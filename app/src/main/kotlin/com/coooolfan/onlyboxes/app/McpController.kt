@@ -1,9 +1,9 @@
-package com.coooolfan.boxlites.app
+package com.coooolfan.onlyboxes.app
 
-import com.coooolfan.boxlites.core.model.ExecResult
-import com.coooolfan.boxlites.core.model.ExecuteStatefulRequest
-import com.coooolfan.boxlites.core.model.RuntimeMetricsView
-import com.coooolfan.boxlites.core.service.CodeExecutor
+import com.coooolfan.onlyboxes.core.model.ExecResult
+import com.coooolfan.onlyboxes.core.model.ExecuteStatefulRequest
+import com.coooolfan.onlyboxes.core.model.RuntimeMetricsView
+import com.coooolfan.onlyboxes.core.service.CodeExecutor
 import org.noear.solon.Solon
 import org.noear.solon.ai.annotation.ToolMapping
 import org.noear.solon.ai.mcp.McpChannel
@@ -16,10 +16,10 @@ class McpController(
 ) {
     private val defaultLeaseSeconds: Long? by lazy {
         val fromConfig = runCatching {
-            Solon.cfg().getLong("boxlites.lease.default-seconds", 0L)
+            Solon.cfg().getLong("onlyboxes.lease.default-seconds", 0L)
         }.getOrDefault(0L)
 
-        val fromEnv = System.getenv("BOXLITES_DEFAULT_LEASE_SECONDS")
+        val fromEnv = System.getenv("ONLYBOXES_DEFAULT_LEASE_SECONDS")
             ?.toLongOrNull()
             ?: 0L
 

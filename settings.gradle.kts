@@ -1,4 +1,4 @@
-rootProject.name = "boxlites"
+rootProject.name = "onlyboxes"
 
 include(":core")
 include(":infra-boxlite")

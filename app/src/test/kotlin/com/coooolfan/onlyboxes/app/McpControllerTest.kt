@@ -1,10 +1,10 @@
-package com.coooolfan.boxlites.app
+package com.coooolfan.onlyboxes.app
 
-import com.coooolfan.boxlites.core.model.ExecResult
-import com.coooolfan.boxlites.core.model.ExecuteStatefulRequest
-import com.coooolfan.boxlites.core.model.ExecuteStatefulResult
-import com.coooolfan.boxlites.core.model.RuntimeMetricsView
-import com.coooolfan.boxlites.core.service.CodeExecutor
+import com.coooolfan.onlyboxes.core.model.ExecResult
+import com.coooolfan.onlyboxes.core.model.ExecuteStatefulRequest
+import com.coooolfan.onlyboxes.core.model.ExecuteStatefulResult
+import com.coooolfan.onlyboxes.core.model.RuntimeMetricsView
+import com.coooolfan.onlyboxes.core.service.CodeExecutor
 import kotlin.test.Test
 import kotlin.test.assertEquals
 

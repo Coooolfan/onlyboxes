@@ -1,4 +1,4 @@
-package com.coooolfan.boxlites.app
+package com.coooolfan.onlyboxes.app
 
 import org.noear.solon.Solon
 import org.noear.solon.annotation.SolonMain

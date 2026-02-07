@@ -1,4 +1,4 @@
-package com.coooolfan.boxlites.core.model
+package com.coooolfan.onlyboxes.core.model
 
 data class RuntimeMetricsView(
     val boxesCreatedTotal: Long,

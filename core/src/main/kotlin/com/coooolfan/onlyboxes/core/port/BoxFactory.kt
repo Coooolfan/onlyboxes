@@ -1,6 +1,6 @@
-package com.coooolfan.boxlites.core.port
+package com.coooolfan.onlyboxes.core.port
 
-import com.coooolfan.boxlites.core.model.RuntimeMetricsView
+import com.coooolfan.onlyboxes.core.model.RuntimeMetricsView
 
 interface BoxFactory {
     fun createStartedBox(): BoxSession

@@ -14,7 +14,7 @@ dependencies {
 
 tasks.withType<Jar>().configureEach {
     manifest {
-        attributes["Main-Class"] = "com.coooolfan.boxlites.app.App"
+        attributes["Main-Class"] = "com.coooolfan.onlyboxes.app.App"
     }
 }
 
@@ -32,7 +32,7 @@ val fatJar by tasks.registering(Jar::class) {
     from(sourceSets.main.get().output)
 
     manifest {
-        attributes["Main-Class"] = "com.coooolfan.boxlites.app.App"
+        attributes["Main-Class"] = "com.coooolfan.onlyboxes.app.App"
     }
 }
 

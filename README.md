@@ -1,4 +1,4 @@
-# Boxlites
+# Onlyboxes
 
 面向个人用户的开箱即用沙盒 MCP 服务。  
 启动后即可通过 MCP 调用 Python 执行能力（无状态 / 有状态）。
@@ -34,12 +34,12 @@ java -jar app/build/libs/app-all.jar
 ## 可选配置
 
 - `SERVER_PORT`：服务端口（默认 `8080`）
-- `BOXLITES_DEFAULT_LEASE_SECONDS`：默认租约秒数（默认 `30`）
+- `ONLYBOXES_DEFAULT_LEASE_SECONDS`：默认租约秒数（默认 `30`）
 
 示例：
 
 ```bash
-SERVER_PORT=8081 BOXLITES_DEFAULT_LEASE_SECONDS=600 java -jar app/build/libs/app-all.jar
+SERVER_PORT=8081 ONLYBOXES_DEFAULT_LEASE_SECONDS=600 java -jar app/build/libs/app-all.jar
 ```
 
 ## 客户端接入示例
@@ -49,7 +49,7 @@ SERVER_PORT=8081 BOXLITES_DEFAULT_LEASE_SECONDS=600 java -jar app/build/libs/app
 ```json
 {
   "mcpServers": {
-    "boxlites": {
+    "onlyboxes": {
       "url": "http://127.0.0.1:8080/mcp"
     }
   }

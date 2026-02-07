@@ -1,12 +1,12 @@
 server.port: ${SERVER_PORT:8080}
 
 solon.app:
-  name: 'boxlites'
+  name: 'onlyboxes'
   group: 'boxlite'
 
-boxlites:
+onlyboxes:
   lease:
-    default-seconds: ${BOXLITES_DEFAULT_LEASE_SECONDS:30}
+    default-seconds: ${ONLYBOXES_DEFAULT_LEASE_SECONDS:30}
 
 solon.logging:
   logger:

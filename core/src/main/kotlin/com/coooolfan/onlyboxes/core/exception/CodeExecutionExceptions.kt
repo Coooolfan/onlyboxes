@@ -1,4 +1,4 @@
-package com.coooolfan.boxlites.core.exception
+package com.coooolfan.onlyboxes.core.exception
 
 open class CodeExecutionException(message: String, cause: Throwable? = null) : RuntimeException(message, cause)
 

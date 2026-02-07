@@ -1,14 +1,14 @@
-package com.coooolfan.boxlites.core.service
+package com.coooolfan.onlyboxes.core.service
 
-import com.coooolfan.boxlites.core.exception.BoxExpiredException
-import com.coooolfan.boxlites.core.exception.BoxNotFoundException
-import com.coooolfan.boxlites.core.exception.InvalidLeaseException
-import com.coooolfan.boxlites.core.model.ExecResult
-import com.coooolfan.boxlites.core.model.ExecuteStatefulRequest
-import com.coooolfan.boxlites.core.model.ExecuteStatefulResult
-import com.coooolfan.boxlites.core.model.RuntimeMetricsView
-import com.coooolfan.boxlites.core.port.BoxFactory
-import com.coooolfan.boxlites.core.port.BoxSession
+import com.coooolfan.onlyboxes.core.exception.BoxExpiredException
+import com.coooolfan.onlyboxes.core.exception.BoxNotFoundException
+import com.coooolfan.onlyboxes.core.exception.InvalidLeaseException
+import com.coooolfan.onlyboxes.core.model.ExecResult
+import com.coooolfan.onlyboxes.core.model.ExecuteStatefulRequest
+import com.coooolfan.onlyboxes.core.model.ExecuteStatefulResult
+import com.coooolfan.onlyboxes.core.model.RuntimeMetricsView
+import com.coooolfan.onlyboxes.core.port.BoxFactory
+import com.coooolfan.onlyboxes.core.port.BoxSession
 import java.time.Clock
 import java.util.concurrent.ConcurrentHashMap
 

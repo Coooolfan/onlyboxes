@@ -1,6 +1,6 @@
-package com.coooolfan.boxlites.core.port
+package com.coooolfan.onlyboxes.core.port
 
-import com.coooolfan.boxlites.core.model.ExecResult
+import com.coooolfan.onlyboxes.core.model.ExecResult
 
 interface BoxSession : AutoCloseable {
     val sessionId: String

@@ -1,17 +1,17 @@
-package com.coooolfan.boxlites.infra.boxlite
+package com.coooolfan.onlyboxes.infra.boxlite
 
-import com.coooolfan.boxlites.core.exception.CodeExecutionException
-import com.coooolfan.boxlites.core.model.ExecResult
-import com.coooolfan.boxlites.core.model.RuntimeMetricsView
-import com.coooolfan.boxlites.core.port.BoxFactory
-import com.coooolfan.boxlites.core.port.BoxSession
+import com.coooolfan.onlyboxes.core.exception.CodeExecutionException
+import com.coooolfan.onlyboxes.core.model.ExecResult
+import com.coooolfan.onlyboxes.core.model.RuntimeMetricsView
+import com.coooolfan.onlyboxes.core.port.BoxFactory
+import com.coooolfan.onlyboxes.core.port.BoxSession
 import io.boxlite.BoxliteRuntime
 import io.boxlite.highlevel.CodeBox
 
 class BoxliteBoxFactory : BoxFactory {
     override fun createStartedBox(): BoxSession {
         return try {
-            BoxliteSession(CodeBox().start())
+            BoxliteCodeSession(CodeBox().start())
         } catch (ex: Exception) {
             throw CodeExecutionException("Failed to create and start CodeBox", ex)
         }
@@ -34,7 +34,7 @@ class BoxliteBoxFactory : BoxFactory {
     }
 }
 
-private class BoxliteSession(
+private class BoxliteCodeSession(
     private val codeBox: CodeBox,
 ) : BoxSession {
     override val sessionId: String = codeBox.id()
