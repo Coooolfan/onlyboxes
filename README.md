@@ -28,6 +28,19 @@ MCP Endpoint（Streamable）：`http://127.0.0.1:8084/mcp`（请求需携带鉴�
 
 - JDK 25+
 
+## Boxlite 依赖来源
+
+`infra-boxlite` 会解析 `boxlite-java-highlevel-allplatforms`：
+
+- 若 `libs/` 下存在与 `boxliteVersion` 对应的同名 jar，优先使用本地文件。
+- 否则自动从 GitHub Release 下载：`https://github.com/<owner>/<repo>/releases/download/v<version>/...jar`。
+
+可通过 Gradle 属性覆盖（`gradle.properties` 或 `-P`）：
+
+- `boxliteVersion`（默认 `0.5.10-coooolfan.1`）
+- `boxliteGithubOwner`（默认 `Coooolfan`）
+- `boxliteGithubRepo`（默认 `boxlite`）
+
 ## 快速开始
 
 ```bash
@@ -94,23 +107,23 @@ java -jar app/build/libs/app-all.jar
 
 ## 第三方依赖与许可证
 
-本节仅列出本仓库手工放入 `libs/` 的第三方 JAR 依赖。
+本节说明运行时用到的第三方 JAR 依赖（可来自 `libs/` 本地覆盖或 GitHub Release）。
 
 ### 依赖关系（核心链路）
 
-`app` -> `infra-boxlite` -> `libs/boxlite-java-highlevel-allplatforms-0.5.10-coooolfan.2.jar`
+`app` -> `infra-boxlite` -> `boxlite-java-highlevel-allplatforms-${boxliteVersion}.jar`
 
 说明：
 
 - `app` 模块依赖 `infra-boxlite` 模块。
-- `infra-boxlite` 模块通过 `fileTree` 从 `libs/` 加载 `*.jar`。
-- 当前运行时使用的核心第三方组件是 `boxlite-java-highlevel-allplatforms-0.5.10-coooolfan.2.jar`。
+- `infra-boxlite` 模块优先从 `libs/` 读取同版本 jar，缺失时回退到 GitHub Release 下载。
+- 当前默认版本由 `gradle.properties` 中的 `boxliteVersion` 控制（默认 `0.5.10-coooolfan.1`）。
 
 ### 第三方组件清单
 
 | 组件 | 版本 | 本仓库位置 | 上游源码仓库 | 打包仓库 | 许可证 |
 | --- | --- | --- | --- | --- | --- |
-| boxlite-java-highlevel-allplatforms | 0.5.10-coooolfan.2 | `libs/boxlite-java-highlevel-allplatforms-0.5.10-coooolfan.2.jar` | https://github.com/boxlite-ai/boxlite | https://github.com/coooolfan/boxlite | Apache-2.0 |
+| boxlite-java-highlevel-allplatforms | `${boxliteVersion}`（默认 `0.5.10-coooolfan.1`） | `libs/boxlite-java-highlevel-allplatforms-${boxliteVersion}.jar`（可选，本地覆盖） | https://github.com/boxlite-ai/boxlite | https://github.com/coooolfan/boxlite | Apache-2.0 |
 
 补充：
 

@@ -1,40 +1,60 @@
 import org.gradle.api.file.DuplicatesStrategy
 import org.gradle.jvm.tasks.Jar
 
-val boxliteJarCandidates = rootProject.file("libs")
-    .listFiles()
-    ?.filter { jarFile ->
-        jarFile.isFile &&
-            jarFile.name.startsWith("boxlite-java-highlevel-allplatforms-") &&
-            jarFile.name.endsWith(".jar") &&
-            !jarFile.name.endsWith("-sources.jar")
+val boxliteArtifact = "boxlite-java-highlevel-allplatforms"
+val boxliteVersion = providers.gradleProperty("boxliteVersion")
+    .orElse("0.5.10-coooolfan.1")
+    .get()
+val boxliteGithubOwner = providers.gradleProperty("boxliteGithubOwner")
+    .orElse("Coooolfan")
+    .get()
+val boxliteGithubRepo = providers.gradleProperty("boxliteGithubRepo")
+    .orElse("boxlite")
+    .get()
+
+val boxliteBinary = configurations.create("boxliteBinary") {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+    isVisible = false
+    description = "Resolves boxlite highlevel jar from local libs or GitHub releases"
+}
+
+repositories {
+    flatDir {
+        dirs(rootProject.file("libs"))
     }
-    .orEmpty()
+    ivy {
+        name = "boxliteGithubRelease"
+        url = uri("https://github.com/$boxliteGithubOwner/$boxliteGithubRepo/releases/download")
+        patternLayout {
+            artifact("v[revision]/[artifact]-[revision].[ext]")
+        }
+        metadataSources {
+            artifact()
+        }
+        content {
+            includeModule("com.coooolfan.boxlite", boxliteArtifact)
+        }
+    }
+}
 
-val boxliteJar = boxliteJarCandidates.maxByOrNull { it.lastModified() }
-    ?: throw GradleException(
-        "No boxlite highlevel jar found under ${rootProject.file("libs")}." +
-            " Expected boxlite-java-highlevel-allplatforms-<version>.jar",
-    )
-
-val boxliteVersion = Regex("boxlite-java-highlevel-allplatforms-(.+)\\.jar")
-    .matchEntire(boxliteJar.name)
-    ?.groupValues
-    ?.get(1)
-    ?: throw GradleException("Cannot parse boxlite version from jar name: ${boxliteJar.name}")
+dependencies {
+    add(boxliteBinary.name, "com.coooolfan.boxlite:$boxliteArtifact:$boxliteVersion@jar")
+}
 
 val sanitizedBoxliteJar by tasks.registering(Jar::class) {
     group = "build"
     description = "Repackages boxlite jar and strips embedded Jackson classes to avoid runtime conflicts"
 
-    archiveBaseName.set("boxlite-java-highlevel-allplatforms")
+    archiveBaseName.set(boxliteArtifact)
     archiveVersion.set(boxliteVersion)
     archiveClassifier.set("sanitized")
     destinationDirectory.set(layout.buildDirectory.dir("sanitized-libs"))
 
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 
-    from(zipTree(boxliteJar))
+    // Resolve the dependency jar lazily from either local libs/ or GitHub Release.
+    from({ boxliteBinary.resolve().map(::zipTree) })
 
     // Keep one Jackson stack on the app classpath. Spring Boot manages those versions.
     exclude("com/fasterxml/jackson/**")
