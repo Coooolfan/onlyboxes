@@ -15,10 +15,12 @@
 | `pythonExecute` | `code: string` | `ExecResult`：`exitCode`、`stdout`、`stderr`、`errorMessage`、`success` |
 | `pythonExecuteStateful` | `name?: string`、`code: string`、`leaseSeconds: long`（必填） | `ExecuteStatefulResponse`：`boxId?`、`destroyed`、`remainingDestroySeconds`、`output`（`ExecResult`） |
 | `fetchBlob` | `path: string`、`name: string` | `CallToolResult`：图片返回 `ImageContent(base64 + mimeType)`，其他文件返回 `mimeType` 与 base64 文本 |
+| `listActiveContainers` | 无 | `[{ boxId, name, remainingDestroySeconds }]`：仅返回当前 token 的活跃容器 |
 | `metrics` | 无 | `RuntimeMetricsView`：`boxesCreatedTotal`、`boxesFailedTotal`、`boxesStoppedTotal`、`numRunningBoxes`、`totalCommandsExecuted`、`totalExecErrors` |
 
 `fetchBlob` 内部实现基于 boxlite `copyOut` 将容器文件拉取到宿主临时目录后读取，不再依赖容器内 Python 文件读取。
 `fetchBlob` 不会续租容器，只检查容器是否已过期。
+`listActiveContainers` 不会续租容器，只返回当前 token 下尚未过期的容器剩余秒数。
 
 MCP Endpoint（Streamable）：`http://127.0.0.1:8080/mcp`（请求需携带鉴权 header）
 

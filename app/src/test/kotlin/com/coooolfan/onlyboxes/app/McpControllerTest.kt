@@ -1,11 +1,13 @@
 package com.coooolfan.onlyboxes.app
 
 import com.coooolfan.onlyboxes.core.exception.CodeExecutionException
+import com.coooolfan.onlyboxes.core.model.ActiveContainerView
 import com.coooolfan.onlyboxes.core.model.ExecResult
 import com.coooolfan.onlyboxes.core.model.ExecuteStatefulRequest
 import com.coooolfan.onlyboxes.core.model.ExecuteStatefulResult
 import com.coooolfan.onlyboxes.core.model.FetchBlobRequest
 import com.coooolfan.onlyboxes.core.model.FetchedBlob
+import com.coooolfan.onlyboxes.core.model.ListActiveContainersRequest
 import com.coooolfan.onlyboxes.core.model.RuntimeMetricsView
 import com.coooolfan.onlyboxes.core.service.CodeExecutor
 import io.modelcontextprotocol.spec.McpSchema
@@ -71,6 +73,33 @@ class McpControllerTest {
         )
 
         assertEquals(45, executor.lastStatefulRequest?.leaseSeconds)
+    }
+
+    @Test
+    fun listActiveContainersDelegatesToCodeExecutor() {
+        val executor = FakeCodeExecutor().apply {
+            listActiveContainersResponse = listOf(
+                ActiveContainerView(
+                    boxId = "auto-session-2",
+                    name = "auto-session-2",
+                    remainingDestroySeconds = 90,
+                ),
+                ActiveContainerView(
+                    boxId = "auto-session-7",
+                    name = "auto-session-7",
+                    remainingDestroySeconds = 12,
+                ),
+            )
+        }
+        val controller = McpController(executor, FixedAuthTokenProvider("token-a"))
+
+        val result = controller.listActiveContainers()
+
+        assertEquals(
+            ListActiveContainersRequest(ownerToken = "token-a"),
+            executor.lastListActiveContainersRequest,
+        )
+        assertEquals(executor.listActiveContainersResponse, result)
     }
 
     @Test
@@ -173,6 +202,16 @@ class McpControllerTest {
     }
 
     @Test
+    fun listActiveContainersFailsWhenTokenContextMissing() {
+        val executor = FakeCodeExecutor()
+        val controller = McpController(executor, FixedAuthTokenProvider(null))
+
+        assertFailsWith<CodeExecutionException> {
+            controller.listActiveContainers()
+        }
+    }
+
+    @Test
     fun statefulExecutionReturnsDestroyedWhenExecutorDestroysContainer() {
         val executor = FakeCodeExecutor().apply {
             nextStatefulResult = ExecuteStatefulResult(
@@ -206,12 +245,14 @@ class McpControllerTest {
         var lastCode: String? = null
         var lastStatefulRequest: ExecuteStatefulRequest? = null
         var lastFetchBlobRequest: FetchBlobRequest? = null
+        var lastListActiveContainersRequest: ListActiveContainersRequest? = null
         var fetchBlobResponse: FetchedBlob = FetchedBlob(
             path = "/workspace/default.bin",
             bytes = byteArrayOf(0),
         )
         var fetchBlobFailure: RuntimeException? = null
         var nextStatefulResult: ExecuteStatefulResult? = null
+        var listActiveContainersResponse: List<ActiveContainerView> = emptyList()
 
         override fun execute(code: String): ExecResult {
             lastCode = code
@@ -251,6 +292,11 @@ class McpControllerTest {
                 throw failure
             }
             return fetchBlobResponse
+        }
+
+        override fun listActiveContainers(request: ListActiveContainersRequest): List<ActiveContainerView> {
+            lastListActiveContainersRequest = request
+            return listActiveContainersResponse
         }
 
         override fun metrics(): RuntimeMetricsView {

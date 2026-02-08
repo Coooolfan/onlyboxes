@@ -3,9 +3,11 @@ package com.coooolfan.onlyboxes.app
 import com.coooolfan.onlyboxes.core.exception.BoxExpiredException
 import com.coooolfan.onlyboxes.core.exception.BoxNotFoundException
 import com.coooolfan.onlyboxes.core.exception.CodeExecutionException
+import com.coooolfan.onlyboxes.core.model.ActiveContainerView
 import com.coooolfan.onlyboxes.core.model.ExecResult
 import com.coooolfan.onlyboxes.core.model.ExecuteStatefulRequest
 import com.coooolfan.onlyboxes.core.model.FetchBlobRequest
+import com.coooolfan.onlyboxes.core.model.ListActiveContainersRequest
 import com.coooolfan.onlyboxes.core.model.RuntimeMetricsView
 import com.coooolfan.onlyboxes.core.service.CodeExecutor
 import io.modelcontextprotocol.spec.McpSchema
@@ -123,6 +125,15 @@ class McpController(
                 .addTextContent(base64Data)
                 .build()
         }
+    }
+
+    @McpTool(description = "List active stateful containers for current user")
+    fun listActiveContainers(): List<ActiveContainerView> {
+        return codeExecutor.listActiveContainers(
+            ListActiveContainersRequest(
+                ownerToken = authTokenProvider.requireToken(),
+            ),
+        )
     }
 
     @McpTool(description = "Fetch all runtime metrics")

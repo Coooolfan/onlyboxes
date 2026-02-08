@@ -6,6 +6,7 @@ import com.coooolfan.onlyboxes.core.exception.CodeExecutionException
 import com.coooolfan.onlyboxes.core.model.ExecResult
 import com.coooolfan.onlyboxes.core.model.ExecuteStatefulRequest
 import com.coooolfan.onlyboxes.core.model.FetchBlobRequest
+import com.coooolfan.onlyboxes.core.model.ListActiveContainersRequest
 import com.coooolfan.onlyboxes.core.model.RuntimeMetricsView
 import com.coooolfan.onlyboxes.core.port.BoxFactory
 import com.coooolfan.onlyboxes.core.port.BoxSession
@@ -354,6 +355,146 @@ class StatefulCodeExecutorServiceTest {
         val metrics = service.metrics()
         assertEquals(2, metrics.boxesCreatedTotal)
         assertEquals(2, metrics.totalCommandsExecuted)
+    }
+
+    @Test
+    fun listActiveContainersReturnsCurrentTokenOnlyAndIncludesBothNames() {
+        val factory = FakeBoxFactory()
+        val service = StatefulCodeExecutorService(factory)
+        val first = service.executeStateful(
+            ExecuteStatefulRequest(
+                ownerToken = "token-a",
+                name = null,
+                code = "print('a-1')",
+                leaseSeconds = 30,
+            ),
+        )
+        val second = service.executeStateful(
+            ExecuteStatefulRequest(
+                ownerToken = "token-a",
+                name = null,
+                code = "print('a-2')",
+                leaseSeconds = 30,
+            ),
+        )
+        service.executeStateful(
+            ExecuteStatefulRequest(
+                ownerToken = "token-b",
+                name = null,
+                code = "print('b-1')",
+                leaseSeconds = 30,
+            ),
+        )
+
+        val tokenA = service.listActiveContainers(
+            ListActiveContainersRequest(ownerToken = "token-a"),
+        )
+
+        val expectedTokenAIds = setOf(assertNotNull(first.boxId), assertNotNull(second.boxId))
+        assertEquals(expectedTokenAIds, tokenA.map { it.boxId }.toSet())
+        assertEquals(tokenA.map { it.boxId }.sorted(), tokenA.map { it.boxId })
+        tokenA.forEach { container ->
+            assertEquals(container.boxId, container.name)
+            assertTrue(container.remainingDestroySeconds >= 1)
+        }
+
+        val tokenB = service.listActiveContainers(
+            ListActiveContainersRequest(ownerToken = "token-b"),
+        )
+        assertEquals(1, tokenB.size)
+        assertEquals(tokenB.single().boxId, tokenB.single().name)
+    }
+
+    @Test
+    fun listActiveContainersReturnsEmptyWhenNoActiveContainers() {
+        val factory = FakeBoxFactory()
+        val service = StatefulCodeExecutorService(factory)
+
+        val listed = service.listActiveContainers(
+            ListActiveContainersRequest(ownerToken = "token-a"),
+        )
+
+        assertEquals(emptyList(), listed)
+    }
+
+    @Test
+    fun listActiveContainersSkipsExpiredAndCleansThemUp() {
+        val clock = MutableClock(Instant.ofEpochMilli(1_000L))
+        val factory = FakeBoxFactory()
+        val service = StatefulCodeExecutorService(factory, clock)
+        val expired = service.executeStateful(
+            ExecuteStatefulRequest(
+                ownerToken = "token-a",
+                name = null,
+                code = "print('old')",
+                leaseSeconds = 30,
+            ),
+        )
+        val expiredBoxId = assertNotNull(expired.boxId)
+
+        clock.advanceMillis(30_500L)
+        val active = service.executeStateful(
+            ExecuteStatefulRequest(
+                ownerToken = "token-a",
+                name = null,
+                code = "print('new')",
+                leaseSeconds = 30,
+            ),
+        )
+        val activeBoxId = assertNotNull(active.boxId)
+
+        val listed = service.listActiveContainers(
+            ListActiveContainersRequest(ownerToken = "token-a"),
+        )
+
+        assertEquals(listOf(activeBoxId), listed.map { it.boxId })
+        assertTrue(factory.sessions[0].closed)
+        assertTrue(!factory.sessions[1].closed)
+        assertFailsWith<BoxNotFoundException> {
+            service.executeStateful(
+                ExecuteStatefulRequest(
+                    ownerToken = "token-a",
+                    name = expiredBoxId,
+                    code = "print('expired')",
+                    leaseSeconds = 30,
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun listActiveContainersDoesNotRenewLease() {
+        val clock = MutableClock(Instant.ofEpochMilli(1_000L))
+        val factory = FakeBoxFactory()
+        val service = StatefulCodeExecutorService(factory, clock)
+        val created = service.executeStateful(
+            ExecuteStatefulRequest(
+                ownerToken = "token-a",
+                name = null,
+                code = "print('init')",
+                leaseSeconds = 30,
+            ),
+        )
+        val boxId = assertNotNull(created.boxId)
+
+        clock.advanceMillis(29_500L)
+        val listed = service.listActiveContainers(
+            ListActiveContainersRequest(ownerToken = "token-a"),
+        )
+        assertEquals(1, listed.size)
+        assertEquals(1, listed.single().remainingDestroySeconds)
+
+        clock.advanceMillis(600L)
+        assertFailsWith<BoxExpiredException> {
+            service.executeStateful(
+                ExecuteStatefulRequest(
+                    ownerToken = "token-a",
+                    name = boxId,
+                    code = "print('after list')",
+                    leaseSeconds = 30,
+                ),
+            )
+        }
     }
 
     @Test

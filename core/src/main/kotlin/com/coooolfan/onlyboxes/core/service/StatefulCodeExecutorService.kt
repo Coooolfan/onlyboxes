@@ -3,11 +3,13 @@ package com.coooolfan.onlyboxes.core.service
 import com.coooolfan.onlyboxes.core.exception.BoxExpiredException
 import com.coooolfan.onlyboxes.core.exception.BoxNotFoundException
 import com.coooolfan.onlyboxes.core.exception.CodeExecutionException
+import com.coooolfan.onlyboxes.core.model.ActiveContainerView
 import com.coooolfan.onlyboxes.core.model.ExecResult
 import com.coooolfan.onlyboxes.core.model.ExecuteStatefulRequest
 import com.coooolfan.onlyboxes.core.model.ExecuteStatefulResult
 import com.coooolfan.onlyboxes.core.model.FetchBlobRequest
 import com.coooolfan.onlyboxes.core.model.FetchedBlob
+import com.coooolfan.onlyboxes.core.model.ListActiveContainersRequest
 import com.coooolfan.onlyboxes.core.model.RuntimeMetricsView
 import com.coooolfan.onlyboxes.core.port.BoxFactory
 import com.coooolfan.onlyboxes.core.port.BoxSession
@@ -104,6 +106,33 @@ class StatefulCodeExecutorService(
         } finally {
             deleteRecursivelyQuietly(tempDir)
         }
+    }
+
+    override fun listActiveContainers(request: ListActiveContainersRequest): List<ActiveContainerView> {
+        val ownerToken = normalizeOwnerToken(request.ownerToken)
+        val now = clock.millis()
+        val activeContainers = mutableListOf<ActiveContainerView>()
+
+        boxLeases.forEach { (leaseKey, lease) ->
+            if (leaseKey.ownerToken != ownerToken) {
+                return@forEach
+            }
+
+            val expiresAt = lease.expiresAtEpochMs
+            if (expiresAt == null || now >= expiresAt) {
+                boxLeases.remove(leaseKey, lease)
+                closeQuietly(lease.box)
+                return@forEach
+            }
+
+            activeContainers += ActiveContainerView(
+                boxId = leaseKey.boxName,
+                name = leaseKey.boxName,
+                remainingDestroySeconds = computeRemainingSecondsCeil(expiresAt, now),
+            )
+        }
+
+        return activeContainers.sortedBy { it.boxId }
     }
 
     override fun metrics(): RuntimeMetricsView = boxFactory.metrics()
@@ -212,7 +241,11 @@ class StatefulCodeExecutorService(
     }
 
     private fun computeRemainingSecondsCeil(expiresAtEpochMs: Long): Long {
-        val remainingMillis = expiresAtEpochMs - clock.millis()
+        return computeRemainingSecondsCeil(expiresAtEpochMs, clock.millis())
+    }
+
+    private fun computeRemainingSecondsCeil(expiresAtEpochMs: Long, nowEpochMs: Long): Long {
+        val remainingMillis = expiresAtEpochMs - nowEpochMs
         if (remainingMillis <= 0L) {
             return 0L
         }
