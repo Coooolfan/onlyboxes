@@ -2,17 +2,22 @@ package com.coooolfan.onlyboxes.core
 
 import com.coooolfan.onlyboxes.core.exception.BoxExpiredException
 import com.coooolfan.onlyboxes.core.exception.BoxNotFoundException
+import com.coooolfan.onlyboxes.core.exception.CodeExecutionException
 import com.coooolfan.onlyboxes.core.exception.InvalidLeaseException
 import com.coooolfan.onlyboxes.core.model.ExecResult
 import com.coooolfan.onlyboxes.core.model.ExecuteStatefulRequest
+import com.coooolfan.onlyboxes.core.model.FetchBlobRequest
 import com.coooolfan.onlyboxes.core.model.RuntimeMetricsView
 import com.coooolfan.onlyboxes.core.port.BoxFactory
 import com.coooolfan.onlyboxes.core.port.BoxSession
 import com.coooolfan.onlyboxes.core.service.StatefulCodeExecutorService
+import java.nio.file.Files
+import java.nio.file.Path
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneId
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
@@ -135,6 +140,133 @@ class StatefulCodeExecutorServiceTest {
         }
     }
 
+    @Test
+    fun fetchBlobReadsSingleCopiedFile() {
+        val factory = FakeBoxFactory()
+        val service = StatefulCodeExecutorService(factory)
+        val created = service.executeStateful(
+            ExecuteStatefulRequest(
+                name = null,
+                code = "print('init')",
+                leaseSeconds = 30,
+            ),
+        )
+        val expected = byteArrayOf(1, 2, 3, 4)
+        val session = factory.sessions.first()
+        session.copyOutHandler = { _, hostDest ->
+            Files.write(hostDest.resolve("plot.png"), expected)
+        }
+
+        val blob = service.fetchBlob(
+            FetchBlobRequest(
+                name = created.boxId,
+                path = "/workspace/plot.png",
+                leaseSeconds = 30,
+            ),
+        )
+
+        assertEquals("/workspace/plot.png", blob.path)
+        assertContentEquals(expected, blob.bytes)
+        assertEquals(listOf("/workspace/plot.png"), session.copiedSources)
+    }
+
+    @Test
+    fun fetchBlobRejectsBlankPath() {
+        val factory = FakeBoxFactory()
+        val service = StatefulCodeExecutorService(factory)
+        val created = service.executeStateful(
+            ExecuteStatefulRequest(
+                name = null,
+                code = "print('init')",
+                leaseSeconds = 30,
+            ),
+        )
+
+        assertFailsWith<CodeExecutionException> {
+            service.fetchBlob(
+                FetchBlobRequest(
+                    name = created.boxId,
+                    path = "   ",
+                    leaseSeconds = 30,
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun fetchBlobUnknownNameThrowsNotFound() {
+        val factory = FakeBoxFactory()
+        val service = StatefulCodeExecutorService(factory)
+
+        assertFailsWith<BoxNotFoundException> {
+            service.fetchBlob(
+                FetchBlobRequest(
+                    name = "missing",
+                    path = "/tmp/blob.bin",
+                    leaseSeconds = 10,
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun fetchBlobExpiredLeaseThrowsAndClosesBox() {
+        val clock = MutableClock(Instant.ofEpochMilli(1_000L))
+        val factory = FakeBoxFactory()
+        val service = StatefulCodeExecutorService(factory, clock)
+        val created = service.executeStateful(
+            ExecuteStatefulRequest(
+                name = null,
+                code = "print('init')",
+                leaseSeconds = 2,
+            ),
+        )
+
+        clock.advanceMillis(2_500L)
+
+        assertFailsWith<BoxExpiredException> {
+            service.fetchBlob(
+                FetchBlobRequest(
+                    name = created.boxId,
+                    path = "/tmp/blob.bin",
+                    leaseSeconds = null,
+                ),
+            )
+        }
+
+        assertTrue(factory.sessions.first().closed)
+    }
+
+    @Test
+    fun fetchBlobFailsWhenCopyOutReturnsMultipleFiles() {
+        val factory = FakeBoxFactory()
+        val service = StatefulCodeExecutorService(factory)
+        val created = service.executeStateful(
+            ExecuteStatefulRequest(
+                name = null,
+                code = "print('init')",
+                leaseSeconds = 30,
+            ),
+        )
+        val session = factory.sessions.first()
+        session.copyOutHandler = { _, hostDest ->
+            Files.write(hostDest.resolve("a.txt"), "a".toByteArray())
+            Files.write(hostDest.resolve("b.txt"), "b".toByteArray())
+        }
+
+        val ex = assertFailsWith<CodeExecutionException> {
+            service.fetchBlob(
+                FetchBlobRequest(
+                    name = created.boxId,
+                    path = "/workspace/multi",
+                    leaseSeconds = 30,
+                ),
+            )
+        }
+
+        assertTrue(ex.message?.contains("multiple files") == true)
+    }
+
     private class FakeBoxFactory : BoxFactory {
         val sessions = mutableListOf<FakeBoxSession>()
 
@@ -161,6 +293,14 @@ class StatefulCodeExecutorServiceTest {
     ) : BoxSession {
         var closed = false
         val executedCodes = mutableListOf<String>()
+        val copiedSources = mutableListOf<String>()
+        var copyOutHandler: (containerSrc: String, hostDest: Path) -> Unit = { containerSrc, hostDest ->
+            val fileName = runCatching { Path.of(containerSrc).fileName?.toString() }
+                .getOrNull()
+                ?.takeIf { it.isNotBlank() }
+                ?: "blob.bin"
+            Files.write(hostDest.resolve(fileName), "blob:$containerSrc".toByteArray())
+        }
 
         override fun run(code: String): ExecResult {
             executedCodes += code
@@ -171,6 +311,11 @@ class StatefulCodeExecutorServiceTest {
                 errorMessage = null,
                 success = true,
             )
+        }
+
+        override fun copyOut(containerSrc: String, hostDest: Path) {
+            copiedSources += containerSrc
+            copyOutHandler(containerSrc, hostDest)
         }
 
         override fun close() {

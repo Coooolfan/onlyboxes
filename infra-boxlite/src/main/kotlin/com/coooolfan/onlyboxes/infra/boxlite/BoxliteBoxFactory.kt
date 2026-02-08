@@ -5,8 +5,10 @@ import com.coooolfan.onlyboxes.core.model.ExecResult
 import com.coooolfan.onlyboxes.core.model.RuntimeMetricsView
 import com.coooolfan.onlyboxes.core.port.BoxFactory
 import com.coooolfan.onlyboxes.core.port.BoxSession
+import io.boxlite.CopyOptions
 import io.boxlite.BoxliteRuntime
 import io.boxlite.highlevel.CodeBox
+import java.nio.file.Path
 
 class BoxliteBoxFactory : BoxFactory {
     override fun createStartedBox(): BoxSession {
@@ -51,6 +53,15 @@ private class BoxliteCodeSession(
             )
         } catch (ex: Exception) {
             throw CodeExecutionException("Failed to execute code in box $sessionId", ex)
+        }
+    }
+
+    override fun copyOut(containerSrc: String, hostDest: Path) {
+        try {
+            codeBox.rawBox().copyOut(containerSrc, hostDest, CopyOptions.defaults()).join()
+        } catch (ex: Exception) {
+            val reason = ex.message ?: ex.javaClass.simpleName
+            throw CodeExecutionException("Failed to copy out file from box $sessionId: $reason", ex)
         }
     }
 

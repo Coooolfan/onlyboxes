@@ -7,7 +7,6 @@
 ## TODO
 - [ ] 支持自定义镜像
 - [ ] 支持自定义容器命令
-- [ ] 支持直接读取文件
 
 ## 工具说明
 
@@ -15,7 +14,10 @@
 | --- | --- | --- |
 | `pythonExecute` | `code: string` | `ExecResult`：`exitCode`、`stdout`、`stderr`、`errorMessage`、`success` |
 | `pythonExecuteStateful` | `name?: string`、`code: string`、`leaseSeconds?: long`（不传时默认 `30` 秒） | `ExecuteStatefulResponse`：`boxId`、`output`（`ExecResult`） |
+| `fetchBlob` | `path: string`、`name: string` | `CallToolResult`：图片返回 `ImageContent(base64 + mimeType)`，其他文件返回 `mimeType` 与 base64 文本 |
 | `metrics` | 无 | `RuntimeMetricsView`：`boxesCreatedTotal`、`boxesFailedTotal`、`boxesStoppedTotal`、`numRunningBoxes`、`totalCommandsExecuted`、`totalExecErrors` |
+
+`fetchBlob` 内部实现基于 boxlite `copyOut` 将容器文件拉取到宿主临时目录后读取，不再依赖容器内 Python 文件读取。
 
 MCP Endpoint（Streamable）：`http://127.0.0.1:8080/mcp`
 
@@ -63,19 +65,19 @@ SERVER_PORT=8081 ONLYBOXES_DEFAULT_LEASE_SECONDS=600 java -jar app/build/libs/ap
 
 ### 依赖关系（核心链路）
 
-`app` -> `infra-boxlite` -> `libs/boxlite-java-highlevel-allplatforms-0.5.9.jar`
+`app` -> `infra-boxlite` -> `libs/boxlite-java-highlevel-allplatforms-0.5.10-coooolfan.2.jar`
 
 说明：
 
 - `app` 模块依赖 `infra-boxlite` 模块。
 - `infra-boxlite` 模块通过 `fileTree` 从 `libs/` 加载 `*.jar`。
-- 当前运行时使用的核心第三方组件是 `boxlite-java-highlevel-allplatforms-0.5.9.jar`。
+- 当前运行时使用的核心第三方组件是 `boxlite-java-highlevel-allplatforms-0.5.10-coooolfan.2.jar`。
 
 ### 第三方组件清单
 
 | 组件 | 版本 | 本仓库位置 | 上游源码仓库 | 打包仓库 | 许可证 |
 | --- | --- | --- | --- | --- | --- |
-| boxlite-java-highlevel-allplatforms | 0.5.9 | `libs/boxlite-java-highlevel-allplatforms-0.5.9.jar` | https://github.com/boxlite-ai/boxlite | https://github.com/coooolfan/boxlite | Apache-2.0 |
+| boxlite-java-highlevel-allplatforms | 0.5.10-coooolfan.2 | `libs/boxlite-java-highlevel-allplatforms-0.5.10-coooolfan.2.jar` | https://github.com/boxlite-ai/boxlite | https://github.com/coooolfan/boxlite | Apache-2.0 |
 
 补充：
 
