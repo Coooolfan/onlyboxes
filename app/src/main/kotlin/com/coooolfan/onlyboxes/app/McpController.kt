@@ -4,36 +4,27 @@ import com.coooolfan.onlyboxes.core.model.ExecResult
 import com.coooolfan.onlyboxes.core.model.ExecuteStatefulRequest
 import com.coooolfan.onlyboxes.core.model.RuntimeMetricsView
 import com.coooolfan.onlyboxes.core.service.CodeExecutor
-import org.noear.solon.Solon
-import org.noear.solon.ai.annotation.ToolMapping
-import org.noear.solon.ai.mcp.McpChannel
-import org.noear.solon.ai.mcp.server.annotation.McpServerEndpoint
-import org.noear.solon.annotation.Param
+import org.springaicommunity.mcp.annotation.McpTool
+import org.springaicommunity.mcp.annotation.McpToolParam
+import org.springframework.beans.factory.annotation.Value
 
-@McpServerEndpoint(channel = McpChannel.STREAMABLE, mcpEndpoint = "/mcp")
+private const val DEFAULT_LEASE_SECONDS = 30L
+
 class McpController(
-    private val codeExecutor: CodeExecutor = RuntimeRegistry.codeExecutor,
+    private val codeExecutor: CodeExecutor,
+    @param:Value("\${onlyboxes.lease.default-seconds:30}")
+    private val defaultLeaseSeconds: Long = DEFAULT_LEASE_SECONDS,
 ) {
-    private val defaultLeaseSeconds: Long? by lazy {
-        val fromConfig = runCatching {
-            Solon.cfg().getLong("onlyboxes.lease.default-seconds", 0L)
-        }.getOrDefault(0L)
-
-        val fromEnv = System.getenv("ONLYBOXES_DEFAULT_LEASE_SECONDS")
-            ?.toLongOrNull()
-            ?: 0L
-
-        val resolved = if (fromConfig > 0L) fromConfig else fromEnv
-        resolved.takeIf { it > 0L }
-    }
-
-    @ToolMapping(description = "Execute Python code with stateful (file-system only) container or create a new one")
+    @McpTool(description = "Execute Python code with stateful (file-system only) container or create a new one")
     fun pythonExecuteStateful(
-        @Param(description = "Container name, if not provided or empty, a new container will be created", required = false)
+        @McpToolParam(
+            description = "Container name, if not provided or empty, a new container will be created",
+            required = false,
+        )
         name: String?,
-        @Param(description = "Python code to execute")
+        @McpToolParam(description = "Python code to execute")
         code: String,
-        @Param(
+        @McpToolParam(
             description = "Lease seconds for this stateful container (renewal). After this time the container becomes unavailable",
             required = false,
         )
@@ -43,7 +34,7 @@ class McpController(
             ExecuteStatefulRequest(
                 name = name,
                 code = code,
-                leaseSeconds = leaseSeconds ?: defaultLeaseSeconds,
+                leaseSeconds = leaseSeconds ?: defaultLeaseSeconds.takeIf { it > 0L },
             ),
         )
 
@@ -53,15 +44,15 @@ class McpController(
         )
     }
 
-    @ToolMapping(description = "Execute Python code")
+    @McpTool(description = "Execute Python code")
     fun pythonExecute(
-        @Param(description = "Python code to execute")
+        @McpToolParam(description = "Python code to execute")
         code: String,
     ): ExecResult {
         return codeExecutor.execute(code)
     }
 
-    @ToolMapping(description = "Fetch all runtime metrics")
+    @McpTool(description = "Fetch all runtime metrics")
     fun metrics(): RuntimeMetricsView = codeExecutor.metrics()
 }
 

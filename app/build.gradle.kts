@@ -1,41 +1,25 @@
+import org.gradle.jvm.tasks.Jar
+import org.springframework.boot.gradle.tasks.bundling.BootJar
+
+plugins {
+    id("org.springframework.boot") version "4.0.2"
+}
+
 dependencies {
     implementation(project(":core"))
     implementation(project(":infra-boxlite"))
 
-    implementation(platform("org.noear:solon-parent:3.9.1"))
-    implementation("org.noear:solon-web")
-    implementation("org.noear:solon-ai")
-    implementation("org.noear:solon-ai-mcp")
-    implementation("org.noear:solon-ai-flow")
-    implementation("org.noear:solon-logging-logback-jakarta")
-
-    testImplementation("org.noear:solon-test")
+    implementation(platform("org.springframework.boot:spring-boot-dependencies:4.0.2"))
+    implementation("org.springframework.boot:spring-boot-starter-web:4.0.2")
+    implementation(platform("org.springframework.ai:spring-ai-bom:2.0.0-M2"))
+    implementation("org.springframework.ai:spring-ai-starter-mcp-server-webmvc")
 }
 
-tasks.withType<Jar>().configureEach {
-    manifest {
-        attributes["Main-Class"] = "com.coooolfan.onlyboxes.app.App"
-    }
-}
-
-val fatJar by tasks.registering(Jar::class) {
-    group = "build"
-    description = "Builds an executable fat jar for the app module"
+tasks.named<BootJar>("bootJar") {
     archiveClassifier.set("all")
-
-    dependsOn(configurations.runtimeClasspath)
-
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    from(configurations.runtimeClasspath.get().map {
-        if (it.isDirectory) it else zipTree(it)
-    })
-    from(sourceSets.main.get().output)
-
-    manifest {
-        attributes["Main-Class"] = "com.coooolfan.onlyboxes.app.App"
-    }
+    mainClass.set("com.coooolfan.onlyboxes.app.App")
 }
 
-tasks.named("assemble") {
-    dependsOn(fatJar)
+tasks.named<Jar>("jar") {
+    enabled = false
 }

@@ -2,6 +2,7 @@
 
 面向个人用户的开箱即用沙盒 MCP 服务。  
 启动后即可通过 MCP 调用 Python 执行能力（无状态 / 有状态）。
+服务端实现基于 Spring Boot + Spring AI MCP Server（WebMVC / Streamable HTTP）。
 
 ## TODO
 - [ ] 支持自定义镜像

@@ -47,6 +47,20 @@ class McpControllerTest {
         assertEquals(6, result.totalCommandsExecuted)
     }
 
+    @Test
+    fun statefulExecutionUsesConfiguredDefaultLeaseWhenMissing() {
+        val executor = FakeCodeExecutor()
+        val controller = McpController(executor, defaultLeaseSeconds = 45)
+
+        controller.pythonExecuteStateful(
+            name = "box-1",
+            code = "print('hello')",
+            leaseSeconds = null,
+        )
+
+        assertEquals(45, executor.lastStatefulRequest?.leaseSeconds)
+    }
+
     private class FakeCodeExecutor : CodeExecutor {
         var lastCode: String? = null
         var lastStatefulRequest: ExecuteStatefulRequest? = null

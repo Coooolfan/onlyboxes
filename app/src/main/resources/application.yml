@@ -1,0 +1,21 @@
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  ai:
+    mcp:
+      server:
+        name: onlyboxes
+        version: 1.0.0
+        protocol: STREAMABLE
+        type: SYNC
+        streamable-http:
+          mcp-endpoint: /mcp
+
+onlyboxes:
+  lease:
+    default-seconds: ${ONLYBOXES_DEFAULT_LEASE_SECONDS:30}
+
+logging:
+  level:
+    io.modelcontextprotocol.util.KeepAliveScheduler: ERROR
