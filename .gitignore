@@ -19,6 +19,8 @@ bin/
 *.test
 *.out
 coverage.out
+go.work
+go.work.sum
 
 # Python artifacts
 *.pyc

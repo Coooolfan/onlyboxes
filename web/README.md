@@ -5,7 +5,8 @@ Onlyboxes worker registry dashboard (Vue 3 + Vite + TypeScript).
 ## 功能
 
 - 实时节点注册与心跳状态仪表台
-- 展示 `GET /api/v1/workers` 的在线/离线节点状态
+- 列表数据来自 `GET /api/v1/workers`
+- 统计卡片数据来自 `GET /api/v1/workers/stats`
 - 支持 `all / online / offline` 筛选、分页、手动刷新和自动刷新
 
 ## 开发

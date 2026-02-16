@@ -7,11 +7,11 @@
 1. 启动 `console`（终端 1）：
 
 ```bash
-cd /Users/yang/Documents/code/onlyboxes
+cd /Users/yang/Documents/code/onlyboxes/console
 CONSOLE_HTTP_ADDR=:8089 \
 CONSOLE_GRPC_ADDR=:50051 \
 CONSOLE_GRPC_SHARED_TOKEN=onlyboxes-dev-token,onlyboxes-backup-token \
-go run ./console/cmd/console
+go run ./cmd/console
 ```
 
 `CONSOLE_GRPC_SHARED_TOKEN` 支持逗号分隔列表，任意一个 token 命中都视为合法。
@@ -19,11 +19,11 @@ go run ./console/cmd/console
 2. 启动 `worker-docker`（终端 2）：
 
 ```bash
-cd /Users/yang/Documents/code/onlyboxes
+cd /Users/yang/Documents/code/onlyboxes/worker/worker-docker
 WORKER_CONSOLE_GRPC_TARGET=127.0.0.1:50051 \
 WORKER_GRPC_SHARED_TOKEN=onlyboxes-backup-token \
 WORKER_HEARTBEAT_INTERVAL_SEC=5 \
-go run ./worker/worker-docker/cmd/worker-docker
+go run ./cmd/worker-docker
 ```
 
 3. 查看已注册 worker：
