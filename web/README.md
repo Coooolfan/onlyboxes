@@ -4,6 +4,7 @@ Onlyboxes worker registry dashboard (Vue 3 + Vite + TypeScript).
 
 ## 功能
 
+- 首次访问需先通过账号密码登录控制台（凭据由 `console` 启动时输出）
 - 实时节点注册与心跳状态仪表台
 - 列表数据来自 `GET /api/v1/workers`
 - 统计卡片数据来自 `GET /api/v1/workers/stats`

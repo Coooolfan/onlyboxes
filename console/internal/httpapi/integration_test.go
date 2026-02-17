@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -43,9 +44,10 @@ func TestRegisterAndListLifecycle(t *testing.T) {
 	defer grpcSrv.Stop()
 
 	handler := NewWorkerHandler(store, 15*time.Second, registrySvc)
-	router := NewRouter(handler)
+	router := NewRouter(handler, newTestConsoleAuth(t))
 	httpSrv := httptest.NewServer(router)
 	defer httpSrv.Close()
+	dashboardClient := newAuthenticatedClient(t, httpSrv)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -108,7 +110,7 @@ func TestRegisterAndListLifecycle(t *testing.T) {
 		t.Fatalf("expected heartbeat_ack, got %#v", heartbeatResp.GetPayload())
 	}
 
-	listOnline := requestList(t, httpSrv.URL+"/api/v1/workers?status=online")
+	listOnline := requestList(t, dashboardClient, httpSrv.URL+"/api/v1/workers?status=online")
 	if listOnline.Total != 1 || len(listOnline.Items) != 1 {
 		t.Fatalf("expected one online worker after register, got total=%d len=%d", listOnline.Total, len(listOnline.Items))
 	}
@@ -119,7 +121,7 @@ func TestRegisterAndListLifecycle(t *testing.T) {
 	handler.nowFn = func() time.Time {
 		return time.Now().Add(16 * time.Second)
 	}
-	listOffline := requestList(t, httpSrv.URL+"/api/v1/workers?status=offline")
+	listOffline := requestList(t, dashboardClient, httpSrv.URL+"/api/v1/workers?status=offline")
 	if listOffline.Total != 1 || len(listOffline.Items) != 1 {
 		t.Fatalf("expected one offline worker after heartbeat timeout, got total=%d len=%d", listOffline.Total, len(listOffline.Items))
 	}
@@ -152,7 +154,7 @@ func TestEchoCommandLifecycle(t *testing.T) {
 	defer grpcSrv.Stop()
 
 	handler := NewWorkerHandler(store, 15*time.Second, registrySvc)
-	router := NewRouter(handler)
+	router := NewRouter(handler, newTestConsoleAuth(t))
 	httpSrv := httptest.NewServer(router)
 	defer httpSrv.Close()
 
@@ -263,7 +265,7 @@ func TestTaskLifecycleSync(t *testing.T) {
 	defer grpcSrv.Stop()
 
 	handler := NewWorkerHandler(store, 15*time.Second, registrySvc)
-	router := NewRouter(handler)
+	router := NewRouter(handler, newTestConsoleAuth(t))
 	httpSrv := httptest.NewServer(router)
 	defer httpSrv.Close()
 
@@ -352,10 +354,10 @@ func TestTaskLifecycleSync(t *testing.T) {
 	}
 }
 
-func requestList(t *testing.T, url string) listWorkersResponse {
+func requestList(t *testing.T, client *http.Client, url string) listWorkersResponse {
 	t.Helper()
 
-	res, err := http.Get(url)
+	res, err := client.Get(url)
 	if err != nil {
 		t.Fatalf("failed to call list API: %v", err)
 	}
@@ -369,4 +371,36 @@ func requestList(t *testing.T, url string) listWorkersResponse {
 		t.Fatalf("failed to decode list response: %v", err)
 	}
 	return payload
+}
+
+func newAuthenticatedClient(t *testing.T, server *httptest.Server) *http.Client {
+	t.Helper()
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("failed to create cookie jar: %v", err)
+	}
+	client := &http.Client{Jar: jar}
+	reqBody, err := json.Marshal(loginRequest{
+		Username: testDashboardUsername,
+		Password: testDashboardPassword,
+	})
+	if err != nil {
+		t.Fatalf("failed to marshal login request: %v", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/console/login", bytes.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("failed to build login request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	res, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("failed to login: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected login 200, got %d", res.StatusCode)
+	}
+	return client
 }

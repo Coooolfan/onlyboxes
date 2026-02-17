@@ -58,7 +58,7 @@ func TestSubmitTaskAccepted(t *testing.T) {
 			return grpcserver.TaskSnapshot{}, nil
 		},
 	})
-	router := NewRouter(handler)
+	router := NewRouter(handler, newTestConsoleAuth(t))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(`{"capability":"echo","input":{"message":"hello"},"mode":"async"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -99,7 +99,7 @@ func TestSubmitTaskCompletedSuccess(t *testing.T) {
 			return grpcserver.TaskSnapshot{}, nil
 		},
 	})
-	router := NewRouter(handler)
+	router := NewRouter(handler, newTestConsoleAuth(t))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(`{"capability":"echo","input":{"message":"hello"},"mode":"sync"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -126,7 +126,7 @@ func TestSubmitTaskNoCapacity(t *testing.T) {
 			return grpcserver.TaskSnapshot{}, nil
 		},
 	})
-	router := NewRouter(handler)
+	router := NewRouter(handler, newTestConsoleAuth(t))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(`{"capability":"echo","input":{"message":"hello"}}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -150,7 +150,7 @@ func TestSubmitTaskRequestInProgress(t *testing.T) {
 			return grpcserver.TaskSnapshot{}, nil
 		},
 	})
-	router := NewRouter(handler)
+	router := NewRouter(handler, newTestConsoleAuth(t))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(`{"capability":"echo","input":{"message":"hello"},"request_id":"req-1"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -188,7 +188,7 @@ func TestGetTask(t *testing.T) {
 			return grpcserver.TaskSnapshot{}, nil
 		},
 	})
-	router := NewRouter(handler)
+	router := NewRouter(handler, newTestConsoleAuth(t))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks/task-3", nil)
 	rec := httptest.NewRecorder()
@@ -228,7 +228,7 @@ func TestCancelTaskTerminalConflict(t *testing.T) {
 			}, grpcserver.ErrTaskTerminal
 		},
 	})
-	router := NewRouter(handler)
+	router := NewRouter(handler, newTestConsoleAuth(t))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/task-5/cancel", nil)
 	rec := httptest.NewRecorder()

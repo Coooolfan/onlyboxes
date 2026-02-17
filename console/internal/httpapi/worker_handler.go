@@ -46,16 +46,31 @@ func NewWorkerHandler(store *registry.Store, offlineTTL time.Duration, dispatche
 	}
 }
 
-func NewRouter(workerHandler *WorkerHandler) *gin.Engine {
+func NewRouter(workerHandler *WorkerHandler, consoleAuth *ConsoleAuth) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 	router.Use(gin.Recovery())
-	router.GET("/api/v1/workers", workerHandler.ListWorkers)
-	router.GET("/api/v1/workers/stats", workerHandler.WorkerStats)
-	router.POST("/api/v1/commands/echo", workerHandler.EchoCommand)
-	router.POST("/api/v1/tasks", workerHandler.SubmitTask)
-	router.GET("/api/v1/tasks/:task_id", workerHandler.GetTask)
-	router.POST("/api/v1/tasks/:task_id/cancel", workerHandler.CancelTask)
+
+	api := router.Group("/api/v1")
+	api.POST("/commands/echo", workerHandler.EchoCommand)
+	api.POST("/tasks", workerHandler.SubmitTask)
+	api.GET("/tasks/:task_id", workerHandler.GetTask)
+	api.POST("/tasks/:task_id/cancel", workerHandler.CancelTask)
+
+	if consoleAuth == nil {
+		api.GET("/workers", workerHandler.ListWorkers)
+		api.GET("/workers/stats", workerHandler.WorkerStats)
+		return router
+	}
+
+	api.POST("/console/login", consoleAuth.Login)
+	api.POST("/console/logout", consoleAuth.Logout)
+
+	dashboard := api.Group("/")
+	dashboard.Use(consoleAuth.RequireAuth())
+	dashboard.GET("/workers", workerHandler.ListWorkers)
+	dashboard.GET("/workers/stats", workerHandler.WorkerStats)
+
 	return router
 }
 

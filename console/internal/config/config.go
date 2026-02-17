@@ -23,6 +23,8 @@ type Config struct {
 	HeartbeatIntervalSec  int32
 	WorkerMaxCount        int
 	WorkerCredentialsFile string
+	DashboardUsername     string
+	DashboardPassword     string
 }
 
 func Load() Config {
@@ -39,6 +41,8 @@ func Load() Config {
 		HeartbeatIntervalSec:  int32(heartbeatIntervalSec),
 		WorkerMaxCount:        workerMaxCount,
 		WorkerCredentialsFile: getEnv("CONSOLE_WORKER_CREDENTIALS_FILE", defaultWorkerCredentialsFile),
+		DashboardUsername:     os.Getenv("CONSOLE_DASHBOARD_USERNAME"),
+		DashboardPassword:     os.Getenv("CONSOLE_DASHBOARD_PASSWORD"),
 	}
 }
 

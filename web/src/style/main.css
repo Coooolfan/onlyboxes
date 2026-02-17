@@ -50,6 +50,58 @@ body {
   gap: 20px;
 }
 
+.auth-panel {
+  width: min(520px, 100%);
+  margin: 48px auto 0;
+  background: linear-gradient(135deg, #fcfdff 0%, #f2f5f9 100%);
+  border: 1px solid var(--stroke);
+  border-radius: 24px;
+  padding: 28px;
+  box-shadow: var(--shadow);
+  animation: rise-in 500ms ease-out;
+}
+
+.login-form {
+  margin-top: 18px;
+  display: grid;
+  gap: 12px;
+}
+
+.field-label {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.field-input {
+  width: 100%;
+  border: 1px solid var(--stroke);
+  border-radius: 12px;
+  background: #fff;
+  color: var(--text-primary);
+  padding: 10px 12px;
+  font: inherit;
+  outline: none;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.field-input:focus {
+  border-color: #5b7cff;
+  box-shadow: 0 0 0 3px rgba(91, 124, 255, 0.18);
+}
+
+.auth-error {
+  margin: 0;
+  border: 1px solid #ffccc7;
+  border-radius: 10px;
+  background: #fff4f2;
+  color: #9f2f24;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
 .gradient-orb {
   position: absolute;
   z-index: 1;

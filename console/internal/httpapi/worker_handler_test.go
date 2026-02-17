@@ -17,9 +17,11 @@ func TestListWorkersEmpty(t *testing.T) {
 	handler.nowFn = func() time.Time {
 		return time.Unix(1_700_000_000, 0)
 	}
-	router := NewRouter(handler)
+	router := NewRouter(handler, newTestConsoleAuth(t))
+	cookie := loginSessionCookie(t, router)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/workers", nil)
+	req.AddCookie(cookie)
 	res := httptest.NewRecorder()
 	router.ServeHTTP(res, req)
 
@@ -51,10 +53,12 @@ func TestListWorkersPaginationAndFilter(t *testing.T) {
 	handler.nowFn = func() time.Time {
 		return base.Add(20 * time.Second)
 	}
-	router := NewRouter(handler)
+	router := NewRouter(handler, newTestConsoleAuth(t))
+	cookie := loginSessionCookie(t, router)
 
 	resPage := httptest.NewRecorder()
 	reqPage := httptest.NewRequest(http.MethodGet, "/api/v1/workers?page=2&page_size=1&status=all", nil)
+	reqPage.AddCookie(cookie)
 	router.ServeHTTP(resPage, reqPage)
 	if resPage.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resPage.Code)
@@ -72,6 +76,7 @@ func TestListWorkersPaginationAndFilter(t *testing.T) {
 
 	resOffline := httptest.NewRecorder()
 	reqOffline := httptest.NewRequest(http.MethodGet, "/api/v1/workers?status=offline", nil)
+	reqOffline.AddCookie(cookie)
 	router.ServeHTTP(resOffline, reqOffline)
 	if resOffline.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resOffline.Code)
@@ -85,5 +90,19 @@ func TestListWorkersPaginationAndFilter(t *testing.T) {
 	}
 	if offlinePayload.Items[0].NodeID != "node-2" {
 		t.Fatalf("expected node-2 to be offline, got %s", offlinePayload.Items[0].NodeID)
+	}
+}
+
+func TestListWorkersRequiresAuthentication(t *testing.T) {
+	store := registry.NewStore()
+	handler := NewWorkerHandler(store, 15*time.Second, nil)
+	router := NewRouter(handler, newTestConsoleAuth(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workers", nil)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d body=%s", res.Code, res.Body.String())
 	}
 }

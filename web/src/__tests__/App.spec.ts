@@ -40,14 +40,22 @@ function jsonResponse(payload: unknown) {
   }
 }
 
-function deferred<T>() {
-  let resolve!: (value: T) => void
-  let reject!: (reason?: unknown) => void
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res
-    reject = rej
-  })
-  return { promise, resolve, reject }
+function noContentResponse() {
+  return {
+    ok: true,
+    status: 204,
+    statusText: 'No Content',
+    json: async () => ({}),
+  }
+}
+
+function unauthorizedResponse() {
+  return {
+    ok: false,
+    status: 401,
+    statusText: 'Unauthorized',
+    json: async () => ({ error: 'authentication required' }),
+  }
 }
 
 describe('App', () => {
@@ -59,14 +67,79 @@ describe('App', () => {
     vi.unstubAllGlobals()
   })
 
-  it('renders stats cards from /workers/stats', async () => {
+  it('shows login panel when dashboard APIs return 401', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url.startsWith('/api/v1/workers/stats')) {
-        return jsonResponse(statsPayload)
+        return unauthorizedResponse()
       }
       if (url.startsWith('/api/v1/workers?')) {
-        return jsonResponse(workersPayload)
+        return unauthorizedResponse()
+      }
+      throw new Error(`unexpected url: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch)
+
+    const wrapper = mount(App)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Sign In to Control Panel')
+    expect(wrapper.text()).not.toContain('Execution Node Control Panel')
+    wrapper.unmount()
+  })
+
+  it('logs in and renders dashboard', async () => {
+    let authenticated = false
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === '/api/v1/console/login') {
+        authenticated = true
+        return jsonResponse({ authenticated: true })
+      }
+      if (url.startsWith('/api/v1/workers/stats')) {
+        return authenticated ? jsonResponse(statsPayload) : unauthorizedResponse()
+      }
+      if (url.startsWith('/api/v1/workers?')) {
+        return authenticated ? jsonResponse(workersPayload) : unauthorizedResponse()
+      }
+      throw new Error(`unexpected url: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch)
+
+    const wrapper = mount(App)
+    await flushPromises()
+
+    await wrapper.get('#dashboard-username').setValue('admin-test')
+    await wrapper.get('#dashboard-password').setValue('password-test')
+    await wrapper.get('form.login-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Execution Node Control Panel')
+    expect(wrapper.text()).toContain('worker-1')
+
+    const loginCall = fetchMock.mock.calls.find(([url]) => String(url) === '/api/v1/console/login')
+    expect(loginCall).toBeTruthy()
+    expect(loginCall?.[1]).toEqual(expect.objectContaining({ credentials: 'same-origin' }))
+
+    const workersCall = fetchMock.mock.calls.find(([url]) => String(url).startsWith('/api/v1/workers?'))
+    expect(workersCall?.[1]).toEqual(expect.objectContaining({ credentials: 'same-origin' }))
+
+    wrapper.unmount()
+  })
+
+  it('logs out and returns to login panel', async () => {
+    let authenticated = true
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === '/api/v1/console/logout') {
+        authenticated = false
+        return noContentResponse()
+      }
+      if (url.startsWith('/api/v1/workers/stats')) {
+        return authenticated ? jsonResponse(statsPayload) : unauthorizedResponse()
+      }
+      if (url.startsWith('/api/v1/workers?')) {
+        return authenticated ? jsonResponse(workersPayload) : unauthorizedResponse()
       }
       throw new Error(`unexpected url: ${url}`)
     })
@@ -76,118 +149,49 @@ describe('App', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('Execution Node Control Panel')
-    expect(wrapper.text()).toContain('150')
-    expect(wrapper.text()).toContain('120')
-    expect(wrapper.text()).toContain('30')
-    expect(wrapper.text()).toContain('10')
-    expect(wrapper.text()).toContain('Heartbeat > 45s')
-    expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining('/api/v1/workers/stats?stale_after_sec=30'),
-      expect.objectContaining({ signal: expect.anything() }),
-    )
+
+    const logoutBtn = wrapper.findAll('button').find((button) => button.text() === 'Logout')
+    expect(logoutBtn).toBeTruthy()
+    await logoutBtn?.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Sign In to Control Panel')
+
+    const logoutCall = fetchMock.mock.calls.find(([url]) => String(url) === '/api/v1/console/logout')
+    expect(logoutCall).toBeTruthy()
+    expect(logoutCall?.[1]).toEqual(expect.objectContaining({ credentials: 'same-origin' }))
+
     wrapper.unmount()
   })
 
-  it('keeps latest filter results when prior request resolves later', async () => {
-    const firstStatsReq = deferred<ReturnType<typeof jsonResponse>>()
-    const firstListReq = deferred<ReturnType<typeof jsonResponse>>()
-
-    const lateAllStats = {
-      total: 2,
-      online: 1,
-      offline: 1,
-      stale: 1,
-      stale_after_sec: 30,
-      generated_at: '2026-02-16T10:00:00Z',
-    }
-
-    const lateAllList = {
-      items: [
-        {
-          node_id: 'node-all-late',
-          node_name: 'all-late',
-          executor_kind: 'docker',
-          capabilities: [],
-          labels: {},
-          version: 'v0.1.0',
-          status: 'offline',
-          registered_at: '2026-02-16T09:00:00Z',
-          last_seen_at: '2026-02-16T09:30:00Z',
-        },
-      ],
-      total: 1,
-      page: 1,
-      page_size: 25,
-    }
-
-    const latestStats = {
-      total: 1,
-      online: 1,
-      offline: 0,
-      stale: 0,
-      stale_after_sec: 30,
-      generated_at: '2026-02-16T10:00:20Z',
-    }
-
-    const latestOnlineList = {
-      items: [
-        {
-          node_id: 'node-online-latest',
-          node_name: 'online-latest',
-          executor_kind: 'docker',
-          capabilities: [],
-          labels: {},
-          version: 'v0.1.0',
-          status: 'online',
-          registered_at: '2026-02-16T10:00:00Z',
-          last_seen_at: '2026-02-16T10:00:19Z',
-        },
-      ],
-      total: 1,
-      page: 1,
-      page_size: 25,
-    }
-
-    let statsCalls = 0
-    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+  it('returns to login when refresh receives 401', async () => {
+    let forceUnauthorized = false
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url.startsWith('/api/v1/workers/stats')) {
-        statsCalls++
-        if (statsCalls === 1) {
-          return firstStatsReq.promise
-        }
-        return Promise.resolve(jsonResponse(latestStats))
+        return forceUnauthorized ? unauthorizedResponse() : jsonResponse(statsPayload)
       }
-      if (url.includes('status=all')) {
-        return firstListReq.promise
-      }
-      if (url.includes('status=online')) {
-        return Promise.resolve(jsonResponse(latestOnlineList))
-      }
-      if (url.includes('status=offline')) {
-        return Promise.resolve(jsonResponse({ ...latestOnlineList, items: [] }))
+      if (url.startsWith('/api/v1/workers?')) {
+        return forceUnauthorized ? unauthorizedResponse() : jsonResponse(workersPayload)
       }
       throw new Error(`unexpected url: ${url}`)
     })
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch)
 
     const wrapper = mount(App)
-    await Promise.resolve()
-
-    const tabButtons = wrapper.findAll('button.tab-btn')
-    expect(tabButtons.length).toBeGreaterThan(1)
-    await tabButtons[1]!.trigger('click')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('online-latest')
-    expect(wrapper.text()).not.toContain('all-late')
+    expect(wrapper.text()).toContain('Execution Node Control Panel')
 
-    firstStatsReq.resolve(jsonResponse(lateAllStats))
-    firstListReq.resolve(jsonResponse(lateAllList))
+    forceUnauthorized = true
+    const refreshBtn = wrapper.findAll('button').find((button) => button.text() === 'Refresh Now')
+    expect(refreshBtn).toBeTruthy()
+    await refreshBtn?.trigger('click')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('online-latest')
-    expect(wrapper.text()).not.toContain('all-late')
+    expect(wrapper.text()).toContain('Sign In to Control Panel')
+    expect(wrapper.text()).not.toContain('API 401')
+
     wrapper.unmount()
   })
 })

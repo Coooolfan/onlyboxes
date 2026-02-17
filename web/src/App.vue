@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 type WorkerStatus = 'all' | 'online' | 'offline'
+type AuthState = 'loading' | 'unauthenticated' | 'authenticated'
 
 interface CapabilityDeclaration {
   name: string
@@ -45,19 +46,25 @@ const refreshedAt = ref<Date | null>(null)
 const autoRefreshEnabled = ref(true)
 const autoRefreshMs = 5000
 
-const dashboardStats = ref<WorkerStatsResponse>({
-  total: 0,
-  online: 0,
-  offline: 0,
-  stale: 0,
-  stale_after_sec: staleAfterDefaultSec,
-  generated_at: '',
-})
+const authState = ref<AuthState>('loading')
+const loginUsername = ref('')
+const loginPassword = ref('')
+const loginErrorMessage = ref('')
+const loginSubmitting = ref(false)
+
+const dashboardStats = ref<WorkerStatsResponse>(emptyStats())
 const currentList = ref<WorkerListResponse | null>(null)
 
 let timer: ReturnType<typeof setInterval> | null = null
 let loadRequestSerial = 0
 let activeController: AbortController | null = null
+
+class UnauthorizedError extends Error {
+  constructor() {
+    super('authentication required')
+    this.name = 'UnauthorizedError'
+  }
+}
 
 const totalWorkers = computed(() => dashboardStats.value.total)
 const onlineWorkers = computed(() => dashboardStats.value.online)
@@ -104,8 +111,13 @@ async function loadDashboard(): Promise<void> {
     dashboardStats.value = statsRes
     currentList.value = listRes
     refreshedAt.value = parseTimestamp(statsRes.generated_at) ?? new Date()
+    authState.value = 'authenticated'
   } catch (error) {
     if (isAbortError(error) || requestSerial !== loadRequestSerial) {
+      return
+    }
+    if (isUnauthorizedError(error)) {
+      switchToUnauthenticatedState()
       return
     }
     errorMessage.value = error instanceof Error ? error.message : 'Failed to load workers.'
@@ -117,6 +129,70 @@ async function loadDashboard(): Promise<void> {
       activeController = null
     }
   }
+}
+
+async function submitLogin(): Promise<void> {
+  if (loginSubmitting.value) {
+    return
+  }
+
+  loginErrorMessage.value = ''
+  if (loginUsername.value.trim() === '' || loginPassword.value === '') {
+    loginErrorMessage.value = '请输入账号和密码。'
+    return
+  }
+
+  loginSubmitting.value = true
+  try {
+    const response = await fetch('/api/v1/console/login', {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      credentials: 'same-origin',
+      body: JSON.stringify({
+        username: loginUsername.value,
+        password: loginPassword.value,
+      }),
+    })
+
+    if (response.status === 401) {
+      loginErrorMessage.value = '账号或密码错误'
+      return
+    }
+    if (!response.ok) {
+      throw new Error(`API ${response.status}: ${response.statusText}`)
+    }
+
+    authState.value = 'authenticated'
+    page.value = 1
+    await loadDashboard()
+  } catch (error) {
+    loginErrorMessage.value = error instanceof Error ? error.message : '登录失败，请稍后重试。'
+  } finally {
+    loginSubmitting.value = false
+  }
+}
+
+async function logout(): Promise<void> {
+  activeController?.abort()
+  loadRequestSerial++
+
+  try {
+    await fetch('/api/v1/console/logout', {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+      },
+      credentials: 'same-origin',
+    })
+  } catch {
+    // ignore network errors and force local logout state
+  }
+
+  loginPassword.value = ''
+  switchToUnauthenticatedState()
 }
 
 async function fetchWorkers(
@@ -135,9 +211,13 @@ async function fetchWorkers(
     headers: {
       Accept: 'application/json',
     },
+    credentials: 'same-origin',
     signal,
   })
 
+  if (response.status === 401) {
+    throw new UnauthorizedError()
+  }
   if (!response.ok) {
     throw new Error(`API ${response.status}: ${response.statusText}`)
   }
@@ -159,9 +239,13 @@ async function fetchStats(staleAfterSec: number, signal: AbortSignal): Promise<W
     headers: {
       Accept: 'application/json',
     },
+    credentials: 'same-origin',
     signal,
   })
 
+  if (response.status === 401) {
+    throw new UnauthorizedError()
+  }
   if (!response.ok) {
     throw new Error(`API ${response.status}: ${response.statusText}`)
   }
@@ -177,6 +261,32 @@ async function fetchStats(staleAfterSec: number, signal: AbortSignal): Promise<W
   }
 }
 
+function emptyStats(): WorkerStatsResponse {
+  return {
+    total: 0,
+    online: 0,
+    offline: 0,
+    stale: 0,
+    stale_after_sec: staleAfterDefaultSec,
+    generated_at: '',
+  }
+}
+
+function resetDashboard(): void {
+  currentList.value = null
+  dashboardStats.value = emptyStats()
+  refreshedAt.value = null
+  page.value = 1
+}
+
+function switchToUnauthenticatedState(): void {
+  authState.value = 'unauthenticated'
+  loginErrorMessage.value = ''
+  loginPassword.value = ''
+  errorMessage.value = ''
+  resetDashboard()
+}
+
 function parseTimestamp(value: string): Date | null {
   const parsed = Date.parse(value)
   if (Number.isNaN(parsed)) {
@@ -190,6 +300,10 @@ function isAbortError(error: unknown): boolean {
     return error.name === 'AbortError'
   }
   return error instanceof Error && error.name === 'AbortError'
+}
+
+function isUnauthorizedError(error: unknown): boolean {
+  return error instanceof UnauthorizedError
 }
 
 function setStatusFilter(status: WorkerStatus): void {
@@ -276,7 +390,7 @@ function formatLabels(worker: WorkerItem): string {
 function startAutoRefresh(): void {
   stopAutoRefresh()
   timer = setInterval(() => {
-    if (!autoRefreshEnabled.value || loading.value) {
+    if (authState.value !== 'authenticated' || !autoRefreshEnabled.value || loading.value) {
       return
     }
     void loadDashboard()
@@ -312,108 +426,152 @@ onBeforeUnmount(() => {
     <div class="gradient-orb orb-right" />
 
     <main class="dashboard-content">
-      <header class="dashboard-header">
-        <div>
-          <p class="eyebrow">Onlyboxes / Worker Registry</p>
-          <h1>Execution Node Control Panel</h1>
-          <p class="subtitle">Real-time monitoring for worker registration and heartbeat health.</p>
-        </div>
-
-        <div class="header-actions">
-          <button class="ghost-btn" type="button" @click="toggleAutoRefresh">
-            {{ autoRefreshEnabled ? 'Auto Refresh: ON' : 'Auto Refresh: OFF' }}
-          </button>
-          <button class="primary-btn" type="button" :disabled="loading" @click="loadDashboard">
-            {{ loading ? 'Refreshing...' : 'Refresh Now' }}
-          </button>
-        </div>
-      </header>
-
-      <section class="stat-grid">
-        <article class="stat-card">
-          <p class="stat-label">Total Workers</p>
-          <p class="stat-value">{{ totalWorkers }}</p>
-        </article>
-        <article class="stat-card online">
-          <p class="stat-label">Online</p>
-          <p class="stat-value">{{ onlineWorkers }}</p>
-        </article>
-        <article class="stat-card offline">
-          <p class="stat-label">Offline</p>
-          <p class="stat-value">{{ offlineWorkers }}</p>
-        </article>
-        <article class="stat-card stale">
-          <p class="stat-label">{{ staleWorkersLabel }}</p>
-          <p class="stat-value">{{ staleWorkers }}</p>
-        </article>
+      <section v-if="authState === 'loading'" class="auth-panel">
+        <p class="eyebrow">Onlyboxes / Console Login</p>
+        <h1>Checking Session</h1>
+        <p class="subtitle">Verifying existing dashboard session...</p>
       </section>
 
-      <section class="board-panel">
-        <div class="panel-topbar">
-          <div class="tabs">
-            <button type="button" :class="['tab-btn', { active: statusFilter === 'all' }]" @click="setStatusFilter('all')">
-              All
-            </button>
-            <button type="button" :class="['tab-btn', { active: statusFilter === 'online' }]" @click="setStatusFilter('online')">
-              Online
-            </button>
-            <button type="button" :class="['tab-btn', { active: statusFilter === 'offline' }]" @click="setStatusFilter('offline')">
-              Offline
-            </button>
-          </div>
+      <section v-else-if="authState === 'unauthenticated'" class="auth-panel">
+        <p class="eyebrow">Onlyboxes / Console Login</p>
+        <h1>Sign In to Control Panel</h1>
+        <p class="subtitle">Use the dashboard username and password printed in the console startup logs.</p>
 
-          <p class="panel-meta">
-            Last refresh:
-            <span>{{ refreshedAt ? formatDateTime(refreshedAt.toISOString()) : 'never' }}</span>
-          </p>
-        </div>
+        <form class="login-form" @submit.prevent="submitLogin">
+          <label class="field-label" for="dashboard-username">Username</label>
+          <input
+            id="dashboard-username"
+            v-model="loginUsername"
+            class="field-input"
+            type="text"
+            name="username"
+            autocomplete="username"
+            spellcheck="false"
+          />
 
-        <p v-if="errorMessage" class="error-banner">{{ errorMessage }}</p>
+          <label class="field-label" for="dashboard-password">Password</label>
+          <input
+            id="dashboard-password"
+            v-model="loginPassword"
+            class="field-input"
+            type="password"
+            name="password"
+            autocomplete="current-password"
+          />
 
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Node</th>
-                <th>Runtime</th>
-                <th>Capabilities</th>
-                <th>Labels</th>
-                <th>Status</th>
-                <th>Registered</th>
-                <th>Last Heartbeat</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-if="!loading && workerRows.length === 0">
-                <td colspan="7" class="empty-cell">No workers found in current filter.</td>
-              </tr>
-              <tr v-for="worker in workerRows" :key="worker.node_id">
-                <td>
-                  <div class="node-main">{{ worker.node_name || worker.node_id }}</div>
-                  <div class="node-sub">{{ worker.node_id }}</div>
-                </td>
-                <td>{{ worker.executor_kind || '--' }}</td>
-                <td>{{ formatCapabilities(worker) }}</td>
-                <td>{{ formatLabels(worker) }}</td>
-                <td>
-                  <span :class="['status-pill', worker.status]">{{ worker.status }}</span>
-                </td>
-                <td>{{ formatDateTime(worker.registered_at) }}</td>
-                <td>{{ formatAge(worker.last_seen_at) }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+          <p v-if="loginErrorMessage" class="auth-error">{{ loginErrorMessage }}</p>
 
-        <footer class="panel-footer">
-          <span class="footer-meta">Showing {{ footerText }}</span>
-          <div class="pager">
-            <button type="button" class="ghost-btn small" :disabled="!canPrev || loading" @click="previousPage">Prev</button>
-            <span class="page-indicator">Page {{ page }} / {{ totalPages }}</span>
-            <button type="button" class="ghost-btn small" :disabled="!canNext || loading" @click="nextPage">Next</button>
-          </div>
-        </footer>
+          <button class="primary-btn" type="submit" :disabled="loginSubmitting">
+            {{ loginSubmitting ? 'Signing In...' : 'Sign In' }}
+          </button>
+        </form>
       </section>
+
+      <template v-else>
+        <header class="dashboard-header">
+          <div>
+            <p class="eyebrow">Onlyboxes / Worker Registry</p>
+            <h1>Execution Node Control Panel</h1>
+            <p class="subtitle">Real-time monitoring for worker registration and heartbeat health.</p>
+          </div>
+
+          <div class="header-actions">
+            <button class="ghost-btn" type="button" @click="toggleAutoRefresh">
+              {{ autoRefreshEnabled ? 'Auto Refresh: ON' : 'Auto Refresh: OFF' }}
+            </button>
+            <button class="primary-btn" type="button" :disabled="loading" @click="loadDashboard">
+              {{ loading ? 'Refreshing...' : 'Refresh Now' }}
+            </button>
+            <button class="ghost-btn" type="button" @click="logout">Logout</button>
+          </div>
+        </header>
+
+        <section class="stat-grid">
+          <article class="stat-card">
+            <p class="stat-label">Total Workers</p>
+            <p class="stat-value">{{ totalWorkers }}</p>
+          </article>
+          <article class="stat-card online">
+            <p class="stat-label">Online</p>
+            <p class="stat-value">{{ onlineWorkers }}</p>
+          </article>
+          <article class="stat-card offline">
+            <p class="stat-label">Offline</p>
+            <p class="stat-value">{{ offlineWorkers }}</p>
+          </article>
+          <article class="stat-card stale">
+            <p class="stat-label">{{ staleWorkersLabel }}</p>
+            <p class="stat-value">{{ staleWorkers }}</p>
+          </article>
+        </section>
+
+        <section class="board-panel">
+          <div class="panel-topbar">
+            <div class="tabs">
+              <button type="button" :class="['tab-btn', { active: statusFilter === 'all' }]" @click="setStatusFilter('all')">
+                All
+              </button>
+              <button type="button" :class="['tab-btn', { active: statusFilter === 'online' }]" @click="setStatusFilter('online')">
+                Online
+              </button>
+              <button type="button" :class="['tab-btn', { active: statusFilter === 'offline' }]" @click="setStatusFilter('offline')">
+                Offline
+              </button>
+            </div>
+
+            <p class="panel-meta">
+              Last refresh:
+              <span>{{ refreshedAt ? formatDateTime(refreshedAt.toISOString()) : 'never' }}</span>
+            </p>
+          </div>
+
+          <p v-if="errorMessage" class="error-banner">{{ errorMessage }}</p>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Node</th>
+                  <th>Runtime</th>
+                  <th>Capabilities</th>
+                  <th>Labels</th>
+                  <th>Status</th>
+                  <th>Registered</th>
+                  <th>Last Heartbeat</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-if="!loading && workerRows.length === 0">
+                  <td colspan="7" class="empty-cell">No workers found in current filter.</td>
+                </tr>
+                <tr v-for="worker in workerRows" :key="worker.node_id">
+                  <td>
+                    <div class="node-main">{{ worker.node_name || worker.node_id }}</div>
+                    <div class="node-sub">{{ worker.node_id }}</div>
+                  </td>
+                  <td>{{ worker.executor_kind || '--' }}</td>
+                  <td>{{ formatCapabilities(worker) }}</td>
+                  <td>{{ formatLabels(worker) }}</td>
+                  <td>
+                    <span :class="['status-pill', worker.status]">{{ worker.status }}</span>
+                  </td>
+                  <td>{{ formatDateTime(worker.registered_at) }}</td>
+                  <td>{{ formatAge(worker.last_seen_at) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <footer class="panel-footer">
+            <span class="footer-meta">Showing {{ footerText }}</span>
+            <div class="pager">
+              <button type="button" class="ghost-btn small" :disabled="!canPrev || loading" @click="previousPage">Prev</button>
+              <span class="page-indicator">Page {{ page }} / {{ totalPages }}</span>
+              <button type="button" class="ghost-btn small" :disabled="!canNext || loading" @click="nextPage">Next</button>
+            </div>
+          </footer>
+        </section>
+      </template>
     </main>
   </div>
 </template>

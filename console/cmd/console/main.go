@@ -23,6 +23,15 @@ func main() {
 	if cfg.WorkerMaxCount <= 0 {
 		log.Fatalf("CONSOLE_WORKER_MAX_COUNT must be a positive integer")
 	}
+	dashboardCredentials, err := httpapi.ResolveDashboardCredentials(cfg.DashboardUsername, cfg.DashboardPassword)
+	if err != nil {
+		log.Fatalf("failed to resolve dashboard credentials: %v", err)
+	}
+	log.Printf(
+		"console dashboard credentials username=%s password=%s",
+		dashboardCredentials.Username,
+		dashboardCredentials.Password,
+	)
 
 	workerCredentials, secretByWorkerID, err := grpcserver.GenerateWorkerCredentials(cfg.WorkerMaxCount)
 	if err != nil {
@@ -56,9 +65,10 @@ func main() {
 	)
 	grpcSrv := grpcserver.NewServer(registryService)
 	httpHandler := httpapi.NewWorkerHandler(store, cfg.OfflineTTL, registryService)
+	consoleAuth := httpapi.NewConsoleAuth(dashboardCredentials)
 	httpSrv := &http.Server{
 		Addr:    cfg.HTTPAddr,
-		Handler: httpapi.NewRouter(httpHandler),
+		Handler: httpapi.NewRouter(httpHandler, consoleAuth),
 	}
 	runCtx, cancelRun := context.WithCancel(context.Background())
 	defer cancelRun()

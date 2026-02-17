@@ -43,7 +43,7 @@ func TestEchoCommandSuccess(t *testing.T) {
 		},
 	}
 	handler := NewWorkerHandler(store, 15*time.Second, dispatcher)
-	router := NewRouter(handler)
+	router := NewRouter(handler, newTestConsoleAuth(t))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/commands/echo", strings.NewReader(`{"message":"hello"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -65,7 +65,7 @@ func TestEchoCommandRejectsInvalidInput(t *testing.T) {
 			return message, nil
 		},
 	})
-	router := NewRouter(handler)
+	router := NewRouter(handler, newTestConsoleAuth(t))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/commands/echo", strings.NewReader(`{"message":"   ","timeout_ms":0}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -84,7 +84,7 @@ func TestEchoCommandMapsNoWorkerError(t *testing.T) {
 			return "", grpcserver.ErrNoEchoWorker
 		},
 	})
-	router := NewRouter(handler)
+	router := NewRouter(handler, newTestConsoleAuth(t))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/commands/echo", strings.NewReader(`{"message":"hello","timeout_ms":1000}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -103,7 +103,7 @@ func TestEchoCommandMapsCapacityError(t *testing.T) {
 			return "", grpcserver.ErrNoWorkerCapacity
 		},
 	})
-	router := NewRouter(handler)
+	router := NewRouter(handler, newTestConsoleAuth(t))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/commands/echo", strings.NewReader(`{"message":"hello","timeout_ms":1000}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -122,7 +122,7 @@ func TestEchoCommandMapsTimeoutError(t *testing.T) {
 			return "", grpcserver.ErrEchoTimeout
 		},
 	})
-	router := NewRouter(handler)
+	router := NewRouter(handler, newTestConsoleAuth(t))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/commands/echo", strings.NewReader(`{"message":"hello","timeout_ms":1000}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -144,7 +144,7 @@ func TestEchoCommandMapsExecutionError(t *testing.T) {
 			}
 		},
 	})
-	router := NewRouter(handler)
+	router := NewRouter(handler, newTestConsoleAuth(t))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/commands/echo", strings.NewReader(`{"message":"hello","timeout_ms":1000}`))
 	req.Header.Set("Content-Type", "application/json")
