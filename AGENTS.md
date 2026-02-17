@@ -20,3 +20,4 @@ Onlyboxes 是一个面向个人与小型团队的代码执行沙箱平台解决�
   - `./skills/skill-creator` 创建技能包：Guide for creating effective skills. This skill should be used when users want to create a new skill (or update an existing skill) that extends Claude's capabilities with specialized knowledge, workflows, or tool integrations.
 - yarn --cwd <project> <command> 用于指定工作路径
 - 所有描述性文字与代码应该始终是面向 开发者/用户 的最终产物，不需要描述中间过程和演变原因。
+- 除非用户主动要求，不需要考虑 API/数据库/模式 的向前兼容。

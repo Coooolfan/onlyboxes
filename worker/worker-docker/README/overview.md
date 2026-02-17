@@ -13,7 +13,10 @@ Capability behavior:
 - each capability declaration includes `max_inflight=4`.
 - when receiving an `echo` command, worker returns the exact input string unchanged.
 - when receiving a `pythonExec` command, worker expects `payload_json` with `{"code":"..."}` and runs:
-  - `docker run --rm --memory 256m --cpus 1.0 --pids-limit 128 python:slim python -c <code>`
+  - `docker create --name <generated-name> --label onlyboxes.managed=true --label onlyboxes.capability=pythonExec --label onlyboxes.runtime=worker-docker --memory 256m --cpus 1.0 --pids-limit 128 python:slim python -c <code>`
+  - `docker start -a <generated-name>`
+  - `docker rm -f <generated-name>` for unified cleanup
+- if command deadline/cancel happens during execution, worker still performs forced cleanup via an independent short-timeout `docker rm -f`, then returns `deadline_exceeded`.
 - `pythonExec` result always uses JSON payload:
   - `{"output":"...","stderr":"...","exit_code":0}`
 - non-zero Python exit code is returned in `exit_code` and does not become command error by itself.

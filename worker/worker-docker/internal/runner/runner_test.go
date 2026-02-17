@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -344,12 +345,16 @@ func TestBuildCommandResultPythonExecDeadlineExceeded(t *testing.T) {
 	}
 }
 
-func TestPythonExecDockerArgsIncludesResourceLimits(t *testing.T) {
+func TestPythonExecDockerCreateArgsIncludesResourceLimitsAndLabels(t *testing.T) {
 	code := "print('hello')"
-	got := pythonExecDockerArgs(code)
+	containerName := "onlyboxes-pythonexec-test"
+	got := pythonExecDockerCreateArgs(containerName, code)
 	want := []string{
-		"run",
-		"--rm",
+		"create",
+		"--name", containerName,
+		"--label", pythonExecManagedLabel,
+		"--label", pythonExecCapabilityLabel,
+		"--label", pythonExecRuntimeLabel,
 		"--memory", defaultPythonExecMemoryLimit,
 		"--cpus", defaultPythonExecCPULimit,
 		"--pids-limit", fmt.Sprint(defaultPythonExecPidsLimit),
@@ -360,6 +365,220 @@ func TestPythonExecDockerArgsIncludesResourceLimits(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected docker args:\nwant=%#v\ngot=%#v", want, got)
+	}
+}
+
+func TestRunPythonExecInDockerReturnsNonZeroExitAsResult(t *testing.T) {
+	originalRunDockerCommand := runDockerCommand
+	originalContainerNameFn := pythonExecContainerNameFn
+	t.Cleanup(func() {
+		runDockerCommand = originalRunDockerCommand
+		pythonExecContainerNameFn = originalContainerNameFn
+	})
+
+	pythonExecContainerNameFn = func() (string, error) {
+		return "container-1", nil
+	}
+
+	var gotCalls [][]string
+	runDockerCommand = func(_ context.Context, args ...string) dockerCommandResult {
+		gotCalls = append(gotCalls, append([]string(nil), args...))
+		switch len(gotCalls) {
+		case 1:
+			return dockerCommandResult{ExitCode: 0}
+		case 2:
+			return dockerCommandResult{
+				Stdout:   "",
+				Stderr:   "Traceback (most recent call last)\n",
+				ExitCode: 1,
+			}
+		case 3:
+			return dockerCommandResult{Stdout: "exited|1", ExitCode: 0}
+		case 4:
+			return dockerCommandResult{ExitCode: 0}
+		default:
+			t.Fatalf("unexpected extra docker call: %#v", args)
+			return dockerCommandResult{}
+		}
+	}
+
+	result, err := runPythonExecInDocker(context.Background(), "raise Exception('boom')")
+	if err != nil {
+		t.Fatalf("expected non-zero exit to be returned as result, got error: %v", err)
+	}
+	if result.ExitCode != 1 {
+		t.Fatalf("expected exit_code=1, got %d", result.ExitCode)
+	}
+	if !strings.Contains(result.Stderr, "Traceback") {
+		t.Fatalf("unexpected stderr: %q", result.Stderr)
+	}
+
+	wantCalls := [][]string{
+		pythonExecDockerCreateArgs("container-1", "raise Exception('boom')"),
+		pythonExecDockerStartArgs("container-1"),
+		pythonExecDockerInspectArgs("container-1"),
+		pythonExecDockerRemoveArgs("container-1"),
+	}
+	if !reflect.DeepEqual(gotCalls, wantCalls) {
+		t.Fatalf("unexpected docker call sequence:\nwant=%#v\ngot=%#v", wantCalls, gotCalls)
+	}
+}
+
+func TestRunPythonExecInDockerTimeoutTriggersForceRemove(t *testing.T) {
+	originalRunDockerCommand := runDockerCommand
+	originalContainerNameFn := pythonExecContainerNameFn
+	t.Cleanup(func() {
+		runDockerCommand = originalRunDockerCommand
+		pythonExecContainerNameFn = originalContainerNameFn
+	})
+
+	pythonExecContainerNameFn = func() (string, error) {
+		return "container-timeout", nil
+	}
+
+	var gotCalls [][]string
+	runDockerCommand = func(_ context.Context, args ...string) dockerCommandResult {
+		gotCalls = append(gotCalls, append([]string(nil), args...))
+		switch len(gotCalls) {
+		case 1:
+			return dockerCommandResult{ExitCode: 0}
+		case 2:
+			return dockerCommandResult{Err: context.DeadlineExceeded}
+		case 3:
+			return dockerCommandResult{ExitCode: 0}
+		default:
+			t.Fatalf("unexpected extra docker call: %#v", args)
+			return dockerCommandResult{}
+		}
+	}
+
+	_, err := runPythonExecInDocker(context.Background(), "import time;time.sleep(10)")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected deadline exceeded, got %v", err)
+	}
+
+	wantCalls := [][]string{
+		pythonExecDockerCreateArgs("container-timeout", "import time;time.sleep(10)"),
+		pythonExecDockerStartArgs("container-timeout"),
+		pythonExecDockerRemoveArgs("container-timeout"),
+	}
+	if !reflect.DeepEqual(gotCalls, wantCalls) {
+		t.Fatalf("unexpected docker call sequence:\nwant=%#v\ngot=%#v", wantCalls, gotCalls)
+	}
+}
+
+func TestRunPythonExecInDockerCreateFailureReturnsErrorWithoutCleanup(t *testing.T) {
+	originalRunDockerCommand := runDockerCommand
+	originalContainerNameFn := pythonExecContainerNameFn
+	t.Cleanup(func() {
+		runDockerCommand = originalRunDockerCommand
+		pythonExecContainerNameFn = originalContainerNameFn
+	})
+
+	pythonExecContainerNameFn = func() (string, error) {
+		return "container-create-fail", nil
+	}
+
+	var gotCalls [][]string
+	runDockerCommand = func(_ context.Context, args ...string) dockerCommandResult {
+		gotCalls = append(gotCalls, append([]string(nil), args...))
+		return dockerCommandResult{
+			Stderr:   "daemon error",
+			ExitCode: 125,
+		}
+	}
+
+	_, err := runPythonExecInDocker(context.Background(), "print(1)")
+	if err == nil || !strings.Contains(err.Error(), "docker create failed") {
+		t.Fatalf("expected docker create failed error, got %v", err)
+	}
+
+	wantCalls := [][]string{
+		pythonExecDockerCreateArgs("container-create-fail", "print(1)"),
+	}
+	if !reflect.DeepEqual(gotCalls, wantCalls) {
+		t.Fatalf("unexpected docker call sequence:\nwant=%#v\ngot=%#v", wantCalls, gotCalls)
+	}
+}
+
+func TestRunPythonExecInDockerStartFailureReturnsExecutionError(t *testing.T) {
+	originalRunDockerCommand := runDockerCommand
+	originalContainerNameFn := pythonExecContainerNameFn
+	t.Cleanup(func() {
+		runDockerCommand = originalRunDockerCommand
+		pythonExecContainerNameFn = originalContainerNameFn
+	})
+
+	pythonExecContainerNameFn = func() (string, error) {
+		return "container-start-fail", nil
+	}
+
+	var gotCalls [][]string
+	runDockerCommand = func(_ context.Context, args ...string) dockerCommandResult {
+		gotCalls = append(gotCalls, append([]string(nil), args...))
+		switch len(gotCalls) {
+		case 1:
+			return dockerCommandResult{ExitCode: 0}
+		case 2:
+			return dockerCommandResult{
+				Stderr:   "OCI runtime create failed",
+				ExitCode: 1,
+			}
+		case 3:
+			return dockerCommandResult{Stdout: "created|0", ExitCode: 0}
+		case 4:
+			return dockerCommandResult{ExitCode: 0}
+		default:
+			t.Fatalf("unexpected extra docker call: %#v", args)
+			return dockerCommandResult{}
+		}
+	}
+
+	_, err := runPythonExecInDocker(context.Background(), "print(1)")
+	if err == nil || !strings.Contains(err.Error(), "docker start failed") {
+		t.Fatalf("expected docker start failed error, got %v", err)
+	}
+
+	wantCalls := [][]string{
+		pythonExecDockerCreateArgs("container-start-fail", "print(1)"),
+		pythonExecDockerStartArgs("container-start-fail"),
+		pythonExecDockerInspectArgs("container-start-fail"),
+		pythonExecDockerRemoveArgs("container-start-fail"),
+	}
+	if !reflect.DeepEqual(gotCalls, wantCalls) {
+		t.Fatalf("unexpected docker call sequence:\nwant=%#v\ngot=%#v", wantCalls, gotCalls)
+	}
+}
+
+func TestRunPythonExecInDockerCleanupFailureDoesNotOverrideDeadline(t *testing.T) {
+	originalRunDockerCommand := runDockerCommand
+	originalContainerNameFn := pythonExecContainerNameFn
+	t.Cleanup(func() {
+		runDockerCommand = originalRunDockerCommand
+		pythonExecContainerNameFn = originalContainerNameFn
+	})
+
+	pythonExecContainerNameFn = func() (string, error) {
+		return "container-cleanup-fail", nil
+	}
+
+	runDockerCommand = func(_ context.Context, args ...string) dockerCommandResult {
+		switch {
+		case reflect.DeepEqual(args, pythonExecDockerCreateArgs("container-cleanup-fail", "import time;time.sleep(10)")):
+			return dockerCommandResult{ExitCode: 0}
+		case reflect.DeepEqual(args, pythonExecDockerStartArgs("container-cleanup-fail")):
+			return dockerCommandResult{Err: context.DeadlineExceeded}
+		case reflect.DeepEqual(args, pythonExecDockerRemoveArgs("container-cleanup-fail")):
+			return dockerCommandResult{Stderr: "permission denied", ExitCode: 1}
+		default:
+			t.Fatalf("unexpected docker call: %#v", args)
+			return dockerCommandResult{}
+		}
+	}
+
+	_, err := runPythonExecInDocker(context.Background(), "import time;time.sleep(10)")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected deadline exceeded, got %v", err)
 	}
 }
 
