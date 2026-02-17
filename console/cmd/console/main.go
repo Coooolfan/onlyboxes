@@ -55,7 +55,7 @@ func main() {
 		cfg.ReplayWindow,
 	)
 	grpcSrv := grpcserver.NewServer(registryService)
-	httpHandler := httpapi.NewWorkerHandler(store, cfg.OfflineTTL)
+	httpHandler := httpapi.NewWorkerHandler(store, cfg.OfflineTTL, registryService)
 	httpSrv := &http.Server{
 		Addr:    cfg.HTTPAddr,
 		Handler: httpapi.NewRouter(httpHandler),

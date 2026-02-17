@@ -3,16 +3,15 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 type WorkerStatus = 'all' | 'online' | 'offline'
 
-interface LanguageCapability {
-  language: string
-  version: string
+interface CapabilityDeclaration {
+  name: string
 }
 
 interface WorkerItem {
   node_id: string
   node_name: string
   executor_kind: string
-  languages: LanguageCapability[]
+  capabilities: CapabilityDeclaration[]
   labels: Record<string, string>
   version: string
   status: Exclude<WorkerStatus, 'all'>
@@ -257,11 +256,11 @@ function formatAge(value: string): string {
 }
 
 function formatCapabilities(worker: WorkerItem): string {
-  if (!worker.languages || worker.languages.length === 0) {
+  if (!worker.capabilities || worker.capabilities.length === 0) {
     return '--'
   }
-  return worker.languages
-    .map((item) => `${item.language}${item.version ? `:${item.version}` : ''}`)
+  return worker.capabilities
+    .map((item) => item.name)
     .join(', ')
 }
 

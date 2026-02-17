@@ -9,16 +9,23 @@ message LanguageCapability {
   string version = 2;
 }
 
+message CapabilityDeclaration {
+  string name = 1;
+  int32 max_inflight = 2;
+}
+
 message ConnectHello {
   string node_id = 1;
   string node_name = 2;
   string executor_kind = 3;
+  // Deprecated: use capabilities.
   repeated LanguageCapability languages = 4;
   map<string, string> labels = 5;
   string version = 6;
   int64 timestamp_unix_ms = 7;
   string nonce = 8;
   string signature = 9;
+  repeated CapabilityDeclaration capabilities = 10;
 }
 
 message HeartbeatFrame {
@@ -31,6 +38,7 @@ message ConnectRequest {
   oneof payload {
     ConnectHello hello = 1;
     HeartbeatFrame heartbeat = 2;
+    CommandResult command_result = 3;
   }
 }
 
@@ -52,11 +60,43 @@ message StreamError {
   string message = 2;
 }
 
+message EchoCommand {
+  string message = 1;
+}
+
+message CommandDispatch {
+  string command_id = 1;
+  string capability = 2;
+  // Deprecated: use payload_json.
+  EchoCommand echo = 3;
+  bytes payload_json = 4;
+  int64 deadline_unix_ms = 5;
+}
+
+message EchoResult {
+  string message = 1;
+}
+
+message CommandError {
+  string code = 1;
+  string message = 2;
+}
+
+message CommandResult {
+  string command_id = 1;
+  // Deprecated: use payload_json.
+  EchoResult echo = 2;
+  CommandError error = 3;
+  bytes payload_json = 4;
+  int64 completed_unix_ms = 5;
+}
+
 message ConnectResponse {
   oneof payload {
     ConnectAck connect_ack = 1;
     HeartbeatAck heartbeat_ack = 2;
     StreamError error = 3;
+    CommandDispatch command_dispatch = 4;
   }
 }
 

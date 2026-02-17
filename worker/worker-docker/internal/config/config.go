@@ -5,8 +5,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
 )
 
 const (
@@ -14,7 +12,6 @@ const (
 	defaultHeartbeatInterval = 5
 	defaultHeartbeatJitter   = 20
 	defaultCallTimeout       = 3
-	defaultLanguagesCSV      = "python:3.12,node:20,go:1.25"
 	defaultExecutorKind      = "docker"
 	defaultWorkerVersion     = "dev"
 )
@@ -29,7 +26,6 @@ type Config struct {
 	NodeName          string
 	ExecutorKind      string
 	Version           string
-	Languages         []*registryv1.LanguageCapability
 	Labels            map[string]string
 }
 
@@ -38,7 +34,6 @@ func Load() Config {
 	heartbeatJitter := parsePercentEnv("WORKER_HEARTBEAT_JITTER_PCT", defaultHeartbeatJitter)
 	callTimeoutSec := parsePositiveIntEnv("WORKER_CALL_TIMEOUT_SEC", defaultCallTimeout)
 
-	languagesCSV := getEnv("WORKER_LANGUAGES", defaultLanguagesCSV)
 	labelsCSV := os.Getenv("WORKER_LABELS")
 
 	return Config{
@@ -51,7 +46,6 @@ func Load() Config {
 		NodeName:          os.Getenv("WORKER_NODE_NAME"),
 		ExecutorKind:      defaultExecutorKind,
 		Version:           getEnv("WORKER_VERSION", defaultWorkerVersion),
-		Languages:         parseLanguages(languagesCSV),
 		Labels:            parseLabels(labelsCSV),
 	}
 }
@@ -86,34 +80,6 @@ func parsePercentEnv(key string, defaultValue int) int {
 		return defaultValue
 	}
 	return parsed
-}
-
-func parseLanguages(raw string) []*registryv1.LanguageCapability {
-	if strings.TrimSpace(raw) == "" {
-		return []*registryv1.LanguageCapability{}
-	}
-	parts := strings.Split(raw, ",")
-	languages := make([]*registryv1.LanguageCapability, 0, len(parts))
-	for _, part := range parts {
-		entry := strings.TrimSpace(part)
-		if entry == "" {
-			continue
-		}
-		tokens := strings.SplitN(entry, ":", 2)
-		language := strings.TrimSpace(tokens[0])
-		if language == "" {
-			continue
-		}
-		version := ""
-		if len(tokens) == 2 {
-			version = strings.TrimSpace(tokens[1])
-		}
-		languages = append(languages, &registryv1.LanguageCapability{
-			Language: language,
-			Version:  version,
-		})
-	}
-	return languages
 }
 
 func parseLabels(raw string) map[string]string {

@@ -22,9 +22,9 @@ const (
 	StatusOffline WorkerStatus = "offline"
 )
 
-type LanguageCapability struct {
-	Language string `json:"language"`
-	Version  string `json:"version"`
+type CapabilityDeclaration struct {
+	Name        string `json:"name"`
+	MaxInflight int32  `json:"max_inflight"`
 }
 
 type Worker struct {
@@ -33,7 +33,7 @@ type Worker struct {
 	Provisioned  bool
 	NodeName     string
 	ExecutorKind string
-	Languages    []LanguageCapability
+	Capabilities []CapabilityDeclaration
 	Labels       map[string]string
 	Version      string
 	RegisteredAt time.Time
@@ -94,7 +94,7 @@ func (s *Store) Upsert(req *registryv1.ConnectHello, sessionID string, now time.
 		Provisioned:  hasExisting && existing.Provisioned,
 		NodeName:     nodeName,
 		ExecutorKind: req.GetExecutorKind(),
-		Languages:    cloneProtoLanguages(req.GetLanguages()),
+		Capabilities: resolveProtoCapabilities(req.GetCapabilities(), req.GetLanguages()),
 		Labels:       labels,
 		Version:      req.GetVersion(),
 		RegisteredAt: now,
@@ -232,6 +232,35 @@ func (s *Store) Stats(now time.Time, offlineTTL time.Duration, staleAfter time.D
 	return stats
 }
 
+func (s *Store) ListOnlineByCapability(capability string, now time.Time, offlineTTL time.Duration) []Worker {
+	trimmed := strings.TrimSpace(strings.ToLower(capability))
+	if trimmed == "" {
+		return []Worker{}
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	workers := make([]Worker, 0, len(s.nodes))
+	for _, worker := range s.nodes {
+		if statusOf(worker.LastSeenAt, now, offlineTTL) != StatusOnline {
+			continue
+		}
+		if !hasCapability(worker.Capabilities, trimmed) {
+			continue
+		}
+		workers = append(workers, cloneWorker(worker))
+	}
+
+	sort.Slice(workers, func(i, j int) bool {
+		if workers[i].NodeID == workers[j].NodeID {
+			return workers[i].RegisteredAt.Before(workers[j].RegisteredAt)
+		}
+		return workers[i].NodeID < workers[j].NodeID
+	})
+	return workers
+}
+
 func (s *Store) PruneOffline(now time.Time, offlineTTL time.Duration) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -257,34 +286,68 @@ func statusOf(lastSeenAt time.Time, now time.Time, offlineTTL time.Duration) Wor
 }
 
 func cloneWorker(worker Worker) Worker {
-	worker.Languages = cloneLanguages(worker.Languages)
+	worker.Capabilities = cloneCapabilities(worker.Capabilities)
 	worker.Labels = cloneMap(worker.Labels)
 	return worker
 }
 
-func cloneProtoLanguages(languages []*registryv1.LanguageCapability) []LanguageCapability {
-	if len(languages) == 0 {
-		return []LanguageCapability{}
+func resolveProtoCapabilities(capabilities []*registryv1.CapabilityDeclaration, legacyLanguages []*registryv1.LanguageCapability) []CapabilityDeclaration {
+	declared := cloneProtoCapabilities(capabilities)
+	if len(declared) > 0 {
+		return declared
 	}
-	cloned := make([]LanguageCapability, 0, len(languages))
-	for _, language := range languages {
-		if language == nil {
+	return cloneLegacyLanguages(legacyLanguages)
+}
+
+func cloneProtoCapabilities(capabilities []*registryv1.CapabilityDeclaration) []CapabilityDeclaration {
+	if len(capabilities) == 0 {
+		return []CapabilityDeclaration{}
+	}
+	cloned := make([]CapabilityDeclaration, 0, len(capabilities))
+	for _, capability := range capabilities {
+		if capability == nil {
 			continue
 		}
-		cloned = append(cloned, LanguageCapability{
-			Language: language.GetLanguage(),
-			Version:  language.GetVersion(),
+		name := strings.TrimSpace(capability.GetName())
+		if name == "" {
+			continue
+		}
+		cloned = append(cloned, CapabilityDeclaration{
+			Name:        name,
+			MaxInflight: capability.GetMaxInflight(),
 		})
 	}
 	return cloned
 }
 
-func cloneLanguages(languages []LanguageCapability) []LanguageCapability {
+func cloneLegacyLanguages(languages []*registryv1.LanguageCapability) []CapabilityDeclaration {
 	if len(languages) == 0 {
-		return []LanguageCapability{}
+		return []CapabilityDeclaration{}
 	}
-	cloned := make([]LanguageCapability, len(languages))
-	copy(cloned, languages)
+
+	cloned := make([]CapabilityDeclaration, 0, len(languages))
+	for _, language := range languages {
+		if language == nil {
+			continue
+		}
+		name := strings.TrimSpace(language.GetLanguage())
+		if name == "" {
+			continue
+		}
+		cloned = append(cloned, CapabilityDeclaration{
+			Name:        name,
+			MaxInflight: 0,
+		})
+	}
+	return cloned
+}
+
+func cloneCapabilities(capabilities []CapabilityDeclaration) []CapabilityDeclaration {
+	if len(capabilities) == 0 {
+		return []CapabilityDeclaration{}
+	}
+	cloned := make([]CapabilityDeclaration, len(capabilities))
+	copy(cloned, capabilities)
 	return cloned
 }
 
@@ -312,4 +375,13 @@ func shortNodeID(nodeID string) string {
 		return nodeID
 	}
 	return nodeID[:8]
+}
+
+func hasCapability(capabilities []CapabilityDeclaration, expected string) bool {
+	for _, capability := range capabilities {
+		if strings.EqualFold(strings.TrimSpace(capability.Name), expected) {
+			return true
+		}
+	}
+	return false
 }

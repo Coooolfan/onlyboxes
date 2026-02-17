@@ -17,9 +17,8 @@ func TestStoreRegisterOverwrite(t *testing.T) {
 		NodeId:       "node-1",
 		NodeName:     "node-a",
 		ExecutorKind: "docker",
-		Languages: []*registryv1.LanguageCapability{{
-			Language: "python",
-			Version:  "3.12",
+		Capabilities: []*registryv1.CapabilityDeclaration{{
+			Name: "echo",
 		}},
 		Labels:  map[string]string{"zone": "a"},
 		Version: "v1",
@@ -29,9 +28,8 @@ func TestStoreRegisterOverwrite(t *testing.T) {
 		NodeId:       "node-1",
 		NodeName:     "node-b",
 		ExecutorKind: "docker",
-		Languages: []*registryv1.LanguageCapability{{
-			Language: "go",
-			Version:  "1.25",
+		Capabilities: []*registryv1.CapabilityDeclaration{{
+			Name: "build",
 		}},
 		Labels:  map[string]string{"zone": "b"},
 		Version: "v2",
@@ -199,5 +197,34 @@ func TestStorePruneOfflineKeepsProvisionedSlots(t *testing.T) {
 	}
 	if !items[0].Provisioned {
 		t.Fatalf("expected provisioned flag to be true")
+	}
+}
+
+func TestStoreListOnlineByCapability(t *testing.T) {
+	store := NewStore()
+	now := time.Unix(1_700_005_000, 0)
+
+	store.Upsert(&registryv1.ConnectHello{
+		NodeId:       "echo-node",
+		NodeName:     "echo-node",
+		Capabilities: []*registryv1.CapabilityDeclaration{{Name: "echo"}},
+	}, "session-echo", now.Add(-2*time.Second))
+	store.Upsert(&registryv1.ConnectHello{
+		NodeId:       "build-node",
+		NodeName:     "build-node",
+		Capabilities: []*registryv1.CapabilityDeclaration{{Name: "build"}},
+	}, "session-build", now.Add(-2*time.Second))
+	store.Upsert(&registryv1.ConnectHello{
+		NodeId:       "offline-echo-node",
+		NodeName:     "offline-echo-node",
+		Capabilities: []*registryv1.CapabilityDeclaration{{Name: "echo"}},
+	}, "session-offline", now.Add(-40*time.Second))
+
+	workers := store.ListOnlineByCapability("echo", now, 15*time.Second)
+	if len(workers) != 1 {
+		t.Fatalf("expected one online echo worker, got %d", len(workers))
+	}
+	if workers[0].NodeID != "echo-node" {
+		t.Fatalf("expected echo-node, got %s", workers[0].NodeID)
 	}
 }

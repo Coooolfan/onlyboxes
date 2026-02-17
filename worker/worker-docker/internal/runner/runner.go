@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -21,10 +22,11 @@ import (
 )
 
 const (
-	heartbeatLogEvery     = 12
 	minHeartbeatInterval  = 1 * time.Second
 	initialReconnectDelay = 1 * time.Second
 	maxReconnectDelay     = 15 * time.Second
+	echoCapabilityName    = "echo"
+	defaultMaxInflight    = 4
 )
 
 var waitReconnect = waitReconnectDelay
@@ -111,7 +113,17 @@ func runSession(ctx context.Context, cfg config.Config) error {
 	heartbeatInterval := durationFromServer(ack.GetHeartbeatIntervalSec(), cfg.HeartbeatInterval)
 	log.Printf("worker connected: node_id=%s node_name=%s session_id=%s", hello.GetNodeId(), hello.GetNodeName(), sessionID)
 
-	return heartbeatLoop(ctx, stream, cfg, sessionID, heartbeatInterval)
+	sessionCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	outbound := make(chan *registryv1.ConnectRequest, 64)
+	heartbeatAckCh := make(chan *registryv1.HeartbeatAck, 16)
+	sessionErrCh := make(chan error, 4)
+
+	go senderLoop(sessionCtx, stream, outbound, sessionErrCh)
+	go receiverLoop(sessionCtx, stream, outbound, heartbeatAckCh, sessionErrCh, cfg.WorkerID)
+
+	return heartbeatLoop(sessionCtx, outbound, heartbeatAckCh, sessionErrCh, cfg, sessionID, heartbeatInterval)
 }
 
 func dial(ctx context.Context, cfg config.Config) (*grpc.ClientConn, error) {
@@ -124,14 +136,96 @@ func dial(ctx context.Context, cfg config.Config) (*grpc.ClientConn, error) {
 	)
 }
 
-func heartbeatLoop(
+func senderLoop(
 	ctx context.Context,
 	stream grpc.BidiStreamingClient[registryv1.ConnectRequest, registryv1.ConnectResponse],
+	outbound <-chan *registryv1.ConnectRequest,
+	errCh chan<- error,
+) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case req := <-outbound:
+			if req == nil {
+				continue
+			}
+			if err := stream.Send(req); err != nil {
+				reportSessionErr(errCh, fmt.Errorf("stream send failed: %w", err))
+				return
+			}
+		}
+	}
+}
+
+func receiverLoop(
+	ctx context.Context,
+	stream grpc.BidiStreamingClient[registryv1.ConnectRequest, registryv1.ConnectResponse],
+	outbound chan<- *registryv1.ConnectRequest,
+	heartbeatAckCh chan<- *registryv1.HeartbeatAck,
+	errCh chan<- error,
+	nodeID string,
+) {
+	for {
+		resp, err := stream.Recv()
+		if err != nil {
+			reportSessionErr(errCh, fmt.Errorf("stream receive failed: %w", err))
+			return
+		}
+
+		switch {
+		case resp.GetHeartbeatAck() != nil:
+			select {
+			case <-ctx.Done():
+				return
+			case heartbeatAckCh <- resp.GetHeartbeatAck():
+			}
+		case resp.GetCommandDispatch() != nil:
+			dispatch := resp.GetCommandDispatch()
+			capability := strings.TrimSpace(strings.ToLower(dispatch.GetCapability()))
+			commandID := strings.TrimSpace(dispatch.GetCommandId())
+			if capability == echoCapabilityName && dispatch.GetEcho() != nil {
+				log.Printf(
+					"command dispatch received: node_id=%s command_id=%s capability=%s message_len=%d",
+					nodeID,
+					commandID,
+					capability,
+					len(dispatch.GetEcho().GetMessage()),
+				)
+			} else {
+				log.Printf(
+					"command dispatch received: node_id=%s command_id=%s capability=%s",
+					nodeID,
+					commandID,
+					capability,
+				)
+			}
+
+			resultReq := buildCommandResult(dispatch)
+			if sendErr := enqueueRequest(ctx, outbound, resultReq); sendErr != nil {
+				reportSessionErr(errCh, fmt.Errorf("enqueue command result: %w", sendErr))
+				return
+			}
+		case resp.GetError() != nil:
+			streamErr := resp.GetError()
+			reportSessionErr(errCh, fmt.Errorf("stream error frame: code=%s message=%s", streamErr.GetCode(), streamErr.GetMessage()))
+			return
+		default:
+			reportSessionErr(errCh, errors.New("unexpected response frame"))
+			return
+		}
+	}
+}
+
+func heartbeatLoop(
+	ctx context.Context,
+	outbound chan<- *registryv1.ConnectRequest,
+	heartbeatAckCh <-chan *registryv1.HeartbeatAck,
+	sessionErrCh <-chan error,
 	cfg config.Config,
 	sessionID string,
 	heartbeatInterval time.Duration,
 ) error {
-	successCount := 0
 	interval := heartbeatInterval
 
 	for {
@@ -141,10 +235,13 @@ func heartbeatLoop(
 		case <-ctx.Done():
 			timer.Stop()
 			return ctx.Err()
+		case err := <-sessionErrCh:
+			timer.Stop()
+			return err
 		case <-timer.C:
 		}
 
-		if err := stream.Send(&registryv1.ConnectRequest{
+		if err := enqueueRequest(ctx, outbound, &registryv1.ConnectRequest{
 			Payload: &registryv1.ConnectRequest_Heartbeat{
 				Heartbeat: &registryv1.HeartbeatFrame{
 					NodeId:       cfg.WorkerID,
@@ -153,28 +250,110 @@ func heartbeatLoop(
 				},
 			},
 		}); err != nil {
-			return fmt.Errorf("send heartbeat: %w", err)
+			return fmt.Errorf("enqueue heartbeat: %w", err)
 		}
 
-		resp, err := recvWithTimeout(ctx, cfg.CallTimeout, stream.Recv)
-		if err != nil {
-			return fmt.Errorf("recv heartbeat_ack: %w", err)
-		}
-
-		if heartbeatAck := resp.GetHeartbeatAck(); heartbeatAck != nil {
-			interval = durationFromServer(heartbeatAck.GetHeartbeatIntervalSec(), interval)
-			successCount++
-			if successCount == 1 || successCount%heartbeatLogEvery == 0 {
-				log.Printf("heartbeat ok: node_id=%s session_id=%s count=%d", cfg.WorkerID, sessionID, successCount)
+		ackTimer := time.NewTimer(cfg.CallTimeout)
+		waitAck := true
+		for waitAck {
+			select {
+			case <-ctx.Done():
+				ackTimer.Stop()
+				return ctx.Err()
+			case err := <-sessionErrCh:
+				ackTimer.Stop()
+				return err
+			case <-ackTimer.C:
+				return context.DeadlineExceeded
+			case heartbeatAck := <-heartbeatAckCh:
+				ackTimer.Stop()
+				interval = durationFromServer(heartbeatAck.GetHeartbeatIntervalSec(), interval)
+				waitAck = false
 			}
-			continue
 		}
+	}
+}
 
-		if streamErr := resp.GetError(); streamErr != nil {
-			return fmt.Errorf("stream error: code=%s message=%s", streamErr.GetCode(), streamErr.GetMessage())
+func buildCommandResult(dispatch *registryv1.CommandDispatch) *registryv1.ConnectRequest {
+	commandID := strings.TrimSpace(dispatch.GetCommandId())
+	if commandID == "" {
+		return &registryv1.ConnectRequest{
+			Payload: &registryv1.ConnectRequest_CommandResult{
+				CommandResult: &registryv1.CommandResult{
+					CommandId: commandID,
+					Error: &registryv1.CommandError{
+						Code:    "invalid_command_id",
+						Message: "command_id is required",
+					},
+				},
+			},
 		}
+	}
 
-		return fmt.Errorf("unexpected heartbeat response frame")
+	if deadline := dispatch.GetDeadlineUnixMs(); deadline > 0 && time.Now().UnixMilli() > deadline {
+		return commandErrorResult(commandID, "deadline_exceeded", "command deadline exceeded")
+	}
+
+	capability := strings.TrimSpace(strings.ToLower(dispatch.GetCapability()))
+	if capability != echoCapabilityName {
+		return commandErrorResult(commandID, "unsupported_capability", fmt.Sprintf("capability %q is not supported", dispatch.GetCapability()))
+	}
+
+	message := ""
+	resultPayload := append([]byte(nil), dispatch.GetPayloadJson()...)
+	if len(resultPayload) > 0 {
+		decoded := struct {
+			Message string `json:"message"`
+		}{}
+		if err := json.Unmarshal(resultPayload, &decoded); err != nil {
+			return commandErrorResult(commandID, "invalid_payload", "payload_json is not valid echo payload")
+		}
+		message = decoded.Message
+	}
+	if strings.TrimSpace(message) == "" && dispatch.GetEcho() != nil {
+		message = dispatch.GetEcho().GetMessage()
+	}
+	if strings.TrimSpace(message) == "" {
+		return commandErrorResult(commandID, "invalid_payload", "echo payload is required")
+	}
+	if len(resultPayload) == 0 {
+		encoded, err := json.Marshal(struct {
+			Message string `json:"message"`
+		}{
+			Message: message,
+		})
+		if err != nil {
+			return commandErrorResult(commandID, "encode_failed", "failed to encode echo payload")
+		}
+		resultPayload = encoded
+	}
+
+	return &registryv1.ConnectRequest{
+		Payload: &registryv1.ConnectRequest_CommandResult{
+			CommandResult: &registryv1.CommandResult{
+				CommandId:       commandID,
+				PayloadJson:     resultPayload,
+				CompletedUnixMs: time.Now().UnixMilli(),
+				Echo: &registryv1.EchoResult{
+					Message: message,
+				},
+			},
+		},
+	}
+}
+
+func commandErrorResult(commandID string, code string, message string) *registryv1.ConnectRequest {
+	return &registryv1.ConnectRequest{
+		Payload: &registryv1.ConnectRequest_CommandResult{
+			CommandResult: &registryv1.CommandResult{
+				CommandId:       commandID,
+				CompletedUnixMs: time.Now().UnixMilli(),
+				Error: &registryv1.CommandError{
+					Code:    code,
+					Message: message,
+				},
+			},
+		},
 	}
 }
 
@@ -197,14 +376,38 @@ func buildHello(cfg config.Config) (*registryv1.ConnectHello, error) {
 		NodeId:          cfg.WorkerID,
 		NodeName:        nodeName,
 		ExecutorKind:    cfg.ExecutorKind,
-		Languages:       cfg.Languages,
 		Labels:          cfg.Labels,
 		Version:         cfg.Version,
 		TimestampUnixMs: time.Now().UnixMilli(),
 		Nonce:           nonce,
+		Capabilities: []*registryv1.CapabilityDeclaration{
+			{
+				Name:        echoCapabilityName,
+				MaxInflight: defaultMaxInflight,
+			},
+		},
 	}
 	hello.Signature = registryauth.Sign(hello.GetNodeId(), hello.GetTimestampUnixMs(), hello.GetNonce(), cfg.WorkerSecret)
 	return hello, nil
+}
+
+func enqueueRequest(ctx context.Context, outbound chan<- *registryv1.ConnectRequest, req *registryv1.ConnectRequest) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case outbound <- req:
+		return nil
+	}
+}
+
+func reportSessionErr(errCh chan<- error, err error) {
+	if err == nil {
+		return
+	}
+	select {
+	case errCh <- err:
+	default:
+	}
 }
 
 func recvWithTimeout(

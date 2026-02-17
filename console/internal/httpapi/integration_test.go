@@ -1,11 +1,13 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -40,7 +42,7 @@ func TestRegisterAndListLifecycle(t *testing.T) {
 	}()
 	defer grpcSrv.Stop()
 
-	handler := NewWorkerHandler(store, 15*time.Second)
+	handler := NewWorkerHandler(store, 15*time.Second, registrySvc)
 	router := NewRouter(handler)
 	httpSrv := httptest.NewServer(router)
 	defer httpSrv.Close()
@@ -63,9 +65,8 @@ func TestRegisterAndListLifecycle(t *testing.T) {
 		NodeId:       workerID,
 		NodeName:     "integration-node",
 		ExecutorKind: "docker",
-		Languages: []*registryv1.LanguageCapability{{
-			Language: "python",
-			Version:  "3.12",
+		Capabilities: []*registryv1.CapabilityDeclaration{{
+			Name: "echo",
 		}},
 		Version:         "v0.1.0",
 		TimestampUnixMs: time.Now().UnixMilli(),
@@ -124,6 +125,230 @@ func TestRegisterAndListLifecycle(t *testing.T) {
 	}
 	if listOffline.Items[0].NodeID != workerID || listOffline.Items[0].Status != registry.StatusOffline {
 		t.Fatalf("unexpected offline worker payload")
+	}
+}
+
+func TestEchoCommandLifecycle(t *testing.T) {
+	store := registry.NewStore()
+	const workerID = "node-echo-1"
+	const workerSecret = "secret-echo-1"
+
+	registrySvc := grpcserver.NewRegistryService(
+		store,
+		map[string]string{workerID: workerSecret},
+		5,
+		15,
+		60*time.Second,
+	)
+	grpcSrv := grpcserver.NewServer(registrySvc)
+	grpcListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to open grpc listener: %v", err)
+	}
+	defer grpcListener.Close()
+	go func() {
+		_ = grpcSrv.Serve(grpcListener)
+	}()
+	defer grpcSrv.Stop()
+
+	handler := NewWorkerHandler(store, 15*time.Second, registrySvc)
+	router := NewRouter(handler)
+	httpSrv := httptest.NewServer(router)
+	defer httpSrv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := grpc.NewClient(grpcListener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("failed to dial grpc: %v", err)
+	}
+	defer conn.Close()
+
+	client := registryv1.NewWorkerRegistryServiceClient(conn)
+	stream, err := client.Connect(ctx)
+	if err != nil {
+		t.Fatalf("connect failed: %v", err)
+	}
+
+	hello := &registryv1.ConnectHello{
+		NodeId:          workerID,
+		NodeName:        "echo-worker",
+		ExecutorKind:    "docker",
+		Capabilities:    []*registryv1.CapabilityDeclaration{{Name: "echo"}},
+		Version:         "v0.1.0",
+		TimestampUnixMs: time.Now().UnixMilli(),
+		Nonce:           "hello-nonce-echo",
+	}
+	hello.Signature = registryauth.Sign(hello.GetNodeId(), hello.GetTimestampUnixMs(), hello.GetNonce(), workerSecret)
+	if err := stream.Send(&registryv1.ConnectRequest{
+		Payload: &registryv1.ConnectRequest_Hello{Hello: hello},
+	}); err != nil {
+		t.Fatalf("send hello failed: %v", err)
+	}
+
+	connectResp, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("recv connect ack failed: %v", err)
+	}
+	if connectResp.GetConnectAck() == nil {
+		t.Fatalf("expected connect_ack, got %#v", connectResp.GetPayload())
+	}
+
+	go func() {
+		for {
+			resp, recvErr := stream.Recv()
+			if recvErr != nil {
+				return
+			}
+			dispatch := resp.GetCommandDispatch()
+			if dispatch == nil {
+				continue
+			}
+			_ = stream.Send(&registryv1.ConnectRequest{
+				Payload: &registryv1.ConnectRequest_CommandResult{
+					CommandResult: &registryv1.CommandResult{
+						CommandId: dispatch.GetCommandId(),
+						Echo: &registryv1.EchoResult{
+							Message: dispatch.GetEcho().GetMessage(),
+						},
+					},
+				},
+			})
+		}
+	}()
+
+	res, err := http.Post(
+		httpSrv.URL+"/api/v1/commands/echo",
+		"application/json",
+		bytes.NewBufferString(`{"message":"hello echo"}`),
+	)
+	if err != nil {
+		t.Fatalf("failed to call echo API: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 response, got %d", res.StatusCode)
+	}
+
+	var payload echoCommandResponse
+	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+		t.Fatalf("failed to decode echo response: %v", err)
+	}
+	if payload.Message != "hello echo" {
+		t.Fatalf("expected echoed message, got %q", payload.Message)
+	}
+}
+
+func TestTaskLifecycleSync(t *testing.T) {
+	store := registry.NewStore()
+	const workerID = "node-task-1"
+	const workerSecret = "secret-task-1"
+
+	registrySvc := grpcserver.NewRegistryService(
+		store,
+		map[string]string{workerID: workerSecret},
+		5,
+		15,
+		60*time.Second,
+	)
+	grpcSrv := grpcserver.NewServer(registrySvc)
+	grpcListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to open grpc listener: %v", err)
+	}
+	defer grpcListener.Close()
+	go func() {
+		_ = grpcSrv.Serve(grpcListener)
+	}()
+	defer grpcSrv.Stop()
+
+	handler := NewWorkerHandler(store, 15*time.Second, registrySvc)
+	router := NewRouter(handler)
+	httpSrv := httptest.NewServer(router)
+	defer httpSrv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := grpc.NewClient(grpcListener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("failed to dial grpc: %v", err)
+	}
+	defer conn.Close()
+
+	client := registryv1.NewWorkerRegistryServiceClient(conn)
+	stream, err := client.Connect(ctx)
+	if err != nil {
+		t.Fatalf("connect failed: %v", err)
+	}
+
+	hello := &registryv1.ConnectHello{
+		NodeId:          workerID,
+		NodeName:        "task-worker",
+		ExecutorKind:    "docker",
+		Capabilities:    []*registryv1.CapabilityDeclaration{{Name: "echo", MaxInflight: 4}},
+		Version:         "v0.1.0",
+		TimestampUnixMs: time.Now().UnixMilli(),
+		Nonce:           "hello-nonce-task",
+	}
+	hello.Signature = registryauth.Sign(hello.GetNodeId(), hello.GetTimestampUnixMs(), hello.GetNonce(), workerSecret)
+	if err := stream.Send(&registryv1.ConnectRequest{
+		Payload: &registryv1.ConnectRequest_Hello{Hello: hello},
+	}); err != nil {
+		t.Fatalf("send hello failed: %v", err)
+	}
+
+	connectResp, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("recv connect ack failed: %v", err)
+	}
+	if connectResp.GetConnectAck() == nil {
+		t.Fatalf("expected connect_ack, got %#v", connectResp.GetPayload())
+	}
+
+	go func() {
+		for {
+			resp, recvErr := stream.Recv()
+			if recvErr != nil {
+				return
+			}
+			dispatch := resp.GetCommandDispatch()
+			if dispatch == nil {
+				continue
+			}
+			_ = stream.Send(&registryv1.ConnectRequest{
+				Payload: &registryv1.ConnectRequest_CommandResult{
+					CommandResult: &registryv1.CommandResult{
+						CommandId:       dispatch.GetCommandId(),
+						PayloadJson:     dispatch.GetPayloadJson(),
+						CompletedUnixMs: time.Now().UnixMilli(),
+					},
+				},
+			})
+		}
+	}()
+
+	res, err := http.Post(
+		httpSrv.URL+"/api/v1/tasks",
+		"application/json",
+		bytes.NewBufferString(`{"capability":"echo","input":{"message":"hello task"},"mode":"sync","wait_ms":1000,"timeout_ms":5000}`),
+	)
+	if err != nil {
+		t.Fatalf("failed to call task API: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 response, got %d", res.StatusCode)
+	}
+
+	var payload taskResponse
+	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+		t.Fatalf("failed to decode task response: %v", err)
+	}
+	if payload.Status != string(grpcserver.TaskStatusSucceeded) {
+		t.Fatalf("expected succeeded status, got %s", payload.Status)
+	}
+	if !strings.Contains(string(payload.Result), `"hello task"`) {
+		t.Fatalf("expected echoed result payload, got %s", string(payload.Result))
 	}
 }
 

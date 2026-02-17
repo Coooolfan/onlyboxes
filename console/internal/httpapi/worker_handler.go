@@ -14,19 +14,20 @@ const maxPageSize = 100
 type WorkerHandler struct {
 	store      *registry.Store
 	offlineTTL time.Duration
+	dispatcher CommandDispatcher
 	nowFn      func() time.Time
 }
 
 type workerItem struct {
-	NodeID       string                        `json:"node_id"`
-	NodeName     string                        `json:"node_name"`
-	ExecutorKind string                        `json:"executor_kind"`
-	Languages    []registry.LanguageCapability `json:"languages"`
-	Labels       map[string]string             `json:"labels"`
-	Version      string                        `json:"version"`
-	Status       registry.WorkerStatus         `json:"status"`
-	RegisteredAt time.Time                     `json:"registered_at"`
-	LastSeenAt   time.Time                     `json:"last_seen_at"`
+	NodeID       string                           `json:"node_id"`
+	NodeName     string                           `json:"node_name"`
+	ExecutorKind string                           `json:"executor_kind"`
+	Capabilities []registry.CapabilityDeclaration `json:"capabilities"`
+	Labels       map[string]string                `json:"labels"`
+	Version      string                           `json:"version"`
+	Status       registry.WorkerStatus            `json:"status"`
+	RegisteredAt time.Time                        `json:"registered_at"`
+	LastSeenAt   time.Time                        `json:"last_seen_at"`
 }
 
 type listWorkersResponse struct {
@@ -36,10 +37,11 @@ type listWorkersResponse struct {
 	PageSize int          `json:"page_size"`
 }
 
-func NewWorkerHandler(store *registry.Store, offlineTTL time.Duration) *WorkerHandler {
+func NewWorkerHandler(store *registry.Store, offlineTTL time.Duration, dispatcher CommandDispatcher) *WorkerHandler {
 	return &WorkerHandler{
 		store:      store,
 		offlineTTL: offlineTTL,
+		dispatcher: dispatcher,
 		nowFn:      time.Now,
 	}
 }
@@ -50,6 +52,10 @@ func NewRouter(workerHandler *WorkerHandler) *gin.Engine {
 	router.Use(gin.Recovery())
 	router.GET("/api/v1/workers", workerHandler.ListWorkers)
 	router.GET("/api/v1/workers/stats", workerHandler.WorkerStats)
+	router.POST("/api/v1/commands/echo", workerHandler.EchoCommand)
+	router.POST("/api/v1/tasks", workerHandler.SubmitTask)
+	router.GET("/api/v1/tasks/:task_id", workerHandler.GetTask)
+	router.POST("/api/v1/tasks/:task_id/cancel", workerHandler.CancelTask)
 	return router
 }
 
@@ -81,7 +87,7 @@ func (h *WorkerHandler) ListWorkers(c *gin.Context) {
 			NodeID:       worker.NodeID,
 			NodeName:     worker.NodeName,
 			ExecutorKind: worker.ExecutorKind,
-			Languages:    worker.Languages,
+			Capabilities: worker.Capabilities,
 			Labels:       worker.Labels,
 			Version:      worker.Version,
 			Status:       worker.Status,

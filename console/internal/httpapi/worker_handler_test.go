@@ -13,7 +13,7 @@ import (
 
 func TestListWorkersEmpty(t *testing.T) {
 	store := registry.NewStore()
-	handler := NewWorkerHandler(store, 15*time.Second)
+	handler := NewWorkerHandler(store, 15*time.Second, nil)
 	handler.nowFn = func() time.Time {
 		return time.Unix(1_700_000_000, 0)
 	}
@@ -47,7 +47,7 @@ func TestListWorkersPaginationAndFilter(t *testing.T) {
 	store.Upsert(&registryv1.ConnectHello{NodeId: "node-1", NodeName: "node-1"}, "session-1", base.Add(10*time.Second))
 	store.Upsert(&registryv1.ConnectHello{NodeId: "node-3", NodeName: "node-3"}, "session-3", base.Add(12*time.Second))
 
-	handler := NewWorkerHandler(store, 15*time.Second)
+	handler := NewWorkerHandler(store, 15*time.Second, nil)
 	handler.nowFn = func() time.Time {
 		return base.Add(20 * time.Second)
 	}

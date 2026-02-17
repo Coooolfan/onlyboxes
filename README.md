@@ -49,6 +49,36 @@ go run ./cmd/worker-docker
 curl "http://127.0.0.1:8089/api/v1/workers?page=1&page_size=20&status=all"
 ```
 
+4. 调用 echo 命令链路（阻塞等待 worker 返回）：
+
+```bash
+curl -X POST "http://127.0.0.1:8089/api/v1/commands/echo" \
+  -H "Content-Type: application/json" \
+  -d '{"message":"hello onlyboxes","timeout_ms":5000}'
+```
+
+成功响应示例：
+
+```json
+{
+  "message": "hello onlyboxes"
+}
+```
+
+5. 提交通用任务（`mode=auto`，先等 `wait_ms`，未完成则返回 `202`）：
+
+```bash
+curl -X POST "http://127.0.0.1:8089/api/v1/tasks" \
+  -H "Content-Type: application/json" \
+  -d '{"capability":"echo","input":{"message":"hello task"},"mode":"auto","wait_ms":1500,"timeout_ms":60000}'
+```
+
+6. 查询任务状态：
+
+```bash
+curl "http://127.0.0.1:8089/api/v1/tasks/<task_id>"
+```
+
 ## 前端开发（Vite 反向代理）
 
 `web` 项目开发服务器会将 `/api/*` 代理到 `http://127.0.0.1:8089`。
