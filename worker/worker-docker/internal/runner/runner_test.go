@@ -2,9 +2,11 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
+	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -73,11 +75,18 @@ func TestBuildHelloSignsWithWorkerSecret(t *testing.T) {
 	) {
 		t.Fatalf("expected signature to verify")
 	}
-	if len(hello.GetCapabilities()) != 1 || hello.GetCapabilities()[0].GetName() != echoCapabilityName {
-		t.Fatalf("expected hardcoded echo capability, got %#v", hello.GetCapabilities())
+	capabilityByName := make(map[string]int32, len(hello.GetCapabilities()))
+	for _, capability := range hello.GetCapabilities() {
+		capabilityByName[capability.GetName()] = capability.GetMaxInflight()
 	}
-	if hello.GetCapabilities()[0].GetMaxInflight() != defaultMaxInflight {
-		t.Fatalf("expected max_inflight=%d, got %d", defaultMaxInflight, hello.GetCapabilities()[0].GetMaxInflight())
+	if len(capabilityByName) != 2 {
+		t.Fatalf("expected two capabilities, got %#v", hello.GetCapabilities())
+	}
+	if capabilityByName[echoCapabilityName] != defaultMaxInflight {
+		t.Fatalf("expected echo max_inflight=%d, got %d", defaultMaxInflight, capabilityByName[echoCapabilityName])
+	}
+	if capabilityByName[pythonExecCapabilityDeclared] != defaultMaxInflight {
+		t.Fatalf("expected pythonExec max_inflight=%d, got %d", defaultMaxInflight, capabilityByName[pythonExecCapabilityDeclared])
 	}
 }
 
@@ -165,6 +174,195 @@ func TestBuildCommandResultUnsupportedCapability(t *testing.T) {
 	}
 }
 
+func TestBuildCommandResultPythonExecSuccess(t *testing.T) {
+	originalRunPythonExec := runPythonExec
+	t.Cleanup(func() {
+		runPythonExec = originalRunPythonExec
+	})
+
+	code := "print(\"123\")\nprint(\"234\")"
+	payloadJSON, err := json.Marshal(pythonExecPayload{Code: code})
+	if err != nil {
+		t.Fatalf("marshal payload failed: %v", err)
+	}
+
+	called := false
+	runPythonExec = func(_ context.Context, inputCode string) (pythonExecRunResult, error) {
+		called = true
+		if inputCode != code {
+			t.Fatalf("unexpected code: %s", inputCode)
+		}
+		return pythonExecRunResult{
+			Output:   "123\n234\n",
+			Stderr:   "",
+			ExitCode: 0,
+		}, nil
+	}
+
+	req := buildCommandResult(&registryv1.CommandDispatch{
+		CommandId:   "cmd-py-1",
+		Capability:  "pythonExec",
+		PayloadJson: payloadJSON,
+	})
+
+	result := req.GetCommandResult()
+	if result == nil {
+		t.Fatalf("expected command_result payload")
+	}
+	if result.GetError() != nil {
+		t.Fatalf("expected success, got error %#v", result.GetError())
+	}
+	if result.GetEcho() != nil {
+		t.Fatalf("expected empty legacy echo field, got %#v", result.GetEcho())
+	}
+	if !called {
+		t.Fatalf("expected python executor to be called")
+	}
+
+	decoded := pythonExecResult{}
+	if err := json.Unmarshal(result.GetPayloadJson(), &decoded); err != nil {
+		t.Fatalf("expected valid pythonExec result payload, got %s", string(result.GetPayloadJson()))
+	}
+	if decoded.Output != "123\n234\n" || decoded.Stderr != "" || decoded.ExitCode != 0 {
+		t.Fatalf("unexpected pythonExec result payload: %#v", decoded)
+	}
+}
+
+func TestBuildCommandResultPythonExecNonZeroExit(t *testing.T) {
+	originalRunPythonExec := runPythonExec
+	t.Cleanup(func() {
+		runPythonExec = originalRunPythonExec
+	})
+
+	runPythonExec = func(_ context.Context, _ string) (pythonExecRunResult, error) {
+		return pythonExecRunResult{
+			Output:   "",
+			Stderr:   "Traceback...",
+			ExitCode: 1,
+		}, nil
+	}
+
+	req := buildCommandResult(&registryv1.CommandDispatch{
+		CommandId:   "cmd-py-2",
+		Capability:  "pythonexec",
+		PayloadJson: []byte(`{"code":"raise Exception(\"boom\")"}`),
+	})
+
+	result := req.GetCommandResult()
+	if result == nil {
+		t.Fatalf("expected command_result payload")
+	}
+	if result.GetError() != nil {
+		t.Fatalf("expected success result with non-zero exit, got error %#v", result.GetError())
+	}
+
+	decoded := pythonExecResult{}
+	if err := json.Unmarshal(result.GetPayloadJson(), &decoded); err != nil {
+		t.Fatalf("expected valid pythonExec result payload, got %s", string(result.GetPayloadJson()))
+	}
+	if decoded.ExitCode != 1 || decoded.Stderr != "Traceback..." {
+		t.Fatalf("unexpected pythonExec non-zero result payload: %#v", decoded)
+	}
+}
+
+func TestBuildCommandResultPythonExecInvalidPayload(t *testing.T) {
+	tests := []struct {
+		name        string
+		payloadJSON []byte
+	}{
+		{name: "malformed", payloadJSON: []byte(`{"code":`)},
+		{name: "missing_code", payloadJSON: []byte(`{}`)},
+		{name: "blank_code", payloadJSON: []byte(`{"code":"   "}`)},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := buildCommandResult(&registryv1.CommandDispatch{
+				CommandId:   "cmd-py-invalid",
+				Capability:  "pythonExec",
+				PayloadJson: tc.payloadJSON,
+			})
+
+			result := req.GetCommandResult()
+			if result == nil {
+				t.Fatalf("expected command_result payload")
+			}
+			if result.GetError() == nil || result.GetError().GetCode() != "invalid_payload" {
+				t.Fatalf("expected invalid_payload error, got %#v", result)
+			}
+		})
+	}
+}
+
+func TestBuildCommandResultPythonExecExecutionFailed(t *testing.T) {
+	originalRunPythonExec := runPythonExec
+	t.Cleanup(func() {
+		runPythonExec = originalRunPythonExec
+	})
+
+	runPythonExec = func(_ context.Context, _ string) (pythonExecRunResult, error) {
+		return pythonExecRunResult{}, errors.New("docker is unavailable")
+	}
+
+	req := buildCommandResult(&registryv1.CommandDispatch{
+		CommandId:   "cmd-py-3",
+		Capability:  "pythonExec",
+		PayloadJson: []byte(`{"code":"print(1)"}`),
+	})
+	result := req.GetCommandResult()
+	if result == nil {
+		t.Fatalf("expected command_result payload")
+	}
+	if result.GetError() == nil || result.GetError().GetCode() != "execution_failed" {
+		t.Fatalf("expected execution_failed error, got %#v", result)
+	}
+}
+
+func TestBuildCommandResultPythonExecDeadlineExceeded(t *testing.T) {
+	originalRunPythonExec := runPythonExec
+	t.Cleanup(func() {
+		runPythonExec = originalRunPythonExec
+	})
+
+	runPythonExec = func(ctx context.Context, _ string) (pythonExecRunResult, error) {
+		<-ctx.Done()
+		return pythonExecRunResult{}, ctx.Err()
+	}
+
+	req := buildCommandResult(&registryv1.CommandDispatch{
+		CommandId:      "cmd-py-4",
+		Capability:     "pythonExec",
+		PayloadJson:    []byte(`{"code":"import time; time.sleep(10)"}`),
+		DeadlineUnixMs: time.Now().Add(50 * time.Millisecond).UnixMilli(),
+	})
+	result := req.GetCommandResult()
+	if result == nil {
+		t.Fatalf("expected command_result payload")
+	}
+	if result.GetError() == nil || result.GetError().GetCode() != "deadline_exceeded" {
+		t.Fatalf("expected deadline_exceeded error, got %#v", result)
+	}
+}
+
+func TestPythonExecDockerArgsIncludesResourceLimits(t *testing.T) {
+	code := "print('hello')"
+	got := pythonExecDockerArgs(code)
+	want := []string{
+		"run",
+		"--rm",
+		"--memory", defaultPythonExecMemoryLimit,
+		"--cpus", defaultPythonExecCPULimit,
+		"--pids-limit", fmt.Sprint(defaultPythonExecPidsLimit),
+		defaultPythonExecDockerImage,
+		"python",
+		"-c",
+		code,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected docker args:\nwant=%#v\ngot=%#v", want, got)
+	}
+}
+
 func TestRunSessionRespondsToEchoCommandDispatch(t *testing.T) {
 	server := grpc.NewServer()
 	fakeSvc := &fakeRegistryService{
@@ -200,6 +398,56 @@ func TestRunSessionRespondsToEchoCommandDispatch(t *testing.T) {
 	}
 }
 
+func TestRunSessionRespondsToPythonExecCommandDispatch(t *testing.T) {
+	originalRunPythonExec := runPythonExec
+	t.Cleanup(func() {
+		runPythonExec = originalRunPythonExec
+	})
+	runPythonExec = func(_ context.Context, code string) (pythonExecRunResult, error) {
+		if code != "print(\"123\")\nprint(\"234\")" {
+			t.Fatalf("unexpected python code: %s", code)
+		}
+		return pythonExecRunResult{
+			Output:   "123\n234\n",
+			Stderr:   "",
+			ExitCode: 0,
+		}, nil
+	}
+
+	server := grpc.NewServer()
+	fakeSvc := &fakeRegistryService{
+		secretByNodeID: map[string]string{"worker-1": "secret-1"},
+		dispatchPython: true,
+	}
+	registryv1.RegisterWorkerRegistryServiceServer(server, fakeSvc)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen failed: %v", err)
+	}
+	defer listener.Close()
+	defer server.Stop()
+	go func() {
+		_ = server.Serve(listener)
+	}()
+
+	cfg := testConfig()
+	cfg.ConsoleGRPCTarget = listener.Addr().String()
+	cfg.HeartbeatInterval = 20 * time.Millisecond
+	cfg.CallTimeout = 2 * time.Second
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	err = runSession(ctx, cfg)
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("expected FailedPrecondition, got %v", err)
+	}
+	if got := atomic.LoadInt32(&fakeSvc.pythonResultCount); got == 0 {
+		t.Fatalf("expected at least one pythonExec command result from worker")
+	}
+}
+
 func testConfig() config.Config {
 	return config.Config{
 		ConsoleGRPCTarget: "127.0.0.1:65535",
@@ -217,10 +465,12 @@ func testConfig() config.Config {
 type fakeRegistryService struct {
 	registryv1.UnimplementedWorkerRegistryServiceServer
 
-	secretByNodeID  map[string]string
-	heartbeatCount  int32
-	echoResultCount int32
-	dispatchEcho    bool
+	secretByNodeID    map[string]string
+	heartbeatCount    int32
+	echoResultCount   int32
+	pythonResultCount int32
+	dispatchEcho      bool
+	dispatchPython    bool
 }
 
 func (s *fakeRegistryService) Connect(stream grpc.BidiStreamingServer[registryv1.ConnectRequest, registryv1.ConnectResponse]) error {
@@ -240,11 +490,15 @@ func (s *fakeRegistryService) Connect(stream grpc.BidiStreamingServer[registryv1
 	if !registryauth.Verify(hello.GetNodeId(), hello.GetTimestampUnixMs(), hello.GetNonce(), secret, hello.GetSignature()) {
 		return status.Error(codes.Unauthenticated, "invalid signature")
 	}
-	if len(hello.GetCapabilities()) == 0 || hello.GetCapabilities()[0].GetName() != echoCapabilityName {
+	capabilityByName := make(map[string]int32, len(hello.GetCapabilities()))
+	for _, capability := range hello.GetCapabilities() {
+		capabilityByName[capability.GetName()] = capability.GetMaxInflight()
+	}
+	if capabilityByName[echoCapabilityName] <= 0 {
 		return status.Error(codes.InvalidArgument, "missing echo capability")
 	}
-	if hello.GetCapabilities()[0].GetMaxInflight() <= 0 {
-		return status.Error(codes.InvalidArgument, "missing max_inflight")
+	if capabilityByName[pythonExecCapabilityDeclared] <= 0 {
+		return status.Error(codes.InvalidArgument, "missing pythonExec capability")
 	}
 
 	if err := stream.Send(&registryv1.ConnectResponse{
@@ -272,6 +526,16 @@ func (s *fakeRegistryService) Connect(stream grpc.BidiStreamingServer[registryv1
 				atomic.AddInt32(&s.echoResultCount, 1)
 				return status.Error(codes.FailedPrecondition, "session replaced after command roundtrip")
 			}
+			if s.dispatchPython {
+				decoded := pythonExecResult{}
+				if err := json.Unmarshal(commandResult.GetPayloadJson(), &decoded); err != nil {
+					return status.Error(codes.InvalidArgument, "invalid pythonExec result payload")
+				}
+				if decoded.Output == "123\n234\n" && decoded.ExitCode == 0 {
+					atomic.AddInt32(&s.pythonResultCount, 1)
+					return status.Error(codes.FailedPrecondition, "session replaced after python command roundtrip")
+				}
+			}
 			return status.Error(codes.InvalidArgument, "unexpected command_result payload")
 		}
 		if heartbeat == nil {
@@ -295,7 +559,20 @@ func (s *fakeRegistryService) Connect(stream grpc.BidiStreamingServer[registryv1
 				return err
 			}
 		}
-		if count >= 2 && !s.dispatchEcho {
+		if s.dispatchPython && count == 1 {
+			if err := stream.Send(&registryv1.ConnectResponse{
+				Payload: &registryv1.ConnectResponse_CommandDispatch{
+					CommandDispatch: &registryv1.CommandDispatch{
+						CommandId:   "cmd-python-1",
+						Capability:  "pythonExec",
+						PayloadJson: []byte(`{"code":"print(\"123\")\nprint(\"234\")"}`),
+					},
+				},
+			}); err != nil {
+				return err
+			}
+		}
+		if count >= 2 && !s.dispatchEcho && !s.dispatchPython {
 			return status.Error(codes.FailedPrecondition, fmt.Sprintf("session outdated after %d heartbeats", count))
 		}
 

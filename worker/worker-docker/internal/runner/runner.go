@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -9,6 +10,8 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,15 +25,22 @@ import (
 )
 
 const (
-	minHeartbeatInterval  = 1 * time.Second
-	initialReconnectDelay = 1 * time.Second
-	maxReconnectDelay     = 15 * time.Second
-	echoCapabilityName    = "echo"
-	defaultMaxInflight    = 4
+	minHeartbeatInterval         = 1 * time.Second
+	initialReconnectDelay        = 1 * time.Second
+	maxReconnectDelay            = 15 * time.Second
+	echoCapabilityName           = "echo"
+	pythonExecCapabilityName     = "pythonexec"
+	pythonExecCapabilityDeclared = "pythonExec"
+	defaultPythonExecDockerImage = "python:slim"
+	defaultPythonExecMemoryLimit = "256m"
+	defaultPythonExecCPULimit    = "1.0"
+	defaultPythonExecPidsLimit   = 128
+	defaultMaxInflight           = 4
 )
 
 var waitReconnect = waitReconnectDelay
 var applyJitter = jitterDuration
+var runPythonExec = runPythonExecInDocker
 
 func Run(ctx context.Context, cfg config.Config) error {
 	if strings.TrimSpace(cfg.WorkerID) == "" {
@@ -184,7 +194,8 @@ func receiverLoop(
 			dispatch := resp.GetCommandDispatch()
 			capability := strings.TrimSpace(strings.ToLower(dispatch.GetCapability()))
 			commandID := strings.TrimSpace(dispatch.GetCommandId())
-			if capability == echoCapabilityName && dispatch.GetEcho() != nil {
+			switch {
+			case capability == echoCapabilityName && dispatch.GetEcho() != nil:
 				log.Printf(
 					"command dispatch received: node_id=%s command_id=%s capability=%s message_len=%d",
 					nodeID,
@@ -192,7 +203,15 @@ func receiverLoop(
 					capability,
 					len(dispatch.GetEcho().GetMessage()),
 				)
-			} else {
+			case capability == pythonExecCapabilityName:
+				log.Printf(
+					"command dispatch received: node_id=%s command_id=%s capability=%s payload_len=%d",
+					nodeID,
+					commandID,
+					capability,
+					len(dispatch.GetPayloadJson()),
+				)
+			default:
 				log.Printf(
 					"command dispatch received: node_id=%s command_id=%s capability=%s",
 					nodeID,
@@ -295,10 +314,17 @@ func buildCommandResult(dispatch *registryv1.CommandDispatch) *registryv1.Connec
 	}
 
 	capability := strings.TrimSpace(strings.ToLower(dispatch.GetCapability()))
-	if capability != echoCapabilityName {
+	switch capability {
+	case echoCapabilityName:
+		return buildEchoCommandResult(commandID, dispatch)
+	case pythonExecCapabilityName:
+		return buildPythonExecCommandResult(commandID, dispatch)
+	default:
 		return commandErrorResult(commandID, "unsupported_capability", fmt.Sprintf("capability %q is not supported", dispatch.GetCapability()))
 	}
+}
 
+func buildEchoCommandResult(commandID string, dispatch *registryv1.CommandDispatch) *registryv1.ConnectRequest {
 	message := ""
 	resultPayload := append([]byte(nil), dispatch.GetPayloadJson()...)
 	if len(resultPayload) > 0 {
@@ -339,6 +365,122 @@ func buildCommandResult(dispatch *registryv1.CommandDispatch) *registryv1.Connec
 				},
 			},
 		},
+	}
+}
+
+type pythonExecPayload struct {
+	Code string `json:"code"`
+}
+
+type pythonExecResult struct {
+	Output   string `json:"output"`
+	Stderr   string `json:"stderr"`
+	ExitCode int    `json:"exit_code"`
+}
+
+type pythonExecRunResult struct {
+	Output   string
+	Stderr   string
+	ExitCode int
+}
+
+func buildPythonExecCommandResult(commandID string, dispatch *registryv1.CommandDispatch) *registryv1.ConnectRequest {
+	payload := append([]byte(nil), dispatch.GetPayloadJson()...)
+	if len(payload) == 0 {
+		return commandErrorResult(commandID, "invalid_payload", "pythonExec payload is required")
+	}
+
+	decoded := pythonExecPayload{}
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		return commandErrorResult(commandID, "invalid_payload", "payload_json is not valid pythonExec payload")
+	}
+	if strings.TrimSpace(decoded.Code) == "" {
+		return commandErrorResult(commandID, "invalid_payload", "pythonExec code is required")
+	}
+
+	commandCtx := context.Background()
+	cancel := func() {}
+	if deadlineUnixMS := dispatch.GetDeadlineUnixMs(); deadlineUnixMS > 0 {
+		commandCtx, cancel = context.WithDeadline(commandCtx, time.UnixMilli(deadlineUnixMS))
+	}
+	defer cancel()
+
+	execResult, err := runPythonExec(commandCtx, decoded.Code)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			return commandErrorResult(commandID, "deadline_exceeded", "command deadline exceeded")
+		}
+		return commandErrorResult(commandID, "execution_failed", fmt.Sprintf("pythonExec execution failed: %v", err))
+	}
+
+	resultPayload, err := json.Marshal(pythonExecResult{
+		Output:   execResult.Output,
+		Stderr:   execResult.Stderr,
+		ExitCode: execResult.ExitCode,
+	})
+	if err != nil {
+		return commandErrorResult(commandID, "encode_failed", "failed to encode pythonExec payload")
+	}
+
+	return &registryv1.ConnectRequest{
+		Payload: &registryv1.ConnectRequest_CommandResult{
+			CommandResult: &registryv1.CommandResult{
+				CommandId:       commandID,
+				PayloadJson:     resultPayload,
+				CompletedUnixMs: time.Now().UnixMilli(),
+			},
+		},
+	}
+}
+
+func runPythonExecInDocker(ctx context.Context, code string) (pythonExecRunResult, error) {
+	command := exec.CommandContext(
+		ctx,
+		"docker",
+		pythonExecDockerArgs(code)...,
+	)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	command.Stdout = &stdout
+	command.Stderr = &stderr
+
+	err := command.Run()
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			return pythonExecRunResult{}, err
+		}
+
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return pythonExecRunResult{
+				Output:   stdout.String(),
+				Stderr:   stderr.String(),
+				ExitCode: exitErr.ExitCode(),
+			}, nil
+		}
+
+		return pythonExecRunResult{}, err
+	}
+
+	return pythonExecRunResult{
+		Output:   stdout.String(),
+		Stderr:   stderr.String(),
+		ExitCode: 0,
+	}, nil
+}
+
+func pythonExecDockerArgs(code string) []string {
+	return []string{
+		"run",
+		"--rm",
+		"--memory", defaultPythonExecMemoryLimit,
+		"--cpus", defaultPythonExecCPULimit,
+		"--pids-limit", strconv.Itoa(defaultPythonExecPidsLimit),
+		defaultPythonExecDockerImage,
+		"python",
+		"-c",
+		code,
 	}
 }
 
@@ -383,6 +525,10 @@ func buildHello(cfg config.Config) (*registryv1.ConnectHello, error) {
 		Capabilities: []*registryv1.CapabilityDeclaration{
 			{
 				Name:        echoCapabilityName,
+				MaxInflight: defaultMaxInflight,
+			},
+			{
+				Name:        pythonExecCapabilityDeclared,
 				MaxInflight: defaultMaxInflight,
 			},
 		},
