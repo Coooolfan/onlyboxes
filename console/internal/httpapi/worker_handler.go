@@ -79,6 +79,7 @@ func NewRouter(workerHandler *WorkerHandler, consoleAuth *ConsoleAuth) *gin.Engi
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 	router.Use(gin.Recovery())
+	router.Any("/mcp", gin.WrapH(NewMCPHandler(workerHandler.dispatcher)))
 
 	api := router.Group("/api/v1")
 	api.POST("/commands/echo", workerHandler.EchoCommand)

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
 	"github.com/onlyboxes/onlyboxes/api/pkg/registryauth"
 	"github.com/onlyboxes/onlyboxes/console/internal/grpcserver"
@@ -351,6 +352,240 @@ func TestTaskLifecycleSync(t *testing.T) {
 	}
 	if !strings.Contains(string(payload.Result), `"hello task"`) {
 		t.Fatalf("expected echoed result payload, got %s", string(payload.Result))
+	}
+}
+
+func TestMCPLifecycle(t *testing.T) {
+	store := registry.NewStore()
+	const workerID = "node-mcp-1"
+	const workerSecret = "secret-mcp-1"
+
+	registrySvc := grpcserver.NewRegistryService(
+		store,
+		map[string]string{workerID: workerSecret},
+		5,
+		15,
+		60*time.Second,
+	)
+	grpcSrv := grpcserver.NewServer(registrySvc)
+	grpcListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to open grpc listener: %v", err)
+	}
+	defer grpcListener.Close()
+	go func() {
+		_ = grpcSrv.Serve(grpcListener)
+	}()
+	defer grpcSrv.Stop()
+
+	handler := NewWorkerHandler(store, 15*time.Second, registrySvc, map[string]string{workerID: workerSecret}, ":50051")
+	router := NewRouter(handler, newTestConsoleAuth(t))
+	httpSrv := httptest.NewServer(router)
+	defer httpSrv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := grpc.NewClient(grpcListener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("failed to dial grpc: %v", err)
+	}
+	defer conn.Close()
+
+	client := registryv1.NewWorkerRegistryServiceClient(conn)
+	stream, err := client.Connect(ctx)
+	if err != nil {
+		t.Fatalf("connect failed: %v", err)
+	}
+
+	hello := &registryv1.ConnectHello{
+		NodeId:       workerID,
+		NodeName:     "mcp-worker",
+		ExecutorKind: "docker",
+		Capabilities: []*registryv1.CapabilityDeclaration{
+			{Name: "echo", MaxInflight: 4},
+			{Name: "pythonExec", MaxInflight: 4},
+		},
+		Version:         "v0.1.0",
+		TimestampUnixMs: time.Now().UnixMilli(),
+		Nonce:           "hello-nonce-mcp",
+	}
+	hello.Signature = registryauth.Sign(hello.GetNodeId(), hello.GetTimestampUnixMs(), hello.GetNonce(), workerSecret)
+	if err := stream.Send(&registryv1.ConnectRequest{
+		Payload: &registryv1.ConnectRequest_Hello{Hello: hello},
+	}); err != nil {
+		t.Fatalf("send hello failed: %v", err)
+	}
+
+	connectResp, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("recv connect ack failed: %v", err)
+	}
+	if connectResp.GetConnectAck() == nil {
+		t.Fatalf("expected connect_ack, got %#v", connectResp.GetPayload())
+	}
+
+	go func() {
+		for {
+			resp, recvErr := stream.Recv()
+			if recvErr != nil {
+				return
+			}
+			dispatch := resp.GetCommandDispatch()
+			if dispatch == nil {
+				continue
+			}
+
+			capability := strings.TrimSpace(strings.ToLower(dispatch.GetCapability()))
+			switch capability {
+			case "echo":
+				_ = stream.Send(&registryv1.ConnectRequest{
+					Payload: &registryv1.ConnectRequest_CommandResult{
+						CommandResult: &registryv1.CommandResult{
+							CommandId:       dispatch.GetCommandId(),
+							PayloadJson:     dispatch.GetPayloadJson(),
+							CompletedUnixMs: time.Now().UnixMilli(),
+						},
+					},
+				})
+			case "pythonexec":
+				pythonPayload := struct {
+					Code string `json:"code"`
+				}{}
+				if err := json.Unmarshal(dispatch.GetPayloadJson(), &pythonPayload); err != nil {
+					return
+				}
+				resultPayload, err := json.Marshal(struct {
+					Output   string `json:"output"`
+					Stderr   string `json:"stderr"`
+					ExitCode int    `json:"exit_code"`
+				}{
+					Output:   "ran:" + pythonPayload.Code,
+					Stderr:   "",
+					ExitCode: 7,
+				})
+				if err != nil {
+					return
+				}
+				_ = stream.Send(&registryv1.ConnectRequest{
+					Payload: &registryv1.ConnectRequest_CommandResult{
+						CommandResult: &registryv1.CommandResult{
+							CommandId:       dispatch.GetCommandId(),
+							PayloadJson:     resultPayload,
+							CompletedUnixMs: time.Now().UnixMilli(),
+						},
+					},
+				})
+			default:
+				_ = stream.Send(&registryv1.ConnectRequest{
+					Payload: &registryv1.ConnectRequest_CommandResult{
+						CommandResult: &registryv1.CommandResult{
+							CommandId: dispatch.GetCommandId(),
+							Error: &registryv1.CommandError{
+								Code:    "unsupported_capability",
+								Message: "unsupported capability",
+							},
+							CompletedUnixMs: time.Now().UnixMilli(),
+						},
+					},
+				})
+			}
+		}
+	}()
+
+	mcpClient := mcp.NewClient(&mcp.Implementation{
+		Name:    "mcp-integration-client",
+		Version: "v0.1.0",
+	}, nil)
+	session, err := mcpClient.Connect(ctx, &mcp.StreamableClientTransport{
+		Endpoint:             httpSrv.URL + "/mcp",
+		DisableStandaloneSSE: true,
+	}, nil)
+	if err != nil {
+		t.Fatalf("failed to connect MCP client: %v", err)
+	}
+	defer session.Close()
+
+	echoResult, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "echo",
+		Arguments: map[string]any{"message": "hello mcp"},
+	})
+	if err != nil {
+		t.Fatalf("mcp echo tools/call failed: %v", err)
+	}
+	if echoResult.IsError {
+		t.Fatalf("expected mcp echo tool success, got error=%q", firstTextContent(echoResult))
+	}
+	echoStructured := structuredContentMap(t, echoResult.StructuredContent)
+	if got := toString(t, echoStructured["message"]); got != "hello mcp" {
+		t.Fatalf("expected echo message hello mcp, got %q", got)
+	}
+
+	pythonResult, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "pythonExec",
+		Arguments: map[string]any{"code": "print('ok')"},
+	})
+	if err != nil {
+		t.Fatalf("mcp pythonExec tools/call failed: %v", err)
+	}
+	if pythonResult.IsError {
+		t.Fatalf("expected mcp pythonExec tool success, got error=%q", firstTextContent(pythonResult))
+	}
+	pythonStructured := structuredContentMap(t, pythonResult.StructuredContent)
+	if got := toString(t, pythonStructured["output"]); got != "ran:print('ok')" {
+		t.Fatalf("unexpected pythonExec output: %q", got)
+	}
+	if got := toInt(t, pythonStructured["exit_code"]); got != 7 {
+		t.Fatalf("expected exit_code=7, got %d", got)
+	}
+}
+
+func structuredContentMap(t *testing.T, value any) map[string]any {
+	t.Helper()
+
+	if mapped, ok := value.(map[string]any); ok {
+		return mapped
+	}
+	if raw, ok := value.(json.RawMessage); ok {
+		decoded := map[string]any{}
+		if err := json.Unmarshal(raw, &decoded); err != nil {
+			t.Fatalf("failed to decode structured content: %v", err)
+		}
+		return decoded
+	}
+	t.Fatalf("unexpected structured content type %T", value)
+	return nil
+}
+
+func firstTextContent(result *mcp.CallToolResult) string {
+	if result == nil || len(result.Content) == 0 {
+		return ""
+	}
+	text, ok := result.Content[0].(*mcp.TextContent)
+	if !ok {
+		return ""
+	}
+	return text.Text
+}
+
+func toString(t *testing.T, value any) string {
+	t.Helper()
+	parsed, ok := value.(string)
+	if !ok {
+		t.Fatalf("expected string value, got %#v", value)
+	}
+	return parsed
+}
+
+func toInt(t *testing.T, value any) int {
+	t.Helper()
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case float64:
+		return int(typed)
+	default:
+		t.Fatalf("expected numeric value, got %#v", value)
+		return 0
 	}
 }
 

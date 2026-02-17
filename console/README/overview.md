@@ -11,6 +11,23 @@ The console service hosts:
   - `POST /api/v1/tasks` for sync/async/auto task submission.
   - `GET /api/v1/tasks/:task_id` for task status and result lookup.
   - `POST /api/v1/tasks/:task_id/cancel` for best-effort task cancellation.
+- MCP Streamable HTTP API (no authentication required):
+  - `POST /mcp` for JSON-RPC requests over Streamable HTTP transport.
+  - `GET /mcp` is intentionally unsupported and returns `405` with `Allow: POST`.
+  - stream behavior is JSON response only (`application/json`), no SSE streaming channel.
+  - tool argument validation is strict (`additionalProperties=false`): unknown input fields are rejected with JSON-RPC `invalid params (-32602)`.
+  - exposed tools:
+    - `echo`
+      - input: `{"message":"...","timeout_ms":5000}`
+      - `message` is required (whitespace-only is rejected).
+      - `timeout_ms` is optional, range `1..60000`, default `5000`.
+      - output: `{"message":"..."}`
+    - `pythonExec`
+      - input: `{"code":"print(1)","timeout_ms":60000}`
+      - `code` is required (whitespace-only is rejected).
+      - `timeout_ms` is optional, range `1..600000`, default `60000`.
+      - output: `{"output":"...","stderr":"...","exit_code":0}`
+      - non-zero `exit_code` is returned as normal tool output, not as MCP protocol error.
 - dashboard authentication APIs:
   - `POST /api/v1/console/login` with `{"username":"...","password":"..."}`.
   - `POST /api/v1/console/logout`.
@@ -31,3 +48,22 @@ Dashboard credential behavior:
 - username env: `CONSOLE_DASHBOARD_USERNAME`
 - password env: `CONSOLE_DASHBOARD_PASSWORD`
 - if either env var is missing, only the missing value is randomly generated.
+
+MCP minimal call sequence (initialize + tools/list + tools/call):
+
+```bash
+curl -X POST "http://127.0.0.1:8089/mcp" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"manual-client","version":"0.1.0"}}}'
+
+curl -X POST "http://127.0.0.1:8089/mcp" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
+
+curl -X POST "http://127.0.0.1:8089/mcp" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"pythonExec","arguments":{"code":"print(1)"}}}'
+```
