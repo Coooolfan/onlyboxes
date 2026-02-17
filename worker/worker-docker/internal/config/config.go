@@ -11,8 +11,8 @@ import (
 
 const (
 	defaultConsoleTarget     = "127.0.0.1:50051"
-	defaultSharedToken       = "onlyboxes-dev-token"
 	defaultHeartbeatInterval = 5
+	defaultHeartbeatJitter   = 20
 	defaultCallTimeout       = 3
 	defaultLanguagesCSV      = "python:3.12,node:20,go:1.25"
 	defaultExecutorKind      = "docker"
@@ -21,8 +21,10 @@ const (
 
 type Config struct {
 	ConsoleGRPCTarget string
-	SharedToken       string
+	WorkerID          string
+	WorkerSecret      string
 	HeartbeatInterval time.Duration
+	HeartbeatJitter   int
 	CallTimeout       time.Duration
 	NodeName          string
 	ExecutorKind      string
@@ -33,6 +35,7 @@ type Config struct {
 
 func Load() Config {
 	heartbeatSec := parsePositiveIntEnv("WORKER_HEARTBEAT_INTERVAL_SEC", defaultHeartbeatInterval)
+	heartbeatJitter := parsePercentEnv("WORKER_HEARTBEAT_JITTER_PCT", defaultHeartbeatJitter)
 	callTimeoutSec := parsePositiveIntEnv("WORKER_CALL_TIMEOUT_SEC", defaultCallTimeout)
 
 	languagesCSV := getEnv("WORKER_LANGUAGES", defaultLanguagesCSV)
@@ -40,8 +43,10 @@ func Load() Config {
 
 	return Config{
 		ConsoleGRPCTarget: getEnv("WORKER_CONSOLE_GRPC_TARGET", defaultConsoleTarget),
-		SharedToken:       getEnv("WORKER_GRPC_SHARED_TOKEN", defaultSharedToken),
+		WorkerID:          strings.TrimSpace(os.Getenv("WORKER_ID")),
+		WorkerSecret:      strings.TrimSpace(os.Getenv("WORKER_SECRET")),
 		HeartbeatInterval: time.Duration(heartbeatSec) * time.Second,
+		HeartbeatJitter:   heartbeatJitter,
 		CallTimeout:       time.Duration(callTimeoutSec) * time.Second,
 		NodeName:          os.Getenv("WORKER_NODE_NAME"),
 		ExecutorKind:      defaultExecutorKind,
@@ -66,6 +71,18 @@ func parsePositiveIntEnv(key string, defaultValue int) int {
 	}
 	parsed, err := strconv.Atoi(value)
 	if err != nil || parsed <= 0 {
+		return defaultValue
+	}
+	return parsed
+}
+
+func parsePercentEnv(key string, defaultValue int) int {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < 0 || parsed > 100 {
 		return defaultValue
 	}
 	return parsed

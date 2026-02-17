@@ -17,13 +17,13 @@ func TestWorkerStatsAggregatesAllWorkers(t *testing.T) {
 	now := time.Unix(1_700_000_500, 0)
 
 	for i := 0; i < 120; i++ {
-		store.Upsert(&registryv1.RegisterRequest{NodeId: fmt.Sprintf("online-%d", i)}, now.Add(-5*time.Second))
+		store.Upsert(&registryv1.ConnectHello{NodeId: fmt.Sprintf("online-%d", i)}, fmt.Sprintf("session-online-%d", i), now.Add(-5*time.Second))
 	}
 	for i := 0; i < 20; i++ {
-		store.Upsert(&registryv1.RegisterRequest{NodeId: fmt.Sprintf("offline-not-stale-%d", i)}, now.Add(-20*time.Second))
+		store.Upsert(&registryv1.ConnectHello{NodeId: fmt.Sprintf("offline-not-stale-%d", i)}, fmt.Sprintf("session-offline-a-%d", i), now.Add(-20*time.Second))
 	}
 	for i := 0; i < 10; i++ {
-		store.Upsert(&registryv1.RegisterRequest{NodeId: fmt.Sprintf("offline-stale-%d", i)}, now.Add(-40*time.Second))
+		store.Upsert(&registryv1.ConnectHello{NodeId: fmt.Sprintf("offline-stale-%d", i)}, fmt.Sprintf("session-offline-b-%d", i), now.Add(-40*time.Second))
 	}
 
 	handler := NewWorkerHandler(store, 15*time.Second)
@@ -64,9 +64,9 @@ func TestWorkerStatsAggregatesAllWorkers(t *testing.T) {
 func TestWorkerStatsSupportsCustomStaleThreshold(t *testing.T) {
 	store := registry.NewStore()
 	now := time.Unix(1_700_000_600, 0)
-	store.Upsert(&registryv1.RegisterRequest{NodeId: "fresh"}, now.Add(-5*time.Second))
-	store.Upsert(&registryv1.RegisterRequest{NodeId: "old-a"}, now.Add(-20*time.Second))
-	store.Upsert(&registryv1.RegisterRequest{NodeId: "old-b"}, now.Add(-40*time.Second))
+	store.Upsert(&registryv1.ConnectHello{NodeId: "fresh"}, "session-fresh", now.Add(-5*time.Second))
+	store.Upsert(&registryv1.ConnectHello{NodeId: "old-a"}, "session-old-a", now.Add(-20*time.Second))
+	store.Upsert(&registryv1.ConnectHello{NodeId: "old-b"}, "session-old-b", now.Add(-40*time.Second))
 
 	handler := NewWorkerHandler(store, 15*time.Second)
 	handler.nowFn = func() time.Time {

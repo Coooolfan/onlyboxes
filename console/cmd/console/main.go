@@ -20,18 +20,41 @@ import (
 
 func main() {
 	cfg := config.Load()
-	if cfg.UsingDefaultSharedToken {
-		log.Printf("WARNING: CONSOLE_GRPC_SHARED_TOKEN is using default development token; set a secure token before production deployment")
+	if cfg.WorkerMaxCount <= 0 {
+		log.Fatalf("CONSOLE_WORKER_MAX_COUNT must be a positive integer")
 	}
 
+	workerCredentials, secretByWorkerID, err := grpcserver.GenerateWorkerCredentials(cfg.WorkerMaxCount)
+	if err != nil {
+		log.Fatalf("failed to generate worker credentials: %v", err)
+	}
+	if err := grpcserver.WriteWorkerCredentialsFile(cfg.WorkerCredentialsFile, workerCredentials); err != nil {
+		log.Fatalf("failed to write worker credentials: %v", err)
+	}
+	log.Printf("generated %d worker credential(s) to %s", len(workerCredentials), cfg.WorkerCredentialsFile)
+
 	store := registry.NewStore()
+	provisionedWorkers := make([]registry.ProvisionedWorker, 0, len(workerCredentials))
+	for _, credential := range workerCredentials {
+		provisionedWorkers = append(provisionedWorkers, registry.ProvisionedWorker{
+			Slot:   credential.Slot,
+			NodeID: credential.WorkerID,
+			Labels: map[string]string{
+				"source": "console-generated",
+			},
+		})
+	}
+	seeded := store.SeedProvisionedWorkers(provisionedWorkers, time.Now(), cfg.OfflineTTL)
+	log.Printf("seeded %d provisioned worker slot(s) into registry state", seeded)
 
 	registryService := grpcserver.NewRegistryService(
 		store,
+		secretByWorkerID,
 		cfg.HeartbeatIntervalSec,
 		int32(cfg.OfflineTTL/time.Second),
+		cfg.ReplayWindow,
 	)
-	grpcSrv := grpcserver.NewServer(cfg.GRPCSharedToken, registryService)
+	grpcSrv := grpcserver.NewServer(registryService)
 	httpHandler := httpapi.NewWorkerHandler(store, cfg.OfflineTTL)
 	httpSrv := &http.Server{
 		Addr:    cfg.HTTPAddr,

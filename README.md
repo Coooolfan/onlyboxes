@@ -10,19 +10,36 @@
 cd /Users/yang/Documents/code/onlyboxes/console
 CONSOLE_HTTP_ADDR=:8089 \
 CONSOLE_GRPC_ADDR=:50051 \
-CONSOLE_GRPC_SHARED_TOKEN=onlyboxes-dev-token,onlyboxes-backup-token \
+CONSOLE_WORKER_MAX_COUNT=10 \
+CONSOLE_WORKER_CREDENTIALS_FILE=./worker-credentials.json \
+CONSOLE_REPLAY_WINDOW_SEC=60 \
+CONSOLE_HEARTBEAT_INTERVAL_SEC=5 \
 go run ./cmd/console
 ```
 
-`CONSOLE_GRPC_SHARED_TOKEN` 支持逗号分隔列表，任意一个 token 命中都视为合法。
+`console` 启动后会生成凭据文件（默认 `./worker-credentials.json`，权限 `0600`）：
+
+```json
+[
+  {
+    "slot": 1,
+    "worker_id": "2f51f8f9-77f2-4c1a-a4f5-2036fc9fcb9e",
+    "worker_secret": "..."
+  }
+]
+```
+
+注意：`console` 每次启动都会重生整份凭据，旧 `worker_id/worker_secret` 会立刻失效。
 
 2. 启动 `worker-docker`（终端 2）：
 
 ```bash
 cd /Users/yang/Documents/code/onlyboxes/worker/worker-docker
 WORKER_CONSOLE_GRPC_TARGET=127.0.0.1:50051 \
-WORKER_GRPC_SHARED_TOKEN=onlyboxes-backup-token \
+WORKER_ID=<worker_id_from_worker_credentials_json> \
+WORKER_SECRET=<worker_secret_from_worker_credentials_json> \
 WORKER_HEARTBEAT_INTERVAL_SEC=5 \
+WORKER_HEARTBEAT_JITTER_PCT=20 \
 go run ./cmd/worker-docker
 ```
 

@@ -9,32 +9,57 @@ message LanguageCapability {
   string version = 2;
 }
 
-message RegisterRequest {
+message ConnectHello {
   string node_id = 1;
   string node_name = 2;
   string executor_kind = 3;
   repeated LanguageCapability languages = 4;
   map<string, string> labels = 5;
   string version = 6;
+  int64 timestamp_unix_ms = 7;
+  string nonce = 8;
+  string signature = 9;
 }
 
-message RegisterResponse {
-  int64 server_time_unix_ms = 1;
-  int32 heartbeat_interval_sec = 2;
-  int32 offline_ttl_sec = 3;
-}
-
-message HeartbeatRequest {
+message HeartbeatFrame {
   string node_id = 1;
+  string session_id = 2;
+  int64 sent_at_unix_ms = 3;
 }
 
-message HeartbeatResponse {
+message ConnectRequest {
+  oneof payload {
+    ConnectHello hello = 1;
+    HeartbeatFrame heartbeat = 2;
+  }
+}
+
+message ConnectAck {
+  string session_id = 1;
+  int64 server_time_unix_ms = 2;
+  int32 heartbeat_interval_sec = 3;
+  int32 offline_ttl_sec = 4;
+}
+
+message HeartbeatAck {
   int64 server_time_unix_ms = 1;
   int32 heartbeat_interval_sec = 2;
   int32 offline_ttl_sec = 3;
+}
+
+message StreamError {
+  string code = 1;
+  string message = 2;
+}
+
+message ConnectResponse {
+  oneof payload {
+    ConnectAck connect_ack = 1;
+    HeartbeatAck heartbeat_ack = 2;
+    StreamError error = 3;
+  }
 }
 
 service WorkerRegistryService {
-  rpc Register(RegisterRequest) returns (RegisterResponse);
-  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  rpc Connect(stream ConnectRequest) returns (stream ConnectResponse);
 }

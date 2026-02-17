@@ -34,3 +34,4 @@ web/.eslintcache
 web/.yarn/install-state.gz
 web/*.local
 web/*.tsbuildinfo
+worker-credentials.json

@@ -2,7 +2,9 @@ package registry
 
 import (
 	"errors"
+	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -10,6 +12,7 @@ import (
 )
 
 var ErrNodeNotFound = errors.New("worker node not found")
+var ErrSessionMismatch = errors.New("worker session mismatch")
 
 type WorkerStatus string
 
@@ -26,6 +29,8 @@ type LanguageCapability struct {
 
 type Worker struct {
 	NodeID       string
+	SessionID    string
+	Provisioned  bool
 	NodeName     string
 	ExecutorKind string
 	Languages    []LanguageCapability
@@ -47,6 +52,12 @@ type WorkerStats struct {
 	Stale   int
 }
 
+type ProvisionedWorker struct {
+	Slot   int
+	NodeID string
+	Labels map[string]string
+}
+
 type Store struct {
 	mu    sync.RWMutex
 	nodes map[string]Worker
@@ -58,39 +69,97 @@ func NewStore() *Store {
 	}
 }
 
-func (s *Store) Upsert(req *registryv1.RegisterRequest, now time.Time) {
-	if req == nil || req.GetNodeId() == "" {
+func (s *Store) Upsert(req *registryv1.ConnectHello, sessionID string, now time.Time) {
+	if req == nil || req.GetNodeId() == "" || sessionID == "" {
 		return
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	existing, ok := s.nodes[req.GetNodeId()]
-	registeredAt := now
-	if ok {
-		registeredAt = existing.RegisteredAt
+	existing, hasExisting := s.nodes[req.GetNodeId()]
+	nodeName := strings.TrimSpace(req.GetNodeName())
+	if nodeName == "" && hasExisting {
+		nodeName = existing.NodeName
+	}
+
+	labels := cloneMap(req.GetLabels())
+	if hasExisting && existing.Provisioned {
+		labels = mergeLabels(existing.Labels, labels)
 	}
 
 	s.nodes[req.GetNodeId()] = Worker{
 		NodeID:       req.GetNodeId(),
-		NodeName:     req.GetNodeName(),
+		SessionID:    sessionID,
+		Provisioned:  hasExisting && existing.Provisioned,
+		NodeName:     nodeName,
 		ExecutorKind: req.GetExecutorKind(),
 		Languages:    cloneProtoLanguages(req.GetLanguages()),
-		Labels:       cloneMap(req.GetLabels()),
+		Labels:       labels,
 		Version:      req.GetVersion(),
-		RegisteredAt: registeredAt,
+		RegisteredAt: now,
 		LastSeenAt:   now,
 	}
 }
 
-func (s *Store) Touch(nodeID string, now time.Time) error {
+func (s *Store) SeedProvisionedWorkers(workers []ProvisionedWorker, now time.Time, offlineTTL time.Duration) int {
+	if len(workers) == 0 {
+		return 0
+	}
+
+	lastSeenAt := now.Add(-time.Second)
+	if offlineTTL > 0 {
+		lastSeenAt = now.Add(-(offlineTTL + time.Second))
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	added := 0
+	for _, worker := range workers {
+		nodeID := strings.TrimSpace(worker.NodeID)
+		if nodeID == "" {
+			continue
+		}
+		if _, exists := s.nodes[nodeID]; exists {
+			continue
+		}
+
+		nodeName := fmt.Sprintf("worker-slot-%d", worker.Slot)
+		if worker.Slot <= 0 {
+			nodeName = fmt.Sprintf("worker-slot-%s", shortNodeID(nodeID))
+		}
+
+		labels := cloneMap(worker.Labels)
+		if worker.Slot > 0 {
+			if _, exists := labels["slot"]; !exists {
+				labels["slot"] = fmt.Sprintf("%d", worker.Slot)
+			}
+		}
+
+		s.nodes[nodeID] = Worker{
+			NodeID:       nodeID,
+			Provisioned:  true,
+			NodeName:     nodeName,
+			Labels:       labels,
+			RegisteredAt: now,
+			LastSeenAt:   lastSeenAt,
+		}
+		added++
+	}
+	return added
+}
+
+func (s *Store) TouchWithSession(nodeID string, sessionID string, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	node, ok := s.nodes[nodeID]
 	if !ok {
 		return ErrNodeNotFound
+	}
+	if node.SessionID != sessionID {
+		return ErrSessionMismatch
 	}
 	node.LastSeenAt = now
 	s.nodes[nodeID] = node
@@ -169,6 +238,9 @@ func (s *Store) PruneOffline(now time.Time, offlineTTL time.Duration) int {
 
 	removed := 0
 	for nodeID, worker := range s.nodes {
+		if worker.Provisioned {
+			continue
+		}
 		if statusOf(worker.LastSeenAt, now, offlineTTL) == StatusOffline {
 			delete(s.nodes, nodeID)
 			removed++
@@ -225,4 +297,19 @@ func cloneMap(input map[string]string) map[string]string {
 		cloned[k] = v
 	}
 	return cloned
+}
+
+func mergeLabels(base map[string]string, override map[string]string) map[string]string {
+	merged := cloneMap(base)
+	for key, value := range override {
+		merged[key] = value
+	}
+	return merged
+}
+
+func shortNodeID(nodeID string) string {
+	if len(nodeID) <= 8 {
+		return nodeID
+	}
+	return nodeID[:8]
 }

@@ -43,9 +43,9 @@ func TestListWorkersPaginationAndFilter(t *testing.T) {
 	store := registry.NewStore()
 	base := time.Unix(1_700_000_100, 0)
 
-	store.Upsert(&registryv1.RegisterRequest{NodeId: "node-2", NodeName: "node-2"}, base)
-	store.Upsert(&registryv1.RegisterRequest{NodeId: "node-1", NodeName: "node-1"}, base.Add(10*time.Second))
-	store.Upsert(&registryv1.RegisterRequest{NodeId: "node-3", NodeName: "node-3"}, base.Add(12*time.Second))
+	store.Upsert(&registryv1.ConnectHello{NodeId: "node-2", NodeName: "node-2"}, "session-2", base)
+	store.Upsert(&registryv1.ConnectHello{NodeId: "node-1", NodeName: "node-1"}, "session-1", base.Add(10*time.Second))
+	store.Upsert(&registryv1.ConnectHello{NodeId: "node-3", NodeName: "node-3"}, "session-3", base.Add(12*time.Second))
 
 	handler := NewWorkerHandler(store, 15*time.Second)
 	handler.nowFn = func() time.Time {

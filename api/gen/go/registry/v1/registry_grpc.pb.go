@@ -19,16 +19,14 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	WorkerRegistryService_Register_FullMethodName  = "/onlyboxes.registry.v1.WorkerRegistryService/Register"
-	WorkerRegistryService_Heartbeat_FullMethodName = "/onlyboxes.registry.v1.WorkerRegistryService/Heartbeat"
+	WorkerRegistryService_Connect_FullMethodName = "/onlyboxes.registry.v1.WorkerRegistryService/Connect"
 )
 
 // WorkerRegistryServiceClient is the client API for WorkerRegistryService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type WorkerRegistryServiceClient interface {
-	Register(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResponse, error)
-	Heartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error)
+	Connect(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ConnectRequest, ConnectResponse], error)
 }
 
 type workerRegistryServiceClient struct {
@@ -39,32 +37,24 @@ func NewWorkerRegistryServiceClient(cc grpc.ClientConnInterface) WorkerRegistryS
 	return &workerRegistryServiceClient{cc}
 }
 
-func (c *workerRegistryServiceClient) Register(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResponse, error) {
+func (c *workerRegistryServiceClient) Connect(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ConnectRequest, ConnectResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(RegisterResponse)
-	err := c.cc.Invoke(ctx, WorkerRegistryService_Register_FullMethodName, in, out, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &WorkerRegistryService_ServiceDesc.Streams[0], WorkerRegistryService_Connect_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	x := &grpc.GenericClientStream[ConnectRequest, ConnectResponse]{ClientStream: stream}
+	return x, nil
 }
 
-func (c *workerRegistryServiceClient) Heartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(HeartbeatResponse)
-	err := c.cc.Invoke(ctx, WorkerRegistryService_Heartbeat_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type WorkerRegistryService_ConnectClient = grpc.BidiStreamingClient[ConnectRequest, ConnectResponse]
 
 // WorkerRegistryServiceServer is the server API for WorkerRegistryService service.
 // All implementations must embed UnimplementedWorkerRegistryServiceServer
 // for forward compatibility.
 type WorkerRegistryServiceServer interface {
-	Register(context.Context, *RegisterRequest) (*RegisterResponse, error)
-	Heartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error)
+	Connect(grpc.BidiStreamingServer[ConnectRequest, ConnectResponse]) error
 	mustEmbedUnimplementedWorkerRegistryServiceServer()
 }
 
@@ -75,11 +65,8 @@ type WorkerRegistryServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedWorkerRegistryServiceServer struct{}
 
-func (UnimplementedWorkerRegistryServiceServer) Register(context.Context, *RegisterRequest) (*RegisterResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Register not implemented")
-}
-func (UnimplementedWorkerRegistryServiceServer) Heartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Heartbeat not implemented")
+func (UnimplementedWorkerRegistryServiceServer) Connect(grpc.BidiStreamingServer[ConnectRequest, ConnectResponse]) error {
+	return status.Errorf(codes.Unimplemented, "method Connect not implemented")
 }
 func (UnimplementedWorkerRegistryServiceServer) mustEmbedUnimplementedWorkerRegistryServiceServer() {}
 func (UnimplementedWorkerRegistryServiceServer) testEmbeddedByValue()                               {}
@@ -102,41 +89,12 @@ func RegisterWorkerRegistryServiceServer(s grpc.ServiceRegistrar, srv WorkerRegi
 	s.RegisterService(&WorkerRegistryService_ServiceDesc, srv)
 }
 
-func _WorkerRegistryService_Register_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(RegisterRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(WorkerRegistryServiceServer).Register(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: WorkerRegistryService_Register_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(WorkerRegistryServiceServer).Register(ctx, req.(*RegisterRequest))
-	}
-	return interceptor(ctx, in, info, handler)
+func _WorkerRegistryService_Connect_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(WorkerRegistryServiceServer).Connect(&grpc.GenericServerStream[ConnectRequest, ConnectResponse]{ServerStream: stream})
 }
 
-func _WorkerRegistryService_Heartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(HeartbeatRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(WorkerRegistryServiceServer).Heartbeat(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: WorkerRegistryService_Heartbeat_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(WorkerRegistryServiceServer).Heartbeat(ctx, req.(*HeartbeatRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type WorkerRegistryService_ConnectServer = grpc.BidiStreamingServer[ConnectRequest, ConnectResponse]
 
 // WorkerRegistryService_ServiceDesc is the grpc.ServiceDesc for WorkerRegistryService service.
 // It's only intended for direct use with grpc.RegisterService,
@@ -144,16 +102,14 @@ func _WorkerRegistryService_Heartbeat_Handler(srv interface{}, ctx context.Conte
 var WorkerRegistryService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "onlyboxes.registry.v1.WorkerRegistryService",
 	HandlerType: (*WorkerRegistryServiceServer)(nil),
-	Methods: []grpc.MethodDesc{
+	Methods:     []grpc.MethodDesc{},
+	Streams: []grpc.StreamDesc{
 		{
-			MethodName: "Register",
-			Handler:    _WorkerRegistryService_Register_Handler,
-		},
-		{
-			MethodName: "Heartbeat",
-			Handler:    _WorkerRegistryService_Heartbeat_Handler,
+			StreamName:    "Connect",
+			Handler:       _WorkerRegistryService_Connect_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
 	Metadata: "registry/v1/registry.proto",
 }
