@@ -539,6 +539,253 @@ func TestMCPLifecycle(t *testing.T) {
 	}
 }
 
+func TestTerminalLifecycle(t *testing.T) {
+	store := registry.NewStore()
+	const workerID = "node-terminal-1"
+	const workerSecret = "secret-terminal-1"
+
+	registrySvc := grpcserver.NewRegistryService(
+		store,
+		map[string]string{workerID: workerSecret},
+		5,
+		15,
+		60*time.Second,
+	)
+	grpcSrv := grpcserver.NewServer(registrySvc)
+	grpcListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to open grpc listener: %v", err)
+	}
+	defer grpcListener.Close()
+	go func() {
+		_ = grpcSrv.Serve(grpcListener)
+	}()
+	defer grpcSrv.Stop()
+
+	handler := NewWorkerHandler(store, 15*time.Second, registrySvc, map[string]string{workerID: workerSecret}, ":50051")
+	router := NewRouter(handler, newTestConsoleAuth(t))
+	httpSrv := httptest.NewServer(router)
+	defer httpSrv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := grpc.NewClient(grpcListener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("failed to dial grpc: %v", err)
+	}
+	defer conn.Close()
+
+	client := registryv1.NewWorkerRegistryServiceClient(conn)
+	stream, err := client.Connect(ctx)
+	if err != nil {
+		t.Fatalf("connect failed: %v", err)
+	}
+
+	hello := &registryv1.ConnectHello{
+		NodeId:       workerID,
+		NodeName:     "terminal-worker",
+		ExecutorKind: "docker",
+		Capabilities: []*registryv1.CapabilityDeclaration{
+			{Name: terminalExecCapabilityName, MaxInflight: 4},
+		},
+		Version:         "v0.1.0",
+		TimestampUnixMs: time.Now().UnixMilli(),
+		Nonce:           "hello-nonce-terminal",
+	}
+	hello.Signature = registryauth.Sign(hello.GetNodeId(), hello.GetTimestampUnixMs(), hello.GetNonce(), workerSecret)
+	if err := stream.Send(&registryv1.ConnectRequest{
+		Payload: &registryv1.ConnectRequest_Hello{Hello: hello},
+	}); err != nil {
+		t.Fatalf("send hello failed: %v", err)
+	}
+
+	connectResp, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("recv connect ack failed: %v", err)
+	}
+	if connectResp.GetConnectAck() == nil {
+		t.Fatalf("expected connect_ack, got %#v", connectResp.GetPayload())
+	}
+
+	go func() {
+		sessionContent := map[string]string{}
+		for {
+			resp, recvErr := stream.Recv()
+			if recvErr != nil {
+				return
+			}
+			dispatch := resp.GetCommandDispatch()
+			if dispatch == nil {
+				continue
+			}
+
+			capability := strings.TrimSpace(strings.ToLower(dispatch.GetCapability()))
+			if capability != "terminalexec" {
+				_ = stream.Send(&registryv1.ConnectRequest{
+					Payload: &registryv1.ConnectRequest_CommandResult{
+						CommandResult: &registryv1.CommandResult{
+							CommandId: dispatch.GetCommandId(),
+							Error: &registryv1.CommandError{
+								Code:    "unsupported_capability",
+								Message: "unsupported capability",
+							},
+							CompletedUnixMs: time.Now().UnixMilli(),
+						},
+					},
+				})
+				continue
+			}
+
+			payload := terminalExecPayload{}
+			if err := json.Unmarshal(dispatch.GetPayloadJson(), &payload); err != nil {
+				_ = stream.Send(&registryv1.ConnectRequest{
+					Payload: &registryv1.ConnectRequest_CommandResult{
+						CommandResult: &registryv1.CommandResult{
+							CommandId: dispatch.GetCommandId(),
+							Error: &registryv1.CommandError{
+								Code:    terminalExecInvalidPayloadCode,
+								Message: "invalid payload",
+							},
+							CompletedUnixMs: time.Now().UnixMilli(),
+						},
+					},
+				})
+				continue
+			}
+
+			sessionID := strings.TrimSpace(payload.SessionID)
+			created := false
+			if sessionID == "" {
+				sessionID = "session-1"
+				if _, ok := sessionContent[sessionID]; !ok {
+					sessionContent[sessionID] = ""
+					created = true
+				}
+			}
+
+			if _, ok := sessionContent[sessionID]; !ok {
+				if !payload.CreateIfMissing {
+					_ = stream.Send(&registryv1.ConnectRequest{
+						Payload: &registryv1.ConnectRequest_CommandResult{
+							CommandResult: &registryv1.CommandResult{
+								CommandId: dispatch.GetCommandId(),
+								Error: &registryv1.CommandError{
+									Code:    terminalExecSessionNotFoundCode,
+									Message: "session not found",
+								},
+								CompletedUnixMs: time.Now().UnixMilli(),
+							},
+						},
+					})
+					continue
+				}
+				sessionContent[sessionID] = ""
+				created = true
+			}
+
+			stdout := ""
+			switch strings.TrimSpace(payload.Command) {
+			case "write":
+				sessionContent[sessionID] = "persisted"
+			case "read":
+				stdout = sessionContent[sessionID]
+			}
+
+			resultJSON, _ := json.Marshal(terminalCommandResponse{
+				SessionID:          sessionID,
+				Created:            created,
+				Stdout:             stdout,
+				Stderr:             "",
+				ExitCode:           0,
+				StdoutTruncated:    false,
+				StderrTruncated:    false,
+				LeaseExpiresUnixMS: time.Now().Add(60 * time.Second).UnixMilli(),
+			})
+			_ = stream.Send(&registryv1.ConnectRequest{
+				Payload: &registryv1.ConnectRequest_CommandResult{
+					CommandResult: &registryv1.CommandResult{
+						CommandId:       dispatch.GetCommandId(),
+						PayloadJson:     resultJSON,
+						CompletedUnixMs: time.Now().UnixMilli(),
+					},
+				},
+			})
+		}
+	}()
+
+	writeRes, err := http.Post(
+		httpSrv.URL+"/api/v1/commands/terminal",
+		"application/json",
+		bytes.NewBufferString(`{"command":"write"}`),
+	)
+	if err != nil {
+		t.Fatalf("failed to call terminal write API: %v", err)
+	}
+	defer writeRes.Body.Close()
+	if writeRes.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 response, got %d", writeRes.StatusCode)
+	}
+	writePayload := terminalCommandResponse{}
+	if err := json.NewDecoder(writeRes.Body).Decode(&writePayload); err != nil {
+		t.Fatalf("failed to decode write response: %v", err)
+	}
+	if strings.TrimSpace(writePayload.SessionID) == "" {
+		t.Fatalf("expected session_id in write response")
+	}
+
+	readReqBody := `{"command":"read","session_id":"` + writePayload.SessionID + `"}`
+	readRes, err := http.Post(
+		httpSrv.URL+"/api/v1/commands/terminal",
+		"application/json",
+		bytes.NewBufferString(readReqBody),
+	)
+	if err != nil {
+		t.Fatalf("failed to call terminal read API: %v", err)
+	}
+	defer readRes.Body.Close()
+	if readRes.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 response, got %d", readRes.StatusCode)
+	}
+	readPayload := terminalCommandResponse{}
+	if err := json.NewDecoder(readRes.Body).Decode(&readPayload); err != nil {
+		t.Fatalf("failed to decode read response: %v", err)
+	}
+	if readPayload.Stdout != "persisted" {
+		t.Fatalf("expected persisted terminal stdout, got %q", readPayload.Stdout)
+	}
+
+	mcpClient := mcp.NewClient(&mcp.Implementation{
+		Name:    "mcp-terminal-client",
+		Version: "v0.1.0",
+	}, nil)
+	session, err := mcpClient.Connect(ctx, &mcp.StreamableClientTransport{
+		Endpoint:             httpSrv.URL + "/mcp",
+		DisableStandaloneSSE: true,
+	}, nil)
+	if err != nil {
+		t.Fatalf("failed to connect MCP client: %v", err)
+	}
+	defer session.Close()
+
+	toolResult, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "terminalExec",
+		Arguments: map[string]any{
+			"command":    "read",
+			"session_id": writePayload.SessionID,
+		},
+	})
+	if err != nil {
+		t.Fatalf("mcp terminalExec tools/call failed: %v", err)
+	}
+	if toolResult.IsError {
+		t.Fatalf("expected mcp terminalExec success, got error=%q", firstTextContent(toolResult))
+	}
+	terminalStructured := structuredContentMap(t, toolResult.StructuredContent)
+	if got := toString(t, terminalStructured["stdout"]); got != "persisted" {
+		t.Fatalf("unexpected terminalExec output: %q", got)
+	}
+}
+
 func structuredContentMap(t *testing.T, value any) map[string]any {
 	t.Helper()
 

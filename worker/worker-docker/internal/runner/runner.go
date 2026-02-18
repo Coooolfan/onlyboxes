@@ -22,31 +22,37 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
-	minHeartbeatInterval         = 1 * time.Second
-	initialReconnectDelay        = 1 * time.Second
-	maxReconnectDelay            = 15 * time.Second
-	echoCapabilityName           = "echo"
-	pythonExecCapabilityName     = "pythonexec"
-	pythonExecCapabilityDeclared = "pythonExec"
-	defaultPythonExecDockerImage = "python:slim"
-	defaultPythonExecMemoryLimit = "256m"
-	defaultPythonExecCPULimit    = "1.0"
-	defaultPythonExecPidsLimit   = 128
-	pythonExecContainerPrefix    = "onlyboxes-pythonexec-"
-	pythonExecManagedLabel       = "onlyboxes.managed=true"
-	pythonExecCapabilityLabel    = "onlyboxes.capability=pythonExec"
-	pythonExecRuntimeLabel       = "onlyboxes.runtime=worker-docker"
-	pythonExecCleanupTimeout     = 3 * time.Second
-	pythonExecInspectTimeout     = 2 * time.Second
-	defaultMaxInflight           = 4
+	minHeartbeatInterval           = 1 * time.Second
+	initialReconnectDelay          = 1 * time.Second
+	maxReconnectDelay              = 15 * time.Second
+	echoCapabilityName             = "echo"
+	pythonExecCapabilityName       = "pythonexec"
+	pythonExecCapabilityDeclared   = "pythonExec"
+	defaultPythonExecDockerImage   = "python:slim"
+	defaultPythonExecMemoryLimit   = "256m"
+	defaultPythonExecCPULimit      = "1.0"
+	defaultPythonExecPidsLimit     = 128
+	defaultTerminalExecDockerImage = "python:slim"
+	defaultTerminalExecMemoryLimit = "256m"
+	defaultTerminalExecCPULimit    = "1.0"
+	defaultTerminalExecPidsLimit   = 128
+	pythonExecContainerPrefix      = "onlyboxes-pythonexec-"
+	pythonExecManagedLabel         = "onlyboxes.managed=true"
+	pythonExecCapabilityLabel      = "onlyboxes.capability=pythonExec"
+	pythonExecRuntimeLabel         = "onlyboxes.runtime=worker-docker"
+	pythonExecCleanupTimeout       = 3 * time.Second
+	pythonExecInspectTimeout       = 2 * time.Second
+	defaultMaxInflight             = 4
 )
 
 var waitReconnect = waitReconnectDelay
 var applyJitter = jitterDuration
 var runPythonExec = runPythonExecInDocker
+var runTerminalExec = runTerminalExecUnavailable
 var runDockerCommand = runDockerCommandCLI
 var pythonExecContainerNameFn = newPythonExecContainerName
 
@@ -57,6 +63,23 @@ func Run(ctx context.Context, cfg config.Config) error {
 	if strings.TrimSpace(cfg.WorkerSecret) == "" {
 		return errors.New("WORKER_SECRET is required")
 	}
+
+	terminalManager := newTerminalSessionManager(terminalSessionManagerConfig{
+		LeaseMinSec:      cfg.TerminalLeaseMinSec,
+		LeaseMaxSec:      cfg.TerminalLeaseMaxSec,
+		LeaseDefaultSec:  cfg.TerminalLeaseDefaultSec,
+		OutputLimitBytes: cfg.TerminalOutputLimitBytes,
+		DockerImage:      defaultTerminalExecDockerImage,
+		MemoryLimit:      defaultTerminalExecMemoryLimit,
+		CPULimit:         defaultTerminalExecCPULimit,
+		PidsLimit:        defaultTerminalExecPidsLimit,
+	})
+	originalRunTerminalExec := runTerminalExec
+	runTerminalExec = terminalManager.Execute
+	defer func() {
+		runTerminalExec = originalRunTerminalExec
+		terminalManager.Close()
+	}()
 
 	reconnectDelay := initialReconnectDelay
 	for {
@@ -219,6 +242,14 @@ func receiverLoop(
 					capability,
 					len(dispatch.GetPayloadJson()),
 				)
+			case capability == terminalExecCapabilityName:
+				log.Printf(
+					"command dispatch received: node_id=%s command_id=%s capability=%s payload_len=%d",
+					nodeID,
+					commandID,
+					capability,
+					len(dispatch.GetPayloadJson()),
+				)
 			default:
 				log.Printf(
 					"command dispatch received: node_id=%s command_id=%s capability=%s",
@@ -228,11 +259,21 @@ func receiverLoop(
 				)
 			}
 
-			resultReq := buildCommandResult(dispatch)
-			if sendErr := enqueueRequest(ctx, outbound, resultReq); sendErr != nil {
-				reportSessionErr(errCh, fmt.Errorf("enqueue command result: %w", sendErr))
+			dispatchCopy, ok := proto.Clone(dispatch).(*registryv1.CommandDispatch)
+			if !ok || dispatchCopy == nil {
+				reportSessionErr(errCh, errors.New("clone command dispatch failed"))
 				return
 			}
+
+			go func(dispatch *registryv1.CommandDispatch) {
+				resultReq := buildCommandResultWithContext(ctx, dispatch)
+				if sendErr := enqueueRequest(ctx, outbound, resultReq); sendErr != nil {
+					if errors.Is(sendErr, context.Canceled) || errors.Is(sendErr, context.DeadlineExceeded) {
+						return
+					}
+					reportSessionErr(errCh, fmt.Errorf("enqueue command result: %w", sendErr))
+				}
+			}(dispatchCopy)
 		case resp.GetError() != nil:
 			streamErr := resp.GetError()
 			reportSessionErr(errCh, fmt.Errorf("stream error frame: code=%s message=%s", streamErr.GetCode(), streamErr.GetMessage()))
@@ -302,6 +343,10 @@ func heartbeatLoop(
 }
 
 func buildCommandResult(dispatch *registryv1.CommandDispatch) *registryv1.ConnectRequest {
+	return buildCommandResultWithContext(context.Background(), dispatch)
+}
+
+func buildCommandResultWithContext(baseCtx context.Context, dispatch *registryv1.CommandDispatch) *registryv1.ConnectRequest {
 	commandID := strings.TrimSpace(dispatch.GetCommandId())
 	if commandID == "" {
 		return &registryv1.ConnectRequest{
@@ -326,7 +371,9 @@ func buildCommandResult(dispatch *registryv1.CommandDispatch) *registryv1.Connec
 	case echoCapabilityName:
 		return buildEchoCommandResult(commandID, dispatch)
 	case pythonExecCapabilityName:
-		return buildPythonExecCommandResult(commandID, dispatch)
+		return buildPythonExecCommandResult(baseCtx, commandID, dispatch)
+	case terminalExecCapabilityName:
+		return buildTerminalExecCommandResult(baseCtx, commandID, dispatch)
 	default:
 		return commandErrorResult(commandID, "unsupported_capability", fmt.Sprintf("capability %q is not supported", dispatch.GetCapability()))
 	}
@@ -392,7 +439,7 @@ type pythonExecRunResult struct {
 	ExitCode int
 }
 
-func buildPythonExecCommandResult(commandID string, dispatch *registryv1.CommandDispatch) *registryv1.ConnectRequest {
+func buildPythonExecCommandResult(baseCtx context.Context, commandID string, dispatch *registryv1.CommandDispatch) *registryv1.ConnectRequest {
 	payload := append([]byte(nil), dispatch.GetPayloadJson()...)
 	if len(payload) == 0 {
 		return commandErrorResult(commandID, "invalid_payload", "pythonExec payload is required")
@@ -406,7 +453,10 @@ func buildPythonExecCommandResult(commandID string, dispatch *registryv1.Command
 		return commandErrorResult(commandID, "invalid_payload", "pythonExec code is required")
 	}
 
-	commandCtx := context.Background()
+	commandCtx := baseCtx
+	if commandCtx == nil {
+		commandCtx = context.Background()
+	}
 	cancel := func() {}
 	if deadlineUnixMS := dispatch.GetDeadlineUnixMs(); deadlineUnixMS > 0 {
 		commandCtx, cancel = context.WithDeadline(commandCtx, time.UnixMilli(deadlineUnixMS))
@@ -428,6 +478,63 @@ func buildPythonExecCommandResult(commandID string, dispatch *registryv1.Command
 	})
 	if err != nil {
 		return commandErrorResult(commandID, "encode_failed", "failed to encode pythonExec payload")
+	}
+
+	return &registryv1.ConnectRequest{
+		Payload: &registryv1.ConnectRequest_CommandResult{
+			CommandResult: &registryv1.CommandResult{
+				CommandId:       commandID,
+				PayloadJson:     resultPayload,
+				CompletedUnixMs: time.Now().UnixMilli(),
+			},
+		},
+	}
+}
+
+func buildTerminalExecCommandResult(baseCtx context.Context, commandID string, dispatch *registryv1.CommandDispatch) *registryv1.ConnectRequest {
+	payload := append([]byte(nil), dispatch.GetPayloadJson()...)
+	if len(payload) == 0 {
+		return commandErrorResult(commandID, terminalExecCodeInvalidPayload, "terminalExec payload is required")
+	}
+
+	decoded := terminalExecPayload{}
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		return commandErrorResult(commandID, terminalExecCodeInvalidPayload, "payload_json is not valid terminalExec payload")
+	}
+	if strings.TrimSpace(decoded.Command) == "" {
+		return commandErrorResult(commandID, terminalExecCodeInvalidPayload, "terminalExec command is required")
+	}
+
+	commandCtx := baseCtx
+	if commandCtx == nil {
+		commandCtx = context.Background()
+	}
+	cancel := func() {}
+	if deadlineUnixMS := dispatch.GetDeadlineUnixMs(); deadlineUnixMS > 0 {
+		commandCtx, cancel = context.WithDeadline(commandCtx, time.UnixMilli(deadlineUnixMS))
+	}
+	defer cancel()
+
+	execResult, err := runTerminalExec(commandCtx, terminalExecRequest{
+		Command:         decoded.Command,
+		SessionID:       decoded.SessionID,
+		CreateIfMissing: decoded.CreateIfMissing,
+		LeaseTTLSec:     decoded.LeaseTTLSec,
+	})
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			return commandErrorResult(commandID, "deadline_exceeded", "command deadline exceeded")
+		}
+		var terminalErr *terminalExecError
+		if errors.As(err, &terminalErr) {
+			return commandErrorResult(commandID, terminalErr.Code(), terminalErr.Error())
+		}
+		return commandErrorResult(commandID, "execution_failed", fmt.Sprintf("terminalExec execution failed: %v", err))
+	}
+
+	resultPayload, err := json.Marshal(execResult)
+	if err != nil {
+		return commandErrorResult(commandID, "encode_failed", "failed to encode terminalExec payload")
 	}
 
 	return &registryv1.ConnectRequest{
@@ -697,10 +804,18 @@ func buildHello(cfg config.Config) (*registryv1.ConnectHello, error) {
 				Name:        pythonExecCapabilityDeclared,
 				MaxInflight: defaultMaxInflight,
 			},
+			{
+				Name:        terminalExecCapabilityDeclared,
+				MaxInflight: defaultMaxInflight,
+			},
 		},
 	}
 	hello.Signature = registryauth.Sign(hello.GetNodeId(), hello.GetTimestampUnixMs(), hello.GetNonce(), cfg.WorkerSecret)
 	return hello, nil
+}
+
+func runTerminalExecUnavailable(context.Context, terminalExecRequest) (terminalExecRunResult, error) {
+	return terminalExecRunResult{}, newTerminalExecError("execution_failed", terminalExecNotReadyMessage)
 }
 
 func enqueueRequest(ctx context.Context, outbound chan<- *registryv1.ConnectRequest, req *registryv1.ConnectRequest) error {

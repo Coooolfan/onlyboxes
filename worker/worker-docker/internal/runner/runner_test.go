@@ -80,14 +80,17 @@ func TestBuildHelloSignsWithWorkerSecret(t *testing.T) {
 	for _, capability := range hello.GetCapabilities() {
 		capabilityByName[capability.GetName()] = capability.GetMaxInflight()
 	}
-	if len(capabilityByName) != 2 {
-		t.Fatalf("expected two capabilities, got %#v", hello.GetCapabilities())
+	if len(capabilityByName) != 3 {
+		t.Fatalf("expected three capabilities, got %#v", hello.GetCapabilities())
 	}
 	if capabilityByName[echoCapabilityName] != defaultMaxInflight {
 		t.Fatalf("expected echo max_inflight=%d, got %d", defaultMaxInflight, capabilityByName[echoCapabilityName])
 	}
 	if capabilityByName[pythonExecCapabilityDeclared] != defaultMaxInflight {
 		t.Fatalf("expected pythonExec max_inflight=%d, got %d", defaultMaxInflight, capabilityByName[pythonExecCapabilityDeclared])
+	}
+	if capabilityByName[terminalExecCapabilityDeclared] != defaultMaxInflight {
+		t.Fatalf("expected terminalExec max_inflight=%d, got %d", defaultMaxInflight, capabilityByName[terminalExecCapabilityDeclared])
 	}
 }
 
@@ -718,6 +721,9 @@ func (s *fakeRegistryService) Connect(stream grpc.BidiStreamingServer[registryv1
 	}
 	if capabilityByName[pythonExecCapabilityDeclared] <= 0 {
 		return status.Error(codes.InvalidArgument, "missing pythonExec capability")
+	}
+	if capabilityByName[terminalExecCapabilityDeclared] <= 0 {
+		return status.Error(codes.InvalidArgument, "missing terminalExec capability")
 	}
 
 	if err := stream.Send(&registryv1.ConnectResponse{

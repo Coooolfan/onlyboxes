@@ -8,6 +8,7 @@ The console service hosts:
   - `GET /api/v1/workers/:node_id/startup-command` for on-demand copy of a worker startup command (includes `WORKER_ID` + `WORKER_SECRET` in command text only).
 - command APIs (execution, no authentication required):
   - `POST /api/v1/commands/echo` for blocking echo command execution.
+  - `POST /api/v1/commands/terminal` for blocking terminal command execution over `terminalExec` capability.
   - `POST /api/v1/tasks` for sync/async/auto task submission.
   - `GET /api/v1/tasks/:task_id` for task status and result lookup.
   - `POST /api/v1/tasks/:task_id/cancel` for best-effort task cancellation.
@@ -28,6 +29,14 @@ The console service hosts:
       - `timeout_ms` is optional, range `1..600000`, default `60000`.
       - output: `{"output":"...","stderr":"...","exit_code":0}`
       - non-zero `exit_code` is returned as normal tool output, not as MCP protocol error.
+    - `terminalExec`
+      - input: `{"command":"pwd","session_id":"optional","create_if_missing":false,"lease_ttl_sec":60,"timeout_ms":60000}`
+      - `command` is required (whitespace-only is rejected).
+      - `session_id` is optional; omit to create a new terminal session/container.
+      - `create_if_missing` controls behavior when `session_id` does not exist.
+      - `lease_ttl_sec` is optional and validated by worker-side lease bounds.
+      - `timeout_ms` is optional, range `1..600000`, default `60000`.
+      - output: `{"session_id":"...","created":true,"stdout":"...","stderr":"...","exit_code":0,"stdout_truncated":false,"stderr_truncated":false,"lease_expires_unix_ms":...}`
 - dashboard authentication APIs:
   - `POST /api/v1/console/login` with `{"username":"...","password":"..."}`.
   - `POST /api/v1/console/logout`.

@@ -74,8 +74,8 @@ func TestMCPToolsList(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected tools array, got %#v", result["tools"])
 	}
-	if len(toolsRaw) != 2 {
-		t.Fatalf("expected exactly 2 tools, got %d", len(toolsRaw))
+	if len(toolsRaw) != 3 {
+		t.Fatalf("expected exactly 3 tools, got %d", len(toolsRaw))
 	}
 
 	toolByName := map[string]map[string]any{}
@@ -91,6 +91,9 @@ func TestMCPToolsList(t *testing.T) {
 	}
 	if _, ok := toolByName["pythonExec"]; !ok {
 		t.Fatalf("expected tool pythonExec in tools/list")
+	}
+	if _, ok := toolByName["terminalExec"]; !ok {
+		t.Fatalf("expected tool terminalExec in tools/list")
 	}
 
 	echoTool := toolByName["echo"]
@@ -221,6 +224,33 @@ func TestMCPToolsList(t *testing.T) {
 	if got := asString(t, pythonExitCodeSchema["type"]); got != "integer" {
 		t.Fatalf("expected pythonExec.exit_code.type=integer, got %q", got)
 	}
+
+	terminalTool := toolByName["terminalExec"]
+	if got := asString(t, terminalTool["title"]); got != mcpTerminalExecToolTitle {
+		t.Fatalf("expected terminalExec title %q, got %q", mcpTerminalExecToolTitle, got)
+	}
+	if got := asString(t, terminalTool["description"]); got != mcpTerminalExecToolDescription {
+		t.Fatalf("unexpected terminalExec description: %q", got)
+	}
+	terminalInputSchema := mustObject(t, terminalTool["inputSchema"], "terminalExec.inputSchema")
+	if got := asString(t, terminalInputSchema["type"]); got != "object" {
+		t.Fatalf("expected terminalExec.inputSchema.type=object, got %q", got)
+	}
+	assertRequiredContains(t, terminalInputSchema["required"], "command")
+	terminalInputProperties := mustObject(t, terminalInputSchema["properties"], "terminalExec.inputSchema.properties")
+	terminalCommandSchema := mustObject(t, terminalInputProperties["command"], "terminalExec.inputSchema.properties.command")
+	if got := asString(t, terminalCommandSchema["type"]); got != "string" {
+		t.Fatalf("expected terminalExec.command.type=string, got %q", got)
+	}
+	terminalOutputSchema := mustObject(t, terminalTool["outputSchema"], "terminalExec.outputSchema")
+	if got := asString(t, terminalOutputSchema["type"]); got != "object" {
+		t.Fatalf("expected terminalExec.outputSchema.type=object, got %q", got)
+	}
+	terminalOutputProperties := mustObject(t, terminalOutputSchema["properties"], "terminalExec.outputSchema.properties")
+	leaseSchema := mustObject(t, terminalOutputProperties["lease_expires_unix_ms"], "terminalExec.outputSchema.properties.lease_expires_unix_ms")
+	if got := asString(t, leaseSchema["type"]); got != "integer" {
+		t.Fatalf("expected terminalExec.lease_expires_unix_ms.type=integer, got %q", got)
+	}
 }
 
 func TestMCPToolCallEchoSuccess(t *testing.T) {
@@ -296,6 +326,58 @@ func TestMCPToolCallPythonExecSuccess(t *testing.T) {
 	}
 }
 
+func TestMCPToolCallTerminalExecSuccess(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	router := newMCPTestRouter(t, &fakeMCPDispatcher{
+		submitTask: func(ctx context.Context, req grpcserver.SubmitTaskRequest) (grpcserver.SubmitTaskResult, error) {
+			if req.Capability != terminalExecCapabilityName {
+				t.Fatalf("expected capability=%q, got %q", terminalExecCapabilityName, req.Capability)
+			}
+
+			payload := terminalExecPayload{}
+			if err := json.Unmarshal(req.InputJSON, &payload); err != nil {
+				t.Fatalf("expected valid terminalExec input json, got %s", string(req.InputJSON))
+			}
+			if payload.Command != "pwd" {
+				t.Fatalf("unexpected command payload: %#v", payload)
+			}
+
+			resultJSON, _ := json.Marshal(mcpTerminalExecToolOutput{
+				SessionID:          "session-1",
+				Created:            true,
+				Stdout:             "/workspace\n",
+				Stderr:             "",
+				ExitCode:           0,
+				StdoutTruncated:    false,
+				StderrTruncated:    false,
+				LeaseExpiresUnixMS: 12345,
+			})
+			return grpcserver.SubmitTaskResult{
+				Task: grpcserver.TaskSnapshot{
+					TaskID:     "task-term-1",
+					Capability: terminalExecCapabilityName,
+					Status:     grpcserver.TaskStatusSucceeded,
+					ResultJSON: resultJSON,
+					CreatedAt:  now,
+					UpdatedAt:  now,
+					DeadlineAt: now.Add(60 * time.Second),
+				},
+				Completed: true,
+			}, nil
+		},
+	})
+
+	payload := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"terminalExec","arguments":{"command":"pwd","create_if_missing":true}}}`)
+	result := mustMapField(t, payload, "result")
+	if asBool(result["isError"]) {
+		t.Fatalf("expected tool call success, got error payload=%s", mustJSON(t, result))
+	}
+	structured := mustMapField(t, result, "structuredContent")
+	if got := asString(t, structured["session_id"]); got != "session-1" {
+		t.Fatalf("expected session_id=session-1, got %q", got)
+	}
+}
+
 func TestMCPToolCallInvalidParams(t *testing.T) {
 	router := newMCPTestRouter(t, &fakeMCPDispatcher{})
 
@@ -310,6 +392,12 @@ func TestMCPToolCallInvalidParams(t *testing.T) {
 
 	pythonUnknownField := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"pythonExec","arguments":{"code":"print(1)","unknown":"x"}}}`)
 	assertMCPInvalidParamsError(t, pythonUnknownField)
+
+	terminalBlank := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"terminalExec","arguments":{"command":"  "}}}`)
+	assertMCPInvalidParamsError(t, terminalBlank)
+
+	terminalUnknownField := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"terminalExec","arguments":{"command":"pwd","unknown":"x"}}}`)
+	assertMCPInvalidParamsError(t, terminalUnknownField)
 }
 
 func TestMCPToolCallBackendErrorsAsToolErrors(t *testing.T) {
@@ -319,6 +407,21 @@ func TestMCPToolCallBackendErrorsAsToolErrors(t *testing.T) {
 			return "", grpcserver.ErrNoEchoWorker
 		},
 		submitTask: func(ctx context.Context, req grpcserver.SubmitTaskRequest) (grpcserver.SubmitTaskResult, error) {
+			if req.Capability == terminalExecCapabilityName {
+				return grpcserver.SubmitTaskResult{
+					Task: grpcserver.TaskSnapshot{
+						TaskID:       "task-3",
+						Capability:   terminalExecCapabilityName,
+						Status:       grpcserver.TaskStatusFailed,
+						ErrorCode:    terminalExecSessionNotFoundCode,
+						ErrorMessage: "session not found",
+						CreatedAt:    now,
+						UpdatedAt:    now,
+						DeadlineAt:   now.Add(60 * time.Second),
+					},
+					Completed: true,
+				}, nil
+			}
 			return grpcserver.SubmitTaskResult{
 				Task: grpcserver.TaskSnapshot{
 					TaskID:       "task-2",
@@ -340,6 +443,9 @@ func TestMCPToolCallBackendErrorsAsToolErrors(t *testing.T) {
 
 	pythonPayload := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"pythonExec","arguments":{"code":"print(1)"}}}`)
 	assertMCPToolError(t, pythonPayload, "execution_failed: pythonExec execution failed: docker is unavailable")
+
+	terminalPayload := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"terminalExec","arguments":{"command":"pwd","session_id":"missing"}}}`)
+	assertMCPToolError(t, terminalPayload, terminalExecSessionNotFoundCode+": session not found")
 }
 
 func TestMCPGetReturnsMethodNotAllowed(t *testing.T) {

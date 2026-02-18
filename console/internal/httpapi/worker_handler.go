@@ -83,6 +83,7 @@ func NewRouter(workerHandler *WorkerHandler, consoleAuth *ConsoleAuth) *gin.Engi
 
 	api := router.Group("/api/v1")
 	api.POST("/commands/echo", workerHandler.EchoCommand)
+	api.POST("/commands/terminal", workerHandler.TerminalCommand)
 	api.POST("/tasks", workerHandler.SubmitTask)
 	api.GET("/tasks/:task_id", workerHandler.GetTask)
 	api.POST("/tasks/:task_id/cancel", workerHandler.CancelTask)

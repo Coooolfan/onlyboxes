@@ -17,15 +17,19 @@ import (
 )
 
 const (
-	mcpServerName             = "onlyboxes-console"
-	mcpServerVersion          = "v0.1.0"
-	pythonExecCapabilityName  = "pythonExec"
-	defaultMCPEchoTimeoutMS   = defaultEchoTimeoutMS
-	minMCPTaskTimeoutMS       = 1
-	defaultMCPTaskTimeoutMS   = defaultTaskTimeoutMS
-	maxMCPPythonExecTimeoutMS = maxTaskTimeoutMS
-	mcpEchoToolTitle          = "Echo Message"
-	mcpPythonExecToolTitle    = "Python Execute"
+	mcpServerName              = "onlyboxes-console"
+	mcpServerVersion           = "v0.1.0"
+	pythonExecCapabilityName   = "pythonExec"
+	terminalExecCapabilityName = "terminalExec"
+	defaultMCPEchoTimeoutMS    = defaultEchoTimeoutMS
+	minMCPTaskTimeoutMS        = 1
+	defaultMCPTaskTimeoutMS    = defaultTaskTimeoutMS
+	maxMCPPythonExecTimeoutMS  = maxTaskTimeoutMS
+	minMCPTerminalLeaseSec     = 1
+	maxMCPTerminalLeaseSec     = 86400
+	mcpEchoToolTitle           = "Echo Message"
+	mcpPythonExecToolTitle     = "Python Execute"
+	mcpTerminalExecToolTitle   = "Terminal Execute"
 )
 
 type mcpEchoToolInput struct {
@@ -48,6 +52,25 @@ type mcpPythonExecToolOutput struct {
 	ExitCode int    `json:"exit_code"`
 }
 
+type mcpTerminalExecToolInput struct {
+	Command         string `json:"command"`
+	SessionID       string `json:"session_id,omitempty"`
+	CreateIfMissing bool   `json:"create_if_missing,omitempty"`
+	LeaseTTLSec     *int   `json:"lease_ttl_sec,omitempty"`
+	TimeoutMS       *int   `json:"timeout_ms,omitempty"`
+}
+
+type mcpTerminalExecToolOutput struct {
+	SessionID          string `json:"session_id"`
+	Created            bool   `json:"created"`
+	Stdout             string `json:"stdout"`
+	Stderr             string `json:"stderr"`
+	ExitCode           int    `json:"exit_code"`
+	StdoutTruncated    bool   `json:"stdout_truncated"`
+	StderrTruncated    bool   `json:"stderr_truncated"`
+	LeaseExpiresUnixMS int64  `json:"lease_expires_unix_ms"`
+}
+
 type pythonExecPayload struct {
 	Code string `json:"code"`
 }
@@ -55,6 +78,8 @@ type pythonExecPayload struct {
 var mcpEchoToolDescription = "Echoes the input message exactly as returned by an online worker supporting the echo capability. Use this tool for connectivity checks, request tracing, and latency baselines. Do not use it for code execution, file operations, or long-running work. timeout_ms is an end-to-end dispatch timeout in milliseconds (1-60000, default 5000)."
 
 var mcpPythonExecToolDescription = "Executes Python code in the worker sandbox via the pythonExec capability and returns stdout, stderr, and exit_code. Use this for short, self-contained snippets. Do not use it for long-running jobs or persistent state. timeout_ms is a synchronous execution timeout in milliseconds (1-600000, default 60000). A non-zero exit_code is returned as normal tool output, not as a protocol error."
+
+var mcpTerminalExecToolDescription = "Executes shell commands in a persistent Docker-backed terminal session via the terminalExec capability. Reuse session_id to preserve filesystem state across calls. create_if_missing controls missing-session behavior. lease_ttl_sec extends session lease within worker-configured bounds. timeout_ms is a synchronous execution timeout in milliseconds (1-600000, default 60000)."
 
 var mcpEchoInputSchema = map[string]any{
 	"type":                 "object",
@@ -122,6 +147,71 @@ var mcpPythonExecOutputSchema = map[string]any{
 		"exit_code": map[string]any{
 			"type":        "integer",
 			"description": "Process exit code from Python execution. Non-zero is reported as normal tool output.",
+		},
+	},
+}
+
+var mcpTerminalExecInputSchema = map[string]any{
+	"type":                 "object",
+	"additionalProperties": false,
+	"required":             []string{"command"},
+	"properties": map[string]any{
+		"command": map[string]any{
+			"type":        "string",
+			"description": "Shell command to run in the session container. Empty or whitespace-only values are rejected.",
+		},
+		"session_id": map[string]any{
+			"type":        "string",
+			"description": "Optional session identifier. Reuse it to keep filesystem state.",
+		},
+		"create_if_missing": map[string]any{
+			"type":        "boolean",
+			"description": "When true and session_id is missing on worker, create the session instead of returning session_not_found.",
+			"default":     false,
+		},
+		"lease_ttl_sec": map[string]any{
+			"type":        "integer",
+			"description": "Optional lease duration in seconds for session expiry extension.",
+			"minimum":     minMCPTerminalLeaseSec,
+			"maximum":     maxMCPTerminalLeaseSec,
+		},
+		"timeout_ms": map[string]any{
+			"type":        "integer",
+			"description": "Optional synchronous execution timeout in milliseconds for this tool call.",
+			"minimum":     minMCPTaskTimeoutMS,
+			"maximum":     maxMCPPythonExecTimeoutMS,
+			"default":     defaultMCPTaskTimeoutMS,
+		},
+	},
+}
+
+var mcpTerminalExecOutputSchema = map[string]any{
+	"type":                 "object",
+	"additionalProperties": false,
+	"required": []string{
+		"session_id",
+		"created",
+		"stdout",
+		"stderr",
+		"exit_code",
+		"stdout_truncated",
+		"stderr_truncated",
+		"lease_expires_unix_ms",
+	},
+	"properties": map[string]any{
+		"session_id": map[string]any{"type": "string"},
+		"created":    map[string]any{"type": "boolean"},
+		"stdout":     map[string]any{"type": "string"},
+		"stderr":     map[string]any{"type": "string"},
+		"exit_code":  map[string]any{"type": "integer"},
+		"stdout_truncated": map[string]any{
+			"type": "boolean",
+		},
+		"stderr_truncated": map[string]any{
+			"type": "boolean",
+		},
+		"lease_expires_unix_ms": map[string]any{
+			"type": "integer",
 		},
 	},
 }
@@ -226,9 +316,81 @@ func NewMCPHandler(dispatcher CommandDispatcher) http.Handler {
 		case grpcserver.TaskStatusCanceled:
 			return nil, mcpPythonExecToolOutput{}, errors.New("task canceled")
 		case grpcserver.TaskStatusFailed:
-			return nil, mcpPythonExecToolOutput{}, formatTaskTerminalError(task)
+			return nil, mcpPythonExecToolOutput{}, formatTaskFailureError(task)
 		default:
 			return nil, mcpPythonExecToolOutput{}, fmt.Errorf("unexpected task status: %s", task.Status)
+		}
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Title:       mcpTerminalExecToolTitle,
+		Name:        "terminalExec",
+		Description: mcpTerminalExecToolDescription,
+		Annotations: &mcp.ToolAnnotations{
+			Title:           mcpTerminalExecToolTitle,
+			DestructiveHint: boolPtr(true),
+			OpenWorldHint:   boolPtr(true),
+		},
+		InputSchema:  mcpTerminalExecInputSchema,
+		OutputSchema: mcpTerminalExecOutputSchema,
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpTerminalExecToolInput) (*mcp.CallToolResult, mcpTerminalExecToolOutput, error) {
+		if strings.TrimSpace(input.Command) == "" {
+			return nil, mcpTerminalExecToolOutput{}, invalidParamsError("command is required")
+		}
+		if input.LeaseTTLSec != nil && *input.LeaseTTLSec < minMCPTerminalLeaseSec {
+			return nil, mcpTerminalExecToolOutput{}, invalidParamsError("lease_ttl_sec must be positive")
+		}
+
+		timeoutMS := defaultMCPTaskTimeoutMS
+		if input.TimeoutMS != nil {
+			timeoutMS = *input.TimeoutMS
+		}
+		if timeoutMS < minMCPTaskTimeoutMS || timeoutMS > maxMCPPythonExecTimeoutMS {
+			return nil, mcpTerminalExecToolOutput{}, invalidParamsError("timeout_ms must be between 1 and 600000")
+		}
+		if dispatcher == nil {
+			return nil, mcpTerminalExecToolOutput{}, errors.New("task dispatcher is unavailable")
+		}
+
+		payloadJSON, err := json.Marshal(terminalExecPayload{
+			Command:         input.Command,
+			SessionID:       strings.TrimSpace(input.SessionID),
+			CreateIfMissing: input.CreateIfMissing,
+			LeaseTTLSec:     input.LeaseTTLSec,
+		})
+		if err != nil {
+			return nil, mcpTerminalExecToolOutput{}, errors.New("failed to encode terminalExec payload")
+		}
+
+		result, err := dispatcher.SubmitTask(ctx, grpcserver.SubmitTaskRequest{
+			Capability: terminalExecCapabilityName,
+			InputJSON:  payloadJSON,
+			Mode:       grpcserver.TaskModeSync,
+			Timeout:    time.Duration(timeoutMS) * time.Millisecond,
+		})
+		if err != nil {
+			return nil, mcpTerminalExecToolOutput{}, mapMCPToolTaskSubmitError(err)
+		}
+		if !result.Completed {
+			return nil, mcpTerminalExecToolOutput{}, errors.New("terminalExec task did not complete")
+		}
+
+		task := result.Task
+		switch task.Status {
+		case grpcserver.TaskStatusSucceeded:
+			decoded := mcpTerminalExecToolOutput{}
+			if err := json.Unmarshal(task.ResultJSON, &decoded); err != nil {
+				return nil, mcpTerminalExecToolOutput{}, errors.New("invalid terminalExec result payload")
+			}
+			return nil, decoded, nil
+		case grpcserver.TaskStatusTimeout:
+			return nil, mcpTerminalExecToolOutput{}, errors.New("task timed out")
+		case grpcserver.TaskStatusCanceled:
+			return nil, mcpTerminalExecToolOutput{}, errors.New("task canceled")
+		case grpcserver.TaskStatusFailed:
+			return nil, mcpTerminalExecToolOutput{}, formatTaskFailureError(task)
+		default:
+			return nil, mcpTerminalExecToolOutput{}, fmt.Errorf("unexpected task status: %s", task.Status)
 		}
 	})
 
@@ -289,7 +451,7 @@ func mapMCPToolTaskSubmitError(err error) error {
 	}
 }
 
-func formatTaskTerminalError(task grpcserver.TaskSnapshot) error {
+func formatTaskFailureError(task grpcserver.TaskSnapshot) error {
 	errorCode := strings.TrimSpace(task.ErrorCode)
 	errorMessage := strings.TrimSpace(task.ErrorMessage)
 

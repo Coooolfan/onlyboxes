@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -12,9 +13,19 @@ import (
 )
 
 const (
-	defaultEchoTimeoutMS = 5000
-	minEchoTimeoutMS     = 1
-	maxEchoTimeoutMS     = 60000
+	defaultEchoTimeoutMS            = 5000
+	minEchoTimeoutMS                = 1
+	maxEchoTimeoutMS                = 60000
+	defaultTerminalTimeoutMS        = defaultTaskTimeoutMS
+	minTerminalTimeoutMS            = 1
+	maxTerminalTimeoutMS            = maxTaskTimeoutMS
+	terminalExecCapability          = "terminalExec"
+	terminalExecSessionNotFoundCode = "session_not_found"
+	terminalExecSessionBusyCode     = "session_busy"
+	terminalExecInvalidPayloadCode  = "invalid_payload"
+	terminalTaskNoWorkerCode        = "no_worker"
+	terminalTaskNoCapacityCode      = "no_capacity"
+	terminalTaskTimeoutCode         = "timeout"
 )
 
 type EchoDispatcher interface {
@@ -39,6 +50,33 @@ type echoCommandRequest struct {
 
 type echoCommandResponse struct {
 	Message string `json:"message"`
+}
+
+type terminalCommandRequest struct {
+	Command         string `json:"command"`
+	SessionID       string `json:"session_id,omitempty"`
+	CreateIfMissing bool   `json:"create_if_missing,omitempty"`
+	LeaseTTLSec     *int   `json:"lease_ttl_sec,omitempty"`
+	TimeoutMS       *int   `json:"timeout_ms,omitempty"`
+	RequestID       string `json:"request_id,omitempty"`
+}
+
+type terminalExecPayload struct {
+	Command         string `json:"command"`
+	SessionID       string `json:"session_id,omitempty"`
+	CreateIfMissing bool   `json:"create_if_missing,omitempty"`
+	LeaseTTLSec     *int   `json:"lease_ttl_sec,omitempty"`
+}
+
+type terminalCommandResponse struct {
+	SessionID          string `json:"session_id"`
+	Created            bool   `json:"created"`
+	Stdout             string `json:"stdout"`
+	Stderr             string `json:"stderr"`
+	ExitCode           int    `json:"exit_code"`
+	StdoutTruncated    bool   `json:"stdout_truncated"`
+	StderrTruncated    bool   `json:"stderr_truncated"`
+	LeaseExpiresUnixMS int64  `json:"lease_expires_unix_ms"`
 }
 
 func (h *WorkerHandler) EchoCommand(c *gin.Context) {
@@ -92,4 +130,102 @@ func (h *WorkerHandler) EchoCommand(c *gin.Context) {
 	c.JSON(http.StatusOK, echoCommandResponse{
 		Message: result,
 	})
+}
+
+func (h *WorkerHandler) TerminalCommand(c *gin.Context) {
+	if h.dispatcher == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "task dispatcher is unavailable"})
+		return
+	}
+
+	var req terminalCommandRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+	if strings.TrimSpace(req.Command) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "command is required"})
+		return
+	}
+
+	timeoutMS := defaultTerminalTimeoutMS
+	if req.TimeoutMS != nil {
+		timeoutMS = *req.TimeoutMS
+	}
+	if timeoutMS < minTerminalTimeoutMS || timeoutMS > maxTerminalTimeoutMS {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "timeout_ms must be between 1 and 600000"})
+		return
+	}
+
+	payloadJSON, err := json.Marshal(terminalExecPayload{
+		Command:         req.Command,
+		SessionID:       strings.TrimSpace(req.SessionID),
+		CreateIfMissing: req.CreateIfMissing,
+		LeaseTTLSec:     req.LeaseTTLSec,
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encode terminal payload"})
+		return
+	}
+
+	taskResult, err := h.dispatcher.SubmitTask(c.Request.Context(), grpcserver.SubmitTaskRequest{
+		Capability: terminalExecCapability,
+		InputJSON:  payloadJSON,
+		Mode:       grpcserver.TaskModeSync,
+		Timeout:    time.Duration(timeoutMS) * time.Millisecond,
+		RequestID:  strings.TrimSpace(req.RequestID),
+	})
+	if err != nil {
+		h.writeTaskSubmitError(c, err)
+		return
+	}
+	if !taskResult.Completed {
+		c.JSON(http.StatusGatewayTimeout, gin.H{"error": "task timed out"})
+		return
+	}
+
+	task := taskResult.Task
+	switch task.Status {
+	case grpcserver.TaskStatusSucceeded:
+		response := terminalCommandResponse{}
+		if err := json.Unmarshal(task.ResultJSON, &response); err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "invalid terminalExec result payload"})
+			return
+		}
+		c.JSON(http.StatusOK, response)
+	case grpcserver.TaskStatusTimeout:
+		c.JSON(http.StatusGatewayTimeout, gin.H{"error": "task timed out"})
+	case grpcserver.TaskStatusCanceled:
+		c.JSON(http.StatusConflict, gin.H{"error": "task canceled"})
+	case grpcserver.TaskStatusFailed:
+		statusCode, message := mapTerminalTaskFailure(task)
+		c.JSON(statusCode, gin.H{"error": message})
+	default:
+		c.JSON(http.StatusBadGateway, gin.H{"error": "unexpected task status"})
+	}
+}
+
+func mapTerminalTaskFailure(task grpcserver.TaskSnapshot) (int, string) {
+	code := strings.TrimSpace(task.ErrorCode)
+	message := strings.TrimSpace(task.ErrorMessage)
+	if message == "" {
+		message = "terminal command failed"
+	}
+
+	switch code {
+	case terminalExecSessionNotFoundCode:
+		return http.StatusNotFound, message
+	case terminalExecSessionBusyCode:
+		return http.StatusConflict, message
+	case terminalTaskNoWorkerCode:
+		return http.StatusServiceUnavailable, "no online worker supports requested capability"
+	case terminalTaskNoCapacityCode:
+		return http.StatusTooManyRequests, "no online worker capacity for requested capability"
+	case terminalExecInvalidPayloadCode:
+		return http.StatusBadRequest, message
+	case terminalTaskTimeoutCode, "deadline_exceeded":
+		return http.StatusGatewayTimeout, message
+	default:
+		return http.StatusBadGateway, message
+	}
 }
