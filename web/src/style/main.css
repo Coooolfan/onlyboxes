@@ -195,6 +195,12 @@ button:not(:disabled):hover {
   border: 1px solid var(--stroke);
 }
 
+.ghost-btn.danger {
+  color: #8f2626;
+  border-color: #f1c5c5;
+  background: #fff7f7;
+}
+
 .primary-btn {
   color: #ffffff;
   background: var(--accent);
@@ -341,6 +347,12 @@ th {
 td {
   font-size: 14px;
   color: #1b2230;
+}
+
+.row-actions {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
 }
 
 .node-main {

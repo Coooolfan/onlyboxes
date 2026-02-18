@@ -25,6 +25,7 @@ const (
 	defaultEchoTimeout            = 5 * time.Second
 	defaultCloseMessage           = "session closed"
 	defaultCapabilityMaxInflight  = 4
+	maxProvisioningCreateAttempts = 8
 	heartbeatAckEnqueueTimeout    = 500 * time.Millisecond
 	controlOutboundBufferSize     = 32
 	commandOutboundBufferSize     = 128
@@ -65,6 +66,7 @@ type RegistryService struct {
 	registryv1.UnimplementedWorkerRegistryServiceServer
 
 	store                *registry.Store
+	credentialsMu        sync.RWMutex
 	credentials          map[string]string
 	heartbeatIntervalSec int32
 	offlineTTLSec        int32
@@ -92,13 +94,13 @@ type RegistryService struct {
 
 func NewRegistryService(
 	store *registry.Store,
-	credentials map[string]string,
+	initialCredentials map[string]string,
 	heartbeatIntervalSec int32,
 	offlineTTLSec int32,
 	replayWindow time.Duration,
 ) *RegistryService {
-	credentialCopy := make(map[string]string, len(credentials))
-	for workerID, secret := range credentials {
+	credentialCopy := make(map[string]string, len(initialCredentials))
+	for workerID, secret := range initialCredentials {
 		credentialCopy[workerID] = secret
 	}
 	return &RegistryService{
@@ -146,7 +148,7 @@ func (s *RegistryService) Connect(stream grpc.BidiStreamingServer[registryv1.Con
 		return status.Error(codes.Unauthenticated, "timestamp is outside replay window")
 	}
 
-	secret, ok := s.credentials[hello.GetNodeId()]
+	secret, ok := s.getCredential(hello.GetNodeId())
 	if !ok {
 		return status.Error(codes.Unauthenticated, "unknown worker_id")
 	}
@@ -509,6 +511,125 @@ func mapStreamError(err error) error {
 		return mapped.Err()
 	}
 	return err
+}
+
+func (s *RegistryService) GetWorkerSecret(nodeID string) (string, bool) {
+	secret, ok := s.getCredential(nodeID)
+	if !ok || strings.TrimSpace(secret) == "" {
+		return "", false
+	}
+	return secret, true
+}
+
+func (s *RegistryService) CreateProvisionedWorker(now time.Time, offlineTTL time.Duration) (string, string, error) {
+	for attempt := 0; attempt < maxProvisioningCreateAttempts; attempt++ {
+		workerID, err := generateUUIDv4()
+		if err != nil {
+			return "", "", fmt.Errorf("generate worker_id: %w", err)
+		}
+		workerSecret, err := generateSecretHex(32)
+		if err != nil {
+			return "", "", fmt.Errorf("generate worker_secret: %w", err)
+		}
+
+		if !s.putCredentialIfAbsent(workerID, workerSecret) {
+			continue
+		}
+
+		seeded := s.store.SeedProvisionedWorkers([]registry.ProvisionedWorker{
+			{
+				NodeID: workerID,
+				Labels: map[string]string{
+					"source": "console-ui",
+				},
+			},
+		}, now, offlineTTL)
+		if seeded == 1 {
+			return workerID, workerSecret, nil
+		}
+
+		s.deleteCredential(workerID)
+	}
+	return "", "", errors.New("failed to allocate unique worker_id")
+}
+
+func (s *RegistryService) DeleteProvisionedWorker(nodeID string) bool {
+	trimmedNodeID := strings.TrimSpace(nodeID)
+	if trimmedNodeID == "" {
+		return false
+	}
+
+	if !s.deleteCredential(trimmedNodeID) {
+		return false
+	}
+
+	s.disconnectWorker(trimmedNodeID, "worker credential revoked")
+	s.store.Delete(trimmedNodeID)
+	return true
+}
+
+func (s *RegistryService) getCredential(nodeID string) (string, bool) {
+	trimmedNodeID := strings.TrimSpace(nodeID)
+	if trimmedNodeID == "" {
+		return "", false
+	}
+
+	s.credentialsMu.RLock()
+	defer s.credentialsMu.RUnlock()
+
+	secret, ok := s.credentials[trimmedNodeID]
+	return secret, ok
+}
+
+func (s *RegistryService) putCredentialIfAbsent(nodeID string, secret string) bool {
+	trimmedNodeID := strings.TrimSpace(nodeID)
+	trimmedSecret := strings.TrimSpace(secret)
+	if trimmedNodeID == "" || trimmedSecret == "" {
+		return false
+	}
+
+	s.credentialsMu.Lock()
+	defer s.credentialsMu.Unlock()
+
+	if _, exists := s.credentials[trimmedNodeID]; exists {
+		return false
+	}
+	s.credentials[trimmedNodeID] = trimmedSecret
+	return true
+}
+
+func (s *RegistryService) deleteCredential(nodeID string) bool {
+	trimmedNodeID := strings.TrimSpace(nodeID)
+	if trimmedNodeID == "" {
+		return false
+	}
+
+	s.credentialsMu.Lock()
+	defer s.credentialsMu.Unlock()
+
+	if _, exists := s.credentials[trimmedNodeID]; !exists {
+		return false
+	}
+	delete(s.credentials, trimmedNodeID)
+	return true
+}
+
+func (s *RegistryService) disconnectWorker(nodeID string, reason string) {
+	trimmedNodeID := strings.TrimSpace(nodeID)
+	if trimmedNodeID == "" {
+		return
+	}
+
+	s.sessionsMu.Lock()
+	session := s.sessions[trimmedNodeID]
+	if session != nil {
+		delete(s.sessions, trimmedNodeID)
+	}
+	s.sessionsMu.Unlock()
+
+	if session != nil {
+		session.close(status.Error(codes.PermissionDenied, reason))
+	}
 }
 
 func (s *RegistryService) getSession(nodeID string) *activeSession {

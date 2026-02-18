@@ -77,7 +77,7 @@ describe('App', () => {
   })
 
   it('shows login panel when dashboard APIs return 401', async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
       const url = String(input)
       if (url.startsWith('/api/v1/workers/stats')) {
         return unauthorizedResponse()
@@ -259,7 +259,7 @@ describe('App', () => {
   })
 
   it('returns to login when startup command fetch receives 401', async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
       const url = String(input)
       if (url.startsWith('/api/v1/workers/stats')) {
         return jsonResponse(statsPayload)
@@ -287,7 +287,7 @@ describe('App', () => {
   })
 
   it('shows API error when startup command fetch fails', async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
       const url = String(input)
       if (url.startsWith('/api/v1/workers/stats')) {
         return jsonResponse(statsPayload)
@@ -312,6 +312,116 @@ describe('App', () => {
 
     expect(wrapper.text()).toContain('failed to build startup command')
     expect(wrapper.text()).toContain('Copy Failed')
+    wrapper.unmount()
+  })
+
+  it('adds worker and copies startup command', async () => {
+    const writeText = vi.fn(async () => {})
+    Object.defineProperty(window.navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    })
+
+    const createCommand =
+      'WORKER_CONSOLE_GRPC_TARGET=127.0.0.1:50051 WORKER_ID=node-2 WORKER_SECRET=secret-2 WORKER_HEARTBEAT_INTERVAL_SEC=5 WORKER_HEARTBEAT_JITTER_PCT=20 go run ./cmd/worker-docker'
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(input)
+      if (url.startsWith('/api/v1/workers/stats')) {
+        return jsonResponse(statsPayload)
+      }
+      if (url.startsWith('/api/v1/workers?')) {
+        return jsonResponse(workersPayload)
+      }
+      if (url === '/api/v1/workers') {
+        return jsonResponse({ node_id: 'node-2', command: createCommand })
+      }
+      throw new Error(`unexpected url: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch)
+
+    const wrapper = mount(App)
+    await flushPromises()
+
+    const addBtn = wrapper.findAll('button').find((button) => button.text() === 'Add Worker')
+    expect(addBtn).toBeTruthy()
+    await addBtn?.trigger('click')
+    await flushPromises()
+
+    expect(writeText).toHaveBeenCalledWith(createCommand)
+
+    const createCall = fetchMock.mock.calls.find(([url]) => String(url) === '/api/v1/workers')
+    expect(createCall?.[1]).toEqual(expect.objectContaining({ method: 'POST', credentials: 'same-origin' }))
+
+    wrapper.unmount()
+  })
+
+  it('deletes worker and refreshes list', async () => {
+    vi.stubGlobal('confirm', vi.fn(() => true))
+
+    let deleted = false
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.startsWith('/api/v1/workers/stats')) {
+        return jsonResponse(statsPayload)
+      }
+      if (url.startsWith('/api/v1/workers?')) {
+        return deleted
+          ? jsonResponse({ items: [], total: 0, page: 1, page_size: 25 })
+          : jsonResponse(workersPayload)
+      }
+      if (url === '/api/v1/workers/node-1' && init?.method === 'DELETE') {
+        deleted = true
+        return noContentResponse()
+      }
+      throw new Error(`unexpected url: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch)
+
+    const wrapper = mount(App)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('worker-1')
+
+    const deleteBtn = wrapper.findAll('button').find((button) => button.text() === 'Delete')
+    expect(deleteBtn).toBeTruthy()
+    await deleteBtn?.trigger('click')
+    await flushPromises()
+
+    const deleteCall = fetchMock.mock.calls.find(
+      ([url, init]) => String(url) === '/api/v1/workers/node-1' && (init as RequestInit | undefined)?.method === 'DELETE',
+    )
+    expect(deleteCall?.[1]).toEqual(expect.objectContaining({ method: 'DELETE', credentials: 'same-origin' }))
+    expect(wrapper.text()).toContain('No workers found in current filter.')
+
+    wrapper.unmount()
+  })
+
+  it('returns to login when create worker receives 401', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.startsWith('/api/v1/workers/stats')) {
+        return jsonResponse(statsPayload)
+      }
+      if (url.startsWith('/api/v1/workers?')) {
+        return jsonResponse(workersPayload)
+      }
+      if (url === '/api/v1/workers') {
+        return unauthorizedResponse()
+      }
+      throw new Error(`unexpected url: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch)
+
+    const wrapper = mount(App)
+    await flushPromises()
+
+    const addBtn = wrapper.findAll('button').find((button) => button.text() === 'Add Worker')
+    expect(addBtn).toBeTruthy()
+    await addBtn?.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Sign In to Control Panel')
     wrapper.unmount()
   })
 })

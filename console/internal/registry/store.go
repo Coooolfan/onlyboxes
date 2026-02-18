@@ -150,6 +150,22 @@ func (s *Store) SeedProvisionedWorkers(workers []ProvisionedWorker, now time.Tim
 	return added
 }
 
+func (s *Store) Delete(nodeID string) bool {
+	trimmedNodeID := strings.TrimSpace(nodeID)
+	if trimmedNodeID == "" {
+		return false
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, exists := s.nodes[trimmedNodeID]; !exists {
+		return false
+	}
+	delete(s.nodes, trimmedNodeID)
+	return true
+}
+
 func (s *Store) TouchWithSession(nodeID string, sessionID string, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

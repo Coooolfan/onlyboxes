@@ -110,6 +110,78 @@ func TestConnectRejectsUnknownWorkerID(t *testing.T) {
 	}
 }
 
+func TestCreateProvisionedWorkerAllowsDynamicConnect(t *testing.T) {
+	store := registry.NewStore()
+	svc := NewRegistryService(store, map[string]string{}, 5, 15, 60*time.Second)
+
+	workerID, workerSecret, err := svc.CreateProvisionedWorker(time.Now(), 15*time.Second)
+	if err != nil {
+		t.Fatalf("create provisioned worker failed: %v", err)
+	}
+	if strings.TrimSpace(workerID) == "" || strings.TrimSpace(workerSecret) == "" {
+		t.Fatalf("expected non-empty worker_id and worker_secret")
+	}
+	if _, ok := svc.GetWorkerSecret(workerID); !ok {
+		t.Fatalf("expected secret lookup for worker %s", workerID)
+	}
+
+	client, cleanup := newBufClient(t, svc)
+	defer cleanup()
+
+	stream, _, err := connectWorker(client, workerID, workerSecret, "nonce-dynamic", []string{"echo"})
+	if err != nil {
+		t.Fatalf("dynamic worker connect failed: %v", err)
+	}
+	_ = stream.CloseSend()
+}
+
+func TestDeleteProvisionedWorkerDisconnectsSessionAndRevokesCredential(t *testing.T) {
+	store := registry.NewStore()
+	svc := NewRegistryService(store, map[string]string{}, 5, 15, 60*time.Second)
+
+	workerID, workerSecret, err := svc.CreateProvisionedWorker(time.Now(), 15*time.Second)
+	if err != nil {
+		t.Fatalf("create provisioned worker failed: %v", err)
+	}
+
+	client, cleanup := newBufClient(t, svc)
+	defer cleanup()
+
+	stream, sessionID, err := connectWorker(client, workerID, workerSecret, "nonce-delete-1", []string{"echo"})
+	if err != nil {
+		t.Fatalf("connect worker failed: %v", err)
+	}
+
+	if removed := svc.DeleteProvisionedWorker(workerID); !removed {
+		t.Fatalf("expected delete to return true")
+	}
+	if _, ok := svc.GetWorkerSecret(workerID); ok {
+		t.Fatalf("expected credential to be revoked")
+	}
+
+	if err := stream.Send(&registryv1.ConnectRequest{
+		Payload: &registryv1.ConnectRequest_Heartbeat{
+			Heartbeat: &registryv1.HeartbeatFrame{
+				NodeId:       workerID,
+				SessionId:    sessionID,
+				SentAtUnixMs: time.Now().UnixMilli(),
+			},
+		},
+	}); err != nil {
+		t.Fatalf("send heartbeat after delete failed: %v", err)
+	}
+
+	_, err = stream.Recv()
+	if code := status.Code(err); code != codes.PermissionDenied && code != codes.NotFound {
+		t.Fatalf("expected PermissionDenied or NotFound after delete, got %v", err)
+	}
+
+	_, _, err = connectWorker(client, workerID, workerSecret, "nonce-delete-2", []string{"echo"})
+	if status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("expected Unauthenticated on reconnect after delete, got %v", err)
+	}
+}
+
 func TestConnectRejectsInvalidSignature(t *testing.T) {
 	svc := NewRegistryService(registry.NewStore(), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
 	client, cleanup := newBufClient(t, svc)

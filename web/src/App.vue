@@ -56,6 +56,8 @@ const loginUsername = ref('')
 const loginPassword = ref('')
 const loginErrorMessage = ref('')
 const loginSubmitting = ref(false)
+const creatingWorker = ref(false)
+const deletingNodeID = ref('')
 const copyingNodeID = ref('')
 const copiedNodeID = ref('')
 const copyFailedNodeID = ref('')
@@ -294,6 +296,58 @@ async function fetchWorkerStartupCommand(nodeID: string): Promise<string> {
   return command
 }
 
+async function createWorkerWithStartupCommand(): Promise<WorkerStartupCommandResponse> {
+  const response = await fetch('/api/v1/workers', {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    credentials: 'same-origin',
+    body: '{}',
+  })
+
+  if (response.status === 401) {
+    throw new UnauthorizedError()
+  }
+  if (!response.ok) {
+    const apiError = await parseAPIError(response)
+    throw new Error(apiError)
+  }
+
+  const payload = (await response.json()) as WorkerStartupCommandResponse
+  const nodeID = payload.node_id?.trim()
+  const command = payload.command?.trim()
+  if (!nodeID || !command) {
+    throw new Error('API returned invalid worker startup payload.')
+  }
+  return {
+    node_id: nodeID,
+    command,
+  }
+}
+
+async function deleteWorkerByID(nodeID: string): Promise<void> {
+  const response = await fetch(`/api/v1/workers/${encodeURIComponent(nodeID)}`, {
+    method: 'DELETE',
+    headers: {
+      Accept: 'application/json',
+    },
+    credentials: 'same-origin',
+  })
+
+  if (response.status === 401) {
+    throw new UnauthorizedError()
+  }
+  if (response.status === 204) {
+    return
+  }
+  if (!response.ok) {
+    const apiError = await parseAPIError(response)
+    throw new Error(apiError)
+  }
+}
+
 async function parseAPIError(response: Response): Promise<string> {
   try {
     const payload = (await response.json()) as { error?: string }
@@ -344,6 +398,13 @@ function startupCopyButtonText(nodeID: string): string {
     return 'Copy Failed'
   }
   return 'Copy Start Cmd'
+}
+
+function deleteWorkerButtonText(nodeID: string): string {
+  if (deletingNodeID.value === nodeID) {
+    return 'Deleting...'
+  }
+  return 'Delete'
 }
 
 function scheduleCopyFeedbackReset(): void {
@@ -425,6 +486,70 @@ async function copyWorkerStartupCommand(nodeID: string): Promise<void> {
   } finally {
     if (copyingNodeID.value === nodeID) {
       copyingNodeID.value = ''
+    }
+  }
+}
+
+function confirmDeleteWorker(nodeID: string): boolean {
+  if (typeof window === 'undefined' || typeof window.confirm !== 'function') {
+    return true
+  }
+  return window.confirm(`Delete worker ${nodeID}?`)
+}
+
+async function createWorker(): Promise<void> {
+  if (creatingWorker.value) {
+    return
+  }
+
+  if (copyFeedbackTimer) {
+    clearTimeout(copyFeedbackTimer)
+    copyFeedbackTimer = null
+  }
+  copiedNodeID.value = ''
+  copyFailedNodeID.value = ''
+  errorMessage.value = ''
+  creatingWorker.value = true
+
+  try {
+    const payload = await createWorkerWithStartupCommand()
+    await writeTextToClipboard(payload.command)
+    copiedNodeID.value = payload.node_id
+    scheduleCopyFeedbackReset()
+    await loadDashboard()
+  } catch (error) {
+    if (isUnauthorizedError(error)) {
+      switchToUnauthenticatedState()
+      return
+    }
+    errorMessage.value = error instanceof Error ? error.message : 'Failed to create worker.'
+  } finally {
+    creatingWorker.value = false
+  }
+}
+
+async function deleteWorker(nodeID: string): Promise<void> {
+  if (!nodeID || deletingNodeID.value === nodeID || !confirmDeleteWorker(nodeID)) {
+    return
+  }
+
+  errorMessage.value = ''
+  deletingNodeID.value = nodeID
+  try {
+    await deleteWorkerByID(nodeID)
+    if (copiedNodeID.value === nodeID || copyFailedNodeID.value === nodeID || copyingNodeID.value === nodeID) {
+      resetCopyFeedback()
+    }
+    await loadDashboard()
+  } catch (error) {
+    if (isUnauthorizedError(error)) {
+      switchToUnauthenticatedState()
+      return
+    }
+    errorMessage.value = error instanceof Error ? error.message : 'Failed to delete worker.'
+  } finally {
+    if (deletingNodeID.value === nodeID) {
+      deletingNodeID.value = ''
     }
   }
 }
@@ -619,6 +744,9 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="header-actions">
+            <button class="primary-btn" type="button" :disabled="creatingWorker" @click="createWorker">
+              {{ creatingWorker ? 'Adding...' : 'Add Worker' }}
+            </button>
             <button class="ghost-btn" type="button" @click="toggleAutoRefresh">
               {{ autoRefreshEnabled ? 'Auto Refresh: ON' : 'Auto Refresh: OFF' }}
             </button>
@@ -681,7 +809,7 @@ onBeforeUnmount(() => {
                   <th>Status</th>
                   <th>Registered</th>
                   <th>Last Heartbeat</th>
-                  <th>Startup</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -702,14 +830,24 @@ onBeforeUnmount(() => {
                   <td>{{ formatDateTime(worker.registered_at) }}</td>
                   <td>{{ formatAge(worker.last_seen_at) }}</td>
                   <td>
-                    <button
-                      type="button"
-                      class="ghost-btn small"
-                      :disabled="copyingNodeID === worker.node_id"
-                      @click="copyWorkerStartupCommand(worker.node_id)"
-                    >
-                      {{ startupCopyButtonText(worker.node_id) }}
-                    </button>
+                    <div class="row-actions">
+                      <button
+                        type="button"
+                        class="ghost-btn small"
+                        :disabled="copyingNodeID === worker.node_id || deletingNodeID === worker.node_id"
+                        @click="copyWorkerStartupCommand(worker.node_id)"
+                      >
+                        {{ startupCopyButtonText(worker.node_id) }}
+                      </button>
+                      <button
+                        type="button"
+                        class="ghost-btn small danger"
+                        :disabled="deletingNodeID === worker.node_id"
+                        @click="deleteWorker(worker.node_id)"
+                      >
+                        {{ deleteWorkerButtonText(worker.node_id) }}
+                      </button>
+                    </div>
                   </td>
                 </tr>
               </tbody>

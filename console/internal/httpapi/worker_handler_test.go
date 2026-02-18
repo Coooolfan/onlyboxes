@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,49 @@ import (
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
 	"github.com/onlyboxes/onlyboxes/console/internal/registry"
 )
+
+type fakeWorkerProvisioning struct {
+	secrets      map[string]string
+	createNodeID string
+	createSecret string
+	createErr    error
+}
+
+func (p *fakeWorkerProvisioning) GetWorkerSecret(nodeID string) (string, bool) {
+	if p == nil || p.secrets == nil {
+		return "", false
+	}
+	secret, ok := p.secrets[nodeID]
+	return secret, ok
+}
+
+func (p *fakeWorkerProvisioning) CreateProvisionedWorker(_ time.Time, _ time.Duration) (string, string, error) {
+	if p == nil {
+		return "", "", errors.New("provisioning unavailable")
+	}
+	if p.createErr != nil {
+		return "", "", p.createErr
+	}
+	if p.createNodeID == "" || p.createSecret == "" {
+		return "", "", errors.New("missing create payload")
+	}
+	if p.secrets == nil {
+		p.secrets = make(map[string]string)
+	}
+	p.secrets[p.createNodeID] = p.createSecret
+	return p.createNodeID, p.createSecret, nil
+}
+
+func (p *fakeWorkerProvisioning) DeleteProvisionedWorker(nodeID string) bool {
+	if p == nil || p.secrets == nil {
+		return false
+	}
+	if _, ok := p.secrets[nodeID]; !ok {
+		return false
+	}
+	delete(p.secrets, nodeID)
+	return true
+}
 
 func TestListWorkersEmpty(t *testing.T) {
 	store := registry.NewStore()
@@ -108,12 +152,117 @@ func TestListWorkersRequiresAuthentication(t *testing.T) {
 	}
 }
 
+func TestCreateWorkerSuccess(t *testing.T) {
+	provisioning := &fakeWorkerProvisioning{
+		secrets:      map[string]string{},
+		createNodeID: "node-new-1",
+		createSecret: "secret-new-1",
+	}
+	handler := NewWorkerHandler(registry.NewStore(), 15*time.Second, nil, provisioning, ":50051")
+	router := NewRouter(handler, newTestConsoleAuth(t))
+	cookie := loginSessionCookie(t, router)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workers", strings.NewReader("{}"))
+	req.Header.Set("Content-Type", "application/json")
+	req.Host = "console.local:8089"
+	req.AddCookie(cookie)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d body=%s", res.Code, res.Body.String())
+	}
+
+	var payload workerStartupCommandResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if payload.NodeID != "node-new-1" {
+		t.Fatalf("expected node_id node-new-1, got %q", payload.NodeID)
+	}
+	if !strings.Contains(payload.Command, "WORKER_ID=node-new-1") {
+		t.Fatalf("expected WORKER_ID in command, got %q", payload.Command)
+	}
+	if !strings.Contains(payload.Command, "WORKER_SECRET=secret-new-1") {
+		t.Fatalf("expected WORKER_SECRET in command, got %q", payload.Command)
+	}
+}
+
+func TestCreateWorkerRequiresAuthentication(t *testing.T) {
+	handler := NewWorkerHandler(registry.NewStore(), 15*time.Second, nil, &fakeWorkerProvisioning{}, ":50051")
+	router := NewRouter(handler, newTestConsoleAuth(t))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workers", strings.NewReader("{}"))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d body=%s", res.Code, res.Body.String())
+	}
+}
+
+func TestDeleteWorkerSuccess(t *testing.T) {
+	provisioning := &fakeWorkerProvisioning{
+		secrets: map[string]string{"node-delete-1": "secret-delete-1"},
+	}
+	handler := NewWorkerHandler(registry.NewStore(), 15*time.Second, nil, provisioning, ":50051")
+	router := NewRouter(handler, newTestConsoleAuth(t))
+	cookie := loginSessionCookie(t, router)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/workers/node-delete-1", nil)
+	req.AddCookie(cookie)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d body=%s", res.Code, res.Body.String())
+	}
+	if _, ok := provisioning.GetWorkerSecret("node-delete-1"); ok {
+		t.Fatalf("expected worker to be removed from provisioning secrets")
+	}
+}
+
+func TestDeleteWorkerNotFound(t *testing.T) {
+	provisioning := &fakeWorkerProvisioning{
+		secrets: map[string]string{"node-delete-1": "secret-delete-1"},
+	}
+	handler := NewWorkerHandler(registry.NewStore(), 15*time.Second, nil, provisioning, ":50051")
+	router := NewRouter(handler, newTestConsoleAuth(t))
+	cookie := loginSessionCookie(t, router)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/workers/node-missing", nil)
+	req.AddCookie(cookie)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d body=%s", res.Code, res.Body.String())
+	}
+}
+
+func TestDeleteWorkerRequiresAuthentication(t *testing.T) {
+	provisioning := &fakeWorkerProvisioning{
+		secrets: map[string]string{"node-delete-1": "secret-delete-1"},
+	}
+	handler := NewWorkerHandler(registry.NewStore(), 15*time.Second, nil, provisioning, ":50051")
+	router := NewRouter(handler, newTestConsoleAuth(t))
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/workers/node-delete-1", nil)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d body=%s", res.Code, res.Body.String())
+	}
+}
+
 func TestGetWorkerStartupCommandSuccess(t *testing.T) {
 	handler := NewWorkerHandler(
 		registry.NewStore(),
 		15*time.Second,
 		nil,
-		map[string]string{"node-copy-1": "secret-copy-1"},
+		&fakeWorkerProvisioning{secrets: map[string]string{"node-copy-1": "secret-copy-1"}},
 		":50051",
 	)
 	router := NewRouter(handler, newTestConsoleAuth(t))
@@ -155,7 +304,7 @@ func TestGetWorkerStartupCommandRequiresAuthentication(t *testing.T) {
 		registry.NewStore(),
 		15*time.Second,
 		nil,
-		map[string]string{"node-copy-1": "secret-copy-1"},
+		&fakeWorkerProvisioning{secrets: map[string]string{"node-copy-1": "secret-copy-1"}},
 		":50051",
 	)
 	router := NewRouter(handler, newTestConsoleAuth(t))
@@ -174,7 +323,7 @@ func TestGetWorkerStartupCommandNotFound(t *testing.T) {
 		registry.NewStore(),
 		15*time.Second,
 		nil,
-		map[string]string{"node-copy-1": "secret-copy-1"},
+		&fakeWorkerProvisioning{secrets: map[string]string{"node-copy-1": "secret-copy-1"}},
 		":50051",
 	)
 	router := NewRouter(handler, newTestConsoleAuth(t))

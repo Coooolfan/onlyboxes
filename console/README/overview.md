@@ -5,6 +5,8 @@ The console service hosts:
 - REST APIs for worker data (dashboard, authentication required):
   - `GET /api/v1/workers` for paginated worker listing.
   - `GET /api/v1/workers/stats` for aggregated worker status metrics.
+  - `POST /api/v1/workers` for creating a provisioned worker (`worker_id` + `worker_secret`) and returning its startup command.
+  - `DELETE /api/v1/workers/:node_id` for deleting a provisioned worker and revoking its credential (online worker is disconnected immediately).
   - `GET /api/v1/workers/:node_id/startup-command` for on-demand copy of a worker startup command (includes `WORKER_ID` + `WORKER_SECRET` in command text only).
 - command APIs (execution, no authentication required):
   - `POST /api/v1/commands/echo` for blocking echo command execution.
@@ -42,9 +44,10 @@ The console service hosts:
   - `POST /api/v1/console/logout`.
 
 Credential behavior:
-- `console` generates worker credentials at startup (`worker_id` + `worker_secret`).
-- credentials are written to `CONSOLE_WORKER_CREDENTIALS_FILE` (default `./worker-credentials.json`).
-- all credentials are regenerated on every startup; old worker credentials become invalid immediately.
+- `console` starts with `0` workers.
+- worker credentials are generated on demand by dashboard/API `POST /api/v1/workers`.
+- credentials are in-memory only; restarting `console` clears all provisioned workers/credentials.
+- deleting a provisioned worker revokes the credential immediately; if the worker is online, its current session is closed.
 
 Defaults:
 - HTTP: `:8089`

@@ -21,12 +21,18 @@ const (
 )
 
 type WorkerHandler struct {
-	store            *registry.Store
-	offlineTTL       time.Duration
-	dispatcher       CommandDispatcher
-	workerSecretByID map[string]string
-	consoleGRPCAddr  string
-	nowFn            func() time.Time
+	store           *registry.Store
+	offlineTTL      time.Duration
+	dispatcher      CommandDispatcher
+	provisioning    WorkerProvisioning
+	consoleGRPCAddr string
+	nowFn           func() time.Time
+}
+
+type WorkerProvisioning interface {
+	GetWorkerSecret(nodeID string) (string, bool)
+	CreateProvisionedWorker(now time.Time, offlineTTL time.Duration) (string, string, error)
+	DeleteProvisionedWorker(nodeID string) bool
 }
 
 type workerItem struct {
@@ -57,21 +63,16 @@ func NewWorkerHandler(
 	store *registry.Store,
 	offlineTTL time.Duration,
 	dispatcher CommandDispatcher,
-	workerSecretByID map[string]string,
+	provisioning WorkerProvisioning,
 	consoleGRPCAddr string,
 ) *WorkerHandler {
-	secretByIDCopy := make(map[string]string, len(workerSecretByID))
-	for workerID, workerSecret := range workerSecretByID {
-		secretByIDCopy[workerID] = workerSecret
-	}
-
 	return &WorkerHandler{
-		store:            store,
-		offlineTTL:       offlineTTL,
-		dispatcher:       dispatcher,
-		workerSecretByID: secretByIDCopy,
-		consoleGRPCAddr:  strings.TrimSpace(consoleGRPCAddr),
-		nowFn:            time.Now,
+		store:           store,
+		offlineTTL:      offlineTTL,
+		dispatcher:      dispatcher,
+		provisioning:    provisioning,
+		consoleGRPCAddr: strings.TrimSpace(consoleGRPCAddr),
+		nowFn:           time.Now,
 	}
 }
 
@@ -91,6 +92,8 @@ func NewRouter(workerHandler *WorkerHandler, consoleAuth *ConsoleAuth) *gin.Engi
 	if consoleAuth == nil {
 		api.GET("/workers", workerHandler.ListWorkers)
 		api.GET("/workers/stats", workerHandler.WorkerStats)
+		api.POST("/workers", workerHandler.CreateWorker)
+		api.DELETE("/workers/:node_id", workerHandler.DeleteWorker)
 		return router
 	}
 
@@ -101,6 +104,8 @@ func NewRouter(workerHandler *WorkerHandler, consoleAuth *ConsoleAuth) *gin.Engi
 	dashboard.Use(consoleAuth.RequireAuth())
 	dashboard.GET("/workers", workerHandler.ListWorkers)
 	dashboard.GET("/workers/stats", workerHandler.WorkerStats)
+	dashboard.POST("/workers", workerHandler.CreateWorker)
+	dashboard.DELETE("/workers/:node_id", workerHandler.DeleteWorker)
 	dashboard.GET("/workers/:node_id/startup-command", workerHandler.GetWorkerStartupCommand)
 
 	return router
@@ -151,6 +156,41 @@ func (h *WorkerHandler) ListWorkers(c *gin.Context) {
 	})
 }
 
+func (h *WorkerHandler) CreateWorker(c *gin.Context) {
+	if h.provisioning == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "worker provisioning is unavailable"})
+		return
+	}
+
+	nodeID, workerSecret, err := h.provisioning.CreateProvisionedWorker(h.nowFn(), h.offlineTTL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create worker"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, workerStartupCommandResponse{
+		NodeID:  nodeID,
+		Command: h.buildWorkerStartupCommand(nodeID, workerSecret, c.Request),
+	})
+}
+
+func (h *WorkerHandler) DeleteWorker(c *gin.Context) {
+	nodeID := strings.TrimSpace(c.Param("node_id"))
+	if nodeID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "node_id is required"})
+		return
+	}
+	if h.provisioning == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "worker provisioning is unavailable"})
+		return
+	}
+	if !h.provisioning.DeleteProvisionedWorker(nodeID) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "worker not found"})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 func (h *WorkerHandler) GetWorkerStartupCommand(c *gin.Context) {
 	nodeID := strings.TrimSpace(c.Param("node_id"))
 	if nodeID == "" {
@@ -158,25 +198,32 @@ func (h *WorkerHandler) GetWorkerStartupCommand(c *gin.Context) {
 		return
 	}
 
-	workerSecret, ok := h.workerSecretByID[nodeID]
+	if h.provisioning == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "worker provisioning is unavailable"})
+		return
+	}
+
+	workerSecret, ok := h.provisioning.GetWorkerSecret(nodeID)
 	if !ok || strings.TrimSpace(workerSecret) == "" {
 		c.JSON(http.StatusNotFound, gin.H{"error": "worker not found"})
 		return
 	}
 
-	command := fmt.Sprintf(
+	c.JSON(http.StatusOK, workerStartupCommandResponse{
+		NodeID:  nodeID,
+		Command: h.buildWorkerStartupCommand(nodeID, workerSecret, c.Request),
+	})
+}
+
+func (h *WorkerHandler) buildWorkerStartupCommand(nodeID string, workerSecret string, req *http.Request) string {
+	return fmt.Sprintf(
 		"WORKER_CONSOLE_GRPC_TARGET=%s WORKER_ID=%s WORKER_SECRET=%s WORKER_HEARTBEAT_INTERVAL_SEC=%d WORKER_HEARTBEAT_JITTER_PCT=%d go run ./cmd/worker-docker",
-		resolveWorkerGRPCTarget(h.consoleGRPCAddr, c.Request),
+		resolveWorkerGRPCTarget(h.consoleGRPCAddr, req),
 		nodeID,
 		workerSecret,
 		startupCommandHeartbeatInterval,
 		startupCommandHeartbeatJitter,
 	)
-
-	c.JSON(http.StatusOK, workerStartupCommandResponse{
-		NodeID:  nodeID,
-		Command: command,
-	})
 }
 
 func parsePositiveIntQuery(c *gin.Context, key string, defaultValue int) (int, bool) {

@@ -228,3 +228,24 @@ func TestStoreListOnlineByCapability(t *testing.T) {
 		t.Fatalf("expected echo-node, got %s", workers[0].NodeID)
 	}
 }
+
+func TestStoreDelete(t *testing.T) {
+	store := NewStore()
+	now := time.Unix(1_700_006_000, 0)
+
+	store.SeedProvisionedWorkers([]ProvisionedWorker{
+		{NodeID: "node-delete-1"},
+	}, now, 15*time.Second)
+
+	if removed := store.Delete("node-delete-1"); !removed {
+		t.Fatalf("expected delete to return true")
+	}
+
+	if removed := store.Delete("node-delete-1"); removed {
+		t.Fatalf("expected delete on missing node to return false")
+	}
+
+	if removed := store.Delete("   "); removed {
+		t.Fatalf("expected delete on empty node_id to return false")
+	}
+}
