@@ -37,7 +37,36 @@ export interface WorkerStartupCommandResponse {
   command: string
 }
 
-export interface MCPTokenListResponse {
-  tokens: string[]
+export interface TrustedTokenItem {
+  id: string
+  name: string
+  token_masked: string
+  created_at: string
+  updated_at: string
+}
+
+export interface TrustedTokenListResponse {
+  items: TrustedTokenItem[]
   total: number
+}
+
+export interface TrustedTokenCreateResponse {
+  id: string
+  name: string
+  token: string
+  token_masked: string
+  generated: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface TrustedTokenValueResponse {
+  id: string
+  name: string
+  token: string
+}
+
+export interface TrustedTokenCreateInput {
+  name: string
+  token?: string
 }

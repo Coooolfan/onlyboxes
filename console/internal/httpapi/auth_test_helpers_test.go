@@ -24,14 +24,23 @@ func newTestConsoleAuth(t *testing.T) *ConsoleAuth {
 }
 
 func newTestMCPAuth() *MCPAuth {
-	return NewMCPAuth([]string{testMCPToken, testMCPTokenB})
+	auth := NewMCPAuth()
+	tokenA := testMCPToken
+	tokenB := testMCPTokenB
+	if _, _, err := auth.createToken("token-a", &tokenA); err != nil {
+		panic(err)
+	}
+	if _, _, err := auth.createToken("token-b", &tokenB); err != nil {
+		panic(err)
+	}
+	return auth
 }
 
 func setMCPTokenHeader(req *http.Request) {
 	if req == nil {
 		return
 	}
-	req.Header.Set(mcpTokenHeader, testMCPToken)
+	req.Header.Set(trustedTokenHeader, testMCPToken)
 }
 
 func loginSessionCookie(t *testing.T, router http.Handler) *http.Cookie {

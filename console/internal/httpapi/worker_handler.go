@@ -81,7 +81,7 @@ func NewRouter(workerHandler *WorkerHandler, consoleAuth *ConsoleAuth, mcpAuth *
 	router := gin.New()
 	router.Use(gin.Recovery())
 	if mcpAuth == nil {
-		mcpAuth = NewMCPAuth(nil)
+		mcpAuth = NewMCPAuth()
 	}
 	router.Any("/mcp", mcpAuth.RequireToken(), gin.WrapH(NewMCPHandler(workerHandler.dispatcher)))
 
@@ -112,7 +112,10 @@ func NewRouter(workerHandler *WorkerHandler, consoleAuth *ConsoleAuth, mcpAuth *
 	dashboard.POST("/workers", workerHandler.CreateWorker)
 	dashboard.DELETE("/workers/:node_id", workerHandler.DeleteWorker)
 	dashboard.GET("/workers/:node_id/startup-command", workerHandler.GetWorkerStartupCommand)
-	dashboard.GET("/console/mcp/tokens", mcpAuth.ListTokens)
+	dashboard.GET("/console/tokens", mcpAuth.ListTokens)
+	dashboard.POST("/console/tokens", mcpAuth.CreateToken)
+	dashboard.DELETE("/console/tokens/:token_id", mcpAuth.DeleteToken)
+	dashboard.GET("/console/tokens/:token_id/value", mcpAuth.GetTokenValue)
 
 	return router
 }

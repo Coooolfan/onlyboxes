@@ -132,6 +132,21 @@ func TestRegisterAndListLifecycle(t *testing.T) {
 	}
 }
 
+func TestLegacyTokenHeaderIsRejected(t *testing.T) {
+	handler := NewWorkerHandler(registry.NewStore(), 15*time.Second, nil, nil, ":50051")
+	router := NewRouter(handler, newTestConsoleAuth(t), newTestMCPAuth())
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/commands/echo", strings.NewReader(`{"message":"hello"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Onlyboxes-MCP-Token", testMCPToken)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for legacy token header, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestEchoCommandLifecycle(t *testing.T) {
 	store := registry.NewStore()
 	const workerID = "node-echo-1"
@@ -1326,7 +1341,7 @@ func TestTokenIsolationLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build cross-token get task request failed: %v", err)
 	}
-	getCrossReq.Header.Set(mcpTokenHeader, testMCPTokenB)
+	getCrossReq.Header.Set(trustedTokenHeader, testMCPTokenB)
 	getCrossRes, err := http.DefaultClient.Do(getCrossReq)
 	if err != nil {
 		t.Fatalf("cross-token get task failed: %v", err)
@@ -1340,7 +1355,7 @@ func TestTokenIsolationLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build cross-token cancel task request failed: %v", err)
 	}
-	cancelCrossReq.Header.Set(mcpTokenHeader, testMCPTokenB)
+	cancelCrossReq.Header.Set(trustedTokenHeader, testMCPTokenB)
 	cancelCrossRes, err := http.DefaultClient.Do(cancelCrossReq)
 	if err != nil {
 		t.Fatalf("cross-token cancel task failed: %v", err)
@@ -1522,7 +1537,7 @@ func (t *mcpTokenTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	cloned := req.Clone(req.Context())
 	cloned.Header = req.Header.Clone()
 	if strings.TrimSpace(t.token) != "" {
-		cloned.Header.Set(mcpTokenHeader, strings.TrimSpace(t.token))
+		cloned.Header.Set(trustedTokenHeader, strings.TrimSpace(t.token))
 	}
 	return base.RoundTrip(cloned)
 }
@@ -1548,7 +1563,7 @@ func postJSONWithToken(url string, body string, token string) (*http.Response, e
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	if strings.TrimSpace(token) != "" {
-		req.Header.Set(mcpTokenHeader, strings.TrimSpace(token))
+		req.Header.Set(trustedTokenHeader, strings.TrimSpace(token))
 	}
 	return http.DefaultClient.Do(req)
 }

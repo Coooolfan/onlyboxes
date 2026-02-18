@@ -4,9 +4,9 @@ import { useRoute, useRouter } from 'vue-router'
 
 import ErrorBanner from '@/components/common/ErrorBanner.vue'
 import DashboardHeader from '@/components/dashboard/DashboardHeader.vue'
-import McpTokensPanel from '@/components/dashboard/McpTokensPanel.vue'
 import PaginationBar from '@/components/dashboard/PaginationBar.vue'
 import StatsGrid from '@/components/dashboard/StatsGrid.vue'
+import TrustedTokensPanel from '@/components/dashboard/TrustedTokensPanel.vue'
 import WorkersTable from '@/components/dashboard/WorkersTable.vue'
 import WorkersToolbar from '@/components/dashboard/WorkersToolbar.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -137,11 +137,16 @@ onBeforeUnmount(() => {
       :stale-workers-label="workersStore.staleWorkersLabel"
     />
 
-    <McpTokensPanel
-      :tokens="workersStore.mcpTokens"
-      :copying-token="workersStore.copyingMcpToken"
-      :copy-button-text="workersStore.mcpTokenCopyButtonText"
-      @copy-token="workersStore.copyMcpToken"
+    <TrustedTokensPanel
+      :tokens="workersStore.trustedTokens"
+      :creating-token="workersStore.creatingTrustedToken"
+      :deleting-token-id="workersStore.deletingTrustedTokenID"
+      :copying-token-id="workersStore.copyingTrustedTokenID"
+      :copy-button-text="workersStore.trustedTokenCopyButtonText"
+      :delete-button-text="workersStore.trustedTokenDeleteButtonText"
+      @create-token="workersStore.createTrustedToken"
+      @copy-token="workersStore.copyTrustedToken"
+      @delete-token="workersStore.deleteTrustedToken"
     />
 
     <section class="board-panel">

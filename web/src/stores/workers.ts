@@ -2,17 +2,21 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 
 import router from '@/router'
+import { isUnauthorizedError } from '@/services/http'
 import {
+  createTrustedTokenAPI,
   createWorkerAPI,
+  deleteTrustedTokenAPI,
   deleteWorkerAPI,
-  fetchMcpTokensAPI,
-  fetchWorkerStartupCommandAPI,
+  fetchTrustedTokenValueAPI,
+  fetchTrustedTokensAPI,
   fetchWorkersAPI,
+  fetchWorkerStartupCommandAPI,
   fetchWorkerStatsAPI,
 } from '@/services/workers.api'
-import { isUnauthorizedError } from '@/services/http'
 import { useAuthStore } from '@/stores/auth'
 import type {
+  TrustedTokenItem,
   WorkerItem,
   WorkerListResponse,
   WorkerStartupCommandResponse,
@@ -91,18 +95,20 @@ export const useWorkersStore = defineStore('workers', () => {
   const copyingNodeID = ref('')
   const copiedNodeID = ref('')
   const copyFailedNodeID = ref('')
-  const copyingMcpToken = ref('')
-  const copiedMcpToken = ref('')
+  const creatingTrustedToken = ref(false)
+  const deletingTrustedTokenID = ref('')
+  const copyingTrustedTokenID = ref('')
+  const copiedTrustedTokenID = ref('')
 
   const dashboardStats = ref<WorkerStatsResponse>(emptyStats())
   const currentList = ref<WorkerListResponse | null>(null)
-  const mcpTokens = ref<string[]>([])
+  const trustedTokens = ref<TrustedTokenItem[]>([])
 
   let timer: ReturnType<typeof setInterval> | null = null
   let loadRequestSerial = 0
   let activeController: AbortController | null = null
   let copyFeedbackTimer: ReturnType<typeof setTimeout> | null = null
-  let mcpTokenCopyFeedbackTimer: ReturnType<typeof setTimeout> | null = null
+  let trustedTokenCopyFeedbackTimer: ReturnType<typeof setTimeout> | null = null
 
   const totalWorkers = computed(() => dashboardStats.value.total)
   const onlineWorkers = computed(() => dashboardStats.value.online)
@@ -147,29 +153,29 @@ export const useWorkersStore = defineStore('workers', () => {
     copyFailedNodeID.value = ''
   }
 
-  function scheduleMcpTokenCopyFeedbackReset(): void {
-    if (mcpTokenCopyFeedbackTimer) {
-      clearTimeout(mcpTokenCopyFeedbackTimer)
+  function scheduleTrustedTokenCopyFeedbackReset(): void {
+    if (trustedTokenCopyFeedbackTimer) {
+      clearTimeout(trustedTokenCopyFeedbackTimer)
     }
-    mcpTokenCopyFeedbackTimer = setTimeout(() => {
-      copiedMcpToken.value = ''
-      mcpTokenCopyFeedbackTimer = null
+    trustedTokenCopyFeedbackTimer = setTimeout(() => {
+      copiedTrustedTokenID.value = ''
+      trustedTokenCopyFeedbackTimer = null
     }, 1500)
   }
 
-  function resetMcpTokenCopyFeedback(): void {
-    if (mcpTokenCopyFeedbackTimer) {
-      clearTimeout(mcpTokenCopyFeedbackTimer)
-      mcpTokenCopyFeedbackTimer = null
+  function resetTrustedTokenCopyFeedback(): void {
+    if (trustedTokenCopyFeedbackTimer) {
+      clearTimeout(trustedTokenCopyFeedbackTimer)
+      trustedTokenCopyFeedbackTimer = null
     }
-    copyingMcpToken.value = ''
-    copiedMcpToken.value = ''
+    copyingTrustedTokenID.value = ''
+    copiedTrustedTokenID.value = ''
   }
 
   function resetDashboard(): void {
     currentList.value = null
     dashboardStats.value = emptyStats()
-    mcpTokens.value = []
+    trustedTokens.value = []
     refreshedAt.value = null
     page.value = 1
   }
@@ -178,7 +184,7 @@ export const useWorkersStore = defineStore('workers', () => {
     const authStore = useAuthStore()
     authStore.logoutLocal()
     resetCopyFeedback()
-    resetMcpTokenCopyFeedback()
+    resetTrustedTokenCopyFeedback()
     resetDashboard()
     errorMessage.value = ''
 
@@ -200,10 +206,10 @@ export const useWorkersStore = defineStore('workers', () => {
     errorMessage.value = ''
 
     try {
-      const [statsRes, listRes, mcpTokensRes] = await Promise.all([
+      const [statsRes, listRes, trustedTokensRes] = await Promise.all([
         fetchWorkerStatsAPI(staleAfterDefaultSec, controller.signal),
         fetchWorkersAPI(statusFilter.value, page.value, pageSize, controller.signal),
-        fetchMcpTokensAPI(controller.signal),
+        fetchTrustedTokensAPI(controller.signal),
       ])
 
       if (requestSerial !== loadRequestSerial || controller.signal.aborted) {
@@ -212,7 +218,7 @@ export const useWorkersStore = defineStore('workers', () => {
 
       dashboardStats.value = statsRes
       currentList.value = listRes
-      mcpTokens.value = mcpTokensRes.tokens ?? []
+      trustedTokens.value = trustedTokensRes.items ?? []
       refreshedAt.value = parseTimestamp(statsRes.generated_at) ?? new Date()
 
       if (page.value > totalPages.value) {
@@ -297,14 +303,21 @@ export const useWorkersStore = defineStore('workers', () => {
     return 'Delete'
   }
 
-  function mcpTokenCopyButtonText(token: string): string {
-    if (copyingMcpToken.value === token) {
+  function trustedTokenCopyButtonText(tokenID: string): string {
+    if (copyingTrustedTokenID.value === tokenID) {
       return 'Copying...'
     }
-    if (copiedMcpToken.value === token) {
+    if (copiedTrustedTokenID.value === tokenID) {
       return 'Copied'
     }
-    return 'Copy Token'
+    return 'Copy'
+  }
+
+  function trustedTokenDeleteButtonText(tokenID: string): string {
+    if (deletingTrustedTokenID.value === tokenID) {
+      return 'Deleting...'
+    }
+    return 'Delete'
   }
 
   function formatDateTime(value: string): string {
@@ -466,29 +479,99 @@ export const useWorkersStore = defineStore('workers', () => {
     }
   }
 
-  async function copyMcpToken(token: string): Promise<void> {
-    const target = token.trim()
-    if (!target || copyingMcpToken.value === target) {
+  async function createTrustedToken(payload: { name: string; token?: string }): Promise<void> {
+    if (creatingTrustedToken.value) {
       return
     }
 
-    if (mcpTokenCopyFeedbackTimer) {
-      clearTimeout(mcpTokenCopyFeedbackTimer)
-      mcpTokenCopyFeedbackTimer = null
+    const name = payload.name.trim()
+    const token = payload.token?.trim() ?? ''
+    if (!name) {
+      errorMessage.value = 'name is required'
+      return
     }
-    copiedMcpToken.value = ''
+
+    creatingTrustedToken.value = true
     errorMessage.value = ''
-    copyingMcpToken.value = target
 
     try {
-      await writeTextToClipboard(target)
-      copiedMcpToken.value = target
-      scheduleMcpTokenCopyFeedbackReset()
+      await createTrustedTokenAPI({
+        name,
+        token: token === '' ? undefined : token,
+      })
+      await loadDashboard()
     } catch (error) {
-      errorMessage.value = error instanceof Error ? error.message : 'Failed to copy MCP token.'
+      if (isUnauthorizedError(error)) {
+        await redirectToLogin()
+        return
+      }
+      errorMessage.value = error instanceof Error ? error.message : 'Failed to create trusted token.'
     } finally {
-      if (copyingMcpToken.value === target) {
-        copyingMcpToken.value = ''
+      creatingTrustedToken.value = false
+    }
+  }
+
+  function confirmDeleteTrustedToken(tokenID: string): boolean {
+    if (typeof window === 'undefined' || typeof window.confirm !== 'function') {
+      return true
+    }
+    return window.confirm(`Delete token ${tokenID}?`)
+  }
+
+  async function deleteTrustedToken(tokenID: string): Promise<void> {
+    if (!tokenID || deletingTrustedTokenID.value === tokenID || !confirmDeleteTrustedToken(tokenID)) {
+      return
+    }
+
+    deletingTrustedTokenID.value = tokenID
+    errorMessage.value = ''
+    try {
+      await deleteTrustedTokenAPI(tokenID)
+      if (copiedTrustedTokenID.value === tokenID || copyingTrustedTokenID.value === tokenID) {
+        resetTrustedTokenCopyFeedback()
+      }
+      await loadDashboard()
+    } catch (error) {
+      if (isUnauthorizedError(error)) {
+        await redirectToLogin()
+        return
+      }
+      errorMessage.value = error instanceof Error ? error.message : 'Failed to delete trusted token.'
+    } finally {
+      if (deletingTrustedTokenID.value === tokenID) {
+        deletingTrustedTokenID.value = ''
+      }
+    }
+  }
+
+  async function copyTrustedToken(tokenID: string): Promise<void> {
+    const targetID = tokenID.trim()
+    if (!targetID || copyingTrustedTokenID.value === targetID) {
+      return
+    }
+
+    if (trustedTokenCopyFeedbackTimer) {
+      clearTimeout(trustedTokenCopyFeedbackTimer)
+      trustedTokenCopyFeedbackTimer = null
+    }
+    copiedTrustedTokenID.value = ''
+    errorMessage.value = ''
+    copyingTrustedTokenID.value = targetID
+
+    try {
+      const payload = await fetchTrustedTokenValueAPI(targetID)
+      await writeTextToClipboard(payload.token)
+      copiedTrustedTokenID.value = targetID
+      scheduleTrustedTokenCopyFeedbackReset()
+    } catch (error) {
+      if (isUnauthorizedError(error)) {
+        await redirectToLogin()
+        return
+      }
+      errorMessage.value = error instanceof Error ? error.message : 'Failed to copy trusted token.'
+    } finally {
+      if (copyingTrustedTokenID.value === targetID) {
+        copyingTrustedTokenID.value = ''
       }
     }
   }
@@ -537,7 +620,7 @@ export const useWorkersStore = defineStore('workers', () => {
     activeController?.abort()
     stopAutoRefresh()
     resetCopyFeedback()
-    resetMcpTokenCopyFeedback()
+    resetTrustedTokenCopyFeedback()
   }
 
   return {
@@ -553,11 +636,13 @@ export const useWorkersStore = defineStore('workers', () => {
     copyingNodeID,
     copiedNodeID,
     copyFailedNodeID,
-    copyingMcpToken,
-    copiedMcpToken,
+    creatingTrustedToken,
+    deletingTrustedTokenID,
+    copyingTrustedTokenID,
+    copiedTrustedTokenID,
     dashboardStats,
     currentList,
-    mcpTokens,
+    trustedTokens,
     totalWorkers,
     onlineWorkers,
     offlineWorkers,
@@ -575,7 +660,8 @@ export const useWorkersStore = defineStore('workers', () => {
     nextPage,
     startupCopyButtonText,
     deleteWorkerButtonText,
-    mcpTokenCopyButtonText,
+    trustedTokenCopyButtonText,
+    trustedTokenDeleteButtonText,
     formatDateTime,
     formatAge,
     formatCapabilities,
@@ -583,7 +669,9 @@ export const useWorkersStore = defineStore('workers', () => {
     copyWorkerStartupCommand,
     createWorker,
     deleteWorker,
-    copyMcpToken,
+    createTrustedToken,
+    deleteTrustedToken,
+    copyTrustedToken,
     toggleAutoRefresh,
     startAutoRefresh,
     stopAutoRefresh,

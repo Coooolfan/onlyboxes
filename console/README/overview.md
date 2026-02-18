@@ -14,15 +14,14 @@ The console service hosts:
   - `POST /api/v1/tasks` for sync/async/auto task submission.
   - `GET /api/v1/tasks/:task_id` for task status and result lookup.
   - `POST /api/v1/tasks/:task_id/cancel` for best-effort task cancellation.
-  - request header: `X-Onlyboxes-MCP-Token: <token>` (must be in whitelist).
+  - request header: `X-Onlyboxes-Token: <token>` (must be in whitelist).
   - token isolation: each token is treated as an isolated user boundary for task/session resources.
   - task visibility: task lookup/cancel is owner-scoped by token; cross-token access returns `404`.
   - task idempotency: `request_id` de-duplication is scoped per token (same `request_id` across different tokens does not conflict).
 - MCP Streamable HTTP API (token whitelist required):
   - `POST /mcp` for JSON-RPC requests over Streamable HTTP transport.
-  - request header: `X-Onlyboxes-MCP-Token: <token>` (must be in whitelist).
-  - whitelist env: `CONSOLE_MCP_ALLOWED_TOKENS` (comma-separated tokens).
-  - if whitelist is empty (unset/blank/parsed-empty), all `/mcp` requests are rejected with `401`.
+  - request header: `X-Onlyboxes-Token: <token>` (must be in whitelist).
+  - if whitelist is empty (no tokens configured in dashboard), all `/mcp` requests are rejected with `401`.
   - `GET /mcp` is intentionally unsupported and returns `405` with `Allow: POST`.
   - stream behavior is JSON response only (`application/json`), no SSE streaming channel.
   - tool argument validation is strict (`additionalProperties=false`): unknown input fields are rejected with JSON-RPC `invalid params (-32602)`.
@@ -59,7 +58,11 @@ The console service hosts:
 - dashboard authentication APIs:
   - `POST /api/v1/console/login` with `{"username":"...","password":"..."}`.
   - `POST /api/v1/console/logout`.
-  - `GET /api/v1/console/mcp/tokens` for listing MCP whitelist tokens (requires dashboard auth).
+  - token management (requires dashboard auth):
+    - `GET /api/v1/console/tokens` list token metadata (`id`, `name`, masked token).
+    - `POST /api/v1/console/tokens` create token (manual token or auto-generated).
+    - `GET /api/v1/console/tokens/:token_id/value` fetch token plaintext by id.
+    - `DELETE /api/v1/console/tokens/:token_id` delete token.
 
 Credential behavior:
 - `console` starts with `0` workers.
@@ -79,10 +82,10 @@ Dashboard credential behavior:
 - password env: `CONSOLE_DASHBOARD_PASSWORD`
 - if either env var is missing, only the missing value is randomly generated.
 
-MCP token whitelist behavior:
-- token env: `CONSOLE_MCP_ALLOWED_TOKENS` (comma-separated, trims whitespace, removes empty items, de-duplicates while preserving order).
-- startup logs whitelist token count only (never logs token plaintext).
-- if resolved token list is empty, MCP is effectively disabled (`/mcp` always returns `401`).
+Trusted token behavior:
+- tokens are in-memory only and managed by dashboard APIs.
+- token metadata includes `name` (case-insensitive unique) and token value.
+- if token list is empty, MCP and execution APIs are effectively disabled (`401`).
 - every accepted token is treated as a distinct user for task and terminal-session ownership.
 - task and session resources are isolated across tokens (`task not found` / `session_not_found` on cross-token access).
 - `request_id` idempotency keys are isolated per token.
@@ -93,18 +96,18 @@ MCP minimal call sequence (initialize + tools/list + tools/call):
 curl -X POST "http://127.0.0.1:8089/mcp" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
-  -H "X-Onlyboxes-MCP-Token: <mcp_token>" \
+  -H "X-Onlyboxes-Token: <trusted_token>" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"manual-client","version":"0.1.0"}}}'
 
 curl -X POST "http://127.0.0.1:8089/mcp" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
-  -H "X-Onlyboxes-MCP-Token: <mcp_token>" \
+  -H "X-Onlyboxes-Token: <trusted_token>" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
 
 curl -X POST "http://127.0.0.1:8089/mcp" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
-  -H "X-Onlyboxes-MCP-Token: <mcp_token>" \
+  -H "X-Onlyboxes-Token: <trusted_token>" \
   -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"pythonExec","arguments":{"code":"print(1)"}}}'
 ```

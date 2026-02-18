@@ -339,12 +339,21 @@ func TestGetWorkerStartupCommandNotFound(t *testing.T) {
 	}
 }
 
-func TestListMCPAllowedTokensSuccess(t *testing.T) {
+func TestListTrustedTokensSuccess(t *testing.T) {
 	handler := NewWorkerHandler(registry.NewStore(), 15*time.Second, nil, nil, ":50051")
-	router := NewRouter(handler, newTestConsoleAuth(t), NewMCPAuth([]string{"token-a", "token-b"}))
+	mcpAuth := NewMCPAuth()
+	tokenA := "token-a"
+	tokenB := "token-b"
+	if _, _, err := mcpAuth.createToken("token-a", &tokenA); err != nil {
+		t.Fatalf("seed token-a failed: %v", err)
+	}
+	if _, _, err := mcpAuth.createToken("token-b", &tokenB); err != nil {
+		t.Fatalf("seed token-b failed: %v", err)
+	}
+	router := NewRouter(handler, newTestConsoleAuth(t), mcpAuth)
 	cookie := loginSessionCookie(t, router)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/console/mcp/tokens", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/console/tokens", nil)
 	req.AddCookie(cookie)
 	res := httptest.NewRecorder()
 	router.ServeHTTP(res, req)
@@ -353,28 +362,104 @@ func TestListMCPAllowedTokensSuccess(t *testing.T) {
 		t.Fatalf("expected 200, got %d body=%s", res.Code, res.Body.String())
 	}
 
-	var payload mcpTokensResponse
+	var payload trustedTokenListResponse
 	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 	if payload.Total != 2 {
 		t.Fatalf("expected total=2, got %d", payload.Total)
 	}
-	if len(payload.Tokens) != 2 || payload.Tokens[0] != "token-a" || payload.Tokens[1] != "token-b" {
-		t.Fatalf("unexpected tokens payload: %#v", payload.Tokens)
+	if len(payload.Items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(payload.Items))
+	}
+	if payload.Items[0].Name != "token-a" || payload.Items[1].Name != "token-b" {
+		t.Fatalf("unexpected token names: %#v", payload.Items)
+	}
+	if payload.Items[0].TokenMasked != "*******" || payload.Items[1].TokenMasked != "*******" {
+		t.Fatalf("unexpected masked token payload: %#v", payload.Items)
 	}
 }
 
-func TestListMCPAllowedTokensRequiresAuthentication(t *testing.T) {
+func TestListTrustedTokensRequiresAuthentication(t *testing.T) {
 	handler := NewWorkerHandler(registry.NewStore(), 15*time.Second, nil, nil, ":50051")
-	router := NewRouter(handler, newTestConsoleAuth(t), NewMCPAuth([]string{"token-a"}))
+	router := NewRouter(handler, newTestConsoleAuth(t), NewMCPAuth())
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/console/mcp/tokens", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/console/tokens", nil)
 	res := httptest.NewRecorder()
 	router.ServeHTTP(res, req)
 
 	if res.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d body=%s", res.Code, res.Body.String())
+	}
+}
+
+func TestCreateAndGetTrustedTokenValueSuccess(t *testing.T) {
+	handler := NewWorkerHandler(registry.NewStore(), 15*time.Second, nil, nil, ":50051")
+	router := NewRouter(handler, newTestConsoleAuth(t), NewMCPAuth())
+	cookie := loginSessionCookie(t, router)
+
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/console/tokens", strings.NewReader(`{"name":"ci-prod"}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	createReq.AddCookie(cookie)
+	createRes := httptest.NewRecorder()
+	router.ServeHTTP(createRes, createReq)
+	if createRes.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d body=%s", createRes.Code, createRes.Body.String())
+	}
+
+	payload := createTrustedTokenResponse{}
+	if err := json.Unmarshal(createRes.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/console/tokens/"+payload.ID+"/value", nil)
+	getReq.AddCookie(cookie)
+	getRes := httptest.NewRecorder()
+	router.ServeHTTP(getRes, getReq)
+	if getRes.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", getRes.Code, getRes.Body.String())
+	}
+	valuePayload := trustedTokenValueResponse{}
+	if err := json.Unmarshal(getRes.Body.Bytes(), &valuePayload); err != nil {
+		t.Fatalf("decode value response: %v", err)
+	}
+	if valuePayload.ID != payload.ID || valuePayload.Token != payload.Token {
+		t.Fatalf("unexpected value payload: %#v", valuePayload)
+	}
+}
+
+func TestDeleteTrustedTokenSuccess(t *testing.T) {
+	handler := NewWorkerHandler(registry.NewStore(), 15*time.Second, nil, nil, ":50051")
+	router := NewRouter(handler, newTestConsoleAuth(t), NewMCPAuth())
+	cookie := loginSessionCookie(t, router)
+
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/console/tokens", strings.NewReader(`{"name":"ci-prod","token":"manual-token"}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	createReq.AddCookie(cookie)
+	createRes := httptest.NewRecorder()
+	router.ServeHTTP(createRes, createReq)
+	if createRes.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d body=%s", createRes.Code, createRes.Body.String())
+	}
+	payload := createTrustedTokenResponse{}
+	if err := json.Unmarshal(createRes.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/v1/console/tokens/"+payload.ID, nil)
+	deleteReq.AddCookie(cookie)
+	deleteRes := httptest.NewRecorder()
+	router.ServeHTTP(deleteRes, deleteReq)
+	if deleteRes.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d body=%s", deleteRes.Code, deleteRes.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/console/tokens/"+payload.ID+"/value", nil)
+	getReq.AddCookie(cookie)
+	getRes := httptest.NewRecorder()
+	router.ServeHTTP(getRes, getReq)
+	if getRes.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 after delete, got %d body=%s", getRes.Code, getRes.Body.String())
 	}
 }
 

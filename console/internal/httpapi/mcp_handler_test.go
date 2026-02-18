@@ -844,7 +844,7 @@ func TestMCPGetReturnsMethodNotAllowed(t *testing.T) {
 	router := newMCPTestRouter(t, &fakeMCPDispatcher{})
 	req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
 	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set(mcpTokenHeader, testMCPToken)
+	req.Header.Set(trustedTokenHeader, testMCPToken)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -882,7 +882,7 @@ func mcpPostJSON(t *testing.T, router http.Handler, body string) map[string]any 
 	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
-	req.Header.Set(mcpTokenHeader, testMCPToken)
+	req.Header.Set(trustedTokenHeader, testMCPToken)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 

@@ -29,7 +29,6 @@ func main() {
 		dashboardCredentials.Username,
 		dashboardCredentials.Password,
 	)
-	log.Printf("console mcp allowed token count=%d", len(cfg.MCPAllowedTokens))
 
 	store := registry.NewStore()
 
@@ -49,7 +48,7 @@ func main() {
 		cfg.GRPCAddr,
 	)
 	consoleAuth := httpapi.NewConsoleAuth(dashboardCredentials)
-	mcpAuth := httpapi.NewMCPAuth(cfg.MCPAllowedTokens)
+	mcpAuth := httpapi.NewMCPAuth()
 	httpSrv := &http.Server{
 		Addr:    cfg.HTTPAddr,
 		Handler: httpapi.NewRouter(httpHandler, consoleAuth, mcpAuth),

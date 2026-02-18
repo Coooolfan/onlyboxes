@@ -8,6 +8,7 @@ Onlyboxes worker registry dashboard (Vue 3 + Vite + TypeScript).
 - 实时节点注册与心跳状态仪表台
 - 列表数据来自 `GET /api/v1/workers`
 - 统计卡片数据来自 `GET /api/v1/workers/stats`
+- 可信 token 管理来自 `GET/POST/DELETE /api/v1/console/tokens` 与 `GET /api/v1/console/tokens/:token_id/value`
 - 每个 worker 支持一键复制启动命令（按需调用 `GET /api/v1/workers/:node_id/startup-command`，命令包含 `WORKER_ID` 与 `WORKER_SECRET`）
 - 节点能力列展示 `capabilities[].name` 能力声明
 - 支持 `all / online / offline` 筛选、分页、手动刷新和自动刷新

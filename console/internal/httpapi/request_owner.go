@@ -71,7 +71,7 @@ func requestOwnerIDFromContext(ctx context.Context) string {
 func requireRequestOwnerID(c *gin.Context) (string, bool) {
 	ownerID := requestOwnerIDFromGin(c)
 	if ownerID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or missing mcp token"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or missing token"})
 		c.Abort()
 		return "", false
 	}
