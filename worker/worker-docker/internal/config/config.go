@@ -14,6 +14,8 @@ const (
 	defaultCallTimeout       = 3
 	defaultExecutorKind      = "docker"
 	defaultWorkerVersion     = "dev"
+	defaultPythonExecImage   = "python:slim"
+	defaultTerminalExecImage = "python:slim"
 	defaultTerminalLeaseMin  = 60
 	defaultTerminalLeaseMax  = 1800
 	defaultTerminalLeaseTTL  = 60
@@ -30,6 +32,8 @@ type Config struct {
 	NodeName                 string
 	ExecutorKind             string
 	Version                  string
+	PythonExecDockerImage    string
+	TerminalExecDockerImage  string
 	Labels                   map[string]string
 	TerminalLeaseMinSec      int
 	TerminalLeaseMaxSec      int
@@ -62,6 +66,8 @@ func Load() Config {
 		NodeName:                 os.Getenv("WORKER_NODE_NAME"),
 		ExecutorKind:             defaultExecutorKind,
 		Version:                  getEnv("WORKER_VERSION", defaultWorkerVersion),
+		PythonExecDockerImage:    getEnv("WORKER_PYTHON_EXEC_DOCKER_IMAGE", defaultPythonExecImage),
+		TerminalExecDockerImage:  getEnv("WORKER_TERMINAL_EXEC_DOCKER_IMAGE", defaultTerminalExecImage),
 		Labels:                   parseLabels(labelsCSV),
 		TerminalLeaseMinSec:      terminalLeaseMinSec,
 		TerminalLeaseMaxSec:      terminalLeaseMaxSec,

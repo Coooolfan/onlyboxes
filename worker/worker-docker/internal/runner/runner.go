@@ -51,11 +51,28 @@ const (
 
 var waitReconnect = waitReconnectDelay
 var applyJitter = jitterDuration
-var runPythonExec = runPythonExecInDocker
+var runPythonExec = newPythonExecRunner("").Execute
 var runTerminalExec = runTerminalExecUnavailable
 var runTerminalResource = runTerminalResourceUnavailable
 var runDockerCommand = runDockerCommandCLI
 var pythonExecContainerNameFn = newPythonExecContainerName
+
+type pythonExecRunner struct {
+	dockerImage string
+}
+
+func newPythonExecRunner(dockerImage string) *pythonExecRunner {
+	return &pythonExecRunner{
+		dockerImage: dockerImage,
+	}
+}
+
+func (r *pythonExecRunner) Execute(ctx context.Context, code string) (pythonExecRunResult, error) {
+	if r == nil {
+		return runPythonExecInDockerWithImage(ctx, "", code)
+	}
+	return runPythonExecInDockerWithImage(ctx, r.dockerImage, code)
+}
 
 func Run(ctx context.Context, cfg config.Config) error {
 	if strings.TrimSpace(cfg.WorkerID) == "" {
@@ -70,16 +87,20 @@ func Run(ctx context.Context, cfg config.Config) error {
 		LeaseMaxSec:      cfg.TerminalLeaseMaxSec,
 		LeaseDefaultSec:  cfg.TerminalLeaseDefaultSec,
 		OutputLimitBytes: cfg.TerminalOutputLimitBytes,
-		DockerImage:      defaultTerminalExecDockerImage,
+		DockerImage:      cfg.TerminalExecDockerImage,
 		MemoryLimit:      defaultTerminalExecMemoryLimit,
 		CPULimit:         defaultTerminalExecCPULimit,
 		PidsLimit:        defaultTerminalExecPidsLimit,
 	})
+	pythonRunner := newPythonExecRunner(cfg.PythonExecDockerImage)
+	originalRunPythonExec := runPythonExec
+	runPythonExec = pythonRunner.Execute
 	originalRunTerminalExec := runTerminalExec
 	runTerminalExec = terminalManager.Execute
 	originalRunTerminalResource := runTerminalResource
 	runTerminalResource = terminalManager.ResolveResource
 	defer func() {
+		runPythonExec = originalRunPythonExec
 		runTerminalExec = originalRunTerminalExec
 		runTerminalResource = originalRunTerminalResource
 		terminalManager.Close()
@@ -630,13 +651,13 @@ type dockerContainerState struct {
 	ExitCode int
 }
 
-func runPythonExecInDocker(ctx context.Context, code string) (pythonExecRunResult, error) {
+func runPythonExecInDockerWithImage(ctx context.Context, dockerImage string, code string) (pythonExecRunResult, error) {
 	containerName, err := pythonExecContainerNameFn()
 	if err != nil {
 		return pythonExecRunResult{}, fmt.Errorf("allocate pythonExec container name: %w", err)
 	}
 
-	createResult := runDockerCommand(ctx, pythonExecDockerCreateArgs(containerName, code)...)
+	createResult := runDockerCommand(ctx, pythonExecDockerCreateArgsWithImage(containerName, dockerImage, code)...)
 	if createResult.Err != nil {
 		return pythonExecRunResult{}, fmt.Errorf("docker create failed: %w", createResult.Err)
 	}
@@ -723,6 +744,15 @@ func runDockerCommandCLI(ctx context.Context, args ...string) dockerCommandResul
 }
 
 func pythonExecDockerCreateArgs(containerName string, code string) []string {
+	return pythonExecDockerCreateArgsWithImage(containerName, defaultPythonExecDockerImage, code)
+}
+
+func pythonExecDockerCreateArgsWithImage(containerName string, dockerImage string, code string) []string {
+	resolvedDockerImage := strings.TrimSpace(dockerImage)
+	if resolvedDockerImage == "" {
+		resolvedDockerImage = defaultPythonExecDockerImage
+	}
+
 	return []string{
 		"create",
 		"--name", containerName,
@@ -732,7 +762,7 @@ func pythonExecDockerCreateArgs(containerName string, code string) []string {
 		"--memory", defaultPythonExecMemoryLimit,
 		"--cpus", defaultPythonExecCPULimit,
 		"--pids-limit", strconv.Itoa(defaultPythonExecPidsLimit),
-		defaultPythonExecDockerImage,
+		resolvedDockerImage,
 		"python",
 		"-c",
 		code,

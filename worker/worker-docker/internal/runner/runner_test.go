@@ -374,6 +374,40 @@ func TestPythonExecDockerCreateArgsIncludesResourceLimitsAndLabels(t *testing.T)
 	}
 }
 
+func TestRunPythonExecInDockerWithImageUsesConfiguredImage(t *testing.T) {
+	originalRunDockerCommand := runDockerCommand
+	originalContainerNameFn := pythonExecContainerNameFn
+	t.Cleanup(func() {
+		runDockerCommand = originalRunDockerCommand
+		pythonExecContainerNameFn = originalContainerNameFn
+	})
+
+	pythonExecContainerNameFn = func() (string, error) {
+		return "container-custom-image", nil
+	}
+
+	var gotCalls [][]string
+	runDockerCommand = func(_ context.Context, args ...string) dockerCommandResult {
+		gotCalls = append(gotCalls, append([]string(nil), args...))
+		return dockerCommandResult{
+			Stderr:   "invalid image",
+			ExitCode: 125,
+		}
+	}
+
+	_, err := runPythonExecInDockerWithImage(context.Background(), "python:3.12-alpine", "print(1)")
+	if err == nil || !strings.Contains(err.Error(), "docker create failed") {
+		t.Fatalf("expected docker create failed error, got %v", err)
+	}
+
+	wantCalls := [][]string{
+		pythonExecDockerCreateArgsWithImage("container-custom-image", "python:3.12-alpine", "print(1)"),
+	}
+	if !reflect.DeepEqual(gotCalls, wantCalls) {
+		t.Fatalf("unexpected docker call sequence:\nwant=%#v\ngot=%#v", wantCalls, gotCalls)
+	}
+}
+
 func TestRunPythonExecInDockerReturnsNonZeroExitAsResult(t *testing.T) {
 	originalRunDockerCommand := runDockerCommand
 	originalContainerNameFn := pythonExecContainerNameFn
@@ -408,7 +442,7 @@ func TestRunPythonExecInDockerReturnsNonZeroExitAsResult(t *testing.T) {
 		}
 	}
 
-	result, err := runPythonExecInDocker(context.Background(), "raise Exception('boom')")
+	result, err := runPythonExecInDockerWithImage(context.Background(), defaultPythonExecDockerImage, "raise Exception('boom')")
 	if err != nil {
 		t.Fatalf("expected non-zero exit to be returned as result, got error: %v", err)
 	}
@@ -458,7 +492,7 @@ func TestRunPythonExecInDockerTimeoutTriggersForceRemove(t *testing.T) {
 		}
 	}
 
-	_, err := runPythonExecInDocker(context.Background(), "import time;time.sleep(10)")
+	_, err := runPythonExecInDockerWithImage(context.Background(), defaultPythonExecDockerImage, "import time;time.sleep(10)")
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected deadline exceeded, got %v", err)
 	}
@@ -494,7 +528,7 @@ func TestRunPythonExecInDockerCreateFailureReturnsErrorWithoutCleanup(t *testing
 		}
 	}
 
-	_, err := runPythonExecInDocker(context.Background(), "print(1)")
+	_, err := runPythonExecInDockerWithImage(context.Background(), defaultPythonExecDockerImage, "print(1)")
 	if err == nil || !strings.Contains(err.Error(), "docker create failed") {
 		t.Fatalf("expected docker create failed error, got %v", err)
 	}
@@ -540,7 +574,7 @@ func TestRunPythonExecInDockerStartFailureReturnsExecutionError(t *testing.T) {
 		}
 	}
 
-	_, err := runPythonExecInDocker(context.Background(), "print(1)")
+	_, err := runPythonExecInDockerWithImage(context.Background(), defaultPythonExecDockerImage, "print(1)")
 	if err == nil || !strings.Contains(err.Error(), "docker start failed") {
 		t.Fatalf("expected docker start failed error, got %v", err)
 	}
@@ -582,7 +616,7 @@ func TestRunPythonExecInDockerCleanupFailureDoesNotOverrideDeadline(t *testing.T
 		}
 	}
 
-	_, err := runPythonExecInDocker(context.Background(), "import time;time.sleep(10)")
+	_, err := runPythonExecInDockerWithImage(context.Background(), defaultPythonExecDockerImage, "import time;time.sleep(10)")
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected deadline exceeded, got %v", err)
 	}
