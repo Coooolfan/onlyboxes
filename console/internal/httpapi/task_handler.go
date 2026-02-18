@@ -56,6 +56,10 @@ func (h *WorkerHandler) SubmitTask(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "task dispatcher is unavailable"})
 		return
 	}
+	ownerID, ok := requireRequestOwnerID(c)
+	if !ok {
+		return
+	}
 
 	var req submitTaskRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -93,6 +97,7 @@ func (h *WorkerHandler) SubmitTask(c *gin.Context) {
 		Wait:       time.Duration(waitMS) * time.Millisecond,
 		Timeout:    time.Duration(timeoutMS) * time.Millisecond,
 		RequestID:  strings.TrimSpace(req.RequestID),
+		OwnerID:    ownerID,
 	})
 	if err != nil {
 		h.writeTaskSubmitError(c, err)
@@ -115,10 +120,14 @@ func (h *WorkerHandler) GetTask(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "task dispatcher is unavailable"})
 		return
 	}
+	ownerID, ok := requireRequestOwnerID(c)
+	if !ok {
+		return
+	}
 
 	taskID := strings.TrimSpace(c.Param("task_id"))
-	task, ok := h.dispatcher.GetTask(taskID)
-	if !ok {
+	task, found := h.dispatcher.GetTask(taskID, ownerID)
+	if !found {
 		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
 		return
 	}
@@ -130,9 +139,13 @@ func (h *WorkerHandler) CancelTask(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "task dispatcher is unavailable"})
 		return
 	}
+	ownerID, ok := requireRequestOwnerID(c)
+	if !ok {
+		return
+	}
 
 	taskID := strings.TrimSpace(c.Param("task_id"))
-	task, err := h.dispatcher.CancelTask(taskID)
+	task, err := h.dispatcher.CancelTask(taskID, ownerID)
 	if err != nil {
 		switch {
 		case errors.Is(err, grpcserver.ErrTaskNotFound):

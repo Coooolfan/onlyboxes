@@ -12,6 +12,7 @@ const (
 	testDashboardUsername = "admin-test"
 	testDashboardPassword = "password-test"
 	testMCPToken          = "mcp-token-test"
+	testMCPTokenB         = "mcp-token-test-b"
 )
 
 func newTestConsoleAuth(t *testing.T) *ConsoleAuth {
@@ -23,7 +24,7 @@ func newTestConsoleAuth(t *testing.T) *ConsoleAuth {
 }
 
 func newTestMCPAuth() *MCPAuth {
-	return NewMCPAuth([]string{testMCPToken})
+	return NewMCPAuth([]string{testMCPToken, testMCPTokenB})
 }
 
 func setMCPTokenHeader(req *http.Request) {

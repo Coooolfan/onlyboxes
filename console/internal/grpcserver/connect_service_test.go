@@ -695,6 +695,7 @@ func TestSubmitTaskSyncSuccess(t *testing.T) {
 		Mode:       TaskModeSync,
 		Wait:       2 * time.Second,
 		Timeout:    2 * time.Second,
+		OwnerID:    "owner-a",
 	})
 	if err != nil {
 		t.Fatalf("submit task failed: %v", err)
@@ -707,6 +708,33 @@ func TestSubmitTaskSyncSuccess(t *testing.T) {
 	}
 	if !strings.Contains(string(result.Task.ResultJSON), `"hello-task"`) {
 		t.Fatalf("expected echoed payload, got %s", string(result.Task.ResultJSON))
+	}
+}
+
+func TestSubmitTaskRejectsEmptyOwnerID(t *testing.T) {
+	svc := NewRegistryService(registry.NewStore(), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
+	client, cleanup := newBufClient(t, svc)
+	defer cleanup()
+
+	stream, _, err := connectWorker(client, "node-1", "secret-1", "nonce-task-empty-owner", []string{"echo"})
+	if err != nil {
+		t.Fatalf("connect worker failed: %v", err)
+	}
+	go payloadEchoResponder(stream)
+
+	_, err = svc.SubmitTask(context.Background(), SubmitTaskRequest{
+		Capability: "echo",
+		InputJSON:  []byte(`{"message":"hello-task"}`),
+		Mode:       TaskModeSync,
+		Wait:       2 * time.Second,
+		Timeout:    2 * time.Second,
+		OwnerID:    "",
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("expected InvalidArgument for empty owner_id, got %v", err)
+	}
+	if status.Convert(err).Message() != "owner_id is required" {
+		t.Fatalf("expected owner_id is required message, got %q", status.Convert(err).Message())
 	}
 }
 
@@ -740,6 +768,7 @@ func TestSubmitTaskFailsWhenCapacityIsFull(t *testing.T) {
 		Mode:       TaskModeAsync,
 		Wait:       100 * time.Millisecond,
 		Timeout:    1 * time.Second,
+		OwnerID:    "owner-a",
 	})
 	if !errors.Is(err, ErrNoWorkerCapacity) {
 		t.Fatalf("expected ErrNoWorkerCapacity, got %v", err)
@@ -770,6 +799,7 @@ func TestSubmitTaskRequestIDDedupConcurrent(t *testing.T) {
 		Wait:       100 * time.Millisecond,
 		Timeout:    2 * time.Second,
 		RequestID:  "request-concurrent-1",
+		OwnerID:    "owner-a",
 	}
 
 	type submitResponse struct {
@@ -848,6 +878,7 @@ func TestSubmitTaskRequestIDConflictWhileReserved(t *testing.T) {
 		Wait:       100 * time.Millisecond,
 		Timeout:    2 * time.Second,
 		RequestID:  "request-reserved-1",
+		OwnerID:    "owner-a",
 	}
 
 	firstResultCh := make(chan SubmitTaskResult, 1)
@@ -887,6 +918,90 @@ func TestSubmitTaskRequestIDConflictWhileReserved(t *testing.T) {
 
 	if atomic.LoadInt32(&createdTaskCount) != 1 {
 		t.Fatalf("expected only one created task, got %d", atomic.LoadInt32(&createdTaskCount))
+	}
+}
+
+func TestSubmitTaskRequestIDDedupIsolatedByOwner(t *testing.T) {
+	svc := NewRegistryService(registry.NewStore(), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
+	client, cleanup := newBufClient(t, svc)
+	defer cleanup()
+
+	stream, _, err := connectWorker(client, "node-1", "secret-1", "nonce-task-request-owner", []string{"echo"})
+	if err != nil {
+		t.Fatalf("connect worker failed: %v", err)
+	}
+	go payloadEchoResponder(stream)
+
+	requestA := SubmitTaskRequest{
+		Capability: "echo",
+		InputJSON:  []byte(`{"message":"hello-task"}`),
+		Mode:       TaskModeAsync,
+		Wait:       100 * time.Millisecond,
+		Timeout:    2 * time.Second,
+		RequestID:  "request-shared-1",
+		OwnerID:    "owner-a",
+	}
+	requestB := requestA
+	requestB.OwnerID = "owner-b"
+
+	resultA, err := svc.SubmitTask(context.Background(), requestA)
+	if err != nil {
+		t.Fatalf("submit task for owner-a failed: %v", err)
+	}
+	resultB, err := svc.SubmitTask(context.Background(), requestB)
+	if err != nil {
+		t.Fatalf("submit task for owner-b failed: %v", err)
+	}
+	if strings.TrimSpace(resultA.Task.TaskID) == "" || strings.TrimSpace(resultB.Task.TaskID) == "" {
+		t.Fatalf("expected non-empty task ids, got owner-a=%q owner-b=%q", resultA.Task.TaskID, resultB.Task.TaskID)
+	}
+	if resultA.Task.TaskID == resultB.Task.TaskID {
+		t.Fatalf("expected different task ids for different owners, got %q", resultA.Task.TaskID)
+	}
+}
+
+func TestGetAndCancelTaskAreOwnerScoped(t *testing.T) {
+	svc := NewRegistryService(registry.NewStore(), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
+	client, cleanup := newBufClient(t, svc)
+	defer cleanup()
+
+	_, _, err := connectWorker(client, "node-1", "secret-1", "nonce-task-owner-scope", []string{"echo"})
+	if err != nil {
+		t.Fatalf("connect worker failed: %v", err)
+	}
+
+	result, err := svc.SubmitTask(context.Background(), SubmitTaskRequest{
+		Capability: "echo",
+		InputJSON:  []byte(`{"message":"hello-task"}`),
+		Mode:       TaskModeAsync,
+		Wait:       100 * time.Millisecond,
+		Timeout:    2 * time.Second,
+		OwnerID:    "owner-a",
+	})
+	if err != nil {
+		t.Fatalf("submit task failed: %v", err)
+	}
+	taskID := strings.TrimSpace(result.Task.TaskID)
+	if taskID == "" {
+		t.Fatalf("expected non-empty task id")
+	}
+
+	if _, ok := svc.GetTask(taskID, "owner-a"); !ok {
+		t.Fatalf("expected owner-a to see the task")
+	}
+	if _, ok := svc.GetTask(taskID, "owner-b"); ok {
+		t.Fatalf("expected owner-b not to see owner-a task")
+	}
+
+	if _, err := svc.CancelTask(taskID, "owner-b"); !errors.Is(err, ErrTaskNotFound) {
+		t.Fatalf("expected owner-b cancel to return ErrTaskNotFound, got %v", err)
+	}
+	canceled, err := svc.CancelTask(taskID, "owner-a")
+	if err != nil {
+		t.Fatalf("expected owner-a cancel success, got %v", err)
+	}
+	if canceled.Status != TaskStatusCanceled {
+		t.Fatalf("expected canceled status, got %s", canceled.Status)
 	}
 }
 

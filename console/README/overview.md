@@ -15,6 +15,9 @@ The console service hosts:
   - `GET /api/v1/tasks/:task_id` for task status and result lookup.
   - `POST /api/v1/tasks/:task_id/cancel` for best-effort task cancellation.
   - request header: `X-Onlyboxes-MCP-Token: <token>` (must be in whitelist).
+  - token isolation: each token is treated as an isolated user boundary for task/session resources.
+  - task visibility: task lookup/cancel is owner-scoped by token; cross-token access returns `404`.
+  - task idempotency: `request_id` de-duplication is scoped per token (same `request_id` across different tokens does not conflict).
 - MCP Streamable HTTP API (token whitelist required):
   - `POST /mcp` for JSON-RPC requests over Streamable HTTP transport.
   - request header: `X-Onlyboxes-MCP-Token: <token>` (must be in whitelist).
@@ -40,6 +43,7 @@ The console service hosts:
       - `command` is required (whitespace-only is rejected).
       - `session_id` is optional; omit to create a new terminal session/container.
       - `create_if_missing` controls behavior when `session_id` does not exist.
+      - session isolation: returned `session_id` can only be reused by the same token; cross-token use returns `session_not_found`.
       - `lease_ttl_sec` is optional and validated by worker-side lease bounds.
       - `timeout_ms` is optional, range `1..600000`, default `60000`.
       - output: `{"session_id":"...","created":true,"stdout":"...","stderr":"...","exit_code":0,"stdout_truncated":false,"stderr_truncated":false,"lease_expires_unix_ms":...}`
@@ -79,6 +83,9 @@ MCP token whitelist behavior:
 - token env: `CONSOLE_MCP_ALLOWED_TOKENS` (comma-separated, trims whitespace, removes empty items, de-duplicates while preserving order).
 - startup logs whitelist token count only (never logs token plaintext).
 - if resolved token list is empty, MCP is effectively disabled (`/mcp` always returns `401`).
+- every accepted token is treated as a distinct user for task and terminal-session ownership.
+- task and session resources are isolated across tokens (`task not found` / `session_not_found` on cross-token access).
+- `request_id` idempotency keys are isolated per token.
 
 MCP minimal call sequence (initialize + tools/list + tools/call):
 

@@ -46,6 +46,12 @@ func TestMCPAuthRequireTokenAllowsWhitelistedToken(t *testing.T) {
 	auth := NewMCPAuth([]string{"token-a"})
 	router := gin.New()
 	router.GET("/mcp", auth.RequireToken(), func(c *gin.Context) {
+		if got := requestOwnerIDFromGin(c); got != ownerIDFromToken("token-a") {
+			t.Fatalf("expected owner id in gin context, got %q", got)
+		}
+		if got := requestOwnerIDFromContext(c.Request.Context()); got != ownerIDFromToken("token-a") {
+			t.Fatalf("expected owner id in request context, got %q", got)
+		}
 		c.Status(http.StatusOK)
 	})
 

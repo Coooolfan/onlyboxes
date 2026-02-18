@@ -16,8 +16,8 @@ import (
 type fakeMCPDispatcher struct {
 	dispatchEcho func(ctx context.Context, message string, timeout time.Duration) (string, error)
 	submitTask   func(ctx context.Context, req grpcserver.SubmitTaskRequest) (grpcserver.SubmitTaskResult, error)
-	getTask      func(taskID string) (grpcserver.TaskSnapshot, bool)
-	cancelTask   func(taskID string) (grpcserver.TaskSnapshot, error)
+	getTask      func(taskID string, ownerID string) (grpcserver.TaskSnapshot, bool)
+	cancelTask   func(taskID string, ownerID string) (grpcserver.TaskSnapshot, error)
 }
 
 func (f *fakeMCPDispatcher) DispatchEcho(ctx context.Context, message string, timeout time.Duration) (string, error) {
@@ -34,16 +34,16 @@ func (f *fakeMCPDispatcher) SubmitTask(ctx context.Context, req grpcserver.Submi
 	return grpcserver.SubmitTaskResult{}, grpcserver.ErrNoCapabilityWorker
 }
 
-func (f *fakeMCPDispatcher) GetTask(taskID string) (grpcserver.TaskSnapshot, bool) {
+func (f *fakeMCPDispatcher) GetTask(taskID string, ownerID string) (grpcserver.TaskSnapshot, bool) {
 	if f.getTask != nil {
-		return f.getTask(taskID)
+		return f.getTask(taskID, ownerID)
 	}
 	return grpcserver.TaskSnapshot{}, false
 }
 
-func (f *fakeMCPDispatcher) CancelTask(taskID string) (grpcserver.TaskSnapshot, error) {
+func (f *fakeMCPDispatcher) CancelTask(taskID string, ownerID string) (grpcserver.TaskSnapshot, error) {
 	if f.cancelTask != nil {
-		return f.cancelTask(taskID)
+		return f.cancelTask(taskID, ownerID)
 	}
 	return grpcserver.TaskSnapshot{}, grpcserver.ErrTaskNotFound
 }
@@ -302,6 +302,9 @@ func TestMCPToolCallPythonExecSuccess(t *testing.T) {
 			if req.Capability != pythonExecCapabilityName {
 				t.Fatalf("expected capability=%q, got %q", pythonExecCapabilityName, req.Capability)
 			}
+			if req.OwnerID != ownerIDFromToken(testMCPToken) {
+				t.Fatalf("expected owner_id from token, got %q", req.OwnerID)
+			}
 			var payload pythonExecPayload
 			if err := json.Unmarshal(req.InputJSON, &payload); err != nil {
 				t.Fatalf("expected valid pythonExec input json, got %s", string(req.InputJSON))
@@ -354,6 +357,9 @@ func TestMCPToolCallTerminalExecSuccess(t *testing.T) {
 			if req.Capability != terminalExecCapabilityName {
 				t.Fatalf("expected capability=%q, got %q", terminalExecCapabilityName, req.Capability)
 			}
+			if req.OwnerID != ownerIDFromToken(testMCPToken) {
+				t.Fatalf("expected owner_id from token, got %q", req.OwnerID)
+			}
 
 			payload := terminalExecPayload{}
 			if err := json.Unmarshal(req.InputJSON, &payload); err != nil {
@@ -405,6 +411,9 @@ func TestMCPToolCallReadImageSuccess(t *testing.T) {
 		submitTask: func(ctx context.Context, req grpcserver.SubmitTaskRequest) (grpcserver.SubmitTaskResult, error) {
 			if req.Capability != terminalResourceCapabilityName {
 				t.Fatalf("expected capability=%q, got %q", terminalResourceCapabilityName, req.Capability)
+			}
+			if req.OwnerID != ownerIDFromToken(testMCPToken) {
+				t.Fatalf("expected owner_id from token, got %q", req.OwnerID)
 			}
 			payload := mcpTerminalResourcePayload{}
 			if err := json.Unmarshal(req.InputJSON, &payload); err != nil {

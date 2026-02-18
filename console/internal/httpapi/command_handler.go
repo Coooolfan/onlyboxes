@@ -34,8 +34,8 @@ type EchoDispatcher interface {
 
 type TaskDispatcher interface {
 	SubmitTask(ctx context.Context, req grpcserver.SubmitTaskRequest) (grpcserver.SubmitTaskResult, error)
-	GetTask(taskID string) (grpcserver.TaskSnapshot, bool)
-	CancelTask(taskID string) (grpcserver.TaskSnapshot, error)
+	GetTask(taskID string, ownerID string) (grpcserver.TaskSnapshot, bool)
+	CancelTask(taskID string, ownerID string) (grpcserver.TaskSnapshot, error)
 }
 
 type CommandDispatcher interface {
@@ -137,6 +137,10 @@ func (h *WorkerHandler) TerminalCommand(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "task dispatcher is unavailable"})
 		return
 	}
+	ownerID, ok := requireRequestOwnerID(c)
+	if !ok {
+		return
+	}
 
 	var req terminalCommandRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -174,6 +178,7 @@ func (h *WorkerHandler) TerminalCommand(c *gin.Context) {
 		Mode:       grpcserver.TaskModeSync,
 		Timeout:    time.Duration(timeoutMS) * time.Millisecond,
 		RequestID:  strings.TrimSpace(req.RequestID),
+		OwnerID:    ownerID,
 	})
 	if err != nil {
 		h.writeTaskSubmitError(c, err)

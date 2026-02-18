@@ -15,8 +15,8 @@ import (
 
 type fakeTaskDispatcher struct {
 	submit func(ctx context.Context, req grpcserver.SubmitTaskRequest) (grpcserver.SubmitTaskResult, error)
-	get    func(taskID string) (grpcserver.TaskSnapshot, bool)
-	cancel func(taskID string) (grpcserver.TaskSnapshot, error)
+	get    func(taskID string, ownerID string) (grpcserver.TaskSnapshot, bool)
+	cancel func(taskID string, ownerID string) (grpcserver.TaskSnapshot, error)
 }
 
 func (f *fakeTaskDispatcher) DispatchEcho(ctx context.Context, message string, timeout time.Duration) (string, error) {
@@ -27,18 +27,21 @@ func (f *fakeTaskDispatcher) SubmitTask(ctx context.Context, req grpcserver.Subm
 	return f.submit(ctx, req)
 }
 
-func (f *fakeTaskDispatcher) GetTask(taskID string) (grpcserver.TaskSnapshot, bool) {
-	return f.get(taskID)
+func (f *fakeTaskDispatcher) GetTask(taskID string, ownerID string) (grpcserver.TaskSnapshot, bool) {
+	return f.get(taskID, ownerID)
 }
 
-func (f *fakeTaskDispatcher) CancelTask(taskID string) (grpcserver.TaskSnapshot, error) {
-	return f.cancel(taskID)
+func (f *fakeTaskDispatcher) CancelTask(taskID string, ownerID string) (grpcserver.TaskSnapshot, error) {
+	return f.cancel(taskID, ownerID)
 }
 
 func TestSubmitTaskAccepted(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	handler := NewWorkerHandler(registry.NewStore(), 15*time.Second, &fakeTaskDispatcher{
 		submit: func(ctx context.Context, req grpcserver.SubmitTaskRequest) (grpcserver.SubmitTaskResult, error) {
+			if req.OwnerID != ownerIDFromToken(testMCPToken) {
+				t.Fatalf("expected owner_id from token, got %q", req.OwnerID)
+			}
 			return grpcserver.SubmitTaskResult{
 				Task: grpcserver.TaskSnapshot{
 					TaskID:     "task-1",
@@ -51,10 +54,10 @@ func TestSubmitTaskAccepted(t *testing.T) {
 				Completed: false,
 			}, nil
 		},
-		get: func(taskID string) (grpcserver.TaskSnapshot, bool) {
+		get: func(taskID string, ownerID string) (grpcserver.TaskSnapshot, bool) {
 			return grpcserver.TaskSnapshot{}, false
 		},
-		cancel: func(taskID string) (grpcserver.TaskSnapshot, error) {
+		cancel: func(taskID string, ownerID string) (grpcserver.TaskSnapshot, error) {
 			return grpcserver.TaskSnapshot{}, nil
 		},
 	}, nil, "")
@@ -94,10 +97,10 @@ func TestSubmitTaskCompletedSuccess(t *testing.T) {
 				Completed: true,
 			}, nil
 		},
-		get: func(taskID string) (grpcserver.TaskSnapshot, bool) {
+		get: func(taskID string, ownerID string) (grpcserver.TaskSnapshot, bool) {
 			return grpcserver.TaskSnapshot{}, false
 		},
-		cancel: func(taskID string) (grpcserver.TaskSnapshot, error) {
+		cancel: func(taskID string, ownerID string) (grpcserver.TaskSnapshot, error) {
 			return grpcserver.TaskSnapshot{}, nil
 		},
 	}, nil, "")
@@ -123,10 +126,10 @@ func TestSubmitTaskRequiresMCPToken(t *testing.T) {
 		submit: func(ctx context.Context, req grpcserver.SubmitTaskRequest) (grpcserver.SubmitTaskResult, error) {
 			return grpcserver.SubmitTaskResult{}, nil
 		},
-		get: func(taskID string) (grpcserver.TaskSnapshot, bool) {
+		get: func(taskID string, ownerID string) (grpcserver.TaskSnapshot, bool) {
 			return grpcserver.TaskSnapshot{}, false
 		},
-		cancel: func(taskID string) (grpcserver.TaskSnapshot, error) {
+		cancel: func(taskID string, ownerID string) (grpcserver.TaskSnapshot, error) {
 			return grpcserver.TaskSnapshot{}, nil
 		},
 	}, nil, "")
@@ -147,10 +150,10 @@ func TestSubmitTaskNoCapacity(t *testing.T) {
 		submit: func(ctx context.Context, req grpcserver.SubmitTaskRequest) (grpcserver.SubmitTaskResult, error) {
 			return grpcserver.SubmitTaskResult{}, grpcserver.ErrNoWorkerCapacity
 		},
-		get: func(taskID string) (grpcserver.TaskSnapshot, bool) {
+		get: func(taskID string, ownerID string) (grpcserver.TaskSnapshot, bool) {
 			return grpcserver.TaskSnapshot{}, false
 		},
-		cancel: func(taskID string) (grpcserver.TaskSnapshot, error) {
+		cancel: func(taskID string, ownerID string) (grpcserver.TaskSnapshot, error) {
 			return grpcserver.TaskSnapshot{}, nil
 		},
 	}, nil, "")
@@ -173,10 +176,10 @@ func TestSubmitTaskRequestInProgress(t *testing.T) {
 		submit: func(ctx context.Context, req grpcserver.SubmitTaskRequest) (grpcserver.SubmitTaskResult, error) {
 			return grpcserver.SubmitTaskResult{}, grpcserver.ErrTaskRequestInProgress
 		},
-		get: func(taskID string) (grpcserver.TaskSnapshot, bool) {
+		get: func(taskID string, ownerID string) (grpcserver.TaskSnapshot, bool) {
 			return grpcserver.TaskSnapshot{}, false
 		},
-		cancel: func(taskID string) (grpcserver.TaskSnapshot, error) {
+		cancel: func(taskID string, ownerID string) (grpcserver.TaskSnapshot, error) {
 			return grpcserver.TaskSnapshot{}, nil
 		},
 	}, nil, "")
@@ -203,9 +206,12 @@ func TestGetTask(t *testing.T) {
 		submit: func(ctx context.Context, req grpcserver.SubmitTaskRequest) (grpcserver.SubmitTaskResult, error) {
 			return grpcserver.SubmitTaskResult{}, nil
 		},
-		get: func(taskID string) (grpcserver.TaskSnapshot, bool) {
+		get: func(taskID string, ownerID string) (grpcserver.TaskSnapshot, bool) {
 			if taskID != "task-3" {
 				return grpcserver.TaskSnapshot{}, false
+			}
+			if ownerID != ownerIDFromToken(testMCPToken) {
+				t.Fatalf("expected owner_id from token, got %q", ownerID)
 			}
 			return grpcserver.TaskSnapshot{
 				TaskID:     "task-3",
@@ -216,7 +222,7 @@ func TestGetTask(t *testing.T) {
 				DeadlineAt: now.Add(30 * time.Second),
 			}, true
 		},
-		cancel: func(taskID string) (grpcserver.TaskSnapshot, error) {
+		cancel: func(taskID string, ownerID string) (grpcserver.TaskSnapshot, error) {
 			return grpcserver.TaskSnapshot{}, nil
 		},
 	}, nil, "")
@@ -246,10 +252,13 @@ func TestCancelTaskTerminalConflict(t *testing.T) {
 		submit: func(ctx context.Context, req grpcserver.SubmitTaskRequest) (grpcserver.SubmitTaskResult, error) {
 			return grpcserver.SubmitTaskResult{}, nil
 		},
-		get: func(taskID string) (grpcserver.TaskSnapshot, bool) {
+		get: func(taskID string, ownerID string) (grpcserver.TaskSnapshot, bool) {
 			return grpcserver.TaskSnapshot{}, false
 		},
-		cancel: func(taskID string) (grpcserver.TaskSnapshot, error) {
+		cancel: func(taskID string, ownerID string) (grpcserver.TaskSnapshot, error) {
+			if ownerID != ownerIDFromToken(testMCPToken) {
+				t.Fatalf("expected owner_id from token, got %q", ownerID)
+			}
 			completed := now.Add(2 * time.Second)
 			return grpcserver.TaskSnapshot{
 				TaskID:      taskID,

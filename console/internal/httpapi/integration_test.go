@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
@@ -1030,6 +1031,433 @@ func TestTerminalLifecycle(t *testing.T) {
 	}
 }
 
+func TestTokenIsolationLifecycle(t *testing.T) {
+	store := registry.NewStore()
+	const workerID = "node-token-isolation-1"
+	const workerSecret = "secret-token-isolation-1"
+
+	registrySvc := grpcserver.NewRegistryService(
+		store,
+		map[string]string{workerID: workerSecret},
+		5,
+		15,
+		60*time.Second,
+	)
+	grpcSrv := grpcserver.NewServer(registrySvc)
+	grpcListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to open grpc listener: %v", err)
+	}
+	defer grpcListener.Close()
+	go func() {
+		_ = grpcSrv.Serve(grpcListener)
+	}()
+	defer grpcSrv.Stop()
+
+	handler := NewWorkerHandler(store, 15*time.Second, registrySvc, registrySvc, ":50051")
+	router := NewRouter(handler, newTestConsoleAuth(t), newTestMCPAuth())
+	httpSrv := httptest.NewServer(router)
+	defer httpSrv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := grpc.NewClient(grpcListener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("failed to dial grpc: %v", err)
+	}
+	defer conn.Close()
+
+	client := registryv1.NewWorkerRegistryServiceClient(conn)
+	stream, err := client.Connect(ctx)
+	if err != nil {
+		t.Fatalf("connect failed: %v", err)
+	}
+
+	hello := &registryv1.ConnectHello{
+		NodeId:       workerID,
+		NodeName:     "token-isolation-worker",
+		ExecutorKind: "docker",
+		Capabilities: []*registryv1.CapabilityDeclaration{
+			{Name: "echo", MaxInflight: 4},
+			{Name: terminalExecCapabilityName, MaxInflight: 4},
+			{Name: terminalResourceCapabilityName, MaxInflight: 4},
+		},
+		Version:         "v0.1.0",
+		TimestampUnixMs: time.Now().UnixMilli(),
+		Nonce:           "hello-nonce-token-isolation",
+	}
+	hello.Signature = registryauth.Sign(hello.GetNodeId(), hello.GetTimestampUnixMs(), hello.GetNonce(), workerSecret)
+	if err := stream.Send(&registryv1.ConnectRequest{
+		Payload: &registryv1.ConnectRequest_Hello{Hello: hello},
+	}); err != nil {
+		t.Fatalf("send hello failed: %v", err)
+	}
+
+	connectResp, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("recv connect ack failed: %v", err)
+	}
+	if connectResp.GetConnectAck() == nil {
+		t.Fatalf("expected connect_ack, got %#v", connectResp.GetPayload())
+	}
+
+	go func() {
+		sessionContent := map[string]string{}
+		sessionFiles := map[string]map[string][]byte{}
+		for {
+			resp, recvErr := stream.Recv()
+			if recvErr != nil {
+				return
+			}
+			dispatch := resp.GetCommandDispatch()
+			if dispatch == nil {
+				continue
+			}
+
+			capability := strings.TrimSpace(strings.ToLower(dispatch.GetCapability()))
+			switch capability {
+			case "echo":
+				_ = stream.Send(&registryv1.ConnectRequest{
+					Payload: &registryv1.ConnectRequest_CommandResult{
+						CommandResult: &registryv1.CommandResult{
+							CommandId:       dispatch.GetCommandId(),
+							PayloadJson:     dispatch.GetPayloadJson(),
+							CompletedUnixMs: time.Now().UnixMilli(),
+						},
+					},
+				})
+			case "terminalexec":
+				payload := terminalExecPayload{}
+				if err := json.Unmarshal(dispatch.GetPayloadJson(), &payload); err != nil {
+					_ = stream.Send(&registryv1.ConnectRequest{
+						Payload: &registryv1.ConnectRequest_CommandResult{
+							CommandResult: &registryv1.CommandResult{
+								CommandId: dispatch.GetCommandId(),
+								Error: &registryv1.CommandError{
+									Code:    terminalExecInvalidPayloadCode,
+									Message: "invalid payload",
+								},
+								CompletedUnixMs: time.Now().UnixMilli(),
+							},
+						},
+					})
+					continue
+				}
+
+				sessionID := strings.TrimSpace(payload.SessionID)
+				if sessionID == "" {
+					_ = stream.Send(&registryv1.ConnectRequest{
+						Payload: &registryv1.ConnectRequest_CommandResult{
+							CommandResult: &registryv1.CommandResult{
+								CommandId: dispatch.GetCommandId(),
+								Error: &registryv1.CommandError{
+									Code:    terminalExecInvalidPayloadCode,
+									Message: "session_id is required",
+								},
+								CompletedUnixMs: time.Now().UnixMilli(),
+							},
+						},
+					})
+					continue
+				}
+
+				if _, ok := sessionContent[sessionID]; !ok {
+					if !payload.CreateIfMissing {
+						_ = stream.Send(&registryv1.ConnectRequest{
+							Payload: &registryv1.ConnectRequest_CommandResult{
+								CommandResult: &registryv1.CommandResult{
+									CommandId: dispatch.GetCommandId(),
+									Error: &registryv1.CommandError{
+										Code:    terminalExecSessionNotFoundCode,
+										Message: "session not found",
+									},
+									CompletedUnixMs: time.Now().UnixMilli(),
+								},
+							},
+						})
+						continue
+					}
+					sessionContent[sessionID] = ""
+					sessionFiles[sessionID] = map[string][]byte{}
+				}
+
+				stdout := ""
+				switch strings.TrimSpace(payload.Command) {
+				case "write":
+					sessionContent[sessionID] = "persisted"
+					sessionFiles[sessionID]["/workspace/state.txt"] = []byte("persisted")
+				case "read":
+					stdout = sessionContent[sessionID]
+				}
+
+				resultJSON, _ := json.Marshal(terminalCommandResponse{
+					SessionID:          sessionID,
+					Created:            false,
+					Stdout:             stdout,
+					Stderr:             "",
+					ExitCode:           0,
+					StdoutTruncated:    false,
+					StderrTruncated:    false,
+					LeaseExpiresUnixMS: time.Now().Add(60 * time.Second).UnixMilli(),
+				})
+				_ = stream.Send(&registryv1.ConnectRequest{
+					Payload: &registryv1.ConnectRequest_CommandResult{
+						CommandResult: &registryv1.CommandResult{
+							CommandId:       dispatch.GetCommandId(),
+							PayloadJson:     resultJSON,
+							CompletedUnixMs: time.Now().UnixMilli(),
+						},
+					},
+				})
+			case "terminalresource":
+				payload := mcpTerminalResourcePayload{}
+				if err := json.Unmarshal(dispatch.GetPayloadJson(), &payload); err != nil {
+					_ = stream.Send(&registryv1.ConnectRequest{
+						Payload: &registryv1.ConnectRequest_CommandResult{
+							CommandResult: &registryv1.CommandResult{
+								CommandId: dispatch.GetCommandId(),
+								Error: &registryv1.CommandError{
+									Code:    terminalExecInvalidPayloadCode,
+									Message: "invalid payload",
+								},
+								CompletedUnixMs: time.Now().UnixMilli(),
+							},
+						},
+					})
+					continue
+				}
+
+				sessionID := strings.TrimSpace(payload.SessionID)
+				filePath := strings.TrimSpace(payload.FilePath)
+				files, ok := sessionFiles[sessionID]
+				if !ok {
+					_ = stream.Send(&registryv1.ConnectRequest{
+						Payload: &registryv1.ConnectRequest_CommandResult{
+							CommandResult: &registryv1.CommandResult{
+								CommandId: dispatch.GetCommandId(),
+								Error: &registryv1.CommandError{
+									Code:    terminalExecSessionNotFoundCode,
+									Message: "session not found",
+								},
+								CompletedUnixMs: time.Now().UnixMilli(),
+							},
+						},
+					})
+					continue
+				}
+				content, ok := files[filePath]
+				if !ok {
+					_ = stream.Send(&registryv1.ConnectRequest{
+						Payload: &registryv1.ConnectRequest_CommandResult{
+							CommandResult: &registryv1.CommandResult{
+								CommandId: dispatch.GetCommandId(),
+								Error: &registryv1.CommandError{
+									Code:    "file_not_found",
+									Message: "file not found",
+								},
+								CompletedUnixMs: time.Now().UnixMilli(),
+							},
+						},
+					})
+					continue
+				}
+
+				result := mcpTerminalResourceResult{
+					SessionID: sessionID,
+					FilePath:  filePath,
+					MIMEType:  "text/plain",
+					SizeBytes: int64(len(content)),
+				}
+				action := strings.TrimSpace(strings.ToLower(payload.Action))
+				if action == "read" {
+					result.Blob = append([]byte(nil), content...)
+				}
+				resultJSON, _ := json.Marshal(result)
+				_ = stream.Send(&registryv1.ConnectRequest{
+					Payload: &registryv1.ConnectRequest_CommandResult{
+						CommandResult: &registryv1.CommandResult{
+							CommandId:       dispatch.GetCommandId(),
+							PayloadJson:     resultJSON,
+							CompletedUnixMs: time.Now().UnixMilli(),
+						},
+					},
+				})
+			}
+		}
+	}()
+
+	taskBody := `{"capability":"echo","input":{"message":"hello token"},"mode":"async","request_id":"req-shared"}`
+	taskARes, err := postJSONWithToken(httpSrv.URL+"/api/v1/tasks", taskBody, testMCPToken)
+	if err != nil {
+		t.Fatalf("submit task token A failed: %v", err)
+	}
+	defer taskARes.Body.Close()
+	if taskARes.StatusCode == http.StatusConflict {
+		t.Fatalf("expected token A submit to succeed, got 409 body=%s", readBody(t, taskARes))
+	}
+	taskA := taskResponse{}
+	if err := json.NewDecoder(taskARes.Body).Decode(&taskA); err != nil {
+		t.Fatalf("decode token A task response failed: %v", err)
+	}
+	if strings.TrimSpace(taskA.TaskID) == "" {
+		t.Fatalf("expected task_id for token A")
+	}
+
+	taskBRes, err := postJSONWithToken(httpSrv.URL+"/api/v1/tasks", taskBody, testMCPTokenB)
+	if err != nil {
+		t.Fatalf("submit task token B failed: %v", err)
+	}
+	defer taskBRes.Body.Close()
+	if taskBRes.StatusCode == http.StatusConflict {
+		t.Fatalf("expected token B submit not to conflict with token A")
+	}
+	taskB := taskResponse{}
+	if err := json.NewDecoder(taskBRes.Body).Decode(&taskB); err != nil {
+		t.Fatalf("decode token B task response failed: %v", err)
+	}
+	if strings.TrimSpace(taskB.TaskID) == "" {
+		t.Fatalf("expected task_id for token B")
+	}
+	if taskA.TaskID == taskB.TaskID {
+		t.Fatalf("expected token A/B request_id dedup isolation, got same task_id=%q", taskA.TaskID)
+	}
+
+	getCrossReq, err := http.NewRequest(http.MethodGet, httpSrv.URL+"/api/v1/tasks/"+taskA.TaskID, nil)
+	if err != nil {
+		t.Fatalf("build cross-token get task request failed: %v", err)
+	}
+	getCrossReq.Header.Set(mcpTokenHeader, testMCPTokenB)
+	getCrossRes, err := http.DefaultClient.Do(getCrossReq)
+	if err != nil {
+		t.Fatalf("cross-token get task failed: %v", err)
+	}
+	defer getCrossRes.Body.Close()
+	if getCrossRes.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected cross-token get task 404, got %d", getCrossRes.StatusCode)
+	}
+
+	cancelCrossReq, err := http.NewRequest(http.MethodPost, httpSrv.URL+"/api/v1/tasks/"+taskA.TaskID+"/cancel", nil)
+	if err != nil {
+		t.Fatalf("build cross-token cancel task request failed: %v", err)
+	}
+	cancelCrossReq.Header.Set(mcpTokenHeader, testMCPTokenB)
+	cancelCrossRes, err := http.DefaultClient.Do(cancelCrossReq)
+	if err != nil {
+		t.Fatalf("cross-token cancel task failed: %v", err)
+	}
+	defer cancelCrossRes.Body.Close()
+	if cancelCrossRes.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected cross-token cancel task 404, got %d", cancelCrossRes.StatusCode)
+	}
+
+	writeRes, err := postJSONWithToken(httpSrv.URL+"/api/v1/commands/terminal", `{"command":"write"}`, testMCPToken)
+	if err != nil {
+		t.Fatalf("terminal write token A failed: %v", err)
+	}
+	defer writeRes.Body.Close()
+	if writeRes.StatusCode != http.StatusOK {
+		t.Fatalf("expected terminal write 200, got %d", writeRes.StatusCode)
+	}
+	writePayload := terminalCommandResponse{}
+	if err := json.NewDecoder(writeRes.Body).Decode(&writePayload); err != nil {
+		t.Fatalf("decode terminal write response failed: %v", err)
+	}
+	if strings.TrimSpace(writePayload.SessionID) == "" {
+		t.Fatalf("expected session_id from terminal write")
+	}
+
+	readBodyByA := `{"command":"read","session_id":"` + writePayload.SessionID + `"}`
+	readByARes, err := postJSONWithToken(httpSrv.URL+"/api/v1/commands/terminal", readBodyByA, testMCPToken)
+	if err != nil {
+		t.Fatalf("terminal read token A failed: %v", err)
+	}
+	defer readByARes.Body.Close()
+	if readByARes.StatusCode != http.StatusOK {
+		t.Fatalf("expected token A terminal read 200, got %d", readByARes.StatusCode)
+	}
+
+	readBodyByB := `{"command":"read","session_id":"` + writePayload.SessionID + `"}`
+	readByBRes, err := postJSONWithToken(httpSrv.URL+"/api/v1/commands/terminal", readBodyByB, testMCPTokenB)
+	if err != nil {
+		t.Fatalf("terminal read token B failed: %v", err)
+	}
+	defer readByBRes.Body.Close()
+	if readByBRes.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected token B terminal read 404, got %d", readByBRes.StatusCode)
+	}
+
+	mcpClientA := mcp.NewClient(&mcp.Implementation{
+		Name:    "mcp-token-a-client",
+		Version: "v0.1.0",
+	}, nil)
+	mcpSessionA, err := mcpClientA.Connect(ctx, &mcp.StreamableClientTransport{
+		Endpoint:             httpSrv.URL + "/mcp",
+		DisableStandaloneSSE: true,
+		HTTPClient:           newMCPTokenHTTPClient(testMCPToken),
+	}, nil)
+	if err != nil {
+		t.Fatalf("connect mcp token A failed: %v", err)
+	}
+	defer mcpSessionA.Close()
+
+	readImageA, err := mcpSessionA.CallTool(ctx, &mcp.CallToolParams{
+		Name: "readImage",
+		Arguments: map[string]any{
+			"session_id": writePayload.SessionID,
+			"file_path":  "/workspace/state.txt",
+		},
+	})
+	if err != nil {
+		t.Fatalf("mcp readImage token A failed: %v", err)
+	}
+	if readImageA.IsError {
+		t.Fatalf("expected mcp readImage token A success, got %q", firstTextContent(readImageA))
+	}
+
+	mcpClientB := mcp.NewClient(&mcp.Implementation{
+		Name:    "mcp-token-b-client",
+		Version: "v0.1.0",
+	}, nil)
+	mcpSessionB, err := mcpClientB.Connect(ctx, &mcp.StreamableClientTransport{
+		Endpoint:             httpSrv.URL + "/mcp",
+		DisableStandaloneSSE: true,
+		HTTPClient:           newMCPTokenHTTPClient(testMCPTokenB),
+	}, nil)
+	if err != nil {
+		t.Fatalf("connect mcp token B failed: %v", err)
+	}
+	defer mcpSessionB.Close()
+
+	readImageB, err := mcpSessionB.CallTool(ctx, &mcp.CallToolParams{
+		Name: "readImage",
+		Arguments: map[string]any{
+			"session_id": writePayload.SessionID,
+			"file_path":  "/workspace/state.txt",
+		},
+	})
+	if err != nil {
+		t.Fatalf("mcp readImage token B failed: %v", err)
+	}
+	if !readImageB.IsError {
+		t.Fatalf("expected mcp readImage token B tool error")
+	}
+	if got := firstTextContent(readImageB); !strings.Contains(got, "session_not_found") {
+		t.Fatalf("expected session_not_found for token B, got %q", got)
+	}
+}
+
+func readBody(t *testing.T, res *http.Response) string {
+	t.Helper()
+	if res == nil || res.Body == nil {
+		return ""
+	}
+	data, err := io.ReadAll(res.Body)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
 func structuredContentMap(t *testing.T, value any) map[string]any {
 	t.Helper()
 
@@ -1109,13 +1537,19 @@ func newMCPTokenHTTPClient(token string) *http.Client {
 }
 
 func postJSONWithMCPToken(url string, body string) (*http.Response, error) {
+	return postJSONWithToken(url, body, testMCPToken)
+}
+
+func postJSONWithToken(url string, body string, token string) (*http.Response, error) {
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBufferString(body))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set(mcpTokenHeader, testMCPToken)
+	if strings.TrimSpace(token) != "" {
+		req.Header.Set(mcpTokenHeader, strings.TrimSpace(token))
+	}
 	return http.DefaultClient.Do(req)
 }
 

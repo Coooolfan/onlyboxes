@@ -55,6 +55,7 @@ type SubmitTaskRequest struct {
 	Wait       time.Duration
 	Timeout    time.Duration
 	RequestID  string
+	OwnerID    string
 }
 
 type SubmitTaskResult struct {
@@ -79,6 +80,7 @@ type TaskSnapshot struct {
 
 type taskRecord struct {
 	id         string
+	ownerID    string
 	requestID  string
 	commandID  string
 	capability string
@@ -119,6 +121,10 @@ func (s *RegistryService) SubmitTask(ctx context.Context, req SubmitTaskRequest)
 	if capability == "" {
 		return SubmitTaskResult{}, status.Error(codes.InvalidArgument, "capability is required")
 	}
+	ownerID := normalizeTaskOwnerID(req.OwnerID)
+	if ownerID == "" {
+		return SubmitTaskResult{}, status.Error(codes.InvalidArgument, "owner_id is required")
+	}
 
 	mode, err := ParseTaskMode(string(req.Mode))
 	if err != nil {
@@ -132,6 +138,11 @@ func (s *RegistryService) SubmitTask(ctx context.Context, req SubmitTaskRequest)
 	if !json.Valid(inputJSON) {
 		return SubmitTaskResult{}, status.Error(codes.InvalidArgument, "input must be valid JSON")
 	}
+	scopedInputJSON, err := s.scopeTaskInputByOwner(capability, ownerID, inputJSON)
+	if err != nil {
+		return SubmitTaskResult{}, err
+	}
+	inputJSON = scopedInputJSON
 
 	timeout := req.Timeout
 	if timeout <= 0 {
@@ -153,26 +164,27 @@ func (s *RegistryService) SubmitTask(ctx context.Context, req SubmitTaskRequest)
 	}
 
 	requestID := strings.TrimSpace(req.RequestID)
+	requestKey := taskRequestScopeKey(ownerID, requestID)
 	requestReserved := false
 
 	if requestID != "" {
 		s.tasksMu.Lock()
 		s.pruneTasksLocked(s.nowFn())
-		if existingID, ok := s.taskByRequestKey[requestID]; ok {
+		if existingID, ok := s.taskByRequestKey[requestKey]; ok {
 			existing, exists := s.tasks[existingID]
 			if exists {
 				s.tasksMu.Unlock()
 				return s.resolveSubmitTaskResult(ctx, existing, mode, wait)
 			}
-			delete(s.taskByRequestKey, requestID)
+			delete(s.taskByRequestKey, requestKey)
 		}
-		if _, reserved := s.taskRequestReservations[requestID]; reserved {
+		if _, reserved := s.taskRequestReservations[requestKey]; reserved {
 			s.tasksMu.Unlock()
 			return SubmitTaskResult{}, ErrTaskRequestInProgress
 		}
 		// Reserve request_id inside the same critical section as the dedup check,
 		// so concurrent submissions cannot pass validation and create duplicates.
-		s.taskRequestReservations[requestID] = struct{}{}
+		s.taskRequestReservations[requestKey] = struct{}{}
 		requestReserved = true
 		s.tasksMu.Unlock()
 		defer func() {
@@ -180,7 +192,7 @@ func (s *RegistryService) SubmitTask(ctx context.Context, req SubmitTaskRequest)
 				return
 			}
 			s.tasksMu.Lock()
-			delete(s.taskRequestReservations, requestID)
+			delete(s.taskRequestReservations, requestKey)
 			s.tasksMu.Unlock()
 		}()
 	}
@@ -197,6 +209,7 @@ func (s *RegistryService) SubmitTask(ctx context.Context, req SubmitTaskRequest)
 	taskCtx, taskCancel := context.WithTimeout(context.Background(), timeout)
 	record := &taskRecord{
 		id:         taskID,
+		ownerID:    ownerID,
 		requestID:  requestID,
 		capability: capability,
 		inputJSON:  inputJSON,
@@ -212,9 +225,9 @@ func (s *RegistryService) SubmitTask(ctx context.Context, req SubmitTaskRequest)
 	s.pruneTasksLocked(now)
 	s.tasks[taskID] = record
 	if requestID != "" {
-		delete(s.taskRequestReservations, requestID)
+		delete(s.taskRequestReservations, requestKey)
 		requestReserved = false
-		s.taskByRequestKey[requestID] = taskID
+		s.taskByRequestKey[requestKey] = taskID
 	}
 	s.tasksMu.Unlock()
 
@@ -223,23 +236,24 @@ func (s *RegistryService) SubmitTask(ctx context.Context, req SubmitTaskRequest)
 	return s.resolveSubmitTaskResult(ctx, record, mode, wait)
 }
 
-func (s *RegistryService) GetTask(taskID string) (TaskSnapshot, bool) {
+func (s *RegistryService) GetTask(taskID string, ownerID string) (TaskSnapshot, bool) {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
 		return TaskSnapshot{}, false
 	}
+	normalizedOwnerID := normalizeTaskOwnerID(ownerID)
 
 	s.tasksMu.RLock()
 	record, ok := s.tasks[taskID]
 	s.tasksMu.RUnlock()
-	if !ok || record == nil {
+	if !ok || record == nil || record.ownerID != normalizedOwnerID {
 		return TaskSnapshot{}, false
 	}
 
 	s.tasksMu.Lock()
 	s.pruneTasksLocked(s.nowFn())
 	record, ok = s.tasks[taskID]
-	if !ok || record == nil {
+	if !ok || record == nil || record.ownerID != normalizedOwnerID {
 		s.tasksMu.Unlock()
 		return TaskSnapshot{}, false
 	}
@@ -248,18 +262,19 @@ func (s *RegistryService) GetTask(taskID string) (TaskSnapshot, bool) {
 	return snapshot, true
 }
 
-func (s *RegistryService) CancelTask(taskID string) (TaskSnapshot, error) {
+func (s *RegistryService) CancelTask(taskID string, ownerID string) (TaskSnapshot, error) {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
 		return TaskSnapshot{}, ErrTaskNotFound
 	}
+	normalizedOwnerID := normalizeTaskOwnerID(ownerID)
 
 	s.tasksMu.Lock()
 	defer s.tasksMu.Unlock()
 
 	s.pruneTasksLocked(s.nowFn())
 	record, ok := s.tasks[taskID]
-	if !ok || record == nil {
+	if !ok || record == nil || record.ownerID != normalizedOwnerID {
 		return TaskSnapshot{}, ErrTaskNotFound
 	}
 	if isTaskTerminal(record.status) {
@@ -347,6 +362,20 @@ func (s *RegistryService) executeTask(ctx context.Context, taskID string, capabi
 	s.tasksMu.Lock()
 	record, ok := s.tasks[taskID]
 	if ok && record != nil {
+		scopedResultPayload, scopedOK := s.restoreTaskResultOwnerScope(record.ownerID, capability, resultPayload)
+		if !scopedOK {
+			s.finishTaskLocked(
+				record,
+				TaskStatusFailed,
+				nil,
+				taskOwnerScopeInvalidPayloadCode,
+				taskOwnerScopeInvalidPayloadMessage,
+				completedAt,
+			)
+			s.tasksMu.Unlock()
+			return
+		}
+		resultPayload = scopedResultPayload
 		s.finishTaskLocked(record, TaskStatusSucceeded, resultPayload, "", "", completedAt)
 	}
 	s.tasksMu.Unlock()
@@ -473,8 +502,9 @@ func (s *RegistryService) pruneTasksLocked(now time.Time) {
 		}
 		delete(s.tasks, taskID)
 		if record.requestID != "" {
-			if mapped, ok := s.taskByRequestKey[record.requestID]; ok && mapped == taskID {
-				delete(s.taskByRequestKey, record.requestID)
+			requestKey := taskRequestScopeKey(record.ownerID, record.requestID)
+			if mapped, ok := s.taskByRequestKey[requestKey]; ok && mapped == taskID {
+				delete(s.taskByRequestKey, requestKey)
 			}
 		}
 	}

@@ -40,6 +40,7 @@ func (a *MCPAuth) RequireToken() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
+		setRequestOwnerID(c, ownerIDFromToken(token))
 		c.Next()
 	}
 }

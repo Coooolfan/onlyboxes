@@ -321,6 +321,10 @@ func NewMCPHandler(dispatcher CommandDispatcher) http.Handler {
 		if dispatcher == nil {
 			return nil, mcpPythonExecToolOutput{}, errors.New("task dispatcher is unavailable")
 		}
+		ownerID := requestOwnerIDFromContext(ctx)
+		if ownerID == "" {
+			return nil, mcpPythonExecToolOutput{}, errors.New("request owner is required")
+		}
 
 		payloadJSON, err := json.Marshal(pythonExecPayload{Code: input.Code})
 		if err != nil {
@@ -332,6 +336,7 @@ func NewMCPHandler(dispatcher CommandDispatcher) http.Handler {
 			InputJSON:  payloadJSON,
 			Mode:       grpcserver.TaskModeSync,
 			Timeout:    time.Duration(timeoutMS) * time.Millisecond,
+			OwnerID:    ownerID,
 		})
 		if err != nil {
 			return nil, mcpPythonExecToolOutput{}, mapMCPToolTaskSubmitError(err)
@@ -388,6 +393,10 @@ func NewMCPHandler(dispatcher CommandDispatcher) http.Handler {
 		if dispatcher == nil {
 			return nil, mcpTerminalExecToolOutput{}, errors.New("task dispatcher is unavailable")
 		}
+		ownerID := requestOwnerIDFromContext(ctx)
+		if ownerID == "" {
+			return nil, mcpTerminalExecToolOutput{}, errors.New("request owner is required")
+		}
 
 		payloadJSON, err := json.Marshal(terminalExecPayload{
 			Command:         input.Command,
@@ -404,6 +413,7 @@ func NewMCPHandler(dispatcher CommandDispatcher) http.Handler {
 			InputJSON:  payloadJSON,
 			Mode:       grpcserver.TaskModeSync,
 			Timeout:    time.Duration(timeoutMS) * time.Millisecond,
+			OwnerID:    ownerID,
 		})
 		if err != nil {
 			return nil, mcpTerminalExecToolOutput{}, mapMCPToolTaskSubmitError(err)

@@ -29,11 +29,11 @@ func (f *fakeEchoDispatcher) SubmitTask(ctx context.Context, req grpcserver.Subm
 	return grpcserver.SubmitTaskResult{}, grpcserver.ErrNoCapabilityWorker
 }
 
-func (f *fakeEchoDispatcher) GetTask(taskID string) (grpcserver.TaskSnapshot, bool) {
+func (f *fakeEchoDispatcher) GetTask(taskID string, ownerID string) (grpcserver.TaskSnapshot, bool) {
 	return grpcserver.TaskSnapshot{}, false
 }
 
-func (f *fakeEchoDispatcher) CancelTask(taskID string) (grpcserver.TaskSnapshot, error) {
+func (f *fakeEchoDispatcher) CancelTask(taskID string, ownerID string) (grpcserver.TaskSnapshot, error) {
 	return grpcserver.TaskSnapshot{}, grpcserver.ErrTaskNotFound
 }
 
@@ -202,6 +202,9 @@ func TestTerminalCommandSuccess(t *testing.T) {
 		submitTask: func(ctx context.Context, req grpcserver.SubmitTaskRequest) (grpcserver.SubmitTaskResult, error) {
 			if req.Capability != terminalExecCapability {
 				t.Fatalf("expected capability=%q, got %q", terminalExecCapability, req.Capability)
+			}
+			if req.OwnerID != ownerIDFromToken(testMCPToken) {
+				t.Fatalf("expected owner_id from token, got %q", req.OwnerID)
 			}
 			payload := terminalExecPayload{}
 			if err := json.Unmarshal(req.InputJSON, &payload); err != nil {

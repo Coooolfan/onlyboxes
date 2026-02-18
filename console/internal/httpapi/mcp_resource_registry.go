@@ -38,6 +38,10 @@ func callTerminalResource(
 	if timeoutValue <= 0 {
 		timeoutValue = time.Duration(defaultMCPTaskTimeoutMS) * time.Millisecond
 	}
+	ownerID := requestOwnerIDFromContext(ctx)
+	if ownerID == "" {
+		return mcpTerminalResourceResult{}, errors.New("request owner is required")
+	}
 
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
@@ -49,6 +53,7 @@ func callTerminalResource(
 		InputJSON:  payloadJSON,
 		Mode:       grpcserver.TaskModeSync,
 		Timeout:    timeoutValue,
+		OwnerID:    ownerID,
 	})
 	if err != nil {
 		return mcpTerminalResourceResult{}, mapMCPToolTaskSubmitError(err)

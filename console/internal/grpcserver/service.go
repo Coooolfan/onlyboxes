@@ -65,18 +65,19 @@ func (e *CommandExecutionError) Error() string {
 type RegistryService struct {
 	registryv1.UnimplementedWorkerRegistryServiceServer
 
-	store                *registry.Store
-	credentialsMu        sync.RWMutex
-	credentials          map[string]string
-	heartbeatIntervalSec int32
-	offlineTTLSec        int32
-	replayWindow         time.Duration
-	nonceCache           *nonceCache
-	nowFn                func() time.Time
-	newSessionIDFn       func() (string, error)
-	newCommandIDFn       func() (string, error)
-	newTaskIDFn          func() (string, error)
-	taskRetention        time.Duration
+	store                  *registry.Store
+	credentialsMu          sync.RWMutex
+	credentials            map[string]string
+	heartbeatIntervalSec   int32
+	offlineTTLSec          int32
+	replayWindow           time.Duration
+	nonceCache             *nonceCache
+	nowFn                  func() time.Time
+	newSessionIDFn         func() (string, error)
+	newCommandIDFn         func() (string, error)
+	newTaskIDFn            func() (string, error)
+	newTerminalSessionIDFn func() (string, error)
+	taskRetention          time.Duration
 
 	sessionsMu sync.RWMutex
 	sessions   map[string]*activeSession
@@ -85,8 +86,8 @@ type RegistryService struct {
 	tasksMu sync.RWMutex
 	// Task lifecycle index:
 	// - tasks stores live/recent task records by task_id.
-	// - taskByRequestKey maps request_id to task_id after record creation.
-	// - taskRequestReservations tracks request_id currently being validated/created.
+	// - taskByRequestKey maps (owner_id, request_id) composite key to task_id after record creation.
+	// - taskRequestReservations tracks (owner_id, request_id) currently being validated/created.
 	tasks                   map[string]*taskRecord
 	taskByRequestKey        map[string]string
 	taskRequestReservations map[string]struct{}
@@ -114,6 +115,7 @@ func NewRegistryService(
 		newSessionIDFn:          generateUUIDv4,
 		newCommandIDFn:          generateUUIDv4,
 		newTaskIDFn:             generateUUIDv4,
+		newTerminalSessionIDFn:  generateUUIDv4,
 		taskRetention:           defaultTaskRetentionWindow,
 		sessions:                make(map[string]*activeSession),
 		tasks:                   make(map[string]*taskRecord),
