@@ -10,7 +10,7 @@ import (
 	"time"
 
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
-	"github.com/onlyboxes/onlyboxes/console/internal/registry"
+	"github.com/onlyboxes/onlyboxes/console/internal/testutil/registrytest"
 )
 
 type fakeWorkerProvisioning struct {
@@ -57,7 +57,7 @@ func (p *fakeWorkerProvisioning) DeleteProvisionedWorker(nodeID string) bool {
 }
 
 func TestListWorkersEmpty(t *testing.T) {
-	store := registry.NewStore()
+	store := registrytest.NewStore(t)
 	handler := NewWorkerHandler(store, 15*time.Second, nil, nil, "")
 	handler.nowFn = func() time.Time {
 		return time.Unix(1_700_000_000, 0)
@@ -87,7 +87,7 @@ func TestListWorkersEmpty(t *testing.T) {
 }
 
 func TestListWorkersPaginationAndFilter(t *testing.T) {
-	store := registry.NewStore()
+	store := registrytest.NewStore(t)
 	base := time.Unix(1_700_000_100, 0)
 
 	store.Upsert(&registryv1.ConnectHello{NodeId: "node-2", NodeName: "node-2"}, "session-2", base)
@@ -139,7 +139,7 @@ func TestListWorkersPaginationAndFilter(t *testing.T) {
 }
 
 func TestListWorkersRequiresAuthentication(t *testing.T) {
-	store := registry.NewStore()
+	store := registrytest.NewStore(t)
 	handler := NewWorkerHandler(store, 15*time.Second, nil, nil, "")
 	router := NewRouter(handler, newTestConsoleAuth(t), newTestMCPAuth())
 
@@ -158,7 +158,7 @@ func TestCreateWorkerSuccess(t *testing.T) {
 		createNodeID: "node-new-1",
 		createSecret: "secret-new-1",
 	}
-	handler := NewWorkerHandler(registry.NewStore(), 15*time.Second, nil, provisioning, ":50051")
+	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, provisioning, ":50051")
 	router := NewRouter(handler, newTestConsoleAuth(t), newTestMCPAuth())
 	cookie := loginSessionCookie(t, router)
 
@@ -189,7 +189,7 @@ func TestCreateWorkerSuccess(t *testing.T) {
 }
 
 func TestCreateWorkerRequiresAuthentication(t *testing.T) {
-	handler := NewWorkerHandler(registry.NewStore(), 15*time.Second, nil, &fakeWorkerProvisioning{}, ":50051")
+	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, &fakeWorkerProvisioning{}, ":50051")
 	router := NewRouter(handler, newTestConsoleAuth(t), newTestMCPAuth())
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/workers", strings.NewReader("{}"))
@@ -206,7 +206,7 @@ func TestDeleteWorkerSuccess(t *testing.T) {
 	provisioning := &fakeWorkerProvisioning{
 		secrets: map[string]string{"node-delete-1": "secret-delete-1"},
 	}
-	handler := NewWorkerHandler(registry.NewStore(), 15*time.Second, nil, provisioning, ":50051")
+	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, provisioning, ":50051")
 	router := NewRouter(handler, newTestConsoleAuth(t), newTestMCPAuth())
 	cookie := loginSessionCookie(t, router)
 
@@ -227,7 +227,7 @@ func TestDeleteWorkerNotFound(t *testing.T) {
 	provisioning := &fakeWorkerProvisioning{
 		secrets: map[string]string{"node-delete-1": "secret-delete-1"},
 	}
-	handler := NewWorkerHandler(registry.NewStore(), 15*time.Second, nil, provisioning, ":50051")
+	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, provisioning, ":50051")
 	router := NewRouter(handler, newTestConsoleAuth(t), newTestMCPAuth())
 	cookie := loginSessionCookie(t, router)
 
@@ -245,7 +245,7 @@ func TestDeleteWorkerRequiresAuthentication(t *testing.T) {
 	provisioning := &fakeWorkerProvisioning{
 		secrets: map[string]string{"node-delete-1": "secret-delete-1"},
 	}
-	handler := NewWorkerHandler(registry.NewStore(), 15*time.Second, nil, provisioning, ":50051")
+	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, provisioning, ":50051")
 	router := NewRouter(handler, newTestConsoleAuth(t), newTestMCPAuth())
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/workers/node-delete-1", nil)
@@ -257,9 +257,9 @@ func TestDeleteWorkerRequiresAuthentication(t *testing.T) {
 	}
 }
 
-func TestGetWorkerStartupCommandSuccess(t *testing.T) {
+func TestGetWorkerStartupCommandReturnsGone(t *testing.T) {
 	handler := NewWorkerHandler(
-		registry.NewStore(),
+		registrytest.NewStore(t),
 		15*time.Second,
 		nil,
 		&fakeWorkerProvisioning{secrets: map[string]string{"node-copy-1": "secret-copy-1"}},
@@ -274,34 +274,14 @@ func TestGetWorkerStartupCommandSuccess(t *testing.T) {
 	res := httptest.NewRecorder()
 	router.ServeHTTP(res, req)
 
-	if res.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d body=%s", res.Code, res.Body.String())
-	}
-
-	var payload workerStartupCommandResponse
-	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-	if payload.NodeID != "node-copy-1" {
-		t.Fatalf("expected node_id node-copy-1, got %q", payload.NodeID)
-	}
-	if !strings.Contains(payload.Command, "WORKER_CONSOLE_GRPC_TARGET=console.local:50051") {
-		t.Fatalf("expected resolved grpc target in command, got %q", payload.Command)
-	}
-	if !strings.Contains(payload.Command, "WORKER_ID=node-copy-1") {
-		t.Fatalf("expected WORKER_ID in command, got %q", payload.Command)
-	}
-	if !strings.Contains(payload.Command, "WORKER_SECRET=secret-copy-1") {
-		t.Fatalf("expected WORKER_SECRET in command, got %q", payload.Command)
-	}
-	if !strings.Contains(payload.Command, "go run ./cmd/worker-docker") {
-		t.Fatalf("expected worker command tail, got %q", payload.Command)
+	if res.Code != http.StatusGone {
+		t.Fatalf("expected 410, got %d body=%s", res.Code, res.Body.String())
 	}
 }
 
 func TestGetWorkerStartupCommandRequiresAuthentication(t *testing.T) {
 	handler := NewWorkerHandler(
-		registry.NewStore(),
+		registrytest.NewStore(t),
 		15*time.Second,
 		nil,
 		&fakeWorkerProvisioning{secrets: map[string]string{"node-copy-1": "secret-copy-1"}},
@@ -318,9 +298,9 @@ func TestGetWorkerStartupCommandRequiresAuthentication(t *testing.T) {
 	}
 }
 
-func TestGetWorkerStartupCommandNotFound(t *testing.T) {
+func TestGetWorkerStartupCommandForMissingWorkerStillReturnsGone(t *testing.T) {
 	handler := NewWorkerHandler(
-		registry.NewStore(),
+		registrytest.NewStore(t),
 		15*time.Second,
 		nil,
 		&fakeWorkerProvisioning{secrets: map[string]string{"node-copy-1": "secret-copy-1"}},
@@ -334,14 +314,14 @@ func TestGetWorkerStartupCommandNotFound(t *testing.T) {
 	res := httptest.NewRecorder()
 	router.ServeHTTP(res, req)
 
-	if res.Code != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d body=%s", res.Code, res.Body.String())
+	if res.Code != http.StatusGone {
+		t.Fatalf("expected 410, got %d body=%s", res.Code, res.Body.String())
 	}
 }
 
 func TestListTrustedTokensSuccess(t *testing.T) {
-	handler := NewWorkerHandler(registry.NewStore(), 15*time.Second, nil, nil, ":50051")
-	mcpAuth := NewMCPAuth()
+	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, nil, ":50051")
+	mcpAuth := newBareTestMCPAuth()
 	tokenA := "token-a"
 	tokenB := "token-b"
 	if _, _, err := mcpAuth.createToken("token-a", &tokenA); err != nil {
@@ -381,8 +361,8 @@ func TestListTrustedTokensSuccess(t *testing.T) {
 }
 
 func TestListTrustedTokensRequiresAuthentication(t *testing.T) {
-	handler := NewWorkerHandler(registry.NewStore(), 15*time.Second, nil, nil, ":50051")
-	router := NewRouter(handler, newTestConsoleAuth(t), NewMCPAuth())
+	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, nil, ":50051")
+	router := NewRouter(handler, newTestConsoleAuth(t), newBareTestMCPAuth())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/console/tokens", nil)
 	res := httptest.NewRecorder()
@@ -393,9 +373,21 @@ func TestListTrustedTokensRequiresAuthentication(t *testing.T) {
 	}
 }
 
-func TestCreateAndGetTrustedTokenValueSuccess(t *testing.T) {
-	handler := NewWorkerHandler(registry.NewStore(), 15*time.Second, nil, nil, ":50051")
-	router := NewRouter(handler, newTestConsoleAuth(t), NewMCPAuth())
+func TestNewRouterPanicsWhenMCPAuthIsNil(t *testing.T) {
+	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, nil, ":50051")
+
+	defer func() {
+		if recover() == nil {
+			t.Fatalf("expected panic when mcpAuth is nil")
+		}
+	}()
+
+	_ = NewRouter(handler, newTestConsoleAuth(t), nil)
+}
+
+func TestCreateTrustedTokenGetValueReturnsGone(t *testing.T) {
+	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, nil, ":50051")
+	router := NewRouter(handler, newTestConsoleAuth(t), newBareTestMCPAuth())
 	cookie := loginSessionCookie(t, router)
 
 	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/console/tokens", strings.NewReader(`{"name":"ci-prod"}`))
@@ -416,21 +408,14 @@ func TestCreateAndGetTrustedTokenValueSuccess(t *testing.T) {
 	getReq.AddCookie(cookie)
 	getRes := httptest.NewRecorder()
 	router.ServeHTTP(getRes, getReq)
-	if getRes.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d body=%s", getRes.Code, getRes.Body.String())
-	}
-	valuePayload := trustedTokenValueResponse{}
-	if err := json.Unmarshal(getRes.Body.Bytes(), &valuePayload); err != nil {
-		t.Fatalf("decode value response: %v", err)
-	}
-	if valuePayload.ID != payload.ID || valuePayload.Token != payload.Token {
-		t.Fatalf("unexpected value payload: %#v", valuePayload)
+	if getRes.Code != http.StatusGone {
+		t.Fatalf("expected 410, got %d body=%s", getRes.Code, getRes.Body.String())
 	}
 }
 
 func TestDeleteTrustedTokenSuccess(t *testing.T) {
-	handler := NewWorkerHandler(registry.NewStore(), 15*time.Second, nil, nil, ":50051")
-	router := NewRouter(handler, newTestConsoleAuth(t), NewMCPAuth())
+	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, nil, ":50051")
+	router := NewRouter(handler, newTestConsoleAuth(t), newBareTestMCPAuth())
 	cookie := loginSessionCookie(t, router)
 
 	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/console/tokens", strings.NewReader(`{"name":"ci-prod","token":"manual-token"}`))
@@ -458,8 +443,8 @@ func TestDeleteTrustedTokenSuccess(t *testing.T) {
 	getReq.AddCookie(cookie)
 	getRes := httptest.NewRecorder()
 	router.ServeHTTP(getRes, getReq)
-	if getRes.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 after delete, got %d body=%s", getRes.Code, getRes.Body.String())
+	if getRes.Code != http.StatusGone {
+		t.Fatalf("expected 410 after delete, got %d body=%s", getRes.Code, getRes.Body.String())
 	}
 }
 

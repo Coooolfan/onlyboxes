@@ -15,15 +15,15 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
-	"github.com/onlyboxes/onlyboxes/api/pkg/registryauth"
 	"github.com/onlyboxes/onlyboxes/console/internal/grpcserver"
 	"github.com/onlyboxes/onlyboxes/console/internal/registry"
+	"github.com/onlyboxes/onlyboxes/console/internal/testutil/registrytest"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
 func TestRegisterAndListLifecycle(t *testing.T) {
-	store := registry.NewStore()
+	store := registrytest.NewStore(t)
 	const workerID = "node-int-1"
 	const workerSecret = "secret-int-1"
 
@@ -72,11 +72,9 @@ func TestRegisterAndListLifecycle(t *testing.T) {
 		Capabilities: []*registryv1.CapabilityDeclaration{{
 			Name: "echo",
 		}},
-		Version:         "v0.1.0",
-		TimestampUnixMs: time.Now().UnixMilli(),
-		Nonce:           "hello-nonce",
+		Version:      "v0.1.0",
+		WorkerSecret: workerSecret,
 	}
-	hello.Signature = registryauth.Sign(hello.GetNodeId(), hello.GetTimestampUnixMs(), hello.GetNonce(), workerSecret)
 	if err := stream.Send(&registryv1.ConnectRequest{
 		Payload: &registryv1.ConnectRequest_Hello{Hello: hello},
 	}); err != nil {
@@ -133,7 +131,7 @@ func TestRegisterAndListLifecycle(t *testing.T) {
 }
 
 func TestLegacyTokenHeaderIsRejected(t *testing.T) {
-	handler := NewWorkerHandler(registry.NewStore(), 15*time.Second, nil, nil, ":50051")
+	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, nil, ":50051")
 	router := NewRouter(handler, newTestConsoleAuth(t), newTestMCPAuth())
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/commands/echo", strings.NewReader(`{"message":"hello"}`))
@@ -148,7 +146,7 @@ func TestLegacyTokenHeaderIsRejected(t *testing.T) {
 }
 
 func TestEchoCommandLifecycle(t *testing.T) {
-	store := registry.NewStore()
+	store := registrytest.NewStore(t)
 	const workerID = "node-echo-1"
 	const workerSecret = "secret-echo-1"
 
@@ -190,15 +188,13 @@ func TestEchoCommandLifecycle(t *testing.T) {
 	}
 
 	hello := &registryv1.ConnectHello{
-		NodeId:          workerID,
-		NodeName:        "echo-worker",
-		ExecutorKind:    "docker",
-		Capabilities:    []*registryv1.CapabilityDeclaration{{Name: "echo"}},
-		Version:         "v0.1.0",
-		TimestampUnixMs: time.Now().UnixMilli(),
-		Nonce:           "hello-nonce-echo",
+		NodeId:       workerID,
+		NodeName:     "echo-worker",
+		ExecutorKind: "docker",
+		Capabilities: []*registryv1.CapabilityDeclaration{{Name: "echo"}},
+		Version:      "v0.1.0",
+		WorkerSecret: workerSecret,
 	}
-	hello.Signature = registryauth.Sign(hello.GetNodeId(), hello.GetTimestampUnixMs(), hello.GetNonce(), workerSecret)
 	if err := stream.Send(&registryv1.ConnectRequest{
 		Payload: &registryv1.ConnectRequest_Hello{Hello: hello},
 	}); err != nil {
@@ -255,7 +251,7 @@ func TestEchoCommandLifecycle(t *testing.T) {
 }
 
 func TestTaskLifecycleSync(t *testing.T) {
-	store := registry.NewStore()
+	store := registrytest.NewStore(t)
 	const workerID = "node-task-1"
 	const workerSecret = "secret-task-1"
 
@@ -297,15 +293,13 @@ func TestTaskLifecycleSync(t *testing.T) {
 	}
 
 	hello := &registryv1.ConnectHello{
-		NodeId:          workerID,
-		NodeName:        "task-worker",
-		ExecutorKind:    "docker",
-		Capabilities:    []*registryv1.CapabilityDeclaration{{Name: "echo", MaxInflight: 4}},
-		Version:         "v0.1.0",
-		TimestampUnixMs: time.Now().UnixMilli(),
-		Nonce:           "hello-nonce-task",
+		NodeId:       workerID,
+		NodeName:     "task-worker",
+		ExecutorKind: "docker",
+		Capabilities: []*registryv1.CapabilityDeclaration{{Name: "echo", MaxInflight: 4}},
+		Version:      "v0.1.0",
+		WorkerSecret: workerSecret,
 	}
-	hello.Signature = registryauth.Sign(hello.GetNodeId(), hello.GetTimestampUnixMs(), hello.GetNonce(), workerSecret)
 	if err := stream.Send(&registryv1.ConnectRequest{
 		Payload: &registryv1.ConnectRequest_Hello{Hello: hello},
 	}); err != nil {
@@ -367,7 +361,7 @@ func TestTaskLifecycleSync(t *testing.T) {
 }
 
 func TestMCPLifecycle(t *testing.T) {
-	store := registry.NewStore()
+	store := registrytest.NewStore(t)
 	const workerID = "node-mcp-1"
 	const workerSecret = "secret-mcp-1"
 
@@ -416,11 +410,9 @@ func TestMCPLifecycle(t *testing.T) {
 			{Name: "echo", MaxInflight: 4},
 			{Name: "pythonExec", MaxInflight: 4},
 		},
-		Version:         "v0.1.0",
-		TimestampUnixMs: time.Now().UnixMilli(),
-		Nonce:           "hello-nonce-mcp",
+		Version:      "v0.1.0",
+		WorkerSecret: workerSecret,
 	}
-	hello.Signature = registryauth.Sign(hello.GetNodeId(), hello.GetTimestampUnixMs(), hello.GetNonce(), workerSecret)
 	if err := stream.Send(&registryv1.ConnectRequest{
 		Payload: &registryv1.ConnectRequest_Hello{Hello: hello},
 	}); err != nil {
@@ -560,7 +552,7 @@ func TestMCPLifecycle(t *testing.T) {
 }
 
 func TestTerminalLifecycle(t *testing.T) {
-	store := registry.NewStore()
+	store := registrytest.NewStore(t)
 	const workerID = "node-terminal-1"
 	const workerSecret = "secret-terminal-1"
 
@@ -609,11 +601,9 @@ func TestTerminalLifecycle(t *testing.T) {
 			{Name: terminalExecCapabilityName, MaxInflight: 4},
 			{Name: terminalResourceCapabilityName, MaxInflight: 4},
 		},
-		Version:         "v0.1.0",
-		TimestampUnixMs: time.Now().UnixMilli(),
-		Nonce:           "hello-nonce-terminal",
+		Version:      "v0.1.0",
+		WorkerSecret: workerSecret,
 	}
-	hello.Signature = registryauth.Sign(hello.GetNodeId(), hello.GetTimestampUnixMs(), hello.GetNonce(), workerSecret)
 	if err := stream.Send(&registryv1.ConnectRequest{
 		Payload: &registryv1.ConnectRequest_Hello{Hello: hello},
 	}); err != nil {
@@ -1047,7 +1037,7 @@ func TestTerminalLifecycle(t *testing.T) {
 }
 
 func TestTokenIsolationLifecycle(t *testing.T) {
-	store := registry.NewStore()
+	store := registrytest.NewStore(t)
 	const workerID = "node-token-isolation-1"
 	const workerSecret = "secret-token-isolation-1"
 
@@ -1097,11 +1087,9 @@ func TestTokenIsolationLifecycle(t *testing.T) {
 			{Name: terminalExecCapabilityName, MaxInflight: 4},
 			{Name: terminalResourceCapabilityName, MaxInflight: 4},
 		},
-		Version:         "v0.1.0",
-		TimestampUnixMs: time.Now().UnixMilli(),
-		Nonce:           "hello-nonce-token-isolation",
+		Version:      "v0.1.0",
+		WorkerSecret: workerSecret,
 	}
-	hello.Signature = registryauth.Sign(hello.GetNodeId(), hello.GetTimestampUnixMs(), hello.GetNonce(), workerSecret)
 	if err := stream.Send(&registryv1.ConnectRequest{
 		Payload: &registryv1.ConnectRequest_Hello{Hello: hello},
 	}); err != nil {

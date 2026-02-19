@@ -57,20 +57,6 @@ export async function fetchWorkerStatsAPI(
   }
 }
 
-export async function fetchWorkerStartupCommandAPI(nodeID: string): Promise<string> {
-  const response = await request(`/api/v1/workers/${encodeURIComponent(nodeID)}/startup-command`)
-  if (!response.ok) {
-    throw new Error(await parseAPIError(response))
-  }
-
-  const payload = (await response.json()) as WorkerStartupCommandResponse
-  const command = payload.command?.trim()
-  if (!command) {
-    throw new Error('API returned empty startup command.')
-  }
-  return command
-}
-
 export async function createWorkerAPI(): Promise<WorkerStartupCommandResponse> {
   const response = await request('/api/v1/workers', {
     method: 'POST',

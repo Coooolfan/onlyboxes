@@ -4,18 +4,15 @@ import type { WorkerItem } from '@/types/workers'
 defineProps<{
   workerRows: WorkerItem[]
   loading: boolean
-  copyingNodeId: string
   deletingNodeId: string
   formatCapabilities: (worker: WorkerItem) => string
   formatLabels: (worker: WorkerItem) => string
   formatDateTime: (value: string) => string
   formatAge: (value: string) => string
-  startupCopyButtonText: (nodeID: string) => string
   deleteWorkerButtonText: (nodeID: string) => string
 }>()
 
 const emit = defineEmits<{
-  copyStartupCommand: [nodeID: string]
   deleteWorker: [nodeID: string]
 }>()
 </script>
@@ -54,14 +51,6 @@ const emit = defineEmits<{
           <td>{{ formatAge(worker.last_seen_at) }}</td>
           <td>
             <div class="row-actions">
-              <button
-                type="button"
-                class="ghost-btn small"
-                :disabled="copyingNodeId === worker.node_id || deletingNodeId === worker.node_id"
-                @click="emit('copyStartupCommand', worker.node_id)"
-              >
-                {{ startupCopyButtonText(worker.node_id) }}
-              </button>
               <button
                 type="button"
                 class="ghost-btn small danger"

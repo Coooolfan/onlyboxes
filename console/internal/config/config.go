@@ -12,6 +12,9 @@ const (
 	defaultOfflineTTLSec        = 15
 	defaultReplayWindowSec      = 60
 	defaultHeartbeatIntervalSec = 5
+	defaultDBPath               = "./onlyboxes-console.db"
+	defaultDBBusyTimeoutMS      = 5000
+	defaultTaskRetentionDays    = 30
 )
 
 type Config struct {
@@ -22,12 +25,18 @@ type Config struct {
 	HeartbeatIntervalSec int32
 	DashboardUsername    string
 	DashboardPassword    string
+	DBPath               string
+	DBBusyTimeoutMS      int
+	HashKey              string
+	TaskRetentionDays    int
 }
 
 func Load() Config {
 	offlineTTLSec := parsePositiveIntEnv("CONSOLE_OFFLINE_TTL_SEC", defaultOfflineTTLSec)
 	replayWindowSec := parsePositiveIntEnv("CONSOLE_REPLAY_WINDOW_SEC", defaultReplayWindowSec)
 	heartbeatIntervalSec := parsePositiveIntEnv("CONSOLE_HEARTBEAT_INTERVAL_SEC", defaultHeartbeatIntervalSec)
+	dbBusyTimeoutMS := parsePositiveIntEnv("CONSOLE_DB_BUSY_TIMEOUT_MS", defaultDBBusyTimeoutMS)
+	taskRetentionDays := parsePositiveIntEnv("CONSOLE_TASK_RETENTION_DAYS", defaultTaskRetentionDays)
 
 	return Config{
 		HTTPAddr:             getEnv("CONSOLE_HTTP_ADDR", defaultHTTPAddr),
@@ -37,6 +46,10 @@ func Load() Config {
 		HeartbeatIntervalSec: int32(heartbeatIntervalSec),
 		DashboardUsername:    os.Getenv("CONSOLE_DASHBOARD_USERNAME"),
 		DashboardPassword:    os.Getenv("CONSOLE_DASHBOARD_PASSWORD"),
+		DBPath:               getEnv("CONSOLE_DB_PATH", defaultDBPath),
+		DBBusyTimeoutMS:      dbBusyTimeoutMS,
+		HashKey:              os.Getenv("CONSOLE_HASH_KEY"),
+		TaskRetentionDays:    taskRetentionDays,
 	}
 }
 

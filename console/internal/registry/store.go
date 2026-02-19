@@ -1,14 +1,16 @@
 package registry
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
+	"github.com/onlyboxes/onlyboxes/console/internal/persistence"
+	"github.com/onlyboxes/onlyboxes/console/internal/persistence/sqlc"
 )
 
 var ErrNodeNotFound = errors.New("worker node not found")
@@ -59,51 +61,113 @@ type ProvisionedWorker struct {
 }
 
 type Store struct {
-	mu    sync.RWMutex
-	nodes map[string]Worker
+	db      *persistence.DB
+	queries *sqlc.Queries
 }
 
-func NewStore() *Store {
-	return &Store{
-		nodes: make(map[string]Worker),
+func NewStoreWithPersistence(db *persistence.DB) *Store {
+	if db == nil {
+		panic("registry store requires non-nil persistence db")
 	}
+	return &Store{db: db, queries: db.Queries}
 }
 
-func (s *Store) Upsert(req *registryv1.ConnectHello, sessionID string, now time.Time) {
-	if req == nil || req.GetNodeId() == "" || sessionID == "" {
-		return
+func (s *Store) Persistence() *persistence.DB {
+	if s == nil {
+		return nil
+	}
+	return s.db
+}
+
+func (s *Store) Upsert(req *registryv1.ConnectHello, sessionID string, now time.Time) error {
+	if s == nil || s.db == nil || s.queries == nil {
+		return errors.New("registry store is unavailable")
+	}
+	if req == nil {
+		return errors.New("connect hello is required")
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	existing, hasExisting := s.nodes[req.GetNodeId()]
+	ctx := context.Background()
+	nodeID := strings.TrimSpace(req.GetNodeId())
+	if nodeID == "" {
+		return errors.New("node_id is required")
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return errors.New("session_id is required")
+	}
 	nodeName := strings.TrimSpace(req.GetNodeName())
+
+	existingNode, err := s.queries.GetWorkerNodeByID(ctx, nodeID)
+	hasExisting := err == nil
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
 	if nodeName == "" && hasExisting {
-		nodeName = existing.NodeName
+		nodeName = existingNode.NodeName
 	}
 
 	labels := cloneMap(req.GetLabels())
-	if hasExisting && existing.Provisioned {
-		labels = mergeLabels(existing.Labels, labels)
+	provisioned := int64(0)
+	if hasExisting && existingNode.Provisioned != 0 {
+		provisioned = 1
+		existingLabels, err := s.queries.ListWorkerLabelsByNode(ctx, nodeID)
+		if err != nil {
+			return err
+		}
+		base := make(map[string]string, len(existingLabels))
+		for _, row := range existingLabels {
+			base[row.LabelKey] = row.LabelValue
+		}
+		labels = mergeLabels(base, labels)
 	}
 
-	s.nodes[req.GetNodeId()] = Worker{
-		NodeID:       req.GetNodeId(),
-		SessionID:    sessionID,
-		Provisioned:  hasExisting && existing.Provisioned,
-		NodeName:     nodeName,
-		ExecutorKind: req.GetExecutorKind(),
-		Capabilities: resolveProtoCapabilities(req.GetCapabilities(), req.GetLanguages()),
-		Labels:       labels,
-		Version:      req.GetVersion(),
-		RegisteredAt: now,
-		LastSeenAt:   now,
-	}
+	capabilities := resolveProtoCapabilities(req.GetCapabilities(), req.GetLanguages())
+	nowMS := now.UnixMilli()
+
+	return s.db.WithTx(ctx, func(q *sqlc.Queries) error {
+		if err := q.UpsertWorkerNode(ctx, sqlc.UpsertWorkerNodeParams{
+			NodeID:             nodeID,
+			SessionID:          sessionID,
+			Provisioned:        provisioned,
+			NodeName:           nodeName,
+			ExecutorKind:       req.GetExecutorKind(),
+			Version:            req.GetVersion(),
+			RegisteredAtUnixMs: nowMS,
+			LastSeenAtUnixMs:   nowMS,
+		}); err != nil {
+			return err
+		}
+		if err := q.DeleteWorkerCapabilitiesByNode(ctx, nodeID); err != nil {
+			return err
+		}
+		for _, capability := range capabilities {
+			if err := q.InsertWorkerCapability(ctx, sqlc.InsertWorkerCapabilityParams{
+				NodeID:         nodeID,
+				CapabilityName: capability.Name,
+				MaxInflight:    int64(capability.MaxInflight),
+			}); err != nil {
+				return err
+			}
+		}
+		if err := q.DeleteWorkerLabelsByNode(ctx, nodeID); err != nil {
+			return err
+		}
+		for key, value := range labels {
+			if err := q.InsertWorkerLabel(ctx, sqlc.InsertWorkerLabelParams{
+				NodeID:     nodeID,
+				LabelKey:   key,
+				LabelValue: value,
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func (s *Store) SeedProvisionedWorkers(workers []ProvisionedWorker, now time.Time, offlineTTL time.Duration) int {
-	if len(workers) == 0 {
+	if len(workers) == 0 || s == nil || s.db == nil {
 		return 0
 	}
 
@@ -111,17 +175,13 @@ func (s *Store) SeedProvisionedWorkers(workers []ProvisionedWorker, now time.Tim
 	if offlineTTL > 0 {
 		lastSeenAt = now.Add(-(offlineTTL + time.Second))
 	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	registeredMS := now.UnixMilli()
+	lastSeenMS := lastSeenAt.UnixMilli()
 
 	added := 0
 	for _, worker := range workers {
 		nodeID := strings.TrimSpace(worker.NodeID)
 		if nodeID == "" {
-			continue
-		}
-		if _, exists := s.nodes[nodeID]; exists {
 			continue
 		}
 
@@ -137,76 +197,150 @@ func (s *Store) SeedProvisionedWorkers(workers []ProvisionedWorker, now time.Tim
 			}
 		}
 
-		s.nodes[nodeID] = Worker{
-			NodeID:       nodeID,
-			Provisioned:  true,
-			NodeName:     nodeName,
-			Labels:       labels,
-			RegisteredAt: now,
-			LastSeenAt:   lastSeenAt,
+		inserted := int64(0)
+		err := s.db.WithTx(context.Background(), func(q *sqlc.Queries) error {
+			rows, err := q.InsertProvisionedWorkerNodeIfAbsent(context.Background(), sqlc.InsertProvisionedWorkerNodeIfAbsentParams{
+				NodeID:             nodeID,
+				NodeName:           nodeName,
+				RegisteredAtUnixMs: registeredMS,
+				LastSeenAtUnixMs:   lastSeenMS,
+			})
+			if err != nil {
+				return err
+			}
+			inserted = rows
+			if rows == 0 {
+				return nil
+			}
+			for key, value := range labels {
+				if err := q.InsertWorkerLabel(context.Background(), sqlc.InsertWorkerLabelParams{
+					NodeID:     nodeID,
+					LabelKey:   key,
+					LabelValue: value,
+				}); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if err == nil && inserted == 1 {
+			added++
 		}
-		added++
 	}
 	return added
 }
 
 func (s *Store) Delete(nodeID string) bool {
 	trimmedNodeID := strings.TrimSpace(nodeID)
-	if trimmedNodeID == "" {
+	if trimmedNodeID == "" || s == nil || s.queries == nil {
 		return false
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if _, exists := s.nodes[trimmedNodeID]; !exists {
-		return false
-	}
-	delete(s.nodes, trimmedNodeID)
-	return true
+	rows, err := s.queries.DeleteWorkerNodeByID(context.Background(), trimmedNodeID)
+	return err == nil && rows > 0
 }
 
 func (s *Store) TouchWithSession(nodeID string, sessionID string, now time.Time) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	node, ok := s.nodes[nodeID]
-	if !ok {
+	if s == nil || s.queries == nil {
 		return ErrNodeNotFound
 	}
-	if node.SessionID != sessionID {
+
+	rows, err := s.queries.UpdateWorkerHeartbeatBySession(context.Background(), sqlc.UpdateWorkerHeartbeatBySessionParams{
+		LastSeenAtUnixMs: now.UnixMilli(),
+		NodeID:           strings.TrimSpace(nodeID),
+		SessionID:        strings.TrimSpace(sessionID),
+	})
+	if err != nil {
+		return err
+	}
+	if rows > 0 {
+		return nil
+	}
+
+	node, err := s.queries.GetWorkerNodeByID(context.Background(), strings.TrimSpace(nodeID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNodeNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if node.SessionID != strings.TrimSpace(sessionID) {
 		return ErrSessionMismatch
 	}
-	node.LastSeenAt = now
-	s.nodes[nodeID] = node
 	return nil
 }
 
-func (s *Store) List(status WorkerStatus, page int, pageSize int, now time.Time, offlineTTL time.Duration) ([]WorkerView, int) {
-	s.mu.RLock()
-	workers := make([]Worker, 0, len(s.nodes))
-	for _, node := range s.nodes {
-		workers = append(workers, cloneWorker(node))
+func (s *Store) ClearSession(nodeID string, sessionID string) error {
+	if s == nil || s.queries == nil {
+		return errors.New("registry store is unavailable")
 	}
-	s.mu.RUnlock()
-
-	sort.Slice(workers, func(i, j int) bool {
-		if workers[i].RegisteredAt.Equal(workers[j].RegisteredAt) {
-			return workers[i].NodeID < workers[j].NodeID
-		}
-		return workers[i].RegisteredAt.Before(workers[j].RegisteredAt)
+	_, err := s.queries.ClearWorkerSessionByNodeAndSession(context.Background(), sqlc.ClearWorkerSessionByNodeAndSessionParams{
+		NodeID:    strings.TrimSpace(nodeID),
+		SessionID: strings.TrimSpace(sessionID),
 	})
+	return err
+}
 
-	filtered := make([]WorkerView, 0, len(workers))
-	for _, worker := range workers {
+func (s *Store) ClearSessionByNode(nodeID string) error {
+	if s == nil || s.queries == nil {
+		return errors.New("registry store is unavailable")
+	}
+	_, err := s.queries.ClearWorkerSessionByNode(context.Background(), strings.TrimSpace(nodeID))
+	return err
+}
+
+func (s *Store) List(status WorkerStatus, page int, pageSize int, now time.Time, offlineTTL time.Duration) ([]WorkerView, int) {
+	if s == nil || s.queries == nil {
+		return []WorkerView{}, 0
+	}
+
+	nodes, err := s.queries.ListWorkerNodesOrdered(context.Background())
+	if err != nil {
+		return []WorkerView{}, 0
+	}
+	capabilityRows, err := s.queries.ListWorkerCapabilitiesAll(context.Background())
+	if err != nil {
+		return []WorkerView{}, 0
+	}
+	labelRows, err := s.queries.ListWorkerLabelsAll(context.Background())
+	if err != nil {
+		return []WorkerView{}, 0
+	}
+
+	capabilityByNode := make(map[string][]CapabilityDeclaration, len(nodes))
+	for _, row := range capabilityRows {
+		capabilityByNode[row.NodeID] = append(capabilityByNode[row.NodeID], CapabilityDeclaration{
+			Name:        row.CapabilityName,
+			MaxInflight: int32(row.MaxInflight),
+		})
+	}
+	labelsByNode := make(map[string]map[string]string, len(nodes))
+	for _, row := range labelRows {
+		if _, ok := labelsByNode[row.NodeID]; !ok {
+			labelsByNode[row.NodeID] = map[string]string{}
+		}
+		labelsByNode[row.NodeID][row.LabelKey] = row.LabelValue
+	}
+
+	filtered := make([]WorkerView, 0, len(nodes))
+	for _, node := range nodes {
+		worker := Worker{
+			NodeID:       node.NodeID,
+			SessionID:    node.SessionID,
+			Provisioned:  node.Provisioned != 0,
+			NodeName:     node.NodeName,
+			ExecutorKind: node.ExecutorKind,
+			Capabilities: cloneCapabilities(capabilityByNode[node.NodeID]),
+			Labels:       cloneMap(labelsByNode[node.NodeID]),
+			Version:      node.Version,
+			RegisteredAt: time.UnixMilli(node.RegisteredAtUnixMs),
+			LastSeenAt:   time.UnixMilli(node.LastSeenAtUnixMs),
+		}
 		workerStatus := statusOf(worker.LastSeenAt, now, offlineTTL)
 		if status != StatusAll && status != workerStatus {
 			continue
 		}
-		filtered = append(filtered, WorkerView{
-			Worker: worker,
-			Status: workerStatus,
-		})
+		filtered = append(filtered, WorkerView{Worker: worker, Status: workerStatus})
 	}
 
 	total := len(filtered)
@@ -229,69 +363,123 @@ func (s *Store) List(status WorkerStatus, page int, pageSize int, now time.Time,
 }
 
 func (s *Store) Stats(now time.Time, offlineTTL time.Duration, staleAfter time.Duration) WorkerStats {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	if s == nil || s.queries == nil {
+		return WorkerStats{}
+	}
+
+	nodes, err := s.queries.ListWorkerNodesOrdered(context.Background())
+	if err != nil {
+		return WorkerStats{}
+	}
 
 	stats := WorkerStats{}
-	for _, worker := range s.nodes {
+	for _, node := range nodes {
 		stats.Total++
-		workerStatus := statusOf(worker.LastSeenAt, now, offlineTTL)
+		lastSeenAt := time.UnixMilli(node.LastSeenAtUnixMs)
+		workerStatus := statusOf(lastSeenAt, now, offlineTTL)
 		if workerStatus == StatusOnline {
 			stats.Online++
 		} else {
 			stats.Offline++
 		}
-		if now.Sub(worker.LastSeenAt) > staleAfter {
+		if now.Sub(lastSeenAt) > staleAfter {
 			stats.Stale++
 		}
 	}
 	return stats
 }
 
-func (s *Store) ListOnlineByCapability(capability string, now time.Time, offlineTTL time.Duration) []Worker {
+func (s *Store) ListOnlineNodeIDsByCapability(capability string, now time.Time, offlineTTL time.Duration) []string {
 	trimmed := strings.TrimSpace(strings.ToLower(capability))
-	if trimmed == "" {
-		return []Worker{}
+	if trimmed == "" || s == nil || s.queries == nil {
+		return []string{}
 	}
 
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	workers := make([]Worker, 0, len(s.nodes))
-	for _, worker := range s.nodes {
-		if statusOf(worker.LastSeenAt, now, offlineTTL) != StatusOnline {
-			continue
-		}
-		if !hasCapability(worker.Capabilities, trimmed) {
-			continue
-		}
-		workers = append(workers, cloneWorker(worker))
-	}
-
-	sort.Slice(workers, func(i, j int) bool {
-		if workers[i].NodeID == workers[j].NodeID {
-			return workers[i].RegisteredAt.Before(workers[j].RegisteredAt)
-		}
-		return workers[i].NodeID < workers[j].NodeID
+	nodeIDs, err := s.queries.ListOnlineWorkerNodeIDsByCapability(context.Background(), sqlc.ListOnlineWorkerNodeIDsByCapabilityParams{
+		CapabilityName:   trimmed,
+		LastSeenAtUnixMs: now.Add(-offlineTTL).UnixMilli(),
 	})
-	return workers
+	if err != nil {
+		return []string{}
+	}
+
+	return append([]string(nil), nodeIDs...)
 }
 
 func (s *Store) PruneOffline(now time.Time, offlineTTL time.Duration) int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if s == nil || s.queries == nil {
+		return 0
+	}
 
-	removed := 0
-	for nodeID, worker := range s.nodes {
-		if worker.Provisioned {
+	rows, err := s.queries.DeleteOfflineRuntimeWorkers(context.Background(), now.Add(-offlineTTL).UnixMilli())
+	if err != nil {
+		return 0
+	}
+	return int(rows)
+}
+
+func (s *Store) GetCredentialHash(nodeID string) (string, bool) {
+	trimmedNodeID := strings.TrimSpace(nodeID)
+	if trimmedNodeID == "" || s == nil || s.queries == nil {
+		return "", false
+	}
+	credential, err := s.queries.GetWorkerCredentialByNode(context.Background(), trimmedNodeID)
+	if err != nil {
+		return "", false
+	}
+	secretHash := strings.TrimSpace(credential.SecretHash)
+	if secretHash == "" {
+		return "", false
+	}
+	return secretHash, true
+}
+
+func (s *Store) PutCredentialHashIfAbsent(nodeID string, secretHash string, hashAlgo string, now time.Time) bool {
+	trimmedNodeID := strings.TrimSpace(nodeID)
+	trimmedHash := strings.TrimSpace(secretHash)
+	trimmedHashAlgo := strings.TrimSpace(hashAlgo)
+	if trimmedNodeID == "" || trimmedHash == "" || trimmedHashAlgo == "" || s == nil || s.queries == nil {
+		return false
+	}
+
+	nowMS := now.UnixMilli()
+	inserted, err := s.queries.InsertWorkerCredentialIfAbsent(context.Background(), sqlc.InsertWorkerCredentialIfAbsentParams{
+		NodeID:          trimmedNodeID,
+		SecretHash:      trimmedHash,
+		HashAlgo:        trimmedHashAlgo,
+		CreatedAtUnixMs: nowMS,
+		UpdatedAtUnixMs: nowMS,
+	})
+	return err == nil && inserted == 1
+}
+
+func (s *Store) DeleteCredential(nodeID string) bool {
+	trimmedNodeID := strings.TrimSpace(nodeID)
+	if trimmedNodeID == "" || s == nil || s.queries == nil {
+		return false
+	}
+	deleted, err := s.queries.DeleteWorkerCredentialByNode(context.Background(), trimmedNodeID)
+	return err == nil && deleted == 1
+}
+
+func (s *Store) ListCredentialHashes() map[string]string {
+	if s == nil || s.queries == nil {
+		return map[string]string{}
+	}
+	credentials, err := s.queries.ListWorkerCredentials(context.Background())
+	if err != nil {
+		return map[string]string{}
+	}
+	values := make(map[string]string, len(credentials))
+	for _, credential := range credentials {
+		nodeID := strings.TrimSpace(credential.NodeID)
+		secretHash := strings.TrimSpace(credential.SecretHash)
+		if nodeID == "" || secretHash == "" {
 			continue
 		}
-		if statusOf(worker.LastSeenAt, now, offlineTTL) == StatusOffline {
-			delete(s.nodes, nodeID)
-			removed++
-		}
+		values[nodeID] = secretHash
 	}
-	return removed
+	return values
 }
 
 func statusOf(lastSeenAt time.Time, now time.Time, offlineTTL time.Duration) WorkerStatus {

@@ -2,6 +2,13 @@
 
 面向个人与小型团队的代码执行沙箱平台解决方案
 
+## 安全告警（高危）
+
+- `worker -> console` 的 gRPC 连接当前默认是明文传输（未启用 TLS/mTLS）。
+- `ConnectHello` 中包含 `worker_secret`，在不受信网络路径上可能被窃听。
+- 仅建议部署在受信私网或已加密隧道内，禁止跨公网裸连。
+- 根治方案需要引入 TLS/mTLS（本版本尚未实现）。
+
 ## 本地启动（console + worker-docker）
 
 1. 启动 `console`（终端 1）：
@@ -10,21 +17,26 @@
 cd console
 CONSOLE_HTTP_ADDR=:8089 \
 CONSOLE_GRPC_ADDR=:50051 \
-CONSOLE_REPLAY_WINDOW_SEC=60 \
 CONSOLE_HEARTBEAT_INTERVAL_SEC=5 \
+CONSOLE_HASH_KEY=replace-with-long-random-key \
 CONSOLE_DASHBOARD_USERNAME=admin \
 CONSOLE_DASHBOARD_PASSWORD=change-me \
 go run ./cmd/console
 ```
 
-`console` 启动后，worker 数量默认为 `0`。worker 凭据（`worker_id/worker_secret`）由控制台 UI（或对应 API）按需新增生成。
+`console` 启动后，worker 数量默认为 `0`。worker 凭据（`worker_id/worker_secret`）由控制台 UI（或对应 API）按需新增生成，并以哈希形式持久化到 SQLite。
 
 `console` 会在终端打印控制台登录账号密码：
 - 若 `CONSOLE_DASHBOARD_USERNAME` / `CONSOLE_DASHBOARD_PASSWORD` 有设置，则直接使用设置值。
 - 若任一未设置，仅缺失项会随机生成。
 
-可信 token 由控制台 API/UI 运行时管理（内存态，不走环境变量）。  
+可信 token 由控制台 API/UI 管理并持久化到 SQLite（仅存哈希，不存明文）。  
 若当前未配置任何 token，`/mcp` 与执行类 API 会返回 `401`。
+
+数据库相关环境变量：
+- `CONSOLE_DB_PATH`（默认 `./onlyboxes-console.db`）
+- `CONSOLE_DB_BUSY_TIMEOUT_MS`（默认 `5000`）
+- `CONSOLE_TASK_RETENTION_DAYS`（默认 `30`）
 
 2. 登录控制台（保存 Cookie）：
 
@@ -76,11 +88,13 @@ cd worker/worker-docker
 curl -b /tmp/onlyboxes-console.cookie "http://127.0.0.1:8089/api/v1/workers?page=1&page_size=20&status=all"
 ```
 
-8. 一键复制场景对应的接口：按 worker 获取启动命令（接口需登录，响应仅返回命令文本）：
+8. 历史接口（已废弃）：按 worker 获取启动命令（接口需登录）：
 
 ```bash
 curl -b /tmp/onlyboxes-console.cookie "http://127.0.0.1:8089/api/v1/workers/<worker_id>/startup-command"
 ```
+
+该接口现为破坏性变更：固定返回 `410 Gone`。`worker_secret` 仅在创建 worker 时返回一次，恢复路径为删除后重建 worker。
 
 9. 删除 worker（接口需登录，若 worker 在线将被立即断开）：
 
@@ -129,6 +143,10 @@ curl -X POST "http://127.0.0.1:8089/mcp" \
   -H "X-Onlyboxes-Token: <trusted_token>" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 ```
+
+补充说明：
+- `GET /api/v1/console/tokens/:token_id/value` 固定返回 `410 Gone`，token 明文仅在 `POST /api/v1/console/tokens` 创建响应返回一次。
+- dashboard 登录会话为内存态，`console` 重启后会失效，需要重新登录。
 
 ## 发布打包（GitHub Actions）
 

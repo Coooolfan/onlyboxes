@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import ErrorBanner from '@/components/common/ErrorBanner.vue'
@@ -7,16 +7,18 @@ import DashboardHeader from '@/components/dashboard/DashboardHeader.vue'
 import PaginationBar from '@/components/dashboard/PaginationBar.vue'
 import StatsGrid from '@/components/dashboard/StatsGrid.vue'
 import TrustedTokensPanel from '@/components/dashboard/TrustedTokensPanel.vue'
+import WorkerCreateResultModal from '@/components/dashboard/WorkerCreateResultModal.vue'
 import WorkersTable from '@/components/dashboard/WorkersTable.vue'
 import WorkersToolbar from '@/components/dashboard/WorkersToolbar.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useWorkersStore } from '@/stores/workers'
-import type { WorkerStatus } from '@/types/workers'
+import type { WorkerStartupCommandResponse, WorkerStatus } from '@/types/workers'
 
 const authStore = useAuthStore()
 const workersStore = useWorkersStore()
 const route = useRoute()
 const router = useRouter()
+const createdWorkerPayload = ref<WorkerStartupCommandResponse | null>(null)
 
 function parseStatus(raw: unknown): WorkerStatus {
   return raw === 'online' || raw === 'offline' || raw === 'all' ? raw : 'all'
@@ -90,6 +92,18 @@ async function handleLogout(): Promise<void> {
   await router.replace('/login')
 }
 
+async function handleAddWorker(): Promise<void> {
+  const payload = await workersStore.createWorker()
+  if (!payload) {
+    return
+  }
+  createdWorkerPayload.value = payload
+}
+
+function closeWorkerCreateResultModal(): void {
+  createdWorkerPayload.value = null
+}
+
 watch(
   () => route.query,
   () => {
@@ -123,7 +137,7 @@ onBeforeUnmount(() => {
       :creating-worker="workersStore.creatingWorker"
       :auto-refresh-enabled="workersStore.autoRefreshEnabled"
       :loading="workersStore.loading"
-      @add-worker="workersStore.createWorker"
+      @add-worker="handleAddWorker"
       @toggle-auto-refresh="workersStore.toggleAutoRefresh"
       @refresh="workersStore.loadDashboard"
       @logout="handleLogout"
@@ -159,15 +173,12 @@ onBeforeUnmount(() => {
       <WorkersTable
         :worker-rows="workersStore.workerRows"
         :loading="workersStore.loading"
-        :copying-node-id="workersStore.copyingNodeID"
         :deleting-node-id="workersStore.deletingNodeID"
         :format-capabilities="workersStore.formatCapabilities"
         :format-labels="workersStore.formatLabels"
         :format-date-time="workersStore.formatDateTime"
         :format-age="workersStore.formatAge"
-        :startup-copy-button-text="workersStore.startupCopyButtonText"
         :delete-worker-button-text="workersStore.deleteWorkerButtonText"
-        @copy-startup-command="workersStore.copyWorkerStartupCommand"
         @delete-worker="workersStore.deleteWorker"
       />
 
@@ -182,6 +193,8 @@ onBeforeUnmount(() => {
         @next="workersStore.nextPage"
       />
     </section>
+
+    <WorkerCreateResultModal :payload="createdWorkerPayload" @close="closeWorkerCreateResultModal" />
   </main>
 </template>
 

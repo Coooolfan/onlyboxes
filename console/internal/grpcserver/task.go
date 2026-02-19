@@ -2,13 +2,16 @@ package grpcserver
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/onlyboxes/onlyboxes/console/internal/persistence/sqlc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -18,15 +21,18 @@ const (
 	defaultTaskTimeout         = 60 * time.Second
 	maxTaskWait                = 60 * time.Second
 	maxTaskTimeout             = 10 * time.Minute
+	inlineTaskPruneMinInterval = 15 * time.Second
 	defaultTaskNoWorkerCode    = "no_worker"
 	defaultTaskNoCapacityCode  = "no_capacity"
 	defaultTaskCanceledCode    = "canceled"
 	defaultTaskTimeoutCode     = "timeout"
 	defaultTaskDispatchErrCode = "dispatch_failed"
+	defaultTaskPersistErrCode  = "persistence_error"
 )
 
 var ErrTaskNotFound = errors.New("task not found")
 var ErrTaskTerminal = errors.New("task already completed")
+var ErrTaskTransitionNotApplied = errors.New("task state transition was not applied")
 
 type TaskMode string
 
@@ -82,21 +88,7 @@ type taskRecord struct {
 	id         string
 	ownerID    string
 	requestID  string
-	commandID  string
-	capability string
-	inputJSON  []byte
-
-	status       TaskStatus
-	resultJSON   []byte
-	errorCode    string
-	errorMessage string
-
-	createdAt   time.Time
-	updatedAt   time.Time
-	deadlineAt  time.Time
-	completedAt time.Time
-	expiresAt   time.Time
-
+	status     TaskStatus
 	cancel     context.CancelFunc
 	cancelOnce sync.Once
 	done       chan struct{}
@@ -162,28 +154,17 @@ func (s *RegistryService) SubmitTask(ctx context.Context, req SubmitTaskRequest)
 	if mode == TaskModeAuto && wait > timeout {
 		wait = timeout
 	}
+	s.maybePruneExpiredTasks(s.nowFn())
 
 	requestID := strings.TrimSpace(req.RequestID)
 	requestKey := taskRequestScopeKey(ownerID, requestID)
 	requestReserved := false
-
 	if requestID != "" {
 		s.tasksMu.Lock()
-		s.pruneTasksLocked(s.nowFn())
-		if existingID, ok := s.taskByRequestKey[requestKey]; ok {
-			existing, exists := s.tasks[existingID]
-			if exists {
-				s.tasksMu.Unlock()
-				return s.resolveSubmitTaskResult(ctx, existing, mode, wait)
-			}
-			delete(s.taskByRequestKey, requestKey)
-		}
 		if _, reserved := s.taskRequestReservations[requestKey]; reserved {
 			s.tasksMu.Unlock()
 			return SubmitTaskResult{}, ErrTaskRequestInProgress
 		}
-		// Reserve request_id inside the same critical section as the dedup check,
-		// so concurrent submissions cannot pass validation and create duplicates.
 		s.taskRequestReservations[requestKey] = struct{}{}
 		requestReserved = true
 		s.tasksMu.Unlock()
@@ -195,6 +176,10 @@ func (s *RegistryService) SubmitTask(ctx context.Context, req SubmitTaskRequest)
 			delete(s.taskRequestReservations, requestKey)
 			s.tasksMu.Unlock()
 		}()
+		existing, found := s.getTaskByOwnerAndRequest(ownerID, requestID)
+		if found {
+			return s.resolveSubmitTaskResult(ctx, existing.taskID, s.getTaskRuntime(existing.taskID), mode, wait)
+		}
 	}
 
 	if availabilityErr := s.checkCapabilityAvailability(capability); availabilityErr != nil {
@@ -206,34 +191,52 @@ func (s *RegistryService) SubmitTask(ctx context.Context, req SubmitTaskRequest)
 		return SubmitTaskResult{}, status.Error(codes.Internal, "failed to create task_id")
 	}
 	now := s.nowFn()
+
+	insertErr := s.taskQueries().InsertTask(context.Background(), sqlc.InsertTaskParams{
+		TaskID:            taskID,
+		OwnerID:           ownerID,
+		RequestID:         requestID,
+		Capability:        capability,
+		InputJson:         string(inputJSON),
+		Status:            string(TaskStatusQueued),
+		CommandID:         "",
+		ResultJson:        "",
+		ErrorCode:         "",
+		ErrorMessage:      "",
+		CreatedAtUnixMs:   now.UnixMilli(),
+		UpdatedAtUnixMs:   now.UnixMilli(),
+		DeadlineAtUnixMs:  now.Add(timeout).UnixMilli(),
+		CompletedAtUnixMs: 0,
+		ExpiresAtUnixMs:   0,
+	})
+	if insertErr != nil {
+		if requestID != "" && isTaskOwnerRequestConflict(insertErr) {
+			existing, found := s.getTaskByOwnerAndRequest(ownerID, requestID)
+			if found {
+				return s.resolveSubmitTaskResult(ctx, existing.taskID, s.getTaskRuntime(existing.taskID), mode, wait)
+			}
+		}
+		return SubmitTaskResult{}, status.Error(codes.Internal, "failed to create task")
+	}
+
 	taskCtx, taskCancel := context.WithTimeout(context.Background(), timeout)
-	record := &taskRecord{
-		id:         taskID,
-		ownerID:    ownerID,
-		requestID:  requestID,
-		capability: capability,
-		inputJSON:  inputJSON,
-		status:     TaskStatusQueued,
-		createdAt:  now,
-		updatedAt:  now,
-		deadlineAt: now.Add(timeout),
-		cancel:     taskCancel,
-		done:       make(chan struct{}),
+	runtimeRecord := &taskRecord{
+		id:        taskID,
+		ownerID:   ownerID,
+		requestID: requestID,
+		cancel:    taskCancel,
+		done:      make(chan struct{}),
 	}
-
-	s.tasksMu.Lock()
-	s.pruneTasksLocked(now)
-	s.tasks[taskID] = record
-	if requestID != "" {
+	s.setTaskRuntime(taskID, runtimeRecord)
+	if requestReserved {
+		s.tasksMu.Lock()
 		delete(s.taskRequestReservations, requestKey)
+		s.tasksMu.Unlock()
 		requestReserved = false
-		s.taskByRequestKey[requestKey] = taskID
 	}
-	s.tasksMu.Unlock()
 
-	go s.executeTask(taskCtx, taskID, capability, inputJSON)
-
-	return s.resolveSubmitTaskResult(ctx, record, mode, wait)
+	go s.executeTask(taskCtx, taskID, ownerID, capability, inputJSON)
+	return s.resolveSubmitTaskResult(ctx, taskID, runtimeRecord, mode, wait)
 }
 
 func (s *RegistryService) GetTask(taskID string, ownerID string) (TaskSnapshot, bool) {
@@ -242,24 +245,11 @@ func (s *RegistryService) GetTask(taskID string, ownerID string) (TaskSnapshot, 
 		return TaskSnapshot{}, false
 	}
 	normalizedOwnerID := normalizeTaskOwnerID(ownerID)
-
-	s.tasksMu.RLock()
-	record, ok := s.tasks[taskID]
-	s.tasksMu.RUnlock()
-	if !ok || record == nil || record.ownerID != normalizedOwnerID {
+	snapshot, found := s.getTaskByID(taskID)
+	if !found || snapshot.ownerID != normalizedOwnerID {
 		return TaskSnapshot{}, false
 	}
-
-	s.tasksMu.Lock()
-	s.pruneTasksLocked(s.nowFn())
-	record, ok = s.tasks[taskID]
-	if !ok || record == nil || record.ownerID != normalizedOwnerID {
-		s.tasksMu.Unlock()
-		return TaskSnapshot{}, false
-	}
-	snapshot := snapshotTaskLocked(record)
-	s.tasksMu.Unlock()
-	return snapshot, true
+	return snapshotTask(snapshot), true
 }
 
 func (s *RegistryService) CancelTask(taskID string, ownerID string) (TaskSnapshot, error) {
@@ -268,82 +258,155 @@ func (s *RegistryService) CancelTask(taskID string, ownerID string) (TaskSnapsho
 		return TaskSnapshot{}, ErrTaskNotFound
 	}
 	normalizedOwnerID := normalizeTaskOwnerID(ownerID)
-
-	s.tasksMu.Lock()
-	defer s.tasksMu.Unlock()
-
-	s.pruneTasksLocked(s.nowFn())
-	record, ok := s.tasks[taskID]
-	if !ok || record == nil || record.ownerID != normalizedOwnerID {
+	current, found := s.getTaskByID(taskID)
+	if !found || current.ownerID != normalizedOwnerID {
 		return TaskSnapshot{}, ErrTaskNotFound
 	}
-	if isTaskTerminal(record.status) {
-		return snapshotTaskLocked(record), ErrTaskTerminal
+	if isTaskTerminal(current.status) {
+		return snapshotTask(current), ErrTaskTerminal
 	}
 
 	now := s.nowFn()
-	s.finishTaskLocked(record, TaskStatusCanceled, nil, defaultTaskCanceledCode, "task canceled", now)
-	return snapshotTaskLocked(record), nil
+	if err := s.finishTask(taskID, TaskStatusCanceled, nil, defaultTaskCanceledCode, "task canceled", now); err != nil {
+		if errors.Is(err, ErrTaskTransitionNotApplied) {
+			latest, found := s.getTaskByID(taskID)
+			if !found || latest.ownerID != normalizedOwnerID {
+				return TaskSnapshot{}, ErrTaskNotFound
+			}
+			if isTaskTerminal(latest.status) {
+				return snapshotTask(latest), ErrTaskTerminal
+			}
+		}
+		return TaskSnapshot{}, err
+	}
+	updated, found := s.getTaskByID(taskID)
+	if !found {
+		return TaskSnapshot{}, ErrTaskNotFound
+	}
+	return snapshotTask(updated), nil
 }
 
 func (s *RegistryService) resolveSubmitTaskResult(
 	ctx context.Context,
-	record *taskRecord,
+	taskID string,
+	runtime *taskRecord,
 	mode TaskMode,
 	wait time.Duration,
 ) (SubmitTaskResult, error) {
-	if record == nil {
+	if strings.TrimSpace(taskID) == "" {
 		return SubmitTaskResult{}, ErrTaskNotFound
 	}
 
-	snapshotNow := func() SubmitTaskResult {
-		s.tasksMu.RLock()
-		defer s.tasksMu.RUnlock()
-		return SubmitTaskResult{
-			Task:      snapshotTaskLocked(record),
-			Completed: isTaskTerminal(record.status),
+	snapshotNow := func() (SubmitTaskResult, error) {
+		taskState, found := s.getTaskByID(taskID)
+		if !found {
+			return SubmitTaskResult{}, ErrTaskNotFound
+		}
+		snapshot := snapshotTask(taskState)
+		return SubmitTaskResult{Task: snapshot, Completed: isTaskTerminal(snapshot.Status)}, nil
+	}
+
+	snap, err := snapshotNow()
+	if err != nil {
+		return SubmitTaskResult{}, err
+	}
+	if mode == TaskModeAsync || snap.Completed {
+		return snap, nil
+	}
+
+	waitDone := func(waitDuration time.Duration) error {
+		if runtime == nil {
+			return nil
+		}
+		if waitDuration <= 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-runtime.done:
+				return nil
+			}
+		}
+		timer := time.NewTimer(waitDuration)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-runtime.done:
+			return nil
+		case <-timer.C:
+			return nil
 		}
 	}
 
 	switch mode {
-	case TaskModeAsync:
-		return snapshotNow(), nil
 	case TaskModeSync:
-		select {
-		case <-ctx.Done():
-			return SubmitTaskResult{}, ctx.Err()
-		case <-record.done:
-			return snapshotNow(), nil
+		if err := waitDone(0); err != nil {
+			return SubmitTaskResult{}, err
 		}
+		return snapshotNow()
 	case TaskModeAuto:
-		timer := time.NewTimer(wait)
-		defer timer.Stop()
-		select {
-		case <-ctx.Done():
-			return SubmitTaskResult{}, ctx.Err()
-		case <-record.done:
-			return snapshotNow(), nil
-		case <-timer.C:
-			result := snapshotNow()
-			result.Completed = isTaskTerminal(result.Task.Status)
-			return result, nil
+		if err := waitDone(wait); err != nil {
+			return SubmitTaskResult{}, err
 		}
+		return snapshotNow()
 	default:
 		return SubmitTaskResult{}, status.Error(codes.InvalidArgument, "unsupported mode")
 	}
 }
 
-func (s *RegistryService) executeTask(ctx context.Context, taskID string, capability string, inputJSON []byte) {
-	s.markTaskDispatched(taskID)
+func (s *RegistryService) executeTask(ctx context.Context, taskID string, ownerID string, capability string, inputJSON []byte) {
+	if err := s.markTaskDispatched(taskID); err != nil {
+		if errors.Is(err, ErrTaskTransitionNotApplied) {
+			return
+		}
+		log.Printf("task %s failed to mark dispatched: %v", taskID, err)
+		if failErr := s.failTaskOnPersistenceError(taskID, "mark_dispatched", err); failErr != nil {
+			log.Printf("task %s failed to persist persistence_error after mark_dispatched: %v", taskID, failErr)
+		}
+		return
+	}
+	var markRunningErr error
 	outcome, err := s.dispatchCommand(ctx, capability, inputJSON, 0, func(commandID string) {
-		s.markTaskRunning(taskID, commandID)
+		if markErr := s.markTaskRunning(taskID, commandID); markErr != nil {
+			markRunningErr = markErr
+			runtime := s.getTaskRuntime(taskID)
+			if runtime != nil && runtime.cancel != nil {
+				runtime.cancelOnce.Do(runtime.cancel)
+			}
+		}
 	})
+	if markRunningErr != nil {
+		if errors.Is(markRunningErr, ErrTaskTransitionNotApplied) {
+			return
+		}
+		log.Printf("task %s failed to mark running: %v", taskID, markRunningErr)
+		if failErr := s.failTaskOnPersistenceError(taskID, "mark_running", markRunningErr); failErr != nil {
+			log.Printf("task %s failed to persist persistence_error after mark_running: %v", taskID, failErr)
+		}
+		return
+	}
 	if err != nil {
-		s.finishTaskWithError(taskID, err)
+		if finishErr := s.finishTaskWithError(taskID, err); finishErr != nil {
+			if errors.Is(finishErr, ErrTaskTransitionNotApplied) {
+				return
+			}
+			log.Printf("task %s failed to mark terminal with dispatch error: %v", taskID, finishErr)
+			if failErr := s.failTaskOnPersistenceError(taskID, "finish_error", finishErr); failErr != nil {
+				log.Printf("task %s failed to persist persistence_error after finish_error: %v", taskID, failErr)
+			}
+		}
 		return
 	}
 	if outcome.err != nil {
-		s.finishTaskWithError(taskID, outcome.err)
+		if finishErr := s.finishTaskWithError(taskID, outcome.err); finishErr != nil {
+			if errors.Is(finishErr, ErrTaskTransitionNotApplied) {
+				return
+			}
+			log.Printf("task %s failed to mark terminal with worker error: %v", taskID, finishErr)
+			if failErr := s.failTaskOnPersistenceError(taskID, "finish_error", finishErr); failErr != nil {
+				log.Printf("task %s failed to persist persistence_error after finish_error: %v", taskID, failErr)
+			}
+		}
 		return
 	}
 
@@ -359,106 +422,163 @@ func (s *RegistryService) executeTask(ctx context.Context, taskID string, capabi
 		resultPayload = buildEchoPayload(string(resultPayload))
 	}
 
-	s.tasksMu.Lock()
-	record, ok := s.tasks[taskID]
-	if ok && record != nil {
-		scopedResultPayload, scopedOK := s.restoreTaskResultOwnerScope(record.ownerID, capability, resultPayload)
-		if !scopedOK {
-			s.finishTaskLocked(
-				record,
-				TaskStatusFailed,
-				nil,
-				taskOwnerScopeInvalidPayloadCode,
-				taskOwnerScopeInvalidPayloadMessage,
-				completedAt,
-			)
-			s.tasksMu.Unlock()
+	scopedResultPayload, scopedOK := s.restoreTaskResultOwnerScope(ownerID, capability, resultPayload)
+	if !scopedOK {
+		if err := s.finishTask(taskID, TaskStatusFailed, nil, taskOwnerScopeInvalidPayloadCode, taskOwnerScopeInvalidPayloadMessage, completedAt); err != nil {
+			if errors.Is(err, ErrTaskTransitionNotApplied) {
+				return
+			}
+			log.Printf("task %s failed to mark invalid scoped payload: %v", taskID, err)
+			if failErr := s.failTaskOnPersistenceError(taskID, "finish_invalid_payload", err); failErr != nil {
+				log.Printf("task %s failed to persist persistence_error after finish_invalid_payload: %v", taskID, failErr)
+			}
+		}
+		return
+	}
+	if err := s.finishTask(taskID, TaskStatusSucceeded, scopedResultPayload, "", "", completedAt); err != nil {
+		if errors.Is(err, ErrTaskTransitionNotApplied) {
 			return
 		}
-		resultPayload = scopedResultPayload
-		s.finishTaskLocked(record, TaskStatusSucceeded, resultPayload, "", "", completedAt)
+		log.Printf("task %s failed to mark succeeded: %v", taskID, err)
+		if failErr := s.failTaskOnPersistenceError(taskID, "finish_succeeded", err); failErr != nil {
+			log.Printf("task %s failed to persist persistence_error after finish_succeeded: %v", taskID, failErr)
+		}
 	}
-	s.tasksMu.Unlock()
 }
 
-func (s *RegistryService) markTaskDispatched(taskID string) {
-	s.tasksMu.Lock()
-	defer s.tasksMu.Unlock()
-	record, ok := s.tasks[taskID]
-	if !ok || record == nil || isTaskTerminal(record.status) {
-		return
+func (s *RegistryService) markTaskDispatched(taskID string) error {
+	if strings.TrimSpace(taskID) == "" {
+		return errors.New("task_id is required")
 	}
-	record.status = TaskStatusDispatched
-	record.updatedAt = s.nowFn()
+	queries := s.taskQueries()
+	if queries == nil {
+		return errors.New("task store is unavailable")
+	}
+	rows, err := queries.MarkTaskDispatched(context.Background(), sqlc.MarkTaskDispatchedParams{
+		UpdatedAtUnixMs: s.nowFn().UnixMilli(),
+		TaskID:          taskID,
+	})
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return fmt.Errorf("%w: task %s transition to dispatched", ErrTaskTransitionNotApplied, taskID)
+	}
+	return nil
 }
 
-func (s *RegistryService) markTaskRunning(taskID string, commandID string) {
-	s.tasksMu.Lock()
-	defer s.tasksMu.Unlock()
-	record, ok := s.tasks[taskID]
-	if !ok || record == nil || isTaskTerminal(record.status) {
-		return
+func (s *RegistryService) markTaskRunning(taskID string, commandID string) error {
+	if strings.TrimSpace(taskID) == "" {
+		return errors.New("task_id is required")
 	}
-	record.status = TaskStatusRunning
-	record.commandID = strings.TrimSpace(commandID)
-	record.updatedAt = s.nowFn()
+	queries := s.taskQueries()
+	if queries == nil {
+		return errors.New("task store is unavailable")
+	}
+	rows, err := queries.MarkTaskRunning(context.Background(), sqlc.MarkTaskRunningParams{
+		CommandID:       strings.TrimSpace(commandID),
+		UpdatedAtUnixMs: s.nowFn().UnixMilli(),
+		TaskID:          taskID,
+	})
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return fmt.Errorf("%w: task %s transition to running", ErrTaskTransitionNotApplied, taskID)
+	}
+	return nil
 }
 
-func (s *RegistryService) finishTaskWithError(taskID string, err error) {
-	s.tasksMu.Lock()
-	defer s.tasksMu.Unlock()
-
-	record, ok := s.tasks[taskID]
-	if !ok || record == nil || isTaskTerminal(record.status) {
-		return
-	}
-
+func (s *RegistryService) finishTaskWithError(taskID string, err error) error {
 	now := s.nowFn()
 	var commandErr *CommandExecutionError
 	switch {
 	case errors.Is(err, ErrNoCapabilityWorker):
-		s.finishTaskLocked(record, TaskStatusFailed, nil, defaultTaskNoWorkerCode, "no online worker supports capability", now)
+		return s.finishTask(taskID, TaskStatusFailed, nil, defaultTaskNoWorkerCode, "no online worker supports capability", now)
 	case errors.Is(err, ErrNoWorkerCapacity):
-		s.finishTaskLocked(record, TaskStatusFailed, nil, defaultTaskNoCapacityCode, "no online worker capacity for capability", now)
+		return s.finishTask(taskID, TaskStatusFailed, nil, defaultTaskNoCapacityCode, "no online worker capacity for capability", now)
 	case errors.Is(err, context.DeadlineExceeded):
-		s.finishTaskLocked(record, TaskStatusTimeout, nil, defaultTaskTimeoutCode, "task timed out", now)
+		return s.finishTask(taskID, TaskStatusTimeout, nil, defaultTaskTimeoutCode, "task timed out", now)
 	case errors.Is(err, context.Canceled):
-		s.finishTaskLocked(record, TaskStatusCanceled, nil, defaultTaskCanceledCode, "task canceled", now)
+		return s.finishTask(taskID, TaskStatusCanceled, nil, defaultTaskCanceledCode, "task canceled", now)
 	case errors.As(err, &commandErr):
 		code := strings.TrimSpace(commandErr.Code)
 		if code == "" {
 			code = defaultTaskDispatchErrCode
 		}
-		s.finishTaskLocked(record, TaskStatusFailed, nil, code, commandErr.Message, now)
+		return s.finishTask(taskID, TaskStatusFailed, nil, code, commandErr.Message, now)
 	case status.Code(err) == codes.DeadlineExceeded:
-		s.finishTaskLocked(record, TaskStatusTimeout, nil, defaultTaskTimeoutCode, "task timed out", now)
+		return s.finishTask(taskID, TaskStatusTimeout, nil, defaultTaskTimeoutCode, "task timed out", now)
 	default:
-		s.finishTaskLocked(record, TaskStatusFailed, nil, defaultTaskDispatchErrCode, err.Error(), now)
+		return s.finishTask(taskID, TaskStatusFailed, nil, defaultTaskDispatchErrCode, err.Error(), now)
 	}
 }
 
-func (s *RegistryService) finishTaskLocked(
-	record *taskRecord,
-	statusValue TaskStatus,
-	resultJSON []byte,
-	errorCode string,
-	errorMessage string,
-	completedAt time.Time,
-) {
-	if record == nil || isTaskTerminal(record.status) {
-		return
+func (s *RegistryService) finishTask(taskID string, statusValue TaskStatus, resultJSON []byte, errorCode string, errorMessage string, completedAt time.Time) error {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return errors.New("task_id is required")
 	}
 	if completedAt.IsZero() {
 		completedAt = s.nowFn()
 	}
 
-	record.status = statusValue
-	record.resultJSON = append([]byte(nil), resultJSON...)
-	record.errorCode = strings.TrimSpace(errorCode)
-	record.errorMessage = strings.TrimSpace(errorMessage)
-	record.updatedAt = completedAt
-	record.completedAt = completedAt
-	record.expiresAt = completedAt.Add(s.taskRetention)
+	resultPayload := string(resultJSON)
+	if resultPayload == "" {
+		resultPayload = ""
+	}
+
+	queries := s.taskQueries()
+	if queries == nil {
+		s.completeTaskRuntime(taskID)
+		return errors.New("task store is unavailable")
+	}
+	rows, err := queries.MarkTaskTerminal(context.Background(), sqlc.MarkTaskTerminalParams{
+		Status:            string(statusValue),
+		ResultJson:        resultPayload,
+		ErrorCode:         strings.TrimSpace(errorCode),
+		ErrorMessage:      strings.TrimSpace(errorMessage),
+		UpdatedAtUnixMs:   completedAt.UnixMilli(),
+		CompletedAtUnixMs: completedAt.UnixMilli(),
+		ExpiresAtUnixMs:   completedAt.Add(s.taskRetention).UnixMilli(),
+		TaskID:            taskID,
+	})
+
+	s.completeTaskRuntime(taskID)
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return fmt.Errorf("%w: task %s terminal transition", ErrTaskTransitionNotApplied, taskID)
+	}
+	return nil
+}
+
+func (s *RegistryService) failTaskOnPersistenceError(taskID string, stage string, cause error) error {
+	stage = strings.TrimSpace(stage)
+	if stage == "" {
+		stage = "unknown_stage"
+	}
+	if cause == nil {
+		cause = errors.New("unknown persistence error")
+	}
+
+	message := fmt.Sprintf("failed to persist task state at %s: %v", stage, cause)
+	if err := s.finishTask(taskID, TaskStatusFailed, nil, defaultTaskPersistErrCode, message, s.nowFn()); err != nil {
+		criticalErr := fmt.Errorf("task %s persistence fallback failed at %s: original=%w fallback=%v", taskID, stage, cause, err)
+		log.Printf("CRITICAL: %v", criticalErr)
+		if s.criticalPersistenceFailureFn != nil {
+			s.criticalPersistenceFailureFn(criticalErr)
+		}
+		return criticalErr
+	}
+	return nil
+}
+
+func (s *RegistryService) closeTaskRuntimeRecord(record *taskRecord) {
+	if record == nil {
+		return
+	}
 	if record.cancel != nil {
 		cancel := record.cancel
 		record.cancel = nil
@@ -471,13 +591,13 @@ func (s *RegistryService) finishTaskLocked(
 
 func (s *RegistryService) checkCapabilityAvailability(capability string) error {
 	now := s.nowFn()
-	workers := s.store.ListOnlineByCapability(capability, now, time.Duration(s.offlineTTLSec)*time.Second)
-	if len(workers) == 0 {
+	nodeIDs := s.store.ListOnlineNodeIDsByCapability(capability, now, time.Duration(s.offlineTTLSec)*time.Second)
+	if len(nodeIDs) == 0 {
 		return ErrNoCapabilityWorker
 	}
 
-	for _, worker := range workers {
-		session := s.getSession(worker.NodeID)
+	for _, nodeID := range nodeIDs {
+		session := s.getSession(nodeID)
 		if session == nil || !session.hasCapability(capability) {
 			continue
 		}
@@ -492,46 +612,152 @@ func (s *RegistryService) checkCapabilityAvailability(capability string) error {
 	return ErrNoWorkerCapacity
 }
 
-func (s *RegistryService) pruneTasksLocked(now time.Time) {
-	for taskID, record := range s.tasks {
-		if record == nil || !isTaskTerminal(record.status) {
-			continue
+func (s *RegistryService) pruneExpiredTasks(now time.Time) error {
+	queries := s.taskQueries()
+	if s == nil || queries == nil {
+		return nil
+	}
+	_, err := queries.DeleteExpiredTerminalTasks(context.Background(), now.UnixMilli())
+	return err
+}
+
+func (s *RegistryService) maybePruneExpiredTasks(now time.Time) {
+	if s == nil {
+		return
+	}
+	nowMS := now.UnixMilli()
+	minIntervalMS := inlineTaskPruneMinInterval.Milliseconds()
+	for {
+		last := s.lastInlineTaskPruneUnixMs.Load()
+		if last > 0 && nowMS-last < minIntervalMS {
+			return
 		}
-		if now.Before(record.expiresAt) {
-			continue
+		if s.lastInlineTaskPruneUnixMs.CompareAndSwap(last, nowMS) {
+			break
 		}
-		delete(s.tasks, taskID)
-		if record.requestID != "" {
-			requestKey := taskRequestScopeKey(record.ownerID, record.requestID)
-			if mapped, ok := s.taskByRequestKey[requestKey]; ok && mapped == taskID {
-				delete(s.taskByRequestKey, requestKey)
-			}
-		}
+	}
+	if err := s.pruneExpiredTasks(now); err != nil {
+		log.Printf("task prune failed during submit: %v", err)
 	}
 }
 
-func snapshotTaskLocked(record *taskRecord) TaskSnapshot {
-	if record == nil {
-		return TaskSnapshot{}
+func (s *RegistryService) taskQueries() *sqlc.Queries {
+	if s == nil || s.store == nil || s.store.Persistence() == nil {
+		return nil
 	}
-	snapshot := TaskSnapshot{
-		TaskID:       record.id,
-		RequestID:    record.requestID,
-		CommandID:    record.commandID,
-		Capability:   record.capability,
-		Status:       record.status,
-		ResultJSON:   append([]byte(nil), record.resultJSON...),
-		ErrorCode:    record.errorCode,
-		ErrorMessage: record.errorMessage,
-		CreatedAt:    record.createdAt,
-		UpdatedAt:    record.updatedAt,
-		DeadlineAt:   record.deadlineAt,
+	return s.store.Persistence().Queries
+}
+
+func (s *RegistryService) getTaskByID(taskID string) (dbTaskSnapshot, bool) {
+	if s.taskQueries() == nil {
+		return dbTaskSnapshot{}, false
 	}
-	if !record.completedAt.IsZero() {
-		completed := record.completedAt
-		snapshot.CompletedAt = &completed
+	task, err := s.taskQueries().GetTaskByID(context.Background(), taskID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return dbTaskSnapshot{}, false
 	}
-	return snapshot
+	if err != nil {
+		return dbTaskSnapshot{}, false
+	}
+	return convertDBTask(task), true
+}
+
+func (s *RegistryService) getTaskByOwnerAndRequest(ownerID string, requestID string) (dbTaskSnapshot, bool) {
+	if s.taskQueries() == nil {
+		return dbTaskSnapshot{}, false
+	}
+	task, err := s.taskQueries().GetTaskByOwnerAndRequest(context.Background(), sqlc.GetTaskByOwnerAndRequestParams{
+		OwnerID:   ownerID,
+		RequestID: requestID,
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return dbTaskSnapshot{}, false
+	}
+	if err != nil {
+		return dbTaskSnapshot{}, false
+	}
+	return convertDBTask(task), true
+}
+
+func (s *RegistryService) setTaskRuntime(taskID string, record *taskRecord) {
+	s.tasksMu.Lock()
+	s.tasks[taskID] = record
+	s.tasksMu.Unlock()
+}
+
+func (s *RegistryService) getTaskRuntime(taskID string) *taskRecord {
+	s.tasksMu.RLock()
+	record := s.tasks[taskID]
+	s.tasksMu.RUnlock()
+	return record
+}
+
+func (s *RegistryService) completeTaskRuntime(taskID string) {
+	s.tasksMu.Lock()
+	record := s.tasks[taskID]
+	if record != nil {
+		delete(s.tasks, taskID)
+	}
+	s.tasksMu.Unlock()
+	s.closeTaskRuntimeRecord(record)
+}
+
+type dbTaskSnapshot struct {
+	taskID       string
+	ownerID      string
+	requestID    string
+	commandID    string
+	capability   string
+	status       TaskStatus
+	resultJSON   []byte
+	errorCode    string
+	errorMessage string
+	createdAt    time.Time
+	updatedAt    time.Time
+	deadlineAt   time.Time
+	completedAt  *time.Time
+	expiresAt    time.Time
+}
+
+func convertDBTask(task sqlc.Task) dbTaskSnapshot {
+	var completedAt *time.Time
+	if task.CompletedAtUnixMs > 0 {
+		completed := time.UnixMilli(task.CompletedAtUnixMs)
+		completedAt = &completed
+	}
+	return dbTaskSnapshot{
+		taskID:       task.TaskID,
+		ownerID:      task.OwnerID,
+		requestID:    task.RequestID,
+		commandID:    task.CommandID,
+		capability:   task.Capability,
+		status:       TaskStatus(task.Status),
+		resultJSON:   []byte(task.ResultJson),
+		errorCode:    task.ErrorCode,
+		errorMessage: task.ErrorMessage,
+		createdAt:    time.UnixMilli(task.CreatedAtUnixMs),
+		updatedAt:    time.UnixMilli(task.UpdatedAtUnixMs),
+		deadlineAt:   time.UnixMilli(task.DeadlineAtUnixMs),
+		completedAt:  completedAt,
+		expiresAt:    time.UnixMilli(task.ExpiresAtUnixMs),
+	}
+}
+
+func snapshotTask(task dbTaskSnapshot) TaskSnapshot {
+	return TaskSnapshot{
+		TaskID:       task.taskID,
+		RequestID:    task.requestID,
+		CommandID:    task.commandID,
+		Capability:   task.capability,
+		Status:       task.status,
+		ResultJSON:   append([]byte(nil), task.resultJSON...),
+		ErrorCode:    task.errorCode,
+		ErrorMessage: task.errorMessage,
+		CreatedAt:    task.createdAt,
+		UpdatedAt:    task.updatedAt,
+		DeadlineAt:   task.deadlineAt,
+		CompletedAt:  task.completedAt,
+	}
 }
 
 func isTaskTerminal(statusValue TaskStatus) bool {
@@ -541,4 +767,12 @@ func isTaskTerminal(statusValue TaskStatus) bool {
 	default:
 		return false
 	}
+}
+
+func isTaskOwnerRequestConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "idx_tasks_owner_request_unique") || strings.Contains(lower, "tasks.owner_id")
 }

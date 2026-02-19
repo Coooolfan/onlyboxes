@@ -433,16 +433,7 @@ describe('App', () => {
     wrapper.unmount()
   })
 
-  it('copies startup command', async () => {
-    const writeText = vi.fn(async () => {})
-    Object.defineProperty(window.navigator, 'clipboard', {
-      value: { writeText },
-      configurable: true,
-    })
-
-    const startupCommand =
-      'WORKER_CONSOLE_GRPC_TARGET=127.0.0.1:50051 WORKER_ID=node-1 WORKER_SECRET=secret-1 WORKER_HEARTBEAT_INTERVAL_SEC=5 WORKER_HEARTBEAT_JITTER_PCT=20 go run ./cmd/worker-docker'
-
+  it('removes per-worker startup command action', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url.startsWith('/api/v1/workers/stats')) {
@@ -454,9 +445,6 @@ describe('App', () => {
       if (url === '/api/v1/console/tokens') {
         return jsonResponse(trustedTokensPayload)
       }
-      if (url === '/api/v1/workers/node-1/startup-command') {
-        return jsonResponse({ node_id: 'node-1', command: startupCommand })
-      }
       throw new Error(`unexpected url: ${url}`)
     })
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch)
@@ -464,81 +452,13 @@ describe('App', () => {
     const wrapper = await mountApp('/workers')
 
     const copyBtn = wrapper.findAll('button').find((button) => button.text() === 'Copy Start Cmd')
-    expect(copyBtn).toBeTruthy()
-    await copyBtn?.trigger('click')
-    await flushPromises()
-
-    expect(writeText).toHaveBeenCalledWith(startupCommand)
-    expect(wrapper.text()).toContain('Copied')
+    expect(copyBtn).toBeUndefined()
+    expect(fetchMock.mock.calls.some(([url]) => String(url) === '/api/v1/workers/node-1/startup-command')).toBe(false)
 
     wrapper.unmount()
   })
 
-  it('returns to login when startup command fetch receives 401', async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input)
-      if (url.startsWith('/api/v1/workers/stats')) {
-        return jsonResponse(statsPayload)
-      }
-      if (url.startsWith('/api/v1/workers?')) {
-        return jsonResponse(workersPayload)
-      }
-      if (url === '/api/v1/console/tokens') {
-        return jsonResponse(trustedTokensPayload)
-      }
-      if (url === '/api/v1/workers/node-1/startup-command') {
-        return unauthorizedResponse()
-      }
-      throw new Error(`unexpected url: ${url}`)
-    })
-    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch)
-
-    const wrapper = await mountApp('/workers')
-
-    const copyBtn = wrapper.findAll('button').find((button) => button.text() === 'Copy Start Cmd')
-    expect(copyBtn).toBeTruthy()
-    await copyBtn?.trigger('click')
-    await flushPromises()
-    await flushPromises()
-
-    expect(router.currentRoute.value.path).toBe('/login')
-
-    wrapper.unmount()
-  })
-
-  it('shows API error when startup command fetch fails', async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input)
-      if (url.startsWith('/api/v1/workers/stats')) {
-        return jsonResponse(statsPayload)
-      }
-      if (url.startsWith('/api/v1/workers?')) {
-        return jsonResponse(workersPayload)
-      }
-      if (url === '/api/v1/console/tokens') {
-        return jsonResponse(trustedTokensPayload)
-      }
-      if (url === '/api/v1/workers/node-1/startup-command') {
-        return errorResponse(500, 'Internal Server Error', 'failed to build startup command')
-      }
-      throw new Error(`unexpected url: ${url}`)
-    })
-    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch)
-
-    const wrapper = await mountApp('/workers')
-
-    const copyBtn = wrapper.findAll('button').find((button) => button.text() === 'Copy Start Cmd')
-    expect(copyBtn).toBeTruthy()
-    await copyBtn?.trigger('click')
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('failed to build startup command')
-    expect(wrapper.text()).toContain('Copy Failed')
-
-    wrapper.unmount()
-  })
-
-  it('adds worker and copies startup command', async () => {
+  it('adds worker and shows modal before manual copy', async () => {
     const writeText = vi.fn(async () => {})
     Object.defineProperty(window.navigator, 'clipboard', {
       value: { writeText },
@@ -572,9 +492,95 @@ describe('App', () => {
     expect(addBtn).toBeTruthy()
     await addBtn?.trigger('click')
     await flushPromises()
+    await flushPromises()
+
+    expect(fetchMock.mock.calls.some(([url]) => String(url) === '/api/v1/workers')).toBe(true)
+    expect(writeText).not.toHaveBeenCalled()
+    expect(wrapper.find('.worker-modal').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Worker Created')
+
+    const secretCodes = wrapper.findAll('.worker-meta code')
+    expect(secretCodes.length).toBeGreaterThanOrEqual(2)
+    expect(secretCodes[1]?.text()).toBe('********')
+
+    const showBtn = wrapper.findAll('button').find((button) => button.text() === 'Show')
+    expect(showBtn).toBeTruthy()
+    await showBtn?.trigger('click')
+    await flushPromises()
+
+    const secretCodesAfterShow = wrapper.findAll('.worker-meta code')
+    expect(secretCodesAfterShow[1]?.text()).toBe('secret-2')
+
+    const copyBtn = wrapper.findAll('button').find((button) => button.text() === 'Copy Startup Command')
+    expect(copyBtn).toBeTruthy()
+    await copyBtn?.trigger('click')
+    await flushPromises()
 
     expect(writeText).toHaveBeenCalledWith(createCommand)
-    expect(fetchMock.mock.calls.some(([url]) => String(url) === '/api/v1/workers')).toBe(true)
+
+    const doneBtn = wrapper.findAll('button').find((button) => button.text() === 'Done')
+    expect(doneBtn).toBeTruthy()
+    await doneBtn?.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.worker-modal').exists()).toBe(false)
+
+    wrapper.unmount()
+  })
+
+  it('retries copy after modal copy failure', async () => {
+    const writeText = vi.fn(async () => {})
+    writeText.mockRejectedValueOnce(new Error('Clipboard API unavailable.'))
+    writeText.mockResolvedValueOnce(undefined)
+    Object.defineProperty(window.navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    })
+
+    const createCommand =
+      'WORKER_CONSOLE_GRPC_TARGET=127.0.0.1:50051 WORKER_ID=node-2 WORKER_SECRET=secret-2 WORKER_HEARTBEAT_INTERVAL_SEC=5 WORKER_HEARTBEAT_JITTER_PCT=20 go run ./cmd/worker-docker'
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.startsWith('/api/v1/workers/stats')) {
+        return jsonResponse(statsPayload)
+      }
+      if (url.startsWith('/api/v1/workers?')) {
+        return jsonResponse(workersPayload)
+      }
+      if (url === '/api/v1/console/tokens') {
+        return jsonResponse(trustedTokensPayload)
+      }
+      if (url === '/api/v1/workers') {
+        return jsonResponse({ node_id: 'node-2', command: createCommand })
+      }
+      throw new Error(`unexpected url: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch)
+
+    const wrapper = await mountApp('/workers')
+    const addBtn = wrapper.findAll('button').find((button) => button.text() === 'Add Worker')
+    expect(addBtn).toBeTruthy()
+    await addBtn?.trigger('click')
+    await flushPromises()
+    await flushPromises()
+
+    const copyBtn = wrapper.findAll('button').find((button) => button.text() === 'Copy Startup Command')
+    expect(copyBtn).toBeTruthy()
+    await copyBtn?.trigger('click')
+    await flushPromises()
+
+    expect(writeText).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('Copy Failed')
+
+    const retryBtn = wrapper.findAll('button').find((button) => button.text() === 'Copy Failed')
+    expect(retryBtn).toBeTruthy()
+    await retryBtn?.trigger('click')
+    await flushPromises()
+
+    expect(writeText).toHaveBeenCalledTimes(2)
+    expect(writeText).toHaveBeenLastCalledWith(createCommand)
+    expect(wrapper.text()).toContain('Copied')
 
     wrapper.unmount()
   })

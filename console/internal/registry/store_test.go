@@ -1,16 +1,19 @@
 package registry
 
 import (
+	"context"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
+	"github.com/onlyboxes/onlyboxes/console/internal/persistence"
 )
 
 func TestStoreRegisterOverwrite(t *testing.T) {
-	store := NewStore()
+	store := newTestStore(t)
 	start := time.Unix(1_700_000_000, 0)
 
 	store.Upsert(&registryv1.ConnectHello{
@@ -54,7 +57,7 @@ func TestStoreRegisterOverwrite(t *testing.T) {
 }
 
 func TestStoreHeartbeatAndOfflineStatus(t *testing.T) {
-	store := NewStore()
+	store := newTestStore(t)
 	start := time.Unix(1_700_000_100, 0)
 	store.Upsert(&registryv1.ConnectHello{NodeId: "node-1", NodeName: "n1"}, "session-1", start)
 
@@ -79,7 +82,7 @@ func TestStoreHeartbeatAndOfflineStatus(t *testing.T) {
 }
 
 func TestStoreConcurrentAccess(t *testing.T) {
-	store := NewStore()
+	store := newTestStore(t)
 	base := time.Unix(1_700_000_200, 0)
 
 	var wg sync.WaitGroup
@@ -106,7 +109,7 @@ func TestStoreConcurrentAccess(t *testing.T) {
 }
 
 func TestStoreStats(t *testing.T) {
-	store := NewStore()
+	store := newTestStore(t)
 	now := time.Unix(1_700_001_000, 0)
 
 	store.Upsert(&registryv1.ConnectHello{NodeId: "online-node", NodeName: "online-node"}, "session-online", now.Add(-5*time.Second))
@@ -129,7 +132,7 @@ func TestStoreStats(t *testing.T) {
 }
 
 func TestStorePruneOffline(t *testing.T) {
-	store := NewStore()
+	store := newTestStore(t)
 	now := time.Unix(1_700_002_000, 0)
 
 	store.Upsert(&registryv1.ConnectHello{NodeId: "online-node", NodeName: "online-node"}, "session-online", now.Add(-5*time.Second))
@@ -151,7 +154,7 @@ func TestStorePruneOffline(t *testing.T) {
 }
 
 func TestStoreSeedProvisionedWorkersCountsAsOffline(t *testing.T) {
-	store := NewStore()
+	store := newTestStore(t)
 	now := time.Unix(1_700_003_000, 0)
 
 	seeded := store.SeedProvisionedWorkers([]ProvisionedWorker{
@@ -175,7 +178,7 @@ func TestStoreSeedProvisionedWorkersCountsAsOffline(t *testing.T) {
 }
 
 func TestStorePruneOfflineKeepsProvisionedSlots(t *testing.T) {
-	store := NewStore()
+	store := newTestStore(t)
 	now := time.Unix(1_700_004_000, 0)
 
 	store.SeedProvisionedWorkers([]ProvisionedWorker{
@@ -200,8 +203,8 @@ func TestStorePruneOfflineKeepsProvisionedSlots(t *testing.T) {
 	}
 }
 
-func TestStoreListOnlineByCapability(t *testing.T) {
-	store := NewStore()
+func TestStoreListOnlineNodeIDsByCapability(t *testing.T) {
+	store := newTestStore(t)
 	now := time.Unix(1_700_005_000, 0)
 
 	store.Upsert(&registryv1.ConnectHello{
@@ -220,17 +223,17 @@ func TestStoreListOnlineByCapability(t *testing.T) {
 		Capabilities: []*registryv1.CapabilityDeclaration{{Name: "echo"}},
 	}, "session-offline", now.Add(-40*time.Second))
 
-	workers := store.ListOnlineByCapability("echo", now, 15*time.Second)
-	if len(workers) != 1 {
-		t.Fatalf("expected one online echo worker, got %d", len(workers))
+	nodeIDs := store.ListOnlineNodeIDsByCapability("echo", now, 15*time.Second)
+	if len(nodeIDs) != 1 {
+		t.Fatalf("expected one online echo worker, got %d", len(nodeIDs))
 	}
-	if workers[0].NodeID != "echo-node" {
-		t.Fatalf("expected echo-node, got %s", workers[0].NodeID)
+	if nodeIDs[0] != "echo-node" {
+		t.Fatalf("expected echo-node, got %s", nodeIDs[0])
 	}
 }
 
 func TestStoreDelete(t *testing.T) {
-	store := NewStore()
+	store := newTestStore(t)
 	now := time.Unix(1_700_006_000, 0)
 
 	store.SeedProvisionedWorkers([]ProvisionedWorker{
@@ -248,4 +251,67 @@ func TestStoreDelete(t *testing.T) {
 	if removed := store.Delete("   "); removed {
 		t.Fatalf("expected delete on empty node_id to return false")
 	}
+}
+
+func TestNewStoreWithPersistenceNilPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatalf("expected panic when persistence db is nil")
+		}
+	}()
+	_ = NewStoreWithPersistence(nil)
+}
+
+func TestStoreUpsertReturnsErrorOnTxFailure(t *testing.T) {
+	store := newTestStore(t)
+	if _, err := store.Persistence().SQL.ExecContext(
+		context.Background(),
+		`CREATE TRIGGER fail_upsert_worker_node
+BEFORE INSERT ON worker_nodes
+BEGIN
+  SELECT RAISE(FAIL, 'forced upsert failure');
+END`,
+	); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
+	err := store.Upsert(&registryv1.ConnectHello{
+		NodeId:       "node-upsert-fail",
+		NodeName:     "node-upsert-fail",
+		Capabilities: []*registryv1.CapabilityDeclaration{{Name: "echo"}},
+	}, "session-upsert-fail", time.Unix(1_700_007_000, 0))
+	if err == nil {
+		t.Fatalf("expected upsert to return error on transaction failure")
+	}
+}
+
+func TestStoreClearSessionReturnsErrorWhenDBClosed(t *testing.T) {
+	store := newTestStore(t)
+	if err := store.Persistence().Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+	if err := store.ClearSession("node-1", "session-1"); err == nil {
+		t.Fatalf("expected clear session to return error when db is closed")
+	}
+	if err := store.ClearSessionByNode("node-1"); err == nil {
+		t.Fatalf("expected clear session by node to return error when db is closed")
+	}
+}
+
+func newTestStore(t *testing.T) *Store {
+	t.Helper()
+
+	db, err := persistence.Open(context.Background(), persistence.Options{
+		Path:             filepath.Join(t.TempDir(), "registry-store.db"),
+		BusyTimeoutMS:    5000,
+		HashKey:          "test-hash-key",
+		TaskRetentionDay: 30,
+	})
+	if err != nil {
+		t.Fatalf("open test registry db: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = db.Close()
+	})
+	return NewStoreWithPersistence(db)
 }

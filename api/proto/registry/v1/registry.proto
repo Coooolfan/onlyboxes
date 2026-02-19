@@ -22,10 +22,8 @@ message ConnectHello {
   repeated LanguageCapability languages = 4;
   map<string, string> labels = 5;
   string version = 6;
-  int64 timestamp_unix_ms = 7;
-  string nonce = 8;
-  string signature = 9;
   repeated CapabilityDeclaration capabilities = 10;
+  string worker_secret = 11;
 }
 
 message HeartbeatFrame {

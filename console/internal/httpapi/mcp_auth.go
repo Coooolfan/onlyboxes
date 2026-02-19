@@ -1,17 +1,19 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
+	"github.com/onlyboxes/onlyboxes/console/internal/persistence"
+	"github.com/onlyboxes/onlyboxes/console/internal/persistence/sqlc"
 )
 
 const trustedTokenHeader = "X-Onlyboxes-Token"
@@ -73,68 +75,75 @@ type trustedTokenValueResponse struct {
 }
 
 type trustedTokenRecord struct {
-	ID        string
-	Name      string
-	NameKey   string
-	Token     string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID          string
+	Name        string
+	NameKey     string
+	Token       string
+	TokenHash   string
+	TokenMasked string
+	Generated   bool
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 type MCPAuth struct {
-	mu          sync.RWMutex
-	recordsByID map[string]trustedTokenRecord
-	tokenToID   map[string]string
-	nameKeyToID map[string]string
-	orderedIDs  []string
-	nowFn       func() time.Time
+	db      *persistence.DB
+	queries *sqlc.Queries
+	hasher  *persistence.Hasher
+	nowFn   func() time.Time
 }
 
-func NewMCPAuth() *MCPAuth {
-	return &MCPAuth{
-		recordsByID: make(map[string]trustedTokenRecord),
-		tokenToID:   make(map[string]string),
-		nameKeyToID: make(map[string]string),
-		orderedIDs:  []string{},
-		nowFn:       time.Now,
+func NewMCPAuthWithPersistence(db *persistence.DB) *MCPAuth {
+	if db == nil {
+		panic("mcp auth requires non-nil persistence db")
 	}
+	auth := &MCPAuth{
+		db:      db,
+		queries: db.Queries,
+		hasher:  db.Hasher,
+		nowFn:   time.Now,
+	}
+	if auth.hasher != nil {
+		setOwnerIDHashFunc(auth.hasher.Hash)
+	}
+	return auth
 }
 
 func (a *MCPAuth) RequireToken() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token := strings.TrimSpace(c.GetHeader(trustedTokenHeader))
-		if token == "" || a == nil || !a.isAllowed(token) {
+		if token == "" || a == nil || a.hasher == nil || !a.isAllowed(token) {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or missing token"})
 			c.Abort()
 			return
 		}
-		setRequestOwnerID(c, ownerIDFromToken(token))
+		setRequestOwnerID(c, a.hasher.Hash(token))
 		c.Next()
 	}
 }
 
 func (a *MCPAuth) ListTokens(c *gin.Context) {
-	items := []trustedTokenItem{}
-	if a == nil {
-		c.JSON(http.StatusOK, trustedTokenListResponse{Items: items, Total: 0})
+	if a == nil || a.queries == nil {
+		c.JSON(http.StatusOK, trustedTokenListResponse{Items: []trustedTokenItem{}, Total: 0})
 		return
 	}
 
-	a.mu.RLock()
-	for _, id := range a.orderedIDs {
-		record, ok := a.recordsByID[id]
-		if !ok {
-			continue
-		}
+	records, err := a.queries.ListTrustedTokens(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list tokens"})
+		return
+	}
+
+	items := make([]trustedTokenItem, 0, len(records))
+	for _, record := range records {
 		items = append(items, trustedTokenItem{
-			ID:          record.ID,
+			ID:          record.TokenID,
 			Name:        record.Name,
-			TokenMasked: maskToken(record.Token),
-			CreatedAt:   record.CreatedAt,
-			UpdatedAt:   record.UpdatedAt,
+			TokenMasked: record.TokenMasked,
+			CreatedAt:   time.UnixMilli(record.CreatedAtUnixMs),
+			UpdatedAt:   time.UnixMilli(record.UpdatedAtUnixMs),
 		})
 	}
-	a.mu.RUnlock()
 
 	c.JSON(http.StatusOK, trustedTokenListResponse{
 		Items: items,
@@ -143,17 +152,16 @@ func (a *MCPAuth) ListTokens(c *gin.Context) {
 }
 
 func (a *MCPAuth) isAllowed(token string) bool {
-	if a == nil {
+	if a == nil || a.queries == nil || a.hasher == nil {
 		return false
 	}
-	a.mu.RLock()
-	_, ok := a.tokenToID[token]
-	a.mu.RUnlock()
-	return ok
+	tokenHash := a.hasher.Hash(token)
+	_, err := a.queries.GetTrustedTokenByHash(contextBackground(), tokenHash)
+	return err == nil
 }
 
 func (a *MCPAuth) CreateToken(c *gin.Context) {
-	if a == nil {
+	if a == nil || a.queries == nil || a.hasher == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "token store is unavailable"})
 		return
 	}
@@ -186,7 +194,7 @@ func (a *MCPAuth) CreateToken(c *gin.Context) {
 		ID:          record.ID,
 		Name:        record.Name,
 		Token:       record.Token,
-		TokenMasked: maskToken(record.Token),
+		TokenMasked: record.TokenMasked,
 		Generated:   generated,
 		CreatedAt:   record.CreatedAt,
 		UpdatedAt:   record.UpdatedAt,
@@ -194,7 +202,7 @@ func (a *MCPAuth) CreateToken(c *gin.Context) {
 }
 
 func (a *MCPAuth) DeleteToken(c *gin.Context) {
-	if a == nil {
+	if a == nil || a.queries == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "token store is unavailable"})
 		return
 	}
@@ -218,31 +226,13 @@ func (a *MCPAuth) DeleteToken(c *gin.Context) {
 }
 
 func (a *MCPAuth) GetTokenValue(c *gin.Context) {
-	if a == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "token store is unavailable"})
-		return
-	}
-
 	tokenID := strings.TrimSpace(c.Param("token_id"))
 	if tokenID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "token_id is required"})
 		return
 	}
-
-	record, err := a.getToken(tokenID)
-	if err != nil {
-		if errors.Is(err, errTrustedTokenNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "token not found"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get token"})
-		return
-	}
-
-	c.JSON(http.StatusOK, trustedTokenValueResponse{
-		ID:    record.ID,
-		Name:  record.Name,
-		Token: record.Token,
+	c.JSON(http.StatusGone, gin.H{
+		"error": "token value is only returned at creation time; delete and recreate the token to obtain a new value",
 	})
 }
 
@@ -253,113 +243,91 @@ func (a *MCPAuth) createToken(name string, tokenInput *string) (trustedTokenReco
 	}
 
 	generated := tokenInput == nil
-
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	if _, exists := a.nameKeyToID[nameKey]; exists {
-		return trustedTokenRecord{}, false, errTrustedTokenNameConflict
-	}
-
 	tokenValue := ""
 	if tokenInput != nil {
 		tokenValue, err = normalizeTokenValue(*tokenInput)
 		if err != nil {
 			return trustedTokenRecord{}, false, err
 		}
-		if _, exists := a.tokenToID[tokenValue]; exists {
+	}
+
+	for i := 0; i < 8; i++ {
+		if generated {
+			generatedToken, genErr := generateTrustedToken()
+			if genErr != nil {
+				return trustedTokenRecord{}, false, errTrustedTokenGenerateFailed
+			}
+			tokenValue = generatedToken
+		}
+
+		tokenID, idErr := generateTokenID()
+		if idErr != nil {
+			return trustedTokenRecord{}, false, errTrustedTokenIDGenerateFailed
+		}
+		now := time.Now()
+		if a.nowFn != nil {
+			now = a.nowFn()
+		}
+
+		tokenHash := a.hasher.Hash(tokenValue)
+		record := trustedTokenRecord{
+			ID:          tokenID,
+			Name:        normalizedName,
+			NameKey:     nameKey,
+			Token:       tokenValue,
+			TokenHash:   tokenHash,
+			TokenMasked: maskToken(tokenValue),
+			Generated:   generated,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		}
+
+		err = a.queries.InsertTrustedToken(contextBackground(), sqlc.InsertTrustedTokenParams{
+			TokenID:         record.ID,
+			Name:            record.Name,
+			NameKey:         record.NameKey,
+			TokenHash:       record.TokenHash,
+			TokenMasked:     record.TokenMasked,
+			Generated:       boolToInt64(record.Generated),
+			CreatedAtUnixMs: record.CreatedAt.UnixMilli(),
+			UpdatedAtUnixMs: record.UpdatedAt.UnixMilli(),
+		})
+		if err == nil {
+			return record, generated, nil
+		}
+
+		errText := strings.ToLower(err.Error())
+		switch {
+		case strings.Contains(errText, "trusted_tokens.name_key"):
+			return trustedTokenRecord{}, false, errTrustedTokenNameConflict
+		case strings.Contains(errText, "trusted_tokens.token_hash"):
+			if generated {
+				continue
+			}
 			return trustedTokenRecord{}, false, errTrustedTokenValueConflict
-		}
-	} else {
-		generatedToken, generateErr := a.nextGeneratedTokenLocked()
-		if generateErr != nil {
-			return trustedTokenRecord{}, false, generateErr
-		}
-		tokenValue = generatedToken
-	}
-
-	tokenID, err := a.nextTokenIDLocked()
-	if err != nil {
-		return trustedTokenRecord{}, false, err
-	}
-
-	now := time.Now()
-	if a.nowFn != nil {
-		now = a.nowFn()
-	}
-
-	record := trustedTokenRecord{
-		ID:        tokenID,
-		Name:      normalizedName,
-		NameKey:   nameKey,
-		Token:     tokenValue,
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	a.recordsByID[tokenID] = record
-	a.tokenToID[tokenValue] = tokenID
-	a.nameKeyToID[nameKey] = tokenID
-	a.orderedIDs = append(a.orderedIDs, tokenID)
-
-	return record, generated, nil
-}
-
-func (a *MCPAuth) nextGeneratedTokenLocked() (string, error) {
-	for i := 0; i < 8; i++ {
-		generated, err := generateTrustedToken()
-		if err != nil {
-			return "", errTrustedTokenGenerateFailed
-		}
-		if _, exists := a.tokenToID[generated]; exists {
+		case strings.Contains(errText, "trusted_tokens.token_id"):
 			continue
+		default:
+			return trustedTokenRecord{}, false, err
 		}
-		return generated, nil
 	}
-	return "", errTrustedTokenGenerateFailed
-}
 
-func (a *MCPAuth) nextTokenIDLocked() (string, error) {
-	for i := 0; i < 8; i++ {
-		id, err := generateTokenID()
-		if err != nil {
-			return "", errTrustedTokenIDGenerateFailed
-		}
-		if _, exists := a.recordsByID[id]; exists {
-			continue
-		}
-		return id, nil
+	if generated {
+		return trustedTokenRecord{}, false, errTrustedTokenGenerateFailed
 	}
-	return "", errTrustedTokenIDGenerateFailed
-}
-
-func (a *MCPAuth) getToken(tokenID string) (trustedTokenRecord, error) {
-	a.mu.RLock()
-	record, ok := a.recordsByID[tokenID]
-	a.mu.RUnlock()
-	if !ok {
-		return trustedTokenRecord{}, errTrustedTokenNotFound
-	}
-	return record, nil
+	return trustedTokenRecord{}, false, errTrustedTokenValueConflict
 }
 
 func (a *MCPAuth) deleteToken(tokenID string) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	record, ok := a.recordsByID[tokenID]
-	if !ok {
-		return errTrustedTokenNotFound
+	if a == nil || a.queries == nil {
+		return errors.New("token store is unavailable")
 	}
-
-	delete(a.recordsByID, tokenID)
-	delete(a.tokenToID, record.Token)
-	delete(a.nameKeyToID, record.NameKey)
-	for i, id := range a.orderedIDs {
-		if id != tokenID {
-			continue
-		}
-		a.orderedIDs = append(a.orderedIDs[:i], a.orderedIDs[i+1:]...)
-		break
+	rows, err := a.queries.DeleteTrustedTokenByID(contextBackground(), tokenID)
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return errTrustedTokenNotFound
 	}
 	return nil
 }
@@ -418,14 +386,30 @@ func randomHexString(size int) (string, error) {
 	return hex.EncodeToString(raw), nil
 }
 
-func maskToken(value string) string {
-	trimmed := strings.TrimSpace(value)
-	length := len(trimmed)
-	if length == 0 {
+func maskToken(token string) string {
+	trimmed := strings.TrimSpace(token)
+	if trimmed == "" {
 		return ""
 	}
-	if length < 8 {
-		return strings.Repeat("*", length)
+	if len(trimmed) <= 8 {
+		return strings.Repeat("*", len(trimmed))
 	}
-	return trimmed[:4] + strings.Repeat("*", length-8) + trimmed[length-4:]
+	prefix := trimmed[:4]
+	suffix := trimmed[len(trimmed)-4:]
+	middleMaskLen := len(trimmed) - 8
+	if middleMaskLen < 6 {
+		middleMaskLen = 6
+	}
+	return prefix + strings.Repeat("*", middleMaskLen) + suffix
+}
+
+func boolToInt64(value bool) int64 {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func contextBackground() context.Context {
+	return context.Background()
 }

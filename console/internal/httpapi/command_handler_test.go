@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/onlyboxes/onlyboxes/console/internal/grpcserver"
-	"github.com/onlyboxes/onlyboxes/console/internal/registry"
+	"github.com/onlyboxes/onlyboxes/console/internal/testutil/registrytest"
 )
 
 type fakeEchoDispatcher struct {
@@ -38,7 +38,7 @@ func (f *fakeEchoDispatcher) CancelTask(taskID string, ownerID string) (grpcserv
 }
 
 func TestEchoCommandSuccess(t *testing.T) {
-	store := registry.NewStore()
+	store := registrytest.NewStore(t)
 	dispatcher := &fakeEchoDispatcher{
 		dispatch: func(ctx context.Context, message string, timeout time.Duration) (string, error) {
 			if timeout != 5*time.Second {
@@ -66,7 +66,7 @@ func TestEchoCommandSuccess(t *testing.T) {
 }
 
 func TestEchoCommandRejectsInvalidInput(t *testing.T) {
-	store := registry.NewStore()
+	store := registrytest.NewStore(t)
 	handler := NewWorkerHandler(store, 15*time.Second, &fakeEchoDispatcher{
 		dispatch: func(ctx context.Context, message string, timeout time.Duration) (string, error) {
 			return message, nil
@@ -87,7 +87,7 @@ func TestEchoCommandRejectsInvalidInput(t *testing.T) {
 }
 
 func TestEchoCommandRequiresMCPToken(t *testing.T) {
-	store := registry.NewStore()
+	store := registrytest.NewStore(t)
 	dispatcher := &fakeEchoDispatcher{
 		dispatch: func(ctx context.Context, message string, timeout time.Duration) (string, error) {
 			return message, nil
@@ -107,7 +107,7 @@ func TestEchoCommandRequiresMCPToken(t *testing.T) {
 }
 
 func TestEchoCommandMapsNoWorkerError(t *testing.T) {
-	store := registry.NewStore()
+	store := registrytest.NewStore(t)
 	handler := NewWorkerHandler(store, 15*time.Second, &fakeEchoDispatcher{
 		dispatch: func(ctx context.Context, message string, timeout time.Duration) (string, error) {
 			return "", grpcserver.ErrNoEchoWorker
@@ -128,7 +128,7 @@ func TestEchoCommandMapsNoWorkerError(t *testing.T) {
 }
 
 func TestEchoCommandMapsCapacityError(t *testing.T) {
-	store := registry.NewStore()
+	store := registrytest.NewStore(t)
 	handler := NewWorkerHandler(store, 15*time.Second, &fakeEchoDispatcher{
 		dispatch: func(ctx context.Context, message string, timeout time.Duration) (string, error) {
 			return "", grpcserver.ErrNoWorkerCapacity
@@ -149,7 +149,7 @@ func TestEchoCommandMapsCapacityError(t *testing.T) {
 }
 
 func TestEchoCommandMapsTimeoutError(t *testing.T) {
-	store := registry.NewStore()
+	store := registrytest.NewStore(t)
 	handler := NewWorkerHandler(store, 15*time.Second, &fakeEchoDispatcher{
 		dispatch: func(ctx context.Context, message string, timeout time.Duration) (string, error) {
 			return "", grpcserver.ErrEchoTimeout
@@ -170,7 +170,7 @@ func TestEchoCommandMapsTimeoutError(t *testing.T) {
 }
 
 func TestEchoCommandMapsExecutionError(t *testing.T) {
-	store := registry.NewStore()
+	store := registrytest.NewStore(t)
 	handler := NewWorkerHandler(store, 15*time.Second, &fakeEchoDispatcher{
 		dispatch: func(ctx context.Context, message string, timeout time.Duration) (string, error) {
 			return "", &grpcserver.CommandExecutionError{
@@ -194,7 +194,7 @@ func TestEchoCommandMapsExecutionError(t *testing.T) {
 }
 
 func TestTerminalCommandSuccess(t *testing.T) {
-	store := registry.NewStore()
+	store := registrytest.NewStore(t)
 	handler := NewWorkerHandler(store, 15*time.Second, &fakeEchoDispatcher{
 		dispatch: func(ctx context.Context, message string, timeout time.Duration) (string, error) {
 			return message, nil
@@ -267,7 +267,7 @@ func TestTerminalCommandStatusMappings(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			store := registry.NewStore()
+			store := registrytest.NewStore(t)
 			handler := NewWorkerHandler(store, 15*time.Second, &fakeEchoDispatcher{
 				dispatch: func(ctx context.Context, message string, timeout time.Duration) (string, error) {
 					return message, nil
@@ -302,7 +302,7 @@ func TestTerminalCommandStatusMappings(t *testing.T) {
 }
 
 func TestTerminalCommandRejectsInvalidInput(t *testing.T) {
-	store := registry.NewStore()
+	store := registrytest.NewStore(t)
 	handler := NewWorkerHandler(store, 15*time.Second, &fakeEchoDispatcher{
 		dispatch: func(ctx context.Context, message string, timeout time.Duration) (string, error) {
 			return message, nil

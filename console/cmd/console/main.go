@@ -14,31 +14,68 @@ import (
 	"github.com/onlyboxes/onlyboxes/console/internal/config"
 	"github.com/onlyboxes/onlyboxes/console/internal/grpcserver"
 	"github.com/onlyboxes/onlyboxes/console/internal/httpapi"
+	"github.com/onlyboxes/onlyboxes/console/internal/persistence"
 	"github.com/onlyboxes/onlyboxes/console/internal/registry"
 	"google.golang.org/grpc"
 )
 
 func main() {
 	cfg := config.Load()
-	dashboardCredentials, err := httpapi.ResolveDashboardCredentials(cfg.DashboardUsername, cfg.DashboardPassword)
+	dbCtx, dbCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer dbCancel()
+	db, err := persistence.Open(dbCtx, persistence.Options{
+		Path:             cfg.DBPath,
+		BusyTimeoutMS:    cfg.DBBusyTimeoutMS,
+		HashKey:          cfg.HashKey,
+		TaskRetentionDay: cfg.TaskRetentionDays,
+	})
 	if err != nil {
-		log.Fatalf("failed to resolve dashboard credentials: %v", err)
+		log.Fatalf("failed to initialize persistence: %v", err)
 	}
-	log.Printf(
-		"console dashboard credentials username=%s password=%s",
-		dashboardCredentials.Username,
-		dashboardCredentials.Password,
-	)
+	defer func() {
+		if closeErr := db.Close(); closeErr != nil {
+			log.Printf("failed to close database: %v", closeErr)
+		}
+	}()
 
-	store := registry.NewStore()
+	dashboardCredentials, err := httpapi.InitializeDashboardCredentials(
+		context.Background(),
+		db.Queries,
+		db.Hasher,
+		cfg.DashboardUsername,
+		cfg.DashboardPassword,
+	)
+	if err != nil {
+		log.Fatalf("failed to initialize dashboard credentials: %v", err)
+	}
+	if dashboardCredentials.EnvIgnored {
+		log.Printf("env credentials ignored because persisted dashboard credential exists")
+	}
+	if dashboardCredentials.InitializedNow {
+		log.Printf(
+			"console dashboard credentials initialized username=%s password=%s",
+			dashboardCredentials.Username,
+			dashboardCredentials.PasswordPlaintext,
+		)
+	} else {
+		log.Printf(
+			"console dashboard credentials loaded username=%s password not reprinted",
+			dashboardCredentials.Username,
+		)
+	}
+
+	store := registry.NewStoreWithPersistence(db)
+	initialCredentialHashes := store.ListCredentialHashes()
 
 	registryService := grpcserver.NewRegistryService(
 		store,
-		nil,
+		initialCredentialHashes,
 		cfg.HeartbeatIntervalSec,
 		int32(cfg.OfflineTTL/time.Second),
 		cfg.ReplayWindow,
 	)
+	registryService.SetHasher(db.Hasher)
+	registryService.SetTaskRetention(time.Duration(cfg.TaskRetentionDays) * 24 * time.Hour)
 	grpcSrv := grpcserver.NewServer(registryService)
 	httpHandler := httpapi.NewWorkerHandler(
 		store,
@@ -47,8 +84,13 @@ func main() {
 		registryService,
 		cfg.GRPCAddr,
 	)
-	consoleAuth := httpapi.NewConsoleAuth(dashboardCredentials)
-	mcpAuth := httpapi.NewMCPAuth()
+	consoleAuth := httpapi.NewConsoleAuth(httpapi.DashboardCredentialMaterial{
+		Username:     dashboardCredentials.Username,
+		PasswordHash: dashboardCredentials.PasswordHash,
+		HashAlgo:     dashboardCredentials.HashAlgo,
+		Hasher:       db.Hasher,
+	})
+	mcpAuth := httpapi.NewMCPAuthWithPersistence(db)
 	httpSrv := &http.Server{
 		Addr:    cfg.HTTPAddr,
 		Handler: httpapi.NewRouter(httpHandler, consoleAuth, mcpAuth),
@@ -56,6 +98,7 @@ func main() {
 	runCtx, cancelRun := context.WithCancel(context.Background())
 	defer cancelRun()
 	go startOfflinePruner(runCtx, store, cfg.OfflineTTL)
+	go startTaskPruner(runCtx, registryService)
 
 	grpcListener, err := net.Listen("tcp", cfg.GRPCAddr)
 	if err != nil {
@@ -140,5 +183,22 @@ func stopGRPCWithTimeout(grpcSrv *grpc.Server, timeout time.Duration) {
 		log.Printf("gRPC graceful stop timed out after %s, forcing stop", timeout)
 		grpcSrv.Stop()
 		<-stopped
+	}
+}
+
+func startTaskPruner(ctx context.Context, service *grpcserver.RegistryService) {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			removed := service.PruneExpiredTasks(now)
+			if removed > 0 {
+				log.Printf("pruned %d expired task(s)", removed)
+			}
+		}
 	}
 }

@@ -1,0 +1,19 @@
+version: "2"
+sql:
+  - engine: sqlite
+    schema:
+      - "db/migrations/00001_init.sql"
+      - "db/migrations/00002_dashboard_credentials.sql"
+    queries:
+      - "db/queries/workers.sql"
+      - "db/queries/tokens.sql"
+      - "db/queries/tasks.sql"
+      - "db/queries/maintenance.sql"
+      - "db/queries/dashboard_auth.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "internal/persistence/sqlc"
+        emit_json_tags: true
+        emit_interface: false
+        emit_exact_table_names: false

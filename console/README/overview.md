@@ -12,7 +12,7 @@ The console service hosts:
   - `GET /api/v1/workers/stats` for aggregated worker status metrics.
   - `POST /api/v1/workers` for creating a provisioned worker (`worker_id` + `worker_secret`) and returning its startup command.
   - `DELETE /api/v1/workers/:node_id` for deleting a provisioned worker and revoking its credential (online worker is disconnected immediately).
-  - `GET /api/v1/workers/:node_id/startup-command` for on-demand copy of a worker startup command (includes `WORKER_ID` + `WORKER_SECRET` in command text only).
+  - `GET /api/v1/workers/:node_id/startup-command` returns `410 Gone` (worker secret is no longer retrievable after creation; delete and recreate worker to get a new command).
 - command APIs (execution, token whitelist required):
   - `POST /api/v1/commands/echo` for blocking echo command execution.
   - `POST /api/v1/commands/terminal` for blocking terminal command execution over `terminalExec` capability.
@@ -65,35 +65,64 @@ The console service hosts:
   - `POST /api/v1/console/logout`.
   - token management (requires dashboard auth):
     - `GET /api/v1/console/tokens` list token metadata (`id`, `name`, masked token).
-    - `POST /api/v1/console/tokens` create token (manual token or auto-generated).
-    - `GET /api/v1/console/tokens/:token_id/value` fetch token plaintext by id.
+    - `POST /api/v1/console/tokens` create token (manual token or auto-generated, plaintext returned only in create response).
+    - `GET /api/v1/console/tokens/:token_id/value` returns `410 Gone` (token plaintext is no longer retrievable after creation).
     - `DELETE /api/v1/console/tokens/:token_id` delete token.
+
+Security warning (high risk):
+- worker-to-console gRPC is currently plaintext by default (no TLS/mTLS).
+- `worker_secret` is sent in `ConnectHello`; on untrusted networks it can be observed in transit.
+- deploy only on trusted private networks or encrypted tunnels; do not expose gRPC directly to the public internet.
+- fully mitigating this risk requires TLS/mTLS support (not implemented in this release).
 
 Credential behavior:
 - `console` starts with `0` workers.
 - worker credentials are generated on demand by dashboard/API `POST /api/v1/workers`.
-- credentials are in-memory only; restarting `console` clears all provisioned workers/credentials.
+- credentials are persisted in SQLite as HMAC-SHA256 hashes only (no plaintext storage).
 - deleting a provisioned worker revokes the credential immediately; if the worker is online, its current session is closed.
+- worker secret is returned only once when creating worker; recovery path is delete + recreate.
 
 Defaults:
 - HTTP: `:8089`
 - gRPC: `:50051`
-- Replay window: `60s`
 - Heartbeat interval: `5s`
+- SQLite DB path: `./onlyboxes-console.db`
+- SQLite busy timeout: `5000ms`
+- Task retention: `30 days`
 
 Dashboard credential behavior:
-- startup resolves dashboard credentials and logs them to stdout.
+- dashboard username/password are persisted in SQLite table `dashboard_credentials`.
 - username env: `CONSOLE_DASHBOARD_USERNAME`
 - password env: `CONSOLE_DASHBOARD_PASSWORD`
-- if either env var is missing, only the missing value is randomly generated.
+- if persisted dashboard credential exists, env username/password are ignored.
+- if no persisted dashboard credential exists, startup resolves credentials from env; missing values are randomly generated.
+- password plaintext is logged only when dashboard credential is initialized for the first time.
+- on subsequent restarts, startup logs username only and does not reprint password.
+- dashboard session is in-memory only; restarting `console` invalidates all dashboard login sessions.
+- recovery path for lost dashboard password:
+  - stop console
+  - run SQL: `DELETE FROM dashboard_credentials WHERE singleton_id = 1;`
+  - restart console to reinitialize credential and print password once
 
 Trusted token behavior:
-- tokens are in-memory only and managed by dashboard APIs.
-- token metadata includes `name` (case-insensitive unique) and token value.
+- tokens are persisted in SQLite and managed by dashboard APIs.
+- token value is stored as HMAC-SHA256 hash only; plaintext is returned once at creation time.
+- token metadata includes `name` (case-insensitive unique) and masked token (`token_masked`).
 - if token list is empty, MCP and execution APIs are effectively disabled (`401`).
 - every accepted token is treated as a distinct user for task and terminal-session ownership.
 - task and session resources are isolated across tokens (`task not found` / `session_not_found` on cross-token access).
 - `request_id` idempotency keys are isolated per token.
+
+Task persistence behavior:
+- task input/result/status lifecycle is persisted in SQLite.
+- startup recovery marks all non-terminal tasks as `failed` with `error_code=console_restarted`.
+- non-expired terminal tasks are retained for `CONSOLE_TASK_RETENTION_DAYS` (default `30`) and cleaned by periodic pruner.
+
+Persistence config:
+- `CONSOLE_DB_PATH`: SQLite file path (default `./onlyboxes-console.db`)
+- `CONSOLE_DB_BUSY_TIMEOUT_MS`: SQLite busy timeout in milliseconds (default `5000`)
+- `CONSOLE_TASK_RETENTION_DAYS`: terminal task retention days (default `30`)
+- `CONSOLE_HASH_KEY`: required HMAC key for hashing worker secret, trusted token, and dashboard password; missing value fails startup
 
 MCP minimal call sequence (initialize + tools/list + tools/call):
 

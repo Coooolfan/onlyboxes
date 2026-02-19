@@ -16,7 +16,6 @@ import (
 	"time"
 
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
-	"github.com/onlyboxes/onlyboxes/api/pkg/registryauth"
 	"github.com/onlyboxes/onlyboxes/worker/worker-docker/internal/config"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -873,11 +872,6 @@ func commandErrorResult(commandID string, code string, message string) *registry
 }
 
 func buildHello(cfg config.Config) (*registryv1.ConnectHello, error) {
-	nonce, err := randomHex(16)
-	if err != nil {
-		return nil, err
-	}
-
 	nodeName := strings.TrimSpace(cfg.NodeName)
 	if nodeName == "" {
 		suffix := cfg.WorkerID
@@ -888,13 +882,12 @@ func buildHello(cfg config.Config) (*registryv1.ConnectHello, error) {
 	}
 
 	hello := &registryv1.ConnectHello{
-		NodeId:          cfg.WorkerID,
-		NodeName:        nodeName,
-		ExecutorKind:    cfg.ExecutorKind,
-		Labels:          cfg.Labels,
-		Version:         cfg.Version,
-		TimestampUnixMs: time.Now().UnixMilli(),
-		Nonce:           nonce,
+		NodeId:       cfg.WorkerID,
+		NodeName:     nodeName,
+		ExecutorKind: cfg.ExecutorKind,
+		Labels:       cfg.Labels,
+		Version:      cfg.Version,
+		WorkerSecret: cfg.WorkerSecret,
 		Capabilities: []*registryv1.CapabilityDeclaration{
 			{
 				Name:        echoCapabilityName,
@@ -914,7 +907,6 @@ func buildHello(cfg config.Config) (*registryv1.ConnectHello, error) {
 			},
 		},
 	}
-	hello.Signature = registryauth.Sign(hello.GetNodeId(), hello.GetTimestampUnixMs(), hello.GetNonce(), cfg.WorkerSecret)
 	return hello, nil
 }
 

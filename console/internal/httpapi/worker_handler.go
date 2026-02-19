@@ -30,7 +30,6 @@ type WorkerHandler struct {
 }
 
 type WorkerProvisioning interface {
-	GetWorkerSecret(nodeID string) (string, bool)
 	CreateProvisionedWorker(now time.Time, offlineTTL time.Duration) (string, string, error)
 	DeleteProvisionedWorker(nodeID string) bool
 }
@@ -81,7 +80,7 @@ func NewRouter(workerHandler *WorkerHandler, consoleAuth *ConsoleAuth, mcpAuth *
 	router := gin.New()
 	router.Use(gin.Recovery())
 	if mcpAuth == nil {
-		mcpAuth = NewMCPAuth()
+		panic("mcp auth is required")
 	}
 	router.Any("/mcp", mcpAuth.RequireToken(), gin.WrapH(NewMCPHandler(workerHandler.dispatcher)))
 
@@ -209,21 +208,8 @@ func (h *WorkerHandler) GetWorkerStartupCommand(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "node_id is required"})
 		return
 	}
-
-	if h.provisioning == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "worker provisioning is unavailable"})
-		return
-	}
-
-	workerSecret, ok := h.provisioning.GetWorkerSecret(nodeID)
-	if !ok || strings.TrimSpace(workerSecret) == "" {
-		c.JSON(http.StatusNotFound, gin.H{"error": "worker not found"})
-		return
-	}
-
-	c.JSON(http.StatusOK, workerStartupCommandResponse{
-		NodeID:  nodeID,
-		Command: h.buildWorkerStartupCommand(nodeID, workerSecret, c.Request),
+	c.JSON(http.StatusGone, gin.H{
+		"error": "worker secret is returned only when creating the worker; delete and recreate to get a new startup command",
 	})
 }
 

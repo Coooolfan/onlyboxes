@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/onlyboxes/onlyboxes/console/internal/grpcserver"
-	"github.com/onlyboxes/onlyboxes/console/internal/registry"
+	"github.com/onlyboxes/onlyboxes/console/internal/testutil/registrytest"
 )
 
 type fakeMCPDispatcher struct {
@@ -872,7 +872,7 @@ func TestMCPPostRequiresToken(t *testing.T) {
 func newMCPTestRouter(t *testing.T, dispatcher CommandDispatcher) http.Handler {
 	t.Helper()
 
-	handler := NewWorkerHandler(registry.NewStore(), 15*time.Second, dispatcher, nil, "")
+	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, dispatcher, nil, "")
 	return NewRouter(handler, newTestConsoleAuth(t), newTestMCPAuth())
 }
 

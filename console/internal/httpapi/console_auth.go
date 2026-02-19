@@ -1,17 +1,22 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"database/sql"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/onlyboxes/onlyboxes/console/internal/persistence"
+	"github.com/onlyboxes/onlyboxes/console/internal/persistence/sqlc"
 )
 
 const (
@@ -20,6 +25,7 @@ const (
 	dashboardUsernamePrefix         = "admin-"
 	dashboardUsernameRandomByteSize = 4
 	dashboardPasswordRandomByteSize = 24
+	dashboardCredentialSingletonID  = 1
 )
 
 var dashboardSessionTTL = 12 * time.Hour
@@ -29,8 +35,28 @@ type DashboardCredentials struct {
 	Password string
 }
 
+type DashboardCredentialMaterial struct {
+	Username     string
+	PasswordHash string
+	HashAlgo     string
+	Hasher       *persistence.Hasher
+}
+
+type DashboardCredentialInitResult struct {
+	Username          string
+	PasswordHash      string
+	HashAlgo          string
+	PasswordPlaintext string
+	InitializedNow    bool
+	EnvIgnored        bool
+}
+
 type ConsoleAuth struct {
-	credentials DashboardCredentials
+	username        string
+	passwordHash    string
+	hashAlgo        string
+	hasher          *persistence.Hasher
+	passwordEqualFn func(hash string, plain string) bool
 
 	sessionMu sync.Mutex
 	sessions  map[string]time.Time
@@ -66,11 +92,90 @@ func ResolveDashboardCredentials(username string, password string) (DashboardCre
 	return credentials, nil
 }
 
-func NewConsoleAuth(credentials DashboardCredentials) *ConsoleAuth {
+func InitializeDashboardCredentials(
+	ctx context.Context,
+	queries *sqlc.Queries,
+	hasher *persistence.Hasher,
+	envUsername string,
+	envPassword string,
+) (DashboardCredentialInitResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if queries == nil {
+		return DashboardCredentialInitResult{}, errors.New("dashboard credential queries is required")
+	}
+	if hasher == nil {
+		return DashboardCredentialInitResult{}, errors.New("dashboard credential hasher is required")
+	}
+
+	record, err := queries.GetDashboardCredential(ctx)
+	if err == nil {
+		username := strings.TrimSpace(record.Username)
+		passwordHash := strings.TrimSpace(record.PasswordHash)
+		hashAlgo := strings.TrimSpace(record.HashAlgo)
+		if username == "" || passwordHash == "" {
+			return DashboardCredentialInitResult{}, errors.New("persisted dashboard credential is invalid")
+		}
+		if !strings.EqualFold(hashAlgo, persistence.HashAlgorithmHMACSHA256) {
+			return DashboardCredentialInitResult{}, fmt.Errorf(
+				"persisted dashboard credential hash algorithm %q is unsupported",
+				hashAlgo,
+			)
+		}
+		return DashboardCredentialInitResult{
+			Username:          username,
+			PasswordHash:      passwordHash,
+			HashAlgo:          persistence.HashAlgorithmHMACSHA256,
+			PasswordPlaintext: "",
+			InitializedNow:    false,
+			EnvIgnored:        envUsername != "" || envPassword != "",
+		}, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return DashboardCredentialInitResult{}, fmt.Errorf("load persisted dashboard credential: %w", err)
+	}
+
+	credentials, err := ResolveDashboardCredentials(envUsername, envPassword)
+	if err != nil {
+		return DashboardCredentialInitResult{}, err
+	}
+	nowMS := time.Now().UnixMilli()
+	passwordHash := hasher.Hash(credentials.Password)
+	if err := queries.InsertDashboardCredential(ctx, sqlc.InsertDashboardCredentialParams{
+		SingletonID:     dashboardCredentialSingletonID,
+		Username:        credentials.Username,
+		PasswordHash:    passwordHash,
+		HashAlgo:        persistence.HashAlgorithmHMACSHA256,
+		CreatedAtUnixMs: nowMS,
+		UpdatedAtUnixMs: nowMS,
+	}); err != nil {
+		return DashboardCredentialInitResult{}, fmt.Errorf("persist dashboard credential: %w", err)
+	}
+
+	return DashboardCredentialInitResult{
+		Username:          credentials.Username,
+		PasswordHash:      passwordHash,
+		HashAlgo:          persistence.HashAlgorithmHMACSHA256,
+		PasswordPlaintext: credentials.Password,
+		InitializedNow:    true,
+		EnvIgnored:        false,
+	}, nil
+}
+
+func NewConsoleAuth(material DashboardCredentialMaterial) *ConsoleAuth {
+	var passwordEqualFn func(hash string, plain string) bool
+	if material.Hasher != nil {
+		passwordEqualFn = material.Hasher.Equal
+	}
 	return &ConsoleAuth{
-		credentials: credentials,
-		sessions:    make(map[string]time.Time),
-		nowFn:       time.Now,
+		username:        strings.TrimSpace(material.Username),
+		passwordHash:    strings.TrimSpace(material.PasswordHash),
+		hashAlgo:        strings.TrimSpace(material.HashAlgo),
+		hasher:          material.Hasher,
+		passwordEqualFn: passwordEqualFn,
+		sessions:        make(map[string]time.Time),
+		nowFn:           time.Now,
 	}
 }
 
@@ -124,8 +229,15 @@ func (a *ConsoleAuth) RequireAuth() gin.HandlerFunc {
 }
 
 func (a *ConsoleAuth) checkCredentials(username string, password string) bool {
-	return constantTimeEqualString(a.credentials.Username, username) &&
-		constantTimeEqualString(a.credentials.Password, password)
+	if a == nil || a.passwordEqualFn == nil {
+		return false
+	}
+	if !strings.EqualFold(a.hashAlgo, persistence.HashAlgorithmHMACSHA256) {
+		return false
+	}
+	usernameOK := constantTimeEqualString(a.username, username)
+	passwordOK := a.passwordEqualFn(a.passwordHash, password)
+	return usernameOK && passwordOK
 }
 
 func (a *ConsoleAuth) createSession() (string, time.Time, error) {

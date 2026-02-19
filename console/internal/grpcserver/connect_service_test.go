@@ -12,8 +12,7 @@ import (
 	"time"
 
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
-	"github.com/onlyboxes/onlyboxes/api/pkg/registryauth"
-	"github.com/onlyboxes/onlyboxes/console/internal/registry"
+	"github.com/onlyboxes/onlyboxes/console/internal/testutil/registrytest"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -53,7 +52,7 @@ func newBufClient(t *testing.T, svc registryv1.WorkerRegistryServiceServer) (reg
 }
 
 func TestConnectRejectsFirstFrameWithoutHello(t *testing.T) {
-	svc := NewRegistryService(registry.NewStore(), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
+	svc := NewRegistryService(registrytest.NewStore(t), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
 	client, cleanup := newBufClient(t, svc)
 	defer cleanup()
 
@@ -82,17 +81,14 @@ func TestConnectRejectsFirstFrameWithoutHello(t *testing.T) {
 }
 
 func TestConnectRejectsUnknownWorkerID(t *testing.T) {
-	svc := NewRegistryService(registry.NewStore(), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
+	svc := NewRegistryService(registrytest.NewStore(t), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
 	client, cleanup := newBufClient(t, svc)
 	defer cleanup()
 
-	now := time.Now().UnixMilli()
 	hello := &registryv1.ConnectHello{
-		NodeId:          "unknown-node",
-		TimestampUnixMs: now,
-		Nonce:           "nonce-1",
+		NodeId:       "unknown-node",
+		WorkerSecret: "secret-unknown",
 	}
-	hello.Signature = registryauth.Sign(hello.GetNodeId(), hello.GetTimestampUnixMs(), hello.GetNonce(), "secret-unknown")
 
 	stream, err := client.Connect(context.Background())
 	if err != nil {
@@ -111,7 +107,7 @@ func TestConnectRejectsUnknownWorkerID(t *testing.T) {
 }
 
 func TestCreateProvisionedWorkerAllowsDynamicConnect(t *testing.T) {
-	store := registry.NewStore()
+	store := registrytest.NewStore(t)
 	svc := NewRegistryService(store, map[string]string{}, 5, 15, 60*time.Second)
 
 	workerID, workerSecret, err := svc.CreateProvisionedWorker(time.Now(), 15*time.Second)
@@ -136,7 +132,7 @@ func TestCreateProvisionedWorkerAllowsDynamicConnect(t *testing.T) {
 }
 
 func TestDeleteProvisionedWorkerDisconnectsSessionAndRevokesCredential(t *testing.T) {
-	store := registry.NewStore()
+	store := registrytest.NewStore(t)
 	svc := NewRegistryService(store, map[string]string{}, 5, 15, 60*time.Second)
 
 	workerID, workerSecret, err := svc.CreateProvisionedWorker(time.Now(), 15*time.Second)
@@ -182,16 +178,14 @@ func TestDeleteProvisionedWorkerDisconnectsSessionAndRevokesCredential(t *testin
 	}
 }
 
-func TestConnectRejectsInvalidSignature(t *testing.T) {
-	svc := NewRegistryService(registry.NewStore(), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
+func TestConnectRejectsInvalidWorkerSecret(t *testing.T) {
+	svc := NewRegistryService(registrytest.NewStore(t), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
 	client, cleanup := newBufClient(t, svc)
 	defer cleanup()
 
 	hello := &registryv1.ConnectHello{
-		NodeId:          "node-1",
-		TimestampUnixMs: time.Now().UnixMilli(),
-		Nonce:           "nonce-1",
-		Signature:       strings.Repeat("a", 64),
+		NodeId:       "node-1",
+		WorkerSecret: "secret-invalid",
 	}
 
 	stream, err := client.Connect(context.Background())
@@ -210,83 +204,23 @@ func TestConnectRejectsInvalidSignature(t *testing.T) {
 	}
 }
 
-func TestConnectRejectsTimestampOutsideReplayWindow(t *testing.T) {
-	svc := NewRegistryService(registry.NewStore(), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
-	svc.nowFn = func() time.Time {
-		return time.UnixMilli(1_700_000_000_000)
-	}
+func TestConnectAcceptsHelloWithoutLegacyAuthFields(t *testing.T) {
+	svc := NewRegistryService(registrytest.NewStore(t), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
 	client, cleanup := newBufClient(t, svc)
 	defer cleanup()
 
-	hello := &registryv1.ConnectHello{
-		NodeId:          "node-1",
-		TimestampUnixMs: svc.nowFn().Add(-120 * time.Second).UnixMilli(),
-		Nonce:           "nonce-1",
-	}
-	hello.Signature = registryauth.Sign(hello.GetNodeId(), hello.GetTimestampUnixMs(), hello.GetNonce(), "secret-1")
-
-	stream, err := client.Connect(context.Background())
+	stream, sessionID, err := connectWorker(client, "node-1", "secret-1", "nonce-legacy", []string{"echo"})
 	if err != nil {
-		t.Fatalf("connect failed: %v", err)
+		t.Fatalf("connect worker failed: %v", err)
 	}
-	if err := stream.Send(&registryv1.ConnectRequest{
-		Payload: &registryv1.ConnectRequest_Hello{Hello: hello},
-	}); err != nil {
-		t.Fatalf("send hello failed: %v", err)
+	if strings.TrimSpace(sessionID) == "" {
+		t.Fatalf("expected non-empty session_id")
 	}
-
-	_, err = stream.Recv()
-	if status.Code(err) != codes.Unauthenticated {
-		t.Fatalf("expected Unauthenticated, got %v", err)
-	}
-}
-
-func TestConnectRejectsNonceReplay(t *testing.T) {
-	now := time.UnixMilli(1_700_000_000_000)
-	svc := NewRegistryService(registry.NewStore(), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
-	svc.nowFn = func() time.Time {
-		return now
-	}
-	client, cleanup := newBufClient(t, svc)
-	defer cleanup()
-
-	connectOnce := func() error {
-		stream, err := client.Connect(context.Background())
-		if err != nil {
-			return err
-		}
-
-		hello := &registryv1.ConnectHello{
-			NodeId:          "node-1",
-			TimestampUnixMs: now.UnixMilli(),
-			Nonce:           "nonce-replay",
-			Capabilities: []*registryv1.CapabilityDeclaration{
-				{Name: "echo"},
-			},
-		}
-		hello.Signature = registryauth.Sign(hello.GetNodeId(), hello.GetTimestampUnixMs(), hello.GetNonce(), "secret-1")
-
-		if sendErr := stream.Send(&registryv1.ConnectRequest{
-			Payload: &registryv1.ConnectRequest_Hello{Hello: hello},
-		}); sendErr != nil {
-			return sendErr
-		}
-
-		_, recvErr := stream.Recv()
-		_ = stream.CloseSend()
-		return recvErr
-	}
-
-	if err := connectOnce(); status.Code(err) != codes.OK {
-		t.Fatalf("first connect should pass, got %v", err)
-	}
-	if err := connectOnce(); status.Code(err) != codes.Unauthenticated {
-		t.Fatalf("expected Unauthenticated on replay, got %v", err)
-	}
+	_ = stream.CloseSend()
 }
 
 func TestConnectAndHeartbeatSuccess(t *testing.T) {
-	svc := NewRegistryService(registry.NewStore(), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
+	svc := NewRegistryService(registrytest.NewStore(t), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
 	svc.newSessionIDFn = func() (string, error) {
 		return "session-1", nil
 	}
@@ -322,8 +256,46 @@ func TestConnectAndHeartbeatSuccess(t *testing.T) {
 	}
 }
 
+func TestConnectReturnsInternalWhenStoreUpsertFails(t *testing.T) {
+	store := registrytest.NewStore(t)
+	if _, err := store.Persistence().SQL.ExecContext(
+		context.Background(),
+		`CREATE TRIGGER fail_connect_upsert
+BEFORE INSERT ON worker_nodes
+BEGIN
+  SELECT RAISE(FAIL, 'forced connect upsert failure');
+END`,
+	); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
+	svc := NewRegistryService(store, map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
+	client, cleanup := newBufClient(t, svc)
+	defer cleanup()
+
+	stream, err := client.Connect(context.Background())
+	if err != nil {
+		t.Fatalf("connect failed: %v", err)
+	}
+
+	if err := stream.Send(&registryv1.ConnectRequest{
+		Payload: &registryv1.ConnectRequest_Hello{
+			Hello: &registryv1.ConnectHello{
+				NodeId:       "node-1",
+				WorkerSecret: "secret-1",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("send hello failed: %v", err)
+	}
+
+	if _, err := stream.Recv(); status.Code(err) != codes.Internal {
+		t.Fatalf("expected Internal when upsert fails, got %v", err)
+	}
+}
+
 func TestHandleHeartbeatReturnsDeadlineExceededWhenControlQueueFull(t *testing.T) {
-	svc := NewRegistryService(registry.NewStore(), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
+	svc := NewRegistryService(registrytest.NewStore(t), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
 	now := time.Unix(1_700_000_000, 0)
 	svc.nowFn = func() time.Time {
 		return now
@@ -333,7 +305,9 @@ func TestHandleHeartbeatReturnsDeadlineExceededWhenControlQueueFull(t *testing.T
 		NodeId:       "node-1",
 		Capabilities: []*registryv1.CapabilityDeclaration{{Name: "echo"}},
 	}
-	svc.store.Upsert(hello, "session-1", now)
+	if err := svc.store.Upsert(hello, "session-1", now); err != nil {
+		t.Fatalf("seed store upsert failed: %v", err)
+	}
 
 	session := newActiveSession("node-1", "session-1", hello)
 	for i := 0; i < controlOutboundBufferSize; i++ {
@@ -356,7 +330,7 @@ func TestHandleHeartbeatReturnsDeadlineExceededWhenControlQueueFull(t *testing.T
 }
 
 func TestConnectReplacesOldSession(t *testing.T) {
-	svc := NewRegistryService(registry.NewStore(), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
+	svc := NewRegistryService(registrytest.NewStore(t), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
 	sessionIDs := []string{"session-a", "session-b"}
 	svc.newSessionIDFn = func() (string, error) {
 		if len(sessionIDs) == 0 {
@@ -425,7 +399,7 @@ func TestConnectReplacesOldSession(t *testing.T) {
 }
 
 func TestDispatchEchoSuccess(t *testing.T) {
-	svc := NewRegistryService(registry.NewStore(), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
+	svc := NewRegistryService(registrytest.NewStore(t), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
 	client, cleanup := newBufClient(t, svc)
 	defer cleanup()
 
@@ -446,7 +420,7 @@ func TestDispatchEchoSuccess(t *testing.T) {
 }
 
 func TestDispatchEchoNoCapabilityWorker(t *testing.T) {
-	svc := NewRegistryService(registry.NewStore(), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
+	svc := NewRegistryService(registrytest.NewStore(t), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
 	client, cleanup := newBufClient(t, svc)
 	defer cleanup()
 
@@ -461,7 +435,7 @@ func TestDispatchEchoNoCapabilityWorker(t *testing.T) {
 }
 
 func TestDispatchEchoNoWorkerCapacity(t *testing.T) {
-	svc := NewRegistryService(registry.NewStore(), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
+	svc := NewRegistryService(registrytest.NewStore(t), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
 	client, cleanup := newBufClient(t, svc)
 	defer cleanup()
 
@@ -492,7 +466,7 @@ func TestDispatchEchoNoWorkerCapacity(t *testing.T) {
 
 func TestDispatchEchoRoundRobin(t *testing.T) {
 	svc := NewRegistryService(
-		registry.NewStore(),
+		registrytest.NewStore(t),
 		map[string]string{
 			"node-a": "secret-a",
 			"node-b": "secret-b",
@@ -531,7 +505,7 @@ func TestDispatchEchoRoundRobin(t *testing.T) {
 }
 
 func TestDispatchEchoCommandError(t *testing.T) {
-	svc := NewRegistryService(registry.NewStore(), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
+	svc := NewRegistryService(registrytest.NewStore(t), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
 	client, cleanup := newBufClient(t, svc)
 	defer cleanup()
 
@@ -576,7 +550,7 @@ func TestDispatchEchoCommandError(t *testing.T) {
 }
 
 func TestDispatchEchoTimeout(t *testing.T) {
-	svc := NewRegistryService(registry.NewStore(), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
+	svc := NewRegistryService(registrytest.NewStore(t), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
 	client, cleanup := newBufClient(t, svc)
 	defer cleanup()
 
@@ -602,7 +576,7 @@ func TestDispatchEchoTimeout(t *testing.T) {
 }
 
 func TestDispatchEchoConcurrentCommandIDs(t *testing.T) {
-	svc := NewRegistryService(registry.NewStore(), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
+	svc := NewRegistryService(registrytest.NewStore(t), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
 	client, cleanup := newBufClient(t, svc)
 	defer cleanup()
 
@@ -679,7 +653,7 @@ func TestDispatchEchoConcurrentCommandIDs(t *testing.T) {
 }
 
 func TestSubmitTaskSyncSuccess(t *testing.T) {
-	svc := NewRegistryService(registry.NewStore(), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
+	svc := NewRegistryService(registrytest.NewStore(t), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
 	client, cleanup := newBufClient(t, svc)
 	defer cleanup()
 
@@ -712,7 +686,7 @@ func TestSubmitTaskSyncSuccess(t *testing.T) {
 }
 
 func TestSubmitTaskRejectsEmptyOwnerID(t *testing.T) {
-	svc := NewRegistryService(registry.NewStore(), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
+	svc := NewRegistryService(registrytest.NewStore(t), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
 	client, cleanup := newBufClient(t, svc)
 	defer cleanup()
 
@@ -739,7 +713,7 @@ func TestSubmitTaskRejectsEmptyOwnerID(t *testing.T) {
 }
 
 func TestSubmitTaskFailsWhenCapacityIsFull(t *testing.T) {
-	svc := NewRegistryService(registry.NewStore(), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
+	svc := NewRegistryService(registrytest.NewStore(t), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
 	client, cleanup := newBufClient(t, svc)
 	defer cleanup()
 
@@ -776,7 +750,7 @@ func TestSubmitTaskFailsWhenCapacityIsFull(t *testing.T) {
 }
 
 func TestSubmitTaskRequestIDDedupConcurrent(t *testing.T) {
-	svc := NewRegistryService(registry.NewStore(), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
+	svc := NewRegistryService(registrytest.NewStore(t), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
 	client, cleanup := newBufClient(t, svc)
 	defer cleanup()
 
@@ -849,7 +823,7 @@ func TestSubmitTaskRequestIDDedupConcurrent(t *testing.T) {
 }
 
 func TestSubmitTaskRequestIDConflictWhileReserved(t *testing.T) {
-	svc := NewRegistryService(registry.NewStore(), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
+	svc := NewRegistryService(registrytest.NewStore(t), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
 	client, cleanup := newBufClient(t, svc)
 	defer cleanup()
 
@@ -922,7 +896,7 @@ func TestSubmitTaskRequestIDConflictWhileReserved(t *testing.T) {
 }
 
 func TestSubmitTaskRequestIDDedupIsolatedByOwner(t *testing.T) {
-	svc := NewRegistryService(registry.NewStore(), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
+	svc := NewRegistryService(registrytest.NewStore(t), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
 	client, cleanup := newBufClient(t, svc)
 	defer cleanup()
 
@@ -961,7 +935,7 @@ func TestSubmitTaskRequestIDDedupIsolatedByOwner(t *testing.T) {
 }
 
 func TestGetAndCancelTaskAreOwnerScoped(t *testing.T) {
-	svc := NewRegistryService(registry.NewStore(), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
+	svc := NewRegistryService(registrytest.NewStore(t), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
 	client, cleanup := newBufClient(t, svc)
 	defer cleanup()
 
@@ -1031,13 +1005,15 @@ func TestPendingCommandCloseResultIsIdempotent(t *testing.T) {
 }
 
 func TestDispatchCommandContextCanceledAfterEnqueueCleansPending(t *testing.T) {
-	svc := NewRegistryService(registry.NewStore(), nil, 5, 15, 60*time.Second)
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, 60*time.Second)
 	now := time.Now()
 	hello := &registryv1.ConnectHello{
 		NodeId:       "node-1",
 		Capabilities: []*registryv1.CapabilityDeclaration{{Name: "echo"}},
 	}
-	svc.store.Upsert(hello, "session-1", now)
+	if err := svc.store.Upsert(hello, "session-1", now); err != nil {
+		t.Fatalf("seed store upsert failed: %v", err)
+	}
 	session := newActiveSession("node-1", "session-1", hello)
 	svc.swapSession(session)
 
@@ -1087,8 +1063,8 @@ func TestDispatchCommandContextCanceledAfterEnqueueCleansPending(t *testing.T) {
 	}
 }
 
-func TestFinishTaskLockedCancelRunsOnce(t *testing.T) {
-	svc := NewRegistryService(registry.NewStore(), nil, 5, 15, 60*time.Second)
+func TestCloseTaskRuntimeRecordCancelRunsOnce(t *testing.T) {
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, 60*time.Second)
 	record := &taskRecord{
 		id:     "task-cancel-once",
 		status: TaskStatusRunning,
@@ -1100,9 +1076,8 @@ func TestFinishTaskLockedCancelRunsOnce(t *testing.T) {
 		atomic.AddInt32(&cancelCallCount, 1)
 	}
 
-	now := time.Unix(1_700_000_000, 0)
-	svc.finishTaskLocked(record, TaskStatusSucceeded, []byte(`{"ok":true}`), "", "", now)
-	svc.finishTaskLocked(record, TaskStatusFailed, nil, "ignored", "ignored", now.Add(time.Second))
+	svc.closeTaskRuntimeRecord(record)
+	svc.closeTaskRuntimeRecord(record)
 
 	if atomic.LoadInt32(&cancelCallCount) != 1 {
 		t.Fatalf("expected cancel to run once, got %d", atomic.LoadInt32(&cancelCallCount))
@@ -1125,20 +1100,19 @@ func connectWorker(
 	nonce string,
 	capabilities []string,
 ) (grpc.BidiStreamingClient[registryv1.ConnectRequest, registryv1.ConnectResponse], string, error) {
+	_ = nonce
 	stream, err := client.Connect(context.Background())
 	if err != nil {
 		return nil, "", err
 	}
 
 	hello := &registryv1.ConnectHello{
-		NodeId:          workerID,
-		TimestampUnixMs: time.Now().UnixMilli(),
-		Nonce:           nonce,
+		NodeId:       workerID,
+		WorkerSecret: secret,
 	}
 	for _, capability := range capabilities {
 		hello.Capabilities = append(hello.Capabilities, &registryv1.CapabilityDeclaration{Name: capability})
 	}
-	hello.Signature = registryauth.Sign(hello.GetNodeId(), hello.GetTimestampUnixMs(), hello.GetNonce(), secret)
 
 	if err := stream.Send(&registryv1.ConnectRequest{
 		Payload: &registryv1.ConnectRequest_Hello{Hello: hello},

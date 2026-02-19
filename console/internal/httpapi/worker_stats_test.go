@@ -9,11 +9,11 @@ import (
 	"time"
 
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
-	"github.com/onlyboxes/onlyboxes/console/internal/registry"
+	"github.com/onlyboxes/onlyboxes/console/internal/testutil/registrytest"
 )
 
 func TestWorkerStatsAggregatesAllWorkers(t *testing.T) {
-	store := registry.NewStore()
+	store := registrytest.NewStore(t)
 	now := time.Unix(1_700_000_500, 0)
 
 	for i := 0; i < 120; i++ {
@@ -64,7 +64,7 @@ func TestWorkerStatsAggregatesAllWorkers(t *testing.T) {
 }
 
 func TestWorkerStatsSupportsCustomStaleThreshold(t *testing.T) {
-	store := registry.NewStore()
+	store := registrytest.NewStore(t)
 	now := time.Unix(1_700_000_600, 0)
 	store.Upsert(&registryv1.ConnectHello{NodeId: "fresh"}, "session-fresh", now.Add(-5*time.Second))
 	store.Upsert(&registryv1.ConnectHello{NodeId: "old-a"}, "session-old-a", now.Add(-20*time.Second))
@@ -99,7 +99,7 @@ func TestWorkerStatsSupportsCustomStaleThreshold(t *testing.T) {
 }
 
 func TestWorkerStatsRejectsInvalidStaleThreshold(t *testing.T) {
-	store := registry.NewStore()
+	store := registrytest.NewStore(t)
 	handler := NewWorkerHandler(store, 15*time.Second, nil, nil, "")
 	router := NewRouter(handler, newTestConsoleAuth(t), newTestMCPAuth())
 	cookie := loginSessionCookie(t, router)

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"net/http"
 	"strings"
+	"sync/atomic"
 
 	"github.com/gin-gonic/gin"
 )
@@ -14,13 +15,22 @@ const requestOwnerIDGinKey = "request_owner_id"
 
 type requestOwnerIDContextKey struct{}
 
+var ownerIDHashFunc atomic.Value
+
 func ownerIDFromToken(token string) string {
 	trimmed := strings.TrimSpace(token)
 	if trimmed == "" {
 		return ""
 	}
+	if hashFn, ok := ownerIDHashFunc.Load().(func(string) string); ok && hashFn != nil {
+		return strings.TrimSpace(hashFn(trimmed))
+	}
 	sum := sha256.Sum256([]byte(trimmed))
 	return hex.EncodeToString(sum[:])
+}
+
+func setOwnerIDHashFunc(hashFn func(string) string) {
+	ownerIDHashFunc.Store(hashFn)
 }
 
 func setRequestOwnerID(c *gin.Context, ownerID string) {

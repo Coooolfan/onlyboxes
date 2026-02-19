@@ -2,17 +2,19 @@ package grpcserver
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
-	"github.com/onlyboxes/onlyboxes/api/pkg/registryauth"
+	"github.com/onlyboxes/onlyboxes/console/internal/persistence"
 	"github.com/onlyboxes/onlyboxes/console/internal/registry"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -68,10 +70,10 @@ type RegistryService struct {
 	store                  *registry.Store
 	credentialsMu          sync.RWMutex
 	credentials            map[string]string
+	credentialHashAlgo     string
+	hasher                 *persistence.Hasher
 	heartbeatIntervalSec   int32
 	offlineTTLSec          int32
-	replayWindow           time.Duration
-	nonceCache             *nonceCache
 	nowFn                  func() time.Time
 	newSessionIDFn         func() (string, error)
 	newCommandIDFn         func() (string, error)
@@ -84,13 +86,13 @@ type RegistryService struct {
 	roundRobin uint64
 
 	tasksMu sync.RWMutex
-	// Task lifecycle index:
-	// - tasks stores live/recent task records by task_id.
-	// - taskByRequestKey maps (owner_id, request_id) composite key to task_id after record creation.
+	// Active task runtime index:
+	// - tasks stores in-flight task runtime records by task_id.
 	// - taskRequestReservations tracks (owner_id, request_id) currently being validated/created.
-	tasks                   map[string]*taskRecord
-	taskByRequestKey        map[string]string
-	taskRequestReservations map[string]struct{}
+	tasks                        map[string]*taskRecord
+	taskRequestReservations      map[string]struct{}
+	criticalPersistenceFailureFn func(error)
+	lastInlineTaskPruneUnixMs    atomic.Int64
 }
 
 func NewRegistryService(
@@ -100,6 +102,7 @@ func NewRegistryService(
 	offlineTTLSec int32,
 	replayWindow time.Duration,
 ) *RegistryService {
+	_ = replayWindow
 	credentialCopy := make(map[string]string, len(initialCredentials))
 	for workerID, secret := range initialCredentials {
 		credentialCopy[workerID] = secret
@@ -107,10 +110,9 @@ func NewRegistryService(
 	return &RegistryService{
 		store:                   store,
 		credentials:             credentialCopy,
+		credentialHashAlgo:      "legacy-plain",
 		heartbeatIntervalSec:    heartbeatIntervalSec,
 		offlineTTLSec:           offlineTTLSec,
-		replayWindow:            replayWindow,
-		nonceCache:              newNonceCache(),
 		nowFn:                   time.Now,
 		newSessionIDFn:          generateUUIDv4,
 		newCommandIDFn:          generateUUIDv4,
@@ -119,9 +121,45 @@ func NewRegistryService(
 		taskRetention:           defaultTaskRetentionWindow,
 		sessions:                make(map[string]*activeSession),
 		tasks:                   make(map[string]*taskRecord),
-		taskByRequestKey:        make(map[string]string),
 		taskRequestReservations: make(map[string]struct{}),
+		criticalPersistenceFailureFn: func(err error) {
+			panic(err)
+		},
 	}
+}
+
+func (s *RegistryService) SetHasher(hasher *persistence.Hasher) {
+	if s == nil {
+		return
+	}
+	s.credentialsMu.Lock()
+	s.hasher = hasher
+	if hasher != nil {
+		s.credentialHashAlgo = persistence.HashAlgorithmHMACSHA256
+	} else {
+		s.credentialHashAlgo = "legacy-plain"
+	}
+	s.credentialsMu.Unlock()
+}
+
+func (s *RegistryService) SetTaskRetention(retention time.Duration) {
+	if s == nil || retention <= 0 {
+		return
+	}
+	s.tasksMu.Lock()
+	s.taskRetention = retention
+	s.tasksMu.Unlock()
+}
+
+func (s *RegistryService) PruneExpiredTasks(now time.Time) int {
+	if s == nil || s.store == nil || s.store.Persistence() == nil {
+		return 0
+	}
+	removed, err := s.store.Persistence().Queries.DeleteExpiredTerminalTasks(context.Background(), now.UnixMilli())
+	if err != nil {
+		return 0
+	}
+	return int(removed)
 }
 
 func (s *RegistryService) Connect(stream grpc.BidiStreamingServer[registryv1.ConnectRequest, registryv1.ConnectResponse]) (retErr error) {
@@ -145,22 +183,27 @@ func (s *RegistryService) Connect(stream grpc.BidiStreamingServer[registryv1.Con
 		return err
 	}
 
-	now := s.nowFn()
-	if !s.withinReplayWindow(now, hello.GetTimestampUnixMs()) {
-		return status.Error(codes.Unauthenticated, "timestamp is outside replay window")
-	}
-
 	secret, ok := s.getCredential(hello.GetNodeId())
 	if !ok {
 		return status.Error(codes.Unauthenticated, "unknown worker_id")
 	}
-	if !registryauth.Verify(hello.GetNodeId(), hello.GetTimestampUnixMs(), hello.GetNonce(), secret, hello.GetSignature()) {
-		return status.Error(codes.Unauthenticated, "invalid signature")
+
+	workerSecret := strings.TrimSpace(hello.GetWorkerSecret())
+	if workerSecret == "" {
+		return status.Error(codes.Unauthenticated, "worker_secret is required")
 	}
-	if err := s.nonceCache.Use(hello.GetNodeId(), hello.GetNonce(), now, s.replayWindow); err != nil {
-		return status.Error(codes.Unauthenticated, err.Error())
+	s.credentialsMu.RLock()
+	hasher := s.hasher
+	s.credentialsMu.RUnlock()
+	if hasher != nil {
+		if !hasher.Equal(secret, workerSecret) {
+			return status.Error(codes.Unauthenticated, "invalid worker credential")
+		}
+	} else if subtle.ConstantTimeCompare([]byte(secret), []byte(workerSecret)) != 1 {
+		return status.Error(codes.Unauthenticated, "invalid worker credential")
 	}
 
+	now := s.nowFn()
 	sessionID, err := s.newSessionIDFn()
 	if err != nil {
 		return status.Error(codes.Internal, "failed to create session_id")
@@ -176,7 +219,9 @@ func (s *RegistryService) Connect(stream grpc.BidiStreamingServer[registryv1.Con
 		session.close(retErr)
 	}()
 
-	s.store.Upsert(hello, sessionID, now)
+	if err := s.store.Upsert(hello, sessionID, now); err != nil {
+		return status.Error(codes.Internal, "failed to persist worker registration")
+	}
 
 	writerErrCh := make(chan error, 1)
 	go func() {
@@ -357,8 +402,8 @@ func (s *RegistryService) dispatchCommand(
 
 func (s *RegistryService) pickSessionForCapability(capability string) (*activeSession, error) {
 	now := s.nowFn()
-	workers := s.store.ListOnlineByCapability(capability, now, time.Duration(s.offlineTTLSec)*time.Second)
-	if len(workers) == 0 {
+	nodeIDs := s.store.ListOnlineNodeIDsByCapability(capability, now, time.Duration(s.offlineTTLSec)*time.Second)
+	if len(nodeIDs) == 0 {
 		return nil, ErrNoCapabilityWorker
 	}
 
@@ -368,13 +413,13 @@ func (s *RegistryService) pickSessionForCapability(capability string) (*activeSe
 		inflight int
 	}
 	minInflight := int(^uint(0) >> 1)
-	preferred := make([]candidate, 0, len(workers))
-	fallback := make([]candidate, 0, len(workers))
+	preferred := make([]candidate, 0, len(nodeIDs))
+	fallback := make([]candidate, 0, len(nodeIDs))
 	hasSession := false
 
-	for i := 0; i < len(workers); i++ {
-		index := (start + i) % len(workers)
-		session := s.getSession(workers[index].NodeID)
+	for i := 0; i < len(nodeIDs); i++ {
+		index := (start + i) % len(nodeIDs)
+		session := s.getSession(nodeIDs[index])
 		if session == nil || !session.hasCapability(capability) {
 			continue
 		}
@@ -462,32 +507,12 @@ func handleCommandResult(session *activeSession, result *registryv1.CommandResul
 	return nil
 }
 
-func (s *RegistryService) withinReplayWindow(now time.Time, timestampUnixMS int64) bool {
-	if timestampUnixMS <= 0 {
-		return false
-	}
-	delta := now.Sub(time.UnixMilli(timestampUnixMS))
-	if delta < 0 {
-		delta = -delta
-	}
-	return delta <= s.replayWindow
-}
-
 func validateHello(hello *registryv1.ConnectHello) error {
 	if hello == nil {
 		return status.Error(codes.InvalidArgument, "hello frame is required")
 	}
 	if err := validateNodeID(hello.GetNodeId()); err != nil {
 		return err
-	}
-	if hello.GetTimestampUnixMs() <= 0 {
-		return status.Error(codes.InvalidArgument, "timestamp_unix_ms is required")
-	}
-	if strings.TrimSpace(hello.GetNonce()) == "" {
-		return status.Error(codes.InvalidArgument, "nonce is required")
-	}
-	if strings.TrimSpace(hello.GetSignature()) == "" {
-		return status.Error(codes.InvalidArgument, "signature is required")
 	}
 	return nil
 }
@@ -534,10 +559,6 @@ func (s *RegistryService) CreateProvisionedWorker(now time.Time, offlineTTL time
 			return "", "", fmt.Errorf("generate worker_secret: %w", err)
 		}
 
-		if !s.putCredentialIfAbsent(workerID, workerSecret) {
-			continue
-		}
-
 		seeded := s.store.SeedProvisionedWorkers([]registry.ProvisionedWorker{
 			{
 				NodeID: workerID,
@@ -546,11 +567,33 @@ func (s *RegistryService) CreateProvisionedWorker(now time.Time, offlineTTL time
 				},
 			},
 		}, now, offlineTTL)
-		if seeded == 1 {
-			return workerID, workerSecret, nil
+		if seeded != 1 {
+			continue
 		}
 
-		s.deleteCredential(workerID)
+		credentialValue := workerSecret
+		hashAlgo := "legacy-plain"
+		s.credentialsMu.RLock()
+		hasher := s.hasher
+		if strings.TrimSpace(s.credentialHashAlgo) != "" {
+			hashAlgo = s.credentialHashAlgo
+		}
+		s.credentialsMu.RUnlock()
+		if hasher != nil {
+			credentialValue = hasher.Hash(workerSecret)
+		}
+
+		if !s.putCredentialIfAbsent(workerID, credentialValue) {
+			s.store.Delete(workerID)
+			continue
+		}
+		if !s.store.PutCredentialHashIfAbsent(workerID, credentialValue, hashAlgo, now) {
+			s.deleteCredential(workerID)
+			s.store.Delete(workerID)
+			continue
+		}
+
+		return workerID, workerSecret, nil
 	}
 	return "", "", errors.New("failed to allocate unique worker_id")
 }
@@ -561,12 +604,14 @@ func (s *RegistryService) DeleteProvisionedWorker(nodeID string) bool {
 		return false
 	}
 
-	if !s.deleteCredential(trimmedNodeID) {
+	deletedCredentialInMemory := s.deleteCredential(trimmedNodeID)
+	deletedCredentialInDB := s.store.DeleteCredential(trimmedNodeID)
+	deletedNode := s.store.Delete(trimmedNodeID)
+	if !deletedCredentialInMemory && !deletedCredentialInDB && !deletedNode {
 		return false
 	}
 
 	s.disconnectWorker(trimmedNodeID, "worker credential revoked")
-	s.store.Delete(trimmedNodeID)
 	return true
 }
 
@@ -577,10 +622,22 @@ func (s *RegistryService) getCredential(nodeID string) (string, bool) {
 	}
 
 	s.credentialsMu.RLock()
-	defer s.credentialsMu.RUnlock()
-
 	secret, ok := s.credentials[trimmedNodeID]
-	return secret, ok
+	s.credentialsMu.RUnlock()
+	if ok {
+		return secret, true
+	}
+	if s.store == nil {
+		return "", false
+	}
+	hash, exists := s.store.GetCredentialHash(trimmedNodeID)
+	if !exists {
+		return "", false
+	}
+	s.credentialsMu.Lock()
+	s.credentials[trimmedNodeID] = hash
+	s.credentialsMu.Unlock()
+	return hash, true
 }
 
 func (s *RegistryService) putCredentialIfAbsent(nodeID string, secret string) bool {
@@ -628,6 +685,11 @@ func (s *RegistryService) disconnectWorker(nodeID string, reason string) {
 		delete(s.sessions, trimmedNodeID)
 	}
 	s.sessionsMu.Unlock()
+	if s.store != nil {
+		if err := s.store.ClearSessionByNode(trimmedNodeID); err != nil {
+			log.Printf("failed to clear worker session by node: node_id=%s err=%v", trimmedNodeID, err)
+		}
+	}
 
 	if session != nil {
 		session.close(status.Error(codes.PermissionDenied, reason))
@@ -655,17 +717,31 @@ func (s *RegistryService) removeSession(session *activeSession) {
 	if session == nil {
 		return
 	}
-	s.sessionsMu.Lock()
-	defer s.sessionsMu.Unlock()
+	shouldClearStoreSession := false
 
+	s.sessionsMu.Lock()
 	current, ok := s.sessions[session.nodeID]
 	if !ok {
+		s.sessionsMu.Unlock()
 		return
 	}
 	if current.sessionID != session.sessionID {
+		s.sessionsMu.Unlock()
 		return
 	}
 	delete(s.sessions, session.nodeID)
+	shouldClearStoreSession = true
+	s.sessionsMu.Unlock()
+	if shouldClearStoreSession && s.store != nil {
+		if err := s.store.ClearSession(session.nodeID, session.sessionID); err != nil {
+			log.Printf(
+				"failed to clear worker session by node+session: node_id=%s session_id=%s err=%v",
+				session.nodeID,
+				session.sessionID,
+				err,
+			)
+		}
+	}
 }
 
 func writerLoop(stream grpc.BidiStreamingServer[registryv1.ConnectRequest, registryv1.ConnectResponse], session *activeSession) error {
@@ -1073,52 +1149,4 @@ func newHeartbeatAck(now time.Time, heartbeatIntervalSec int32, offlineTTLSec in
 			},
 		},
 	}
-}
-
-type nonceCache struct {
-	mu      sync.Mutex
-	entries map[string]map[string]time.Time
-}
-
-func newNonceCache() *nonceCache {
-	return &nonceCache{
-		entries: make(map[string]map[string]time.Time),
-	}
-}
-
-func (c *nonceCache) Use(nodeID string, nonce string, now time.Time, window time.Duration) error {
-	if strings.TrimSpace(nodeID) == "" {
-		return errors.New("node_id is required")
-	}
-	if strings.TrimSpace(nonce) == "" {
-		return errors.New("nonce is required")
-	}
-	if window <= 0 {
-		return errors.New("replay window must be positive")
-	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	for id, nonces := range c.entries {
-		for value, seenAt := range nonces {
-			if now.Sub(seenAt) > window {
-				delete(nonces, value)
-			}
-		}
-		if len(nonces) == 0 {
-			delete(c.entries, id)
-		}
-	}
-
-	nodeNonces, ok := c.entries[nodeID]
-	if !ok {
-		nodeNonces = make(map[string]time.Time)
-		c.entries[nodeID] = nodeNonces
-	}
-	if _, exists := nodeNonces[nonce]; exists {
-		return fmt.Errorf("nonce replay detected")
-	}
-	nodeNonces[nonce] = now
-	return nil
 }

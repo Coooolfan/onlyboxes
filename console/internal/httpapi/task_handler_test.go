@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/onlyboxes/onlyboxes/console/internal/grpcserver"
-	"github.com/onlyboxes/onlyboxes/console/internal/registry"
+	"github.com/onlyboxes/onlyboxes/console/internal/testutil/registrytest"
 )
 
 type fakeTaskDispatcher struct {
@@ -37,7 +37,7 @@ func (f *fakeTaskDispatcher) CancelTask(taskID string, ownerID string) (grpcserv
 
 func TestSubmitTaskAccepted(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	handler := NewWorkerHandler(registry.NewStore(), 15*time.Second, &fakeTaskDispatcher{
+	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, &fakeTaskDispatcher{
 		submit: func(ctx context.Context, req grpcserver.SubmitTaskRequest) (grpcserver.SubmitTaskResult, error) {
 			if req.OwnerID != ownerIDFromToken(testMCPToken) {
 				t.Fatalf("expected owner_id from token, got %q", req.OwnerID)
@@ -80,7 +80,7 @@ func TestSubmitTaskAccepted(t *testing.T) {
 
 func TestSubmitTaskCompletedSuccess(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	handler := NewWorkerHandler(registry.NewStore(), 15*time.Second, &fakeTaskDispatcher{
+	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, &fakeTaskDispatcher{
 		submit: func(ctx context.Context, req grpcserver.SubmitTaskRequest) (grpcserver.SubmitTaskResult, error) {
 			completed := now.Add(1 * time.Second)
 			return grpcserver.SubmitTaskResult{
@@ -122,7 +122,7 @@ func TestSubmitTaskCompletedSuccess(t *testing.T) {
 }
 
 func TestSubmitTaskRequiresMCPToken(t *testing.T) {
-	handler := NewWorkerHandler(registry.NewStore(), 15*time.Second, &fakeTaskDispatcher{
+	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, &fakeTaskDispatcher{
 		submit: func(ctx context.Context, req grpcserver.SubmitTaskRequest) (grpcserver.SubmitTaskResult, error) {
 			return grpcserver.SubmitTaskResult{}, nil
 		},
@@ -146,7 +146,7 @@ func TestSubmitTaskRequiresMCPToken(t *testing.T) {
 }
 
 func TestSubmitTaskNoCapacity(t *testing.T) {
-	handler := NewWorkerHandler(registry.NewStore(), 15*time.Second, &fakeTaskDispatcher{
+	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, &fakeTaskDispatcher{
 		submit: func(ctx context.Context, req grpcserver.SubmitTaskRequest) (grpcserver.SubmitTaskResult, error) {
 			return grpcserver.SubmitTaskResult{}, grpcserver.ErrNoWorkerCapacity
 		},
@@ -172,7 +172,7 @@ func TestSubmitTaskNoCapacity(t *testing.T) {
 }
 
 func TestSubmitTaskRequestInProgress(t *testing.T) {
-	handler := NewWorkerHandler(registry.NewStore(), 15*time.Second, &fakeTaskDispatcher{
+	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, &fakeTaskDispatcher{
 		submit: func(ctx context.Context, req grpcserver.SubmitTaskRequest) (grpcserver.SubmitTaskResult, error) {
 			return grpcserver.SubmitTaskResult{}, grpcserver.ErrTaskRequestInProgress
 		},
@@ -202,7 +202,7 @@ func TestSubmitTaskRequestInProgress(t *testing.T) {
 
 func TestGetTask(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	handler := NewWorkerHandler(registry.NewStore(), 15*time.Second, &fakeTaskDispatcher{
+	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, &fakeTaskDispatcher{
 		submit: func(ctx context.Context, req grpcserver.SubmitTaskRequest) (grpcserver.SubmitTaskResult, error) {
 			return grpcserver.SubmitTaskResult{}, nil
 		},
@@ -248,7 +248,7 @@ func TestGetTask(t *testing.T) {
 
 func TestCancelTaskTerminalConflict(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	handler := NewWorkerHandler(registry.NewStore(), 15*time.Second, &fakeTaskDispatcher{
+	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, &fakeTaskDispatcher{
 		submit: func(ctx context.Context, req grpcserver.SubmitTaskRequest) (grpcserver.SubmitTaskResult, error) {
 			return grpcserver.SubmitTaskResult{}, nil
 		},

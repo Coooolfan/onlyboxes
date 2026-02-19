@@ -7,13 +7,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/onlyboxes/onlyboxes/console/internal/registry"
+	"github.com/onlyboxes/onlyboxes/console/internal/testutil/registrytest"
 )
 
 func newWebStaticTestRouter(t *testing.T) http.Handler {
 	t.Helper()
 
-	handler := NewWorkerHandler(registry.NewStore(), 15*time.Second, nil, nil, "")
+	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, nil, "")
 	return NewRouter(handler, newTestConsoleAuth(t), newTestMCPAuth())
 }
 

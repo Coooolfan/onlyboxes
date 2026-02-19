@@ -37,3 +37,8 @@ web/*.tsbuildinfo
 console/internal/httpapi/web_dist/*
 !console/internal/httpapi/web_dist/index.html
 worker-credentials.json
+
+# SQLite database files
+*.db
+*.db-shm
+*.db-wal

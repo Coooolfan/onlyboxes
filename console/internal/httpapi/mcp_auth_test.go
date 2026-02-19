@@ -11,7 +11,7 @@ import (
 )
 
 func TestMCPAuthRequireTokenRejectsMissingHeader(t *testing.T) {
-	auth := NewMCPAuth()
+	auth := newBareTestMCPAuth()
 	token := "token-a"
 	if _, _, err := auth.createToken("token-a", &token); err != nil {
 		t.Fatalf("seed token: %v", err)
@@ -31,7 +31,7 @@ func TestMCPAuthRequireTokenRejectsMissingHeader(t *testing.T) {
 }
 
 func TestMCPAuthRequireTokenRejectsOldHeader(t *testing.T) {
-	auth := NewMCPAuth()
+	auth := newBareTestMCPAuth()
 	token := "token-a"
 	if _, _, err := auth.createToken("token-a", &token); err != nil {
 		t.Fatalf("seed token: %v", err)
@@ -52,7 +52,7 @@ func TestMCPAuthRequireTokenRejectsOldHeader(t *testing.T) {
 }
 
 func TestMCPAuthRequireTokenRejectsWrongToken(t *testing.T) {
-	auth := NewMCPAuth()
+	auth := newBareTestMCPAuth()
 	token := "token-a"
 	if _, _, err := auth.createToken("token-a", &token); err != nil {
 		t.Fatalf("seed token: %v", err)
@@ -73,7 +73,7 @@ func TestMCPAuthRequireTokenRejectsWrongToken(t *testing.T) {
 }
 
 func TestMCPAuthRequireTokenAllowsTrustedToken(t *testing.T) {
-	auth := NewMCPAuth()
+	auth := newBareTestMCPAuth()
 	token := "token-a"
 	if _, _, err := auth.createToken("token-a", &token); err != nil {
 		t.Fatalf("seed token: %v", err)
@@ -100,7 +100,7 @@ func TestMCPAuthRequireTokenAllowsTrustedToken(t *testing.T) {
 }
 
 func TestMCPAuthRequireTokenRejectsWhenStoreIsEmpty(t *testing.T) {
-	auth := NewMCPAuth()
+	auth := newBareTestMCPAuth()
 	router := gin.New()
 	router.GET("/mcp", auth.RequireToken(), func(c *gin.Context) {
 		c.Status(http.StatusOK)
@@ -117,7 +117,7 @@ func TestMCPAuthRequireTokenRejectsWhenStoreIsEmpty(t *testing.T) {
 }
 
 func TestMCPAuthTokenCRUD(t *testing.T) {
-	auth := NewMCPAuth()
+	auth := newBareTestMCPAuth()
 	router := gin.New()
 	router.POST("/tokens", auth.CreateToken)
 	router.GET("/tokens", auth.ListTokens)
@@ -183,15 +183,8 @@ func TestMCPAuthTokenCRUD(t *testing.T) {
 	getValueReq := httptest.NewRequest(http.MethodGet, "/tokens/"+manualPayload.ID+"/value", nil)
 	getValueRec := httptest.NewRecorder()
 	router.ServeHTTP(getValueRec, getValueReq)
-	if getValueRec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d body=%s", getValueRec.Code, getValueRec.Body.String())
-	}
-	valuePayload := trustedTokenValueResponse{}
-	if err := json.Unmarshal(getValueRec.Body.Bytes(), &valuePayload); err != nil {
-		t.Fatalf("decode value response: %v", err)
-	}
-	if valuePayload.Token != "manual-token-1" {
-		t.Fatalf("unexpected token value: %q", valuePayload.Token)
+	if getValueRec.Code != http.StatusGone {
+		t.Fatalf("expected 410, got %d body=%s", getValueRec.Code, getValueRec.Body.String())
 	}
 
 	deleteReq := httptest.NewRequest(http.MethodDelete, "/tokens/"+manualPayload.ID, nil)
@@ -204,13 +197,13 @@ func TestMCPAuthTokenCRUD(t *testing.T) {
 	getDeletedReq := httptest.NewRequest(http.MethodGet, "/tokens/"+manualPayload.ID+"/value", nil)
 	getDeletedRec := httptest.NewRecorder()
 	router.ServeHTTP(getDeletedRec, getDeletedReq)
-	if getDeletedRec.Code != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d body=%s", getDeletedRec.Code, getDeletedRec.Body.String())
+	if getDeletedRec.Code != http.StatusGone {
+		t.Fatalf("expected 410, got %d body=%s", getDeletedRec.Code, getDeletedRec.Body.String())
 	}
 }
 
 func TestMCPAuthCreateTokenConflicts(t *testing.T) {
-	auth := NewMCPAuth()
+	auth := newBareTestMCPAuth()
 	router := gin.New()
 	router.POST("/tokens", auth.CreateToken)
 

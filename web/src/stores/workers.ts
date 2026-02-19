@@ -10,7 +10,6 @@ import {
   deleteWorkerAPI,
   fetchTrustedTokensAPI,
   fetchWorkersAPI,
-  fetchWorkerStartupCommandAPI,
   fetchWorkerStatsAPI,
 } from '@/services/workers.api'
 import { useAuthStore } from '@/stores/auth'
@@ -23,7 +22,6 @@ import type {
   WorkerStatsResponse,
   WorkerStatus,
 } from '@/types/workers'
-import { writeTextToClipboard } from '@/utils/clipboard'
 
 const pageSize = 25
 const staleAfterDefaultSec = 30
@@ -65,9 +63,6 @@ export const useWorkersStore = defineStore('workers', () => {
   const autoRefreshEnabled = ref(true)
   const creatingWorker = ref(false)
   const deletingNodeID = ref('')
-  const copyingNodeID = ref('')
-  const copiedNodeID = ref('')
-  const copyFailedNodeID = ref('')
   const creatingTrustedToken = ref(false)
   const deletingTrustedTokenID = ref('')
 
@@ -78,7 +73,6 @@ export const useWorkersStore = defineStore('workers', () => {
   let timer: ReturnType<typeof setInterval> | null = null
   let loadRequestSerial = 0
   let activeController: AbortController | null = null
-  let copyFeedbackTimer: ReturnType<typeof setTimeout> | null = null
 
   const totalWorkers = computed(() => dashboardStats.value.total)
   const onlineWorkers = computed(() => dashboardStats.value.online)
@@ -102,27 +96,6 @@ export const useWorkersStore = defineStore('workers', () => {
     return `${start}-${end} / ${total}`
   })
 
-  function scheduleCopyFeedbackReset(): void {
-    if (copyFeedbackTimer) {
-      clearTimeout(copyFeedbackTimer)
-    }
-    copyFeedbackTimer = setTimeout(() => {
-      copiedNodeID.value = ''
-      copyFailedNodeID.value = ''
-      copyFeedbackTimer = null
-    }, 1500)
-  }
-
-  function resetCopyFeedback(): void {
-    if (copyFeedbackTimer) {
-      clearTimeout(copyFeedbackTimer)
-      copyFeedbackTimer = null
-    }
-    copyingNodeID.value = ''
-    copiedNodeID.value = ''
-    copyFailedNodeID.value = ''
-  }
-
   function resetDashboard(): void {
     currentList.value = null
     dashboardStats.value = emptyStats()
@@ -134,7 +107,6 @@ export const useWorkersStore = defineStore('workers', () => {
   async function redirectToLogin(): Promise<void> {
     const authStore = useAuthStore()
     authStore.logoutLocal()
-    resetCopyFeedback()
     resetDashboard()
     errorMessage.value = ''
 
@@ -233,19 +205,6 @@ export const useWorkersStore = defineStore('workers', () => {
     void loadDashboard()
   }
 
-  function startupCopyButtonText(nodeID: string): string {
-    if (copyingNodeID.value === nodeID) {
-      return 'Copying...'
-    }
-    if (copiedNodeID.value === nodeID) {
-      return 'Copied'
-    }
-    if (copyFailedNodeID.value === nodeID) {
-      return 'Copy Failed'
-    }
-    return 'Copy Start Cmd'
-  }
-
   function deleteWorkerButtonText(nodeID: string): string {
     if (deletingNodeID.value === nodeID) {
       return 'Deleting...'
@@ -315,70 +274,25 @@ export const useWorkersStore = defineStore('workers', () => {
     return entries.map(([key, value]) => `${key}=${value}`).join(' · ')
   }
 
-  async function copyWorkerStartupCommand(nodeID: string): Promise<void> {
-    if (!nodeID || copyingNodeID.value === nodeID) {
-      return
-    }
-
-    if (copyFeedbackTimer) {
-      clearTimeout(copyFeedbackTimer)
-      copyFeedbackTimer = null
-    }
-    copiedNodeID.value = ''
-    copyFailedNodeID.value = ''
-    errorMessage.value = ''
-
-    copyingNodeID.value = nodeID
-    try {
-      const command = await fetchWorkerStartupCommandAPI(nodeID)
-      await writeTextToClipboard(command, {
-        fallbackErrorMessage: 'Failed to copy startup command.',
-      })
-      copiedNodeID.value = nodeID
-      scheduleCopyFeedbackReset()
-    } catch (error) {
-      if (isUnauthorizedError(error)) {
-        await redirectToLogin()
-        return
-      }
-      copyFailedNodeID.value = nodeID
-      errorMessage.value = error instanceof Error ? error.message : 'Failed to copy startup command.'
-      scheduleCopyFeedbackReset()
-    } finally {
-      if (copyingNodeID.value === nodeID) {
-        copyingNodeID.value = ''
-      }
-    }
-  }
-
-  async function createWorker(): Promise<void> {
+  async function createWorker(): Promise<WorkerStartupCommandResponse | null> {
     if (creatingWorker.value) {
-      return
+      return null
     }
 
-    if (copyFeedbackTimer) {
-      clearTimeout(copyFeedbackTimer)
-      copyFeedbackTimer = null
-    }
-    copiedNodeID.value = ''
-    copyFailedNodeID.value = ''
     errorMessage.value = ''
     creatingWorker.value = true
 
     try {
       const payload: WorkerStartupCommandResponse = await createWorkerAPI()
-      await writeTextToClipboard(payload.command, {
-        fallbackErrorMessage: 'Failed to copy startup command.',
-      })
-      copiedNodeID.value = payload.node_id
-      scheduleCopyFeedbackReset()
       await loadDashboard()
+      return payload
     } catch (error) {
       if (isUnauthorizedError(error)) {
         await redirectToLogin()
-        return
+        return null
       }
       errorMessage.value = error instanceof Error ? error.message : 'Failed to create worker.'
+      return null
     } finally {
       creatingWorker.value = false
     }
@@ -401,10 +315,6 @@ export const useWorkersStore = defineStore('workers', () => {
 
     try {
       await deleteWorkerAPI(nodeID)
-      if (copiedNodeID.value === nodeID || copyFailedNodeID.value === nodeID || copyingNodeID.value === nodeID) {
-        resetCopyFeedback()
-      }
-
       await loadDashboard()
       if (page.value > totalPages.value) {
         page.value = totalPages.value
@@ -534,7 +444,6 @@ export const useWorkersStore = defineStore('workers', () => {
   function teardown(): void {
     activeController?.abort()
     stopAutoRefresh()
-    resetCopyFeedback()
   }
 
   return {
@@ -547,9 +456,6 @@ export const useWorkersStore = defineStore('workers', () => {
     autoRefreshEnabled,
     creatingWorker,
     deletingNodeID,
-    copyingNodeID,
-    copiedNodeID,
-    copyFailedNodeID,
     creatingTrustedToken,
     deletingTrustedTokenID,
     dashboardStats,
@@ -570,14 +476,12 @@ export const useWorkersStore = defineStore('workers', () => {
     setPage,
     previousPage,
     nextPage,
-    startupCopyButtonText,
     deleteWorkerButtonText,
     trustedTokenDeleteButtonText,
     formatDateTime,
     formatAge,
     formatCapabilities,
     formatLabels,
-    copyWorkerStartupCommand,
     createWorker,
     deleteWorker,
     createTrustedToken,

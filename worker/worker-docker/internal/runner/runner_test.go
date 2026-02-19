@@ -13,7 +13,6 @@ import (
 	"time"
 
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
-	"github.com/onlyboxes/onlyboxes/api/pkg/registryauth"
 	"github.com/onlyboxes/onlyboxes/worker/worker-docker/internal/config"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -54,7 +53,7 @@ func TestRunWaitsBeforeReconnectOnSessionFailure(t *testing.T) {
 	}
 }
 
-func TestBuildHelloSignsWithWorkerSecret(t *testing.T) {
+func TestBuildHelloCarriesWorkerSecret(t *testing.T) {
 	cfg := testConfig()
 	hello, err := buildHello(cfg)
 	if err != nil {
@@ -64,17 +63,8 @@ func TestBuildHelloSignsWithWorkerSecret(t *testing.T) {
 	if hello.GetNodeId() != cfg.WorkerID {
 		t.Fatalf("expected node_id=%s, got %s", cfg.WorkerID, hello.GetNodeId())
 	}
-	if hello.GetNonce() == "" {
-		t.Fatalf("expected nonce to be set")
-	}
-	if !registryauth.Verify(
-		hello.GetNodeId(),
-		hello.GetTimestampUnixMs(),
-		hello.GetNonce(),
-		cfg.WorkerSecret,
-		hello.GetSignature(),
-	) {
-		t.Fatalf("expected signature to verify")
+	if hello.GetWorkerSecret() != cfg.WorkerSecret {
+		t.Fatalf("expected worker_secret to be set")
 	}
 	capabilityByName := make(map[string]int32, len(hello.GetCapabilities()))
 	for _, capability := range hello.GetCapabilities() {
@@ -746,8 +736,11 @@ func (s *fakeRegistryService) Connect(stream grpc.BidiStreamingServer[registryv1
 	if !ok {
 		return status.Error(codes.Unauthenticated, "unknown worker")
 	}
-	if !registryauth.Verify(hello.GetNodeId(), hello.GetTimestampUnixMs(), hello.GetNonce(), secret, hello.GetSignature()) {
-		return status.Error(codes.Unauthenticated, "invalid signature")
+	if strings.TrimSpace(hello.GetWorkerSecret()) == "" {
+		return status.Error(codes.Unauthenticated, "worker_secret is required")
+	}
+	if hello.GetWorkerSecret() != secret {
+		return status.Error(codes.Unauthenticated, "invalid worker credential")
 	}
 	capabilityByName := make(map[string]int32, len(hello.GetCapabilities()))
 	for _, capability := range hello.GetCapabilities() {
