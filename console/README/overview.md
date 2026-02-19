@@ -92,6 +92,7 @@ Defaults:
 
 Dashboard credential behavior:
 - dashboard username/password are persisted in SQLite table `dashboard_credentials`.
+- dashboard password is hashed with `bcrypt` before persistence (no plaintext storage).
 - username env: `CONSOLE_DASHBOARD_USERNAME`
 - password env: `CONSOLE_DASHBOARD_PASSWORD`
 - if persisted dashboard credential exists, env username/password are ignored.
@@ -122,7 +123,7 @@ Persistence config:
 - `CONSOLE_DB_PATH`: SQLite file path (default `./onlyboxes-console.db`)
 - `CONSOLE_DB_BUSY_TIMEOUT_MS`: SQLite busy timeout in milliseconds (default `5000`)
 - `CONSOLE_TASK_RETENTION_DAYS`: terminal task retention days (default `30`)
-- `CONSOLE_HASH_KEY`: required HMAC key for hashing worker secret, trusted token, and dashboard password; missing value fails startup
+- `CONSOLE_HASH_KEY`: required HMAC key for hashing worker secret and trusted token; missing value fails startup
 
 MCP minimal call sequence (initialize + tools/list + tools/call):
 

@@ -93,9 +93,8 @@ func TestRegisterAndListLifecycle(t *testing.T) {
 	if err := stream.Send(&registryv1.ConnectRequest{
 		Payload: &registryv1.ConnectRequest_Heartbeat{
 			Heartbeat: &registryv1.HeartbeatFrame{
-				NodeId:       workerID,
-				SessionId:    connectAck.GetSessionId(),
-				SentAtUnixMs: time.Now().UnixMilli(),
+				NodeId:    workerID,
+				SessionId: connectAck.GetSessionId(),
 			},
 		},
 	}); err != nil {
@@ -222,10 +221,9 @@ func TestEchoCommandLifecycle(t *testing.T) {
 			_ = stream.Send(&registryv1.ConnectRequest{
 				Payload: &registryv1.ConnectRequest_CommandResult{
 					CommandResult: &registryv1.CommandResult{
-						CommandId: dispatch.GetCommandId(),
-						Echo: &registryv1.EchoResult{
-							Message: dispatch.GetEcho().GetMessage(),
-						},
+						CommandId:       dispatch.GetCommandId(),
+						PayloadJson:     dispatch.GetPayloadJson(),
+						CompletedUnixMs: time.Now().UnixMilli(),
 					},
 				},
 			})

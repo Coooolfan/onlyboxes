@@ -22,15 +22,14 @@ const (
 
 func newTestConsoleAuth(t *testing.T) *ConsoleAuth {
 	t.Helper()
-	hasher, err := persistence.NewHasher("test-hash-key")
+	passwordHash, err := hashDashboardPassword(testDashboardPassword)
 	if err != nil {
-		t.Fatalf("create test hasher: %v", err)
+		t.Fatalf("hash test dashboard password: %v", err)
 	}
 	return NewConsoleAuth(DashboardCredentialMaterial{
 		Username:     testDashboardUsername,
-		PasswordHash: hasher.Hash(testDashboardPassword),
-		HashAlgo:     persistence.HashAlgorithmHMACSHA256,
-		Hasher:       hasher,
+		PasswordHash: passwordHash,
+		HashAlgo:     dashboardPasswordHashAlgo,
 	})
 }
 

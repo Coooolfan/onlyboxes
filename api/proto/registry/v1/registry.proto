@@ -4,11 +4,6 @@ package onlyboxes.registry.v1;
 
 option go_package = "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1;registryv1";
 
-message LanguageCapability {
-  string language = 1;
-  string version = 2;
-}
-
 message CapabilityDeclaration {
   string name = 1;
   int32 max_inflight = 2;
@@ -18,8 +13,6 @@ message ConnectHello {
   string node_id = 1;
   string node_name = 2;
   string executor_kind = 3;
-  // Deprecated: use capabilities.
-  repeated LanguageCapability languages = 4;
   map<string, string> labels = 5;
   string version = 6;
   repeated CapabilityDeclaration capabilities = 10;
@@ -29,7 +22,6 @@ message ConnectHello {
 message HeartbeatFrame {
   string node_id = 1;
   string session_id = 2;
-  int64 sent_at_unix_ms = 3;
 }
 
 message ConnectRequest {
@@ -42,37 +34,18 @@ message ConnectRequest {
 
 message ConnectAck {
   string session_id = 1;
-  int64 server_time_unix_ms = 2;
   int32 heartbeat_interval_sec = 3;
-  int32 offline_ttl_sec = 4;
 }
 
 message HeartbeatAck {
-  int64 server_time_unix_ms = 1;
   int32 heartbeat_interval_sec = 2;
-  int32 offline_ttl_sec = 3;
-}
-
-message StreamError {
-  string code = 1;
-  string message = 2;
-}
-
-message EchoCommand {
-  string message = 1;
 }
 
 message CommandDispatch {
   string command_id = 1;
   string capability = 2;
-  // Deprecated: use payload_json.
-  EchoCommand echo = 3;
   bytes payload_json = 4;
   int64 deadline_unix_ms = 5;
-}
-
-message EchoResult {
-  string message = 1;
 }
 
 message CommandError {
@@ -82,8 +55,6 @@ message CommandError {
 
 message CommandResult {
   string command_id = 1;
-  // Deprecated: use payload_json.
-  EchoResult echo = 2;
   CommandError error = 3;
   bytes payload_json = 4;
   int64 completed_unix_ms = 5;
@@ -93,7 +64,6 @@ message ConnectResponse {
   oneof payload {
     ConnectAck connect_ack = 1;
     HeartbeatAck heartbeat_ack = 2;
-    StreamError error = 3;
     CommandDispatch command_dispatch = 4;
   }
 }

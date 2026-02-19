@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -88,7 +87,7 @@ func TestInitializeDashboardCredentialsPersistsOnFirstRun(t *testing.T) {
 		_ = db.Close()
 	}()
 
-	result, err := InitializeDashboardCredentials(ctx, db.Queries, db.Hasher, "", "")
+	result, err := InitializeDashboardCredentials(ctx, db.Queries, "", "")
 	if err != nil {
 		t.Fatalf("initialize dashboard credentials: %v", err)
 	}
@@ -110,7 +109,7 @@ func TestInitializeDashboardCredentialsPersistsOnFirstRun(t *testing.T) {
 	if result.PasswordHash == result.PasswordPlaintext {
 		t.Fatalf("expected hash storage, got plaintext")
 	}
-	if !strings.EqualFold(result.HashAlgo, persistence.HashAlgorithmHMACSHA256) {
+	if !strings.EqualFold(result.HashAlgo, dashboardPasswordHashAlgo) {
 		t.Fatalf("unexpected hash algo: %q", result.HashAlgo)
 	}
 
@@ -136,7 +135,7 @@ func TestInitializeDashboardCredentialsLoadsPersistedAndIgnoresEnv(t *testing.T)
 		_ = db.Close()
 	}()
 
-	first, err := InitializeDashboardCredentials(ctx, db.Queries, db.Hasher, "admin-first", "password-first")
+	first, err := InitializeDashboardCredentials(ctx, db.Queries, "admin-first", "password-first")
 	if err != nil {
 		t.Fatalf("initialize first dashboard credential: %v", err)
 	}
@@ -144,7 +143,7 @@ func TestInitializeDashboardCredentialsLoadsPersistedAndIgnoresEnv(t *testing.T)
 		t.Fatalf("expected first initialization")
 	}
 
-	second, err := InitializeDashboardCredentials(ctx, db.Queries, db.Hasher, "admin-second", "password-second")
+	second, err := InitializeDashboardCredentials(ctx, db.Queries, "admin-second", "password-second")
 	if err != nil {
 		t.Fatalf("initialize second dashboard credential: %v", err)
 	}
@@ -168,7 +167,6 @@ func TestInitializeDashboardCredentialsLoadsPersistedAndIgnoresEnv(t *testing.T)
 		Username:     second.Username,
 		PasswordHash: second.PasswordHash,
 		HashAlgo:     second.HashAlgo,
-		Hasher:       db.Hasher,
 	})
 	if !auth.checkCredentials("admin-first", "password-first") {
 		t.Fatalf("expected persisted credential to remain valid")
@@ -196,26 +194,19 @@ func TestInitializeDashboardCredentialsRejectsUnsupportedHashAlgo(t *testing.T) 
 		t.Fatalf("seed dashboard credential: %v", err)
 	}
 
-	_, err := InitializeDashboardCredentials(ctx, db.Queries, db.Hasher, "", "")
+	_, err := InitializeDashboardCredentials(ctx, db.Queries, "", "")
 	if err == nil {
 		t.Fatalf("expected error for unsupported hash algo")
 	}
 }
 
-func TestCheckCredentialsAlwaysEvaluatesPasswordPath(t *testing.T) {
+func TestCheckCredentialsRejectsWrongUsername(t *testing.T) {
 	auth := newTestConsoleAuth(t)
-	originalEqual := auth.passwordEqualFn
-	var equalCalls int32
-	auth.passwordEqualFn = func(hash string, plain string) bool {
-		atomic.AddInt32(&equalCalls, 1)
-		return originalEqual(hash, plain)
-	}
-
 	if auth.checkCredentials("wrong-user", testDashboardPassword) {
 		t.Fatalf("expected invalid credentials for username mismatch")
 	}
-	if atomic.LoadInt32(&equalCalls) != 1 {
-		t.Fatalf("expected password compare path to run once, got %d", atomic.LoadInt32(&equalCalls))
+	if auth.checkCredentials(testDashboardUsername, "wrong-password") {
+		t.Fatalf("expected invalid credentials for password mismatch")
 	}
 }
 

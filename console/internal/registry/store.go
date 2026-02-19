@@ -122,7 +122,7 @@ func (s *Store) Upsert(req *registryv1.ConnectHello, sessionID string, now time.
 		labels = mergeLabels(base, labels)
 	}
 
-	capabilities := resolveProtoCapabilities(req.GetCapabilities(), req.GetLanguages())
+	capabilities := resolveProtoCapabilities(req.GetCapabilities())
 	nowMS := now.UnixMilli()
 
 	return s.db.WithTx(ctx, func(q *sqlc.Queries) error {
@@ -495,12 +495,8 @@ func cloneWorker(worker Worker) Worker {
 	return worker
 }
 
-func resolveProtoCapabilities(capabilities []*registryv1.CapabilityDeclaration, legacyLanguages []*registryv1.LanguageCapability) []CapabilityDeclaration {
-	declared := cloneProtoCapabilities(capabilities)
-	if len(declared) > 0 {
-		return declared
-	}
-	return cloneLegacyLanguages(legacyLanguages)
+func resolveProtoCapabilities(capabilities []*registryv1.CapabilityDeclaration) []CapabilityDeclaration {
+	return cloneProtoCapabilities(capabilities)
 }
 
 func cloneProtoCapabilities(capabilities []*registryv1.CapabilityDeclaration) []CapabilityDeclaration {
@@ -519,28 +515,6 @@ func cloneProtoCapabilities(capabilities []*registryv1.CapabilityDeclaration) []
 		cloned = append(cloned, CapabilityDeclaration{
 			Name:        name,
 			MaxInflight: capability.GetMaxInflight(),
-		})
-	}
-	return cloned
-}
-
-func cloneLegacyLanguages(languages []*registryv1.LanguageCapability) []CapabilityDeclaration {
-	if len(languages) == 0 {
-		return []CapabilityDeclaration{}
-	}
-
-	cloned := make([]CapabilityDeclaration, 0, len(languages))
-	for _, language := range languages {
-		if language == nil {
-			continue
-		}
-		name := strings.TrimSpace(language.GetLanguage())
-		if name == "" {
-			continue
-		}
-		cloned = append(cloned, CapabilityDeclaration{
-			Name:        name,
-			MaxInflight: 0,
 		})
 	}
 	return cloned

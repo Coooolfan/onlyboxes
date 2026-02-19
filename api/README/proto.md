@@ -21,6 +21,5 @@ Make sure `$(go env GOPATH)/bin` is in your `PATH`.
 ```
 
 ## Compatibility Rules
-- Only append new fields with new tag numbers.
-- Never delete or reuse field tags.
-- Keep existing service/method names stable for backward compatibility.
+- Project is pre-release; breaking protocol refactors are allowed when all in-repo consumers are updated together.
+- For external compatibility needs in the future, preserve existing field tags and avoid destructive changes.

@@ -64,9 +64,8 @@ func TestConnectRejectsFirstFrameWithoutHello(t *testing.T) {
 	err = stream.Send(&registryv1.ConnectRequest{
 		Payload: &registryv1.ConnectRequest_Heartbeat{
 			Heartbeat: &registryv1.HeartbeatFrame{
-				NodeId:       "node-1",
-				SessionId:    "session-x",
-				SentAtUnixMs: time.Now().UnixMilli(),
+				NodeId:    "node-1",
+				SessionId: "session-x",
 			},
 		},
 	})
@@ -158,9 +157,8 @@ func TestDeleteProvisionedWorkerDisconnectsSessionAndRevokesCredential(t *testin
 	if err := stream.Send(&registryv1.ConnectRequest{
 		Payload: &registryv1.ConnectRequest_Heartbeat{
 			Heartbeat: &registryv1.HeartbeatFrame{
-				NodeId:       workerID,
-				SessionId:    sessionID,
-				SentAtUnixMs: time.Now().UnixMilli(),
+				NodeId:    workerID,
+				SessionId: sessionID,
 			},
 		},
 	}); err != nil {
@@ -238,9 +236,8 @@ func TestConnectAndHeartbeatSuccess(t *testing.T) {
 	if err := stream.Send(&registryv1.ConnectRequest{
 		Payload: &registryv1.ConnectRequest_Heartbeat{
 			Heartbeat: &registryv1.HeartbeatFrame{
-				NodeId:       "node-1",
-				SessionId:    sessionID,
-				SentAtUnixMs: time.Now().UnixMilli(),
+				NodeId:    "node-1",
+				SessionId: sessionID,
 			},
 		},
 	}); err != nil {
@@ -311,7 +308,7 @@ func TestHandleHeartbeatReturnsDeadlineExceededWhenControlQueueFull(t *testing.T
 
 	session := newActiveSession("node-1", "session-1", hello)
 	for i := 0; i < controlOutboundBufferSize; i++ {
-		if err := session.enqueueControl(context.Background(), newHeartbeatAck(now, 5, 15)); err != nil {
+		if err := session.enqueueControl(context.Background(), newHeartbeatAck(5)); err != nil {
 			t.Fatalf("failed to preload control queue: %v", err)
 		}
 	}
@@ -320,9 +317,8 @@ func TestHandleHeartbeatReturnsDeadlineExceededWhenControlQueueFull(t *testing.T
 	defer cancel()
 
 	err := svc.handleHeartbeat(ctx, session, &registryv1.HeartbeatFrame{
-		NodeId:       "node-1",
-		SessionId:    "session-1",
-		SentAtUnixMs: now.UnixMilli(),
+		NodeId:    "node-1",
+		SessionId: "session-1",
 	})
 	if status.Code(err) != codes.DeadlineExceeded {
 		t.Fatalf("expected DeadlineExceeded, got %v", err)
@@ -363,9 +359,8 @@ func TestConnectReplacesOldSession(t *testing.T) {
 	if err := streamA.Send(&registryv1.ConnectRequest{
 		Payload: &registryv1.ConnectRequest_Heartbeat{
 			Heartbeat: &registryv1.HeartbeatFrame{
-				NodeId:       "node-1",
-				SessionId:    sessionA,
-				SentAtUnixMs: time.Now().UnixMilli(),
+				NodeId:    "node-1",
+				SessionId: sessionA,
 			},
 		},
 	}); err != nil {
@@ -380,9 +375,8 @@ func TestConnectReplacesOldSession(t *testing.T) {
 	if err := streamB.Send(&registryv1.ConnectRequest{
 		Payload: &registryv1.ConnectRequest_Heartbeat{
 			Heartbeat: &registryv1.HeartbeatFrame{
-				NodeId:       "node-1",
-				SessionId:    sessionB,
-				SentAtUnixMs: time.Now().UnixMilli(),
+				NodeId:    "node-1",
+				SessionId: sessionB,
 			},
 		},
 	}); err != nil {
@@ -605,10 +599,9 @@ func TestDispatchEchoConcurrentCommandIDs(t *testing.T) {
 			_ = stream.Send(&registryv1.ConnectRequest{
 				Payload: &registryv1.ConnectRequest_CommandResult{
 					CommandResult: &registryv1.CommandResult{
-						CommandId: dispatch.GetCommandId(),
-						Echo: &registryv1.EchoResult{
-							Message: dispatch.GetEcho().GetMessage(),
-						},
+						CommandId:       dispatch.GetCommandId(),
+						PayloadJson:     dispatch.GetPayloadJson(),
+						CompletedUnixMs: time.Now().UnixMilli(),
 					},
 				},
 			})
@@ -1144,10 +1137,9 @@ func echoResponder(stream grpc.BidiStreamingClient[registryv1.ConnectRequest, re
 		_ = stream.Send(&registryv1.ConnectRequest{
 			Payload: &registryv1.ConnectRequest_CommandResult{
 				CommandResult: &registryv1.CommandResult{
-					CommandId: dispatch.GetCommandId(),
-					Echo: &registryv1.EchoResult{
-						Message: dispatch.GetEcho().GetMessage(),
-					},
+					CommandId:       dispatch.GetCommandId(),
+					PayloadJson:     dispatch.GetPayloadJson(),
+					CompletedUnixMs: time.Now().UnixMilli(),
 				},
 			},
 		})
@@ -1168,10 +1160,9 @@ func countingEchoResponder(stream grpc.BidiStreamingClient[registryv1.ConnectReq
 		_ = stream.Send(&registryv1.ConnectRequest{
 			Payload: &registryv1.ConnectRequest_CommandResult{
 				CommandResult: &registryv1.CommandResult{
-					CommandId: dispatch.GetCommandId(),
-					Echo: &registryv1.EchoResult{
-						Message: dispatch.GetEcho().GetMessage(),
-					},
+					CommandId:       dispatch.GetCommandId(),
+					PayloadJson:     dispatch.GetPayloadJson(),
+					CompletedUnixMs: time.Now().UnixMilli(),
 				},
 			},
 		})
@@ -1189,10 +1180,6 @@ func payloadEchoResponder(stream grpc.BidiStreamingClient[registryv1.ConnectRequ
 			continue
 		}
 		payload := dispatch.GetPayloadJson()
-		message := dispatch.GetEcho().GetMessage()
-		if len(payload) == 0 {
-			payload = buildEchoPayload(message)
-		}
 		_ = stream.Send(&registryv1.ConnectRequest{
 			Payload: &registryv1.ConnectRequest_CommandResult{
 				CommandResult: &registryv1.CommandResult{

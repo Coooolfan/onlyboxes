@@ -228,7 +228,7 @@ func (s *RegistryService) Connect(stream grpc.BidiStreamingServer[registryv1.Con
 		writerErrCh <- writerLoop(stream, session)
 	}()
 
-	if err := session.enqueueControl(stream.Context(), newConnectAck(sessionID, now, s.heartbeatIntervalSec, s.offlineTTLSec)); err != nil {
+	if err := session.enqueueControl(stream.Context(), newConnectAck(sessionID, s.heartbeatIntervalSec)); err != nil {
 		return status.Error(codes.Internal, "failed to send connect ack")
 	}
 
@@ -361,11 +361,6 @@ func (s *RegistryService) dispatchCommand(
 	if deadline, ok := commandCtx.Deadline(); ok {
 		dispatch.GetCommandDispatch().DeadlineUnixMs = deadline.UnixMilli()
 	}
-	if capability == echoCapabilityName {
-		if message, ok := parseEchoPayload(payloadJSON); ok {
-			dispatch.GetCommandDispatch().Echo = &registryv1.EchoCommand{Message: message}
-		}
-	}
 
 	if err := session.enqueueCommand(commandCtx, dispatch); err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
@@ -483,7 +478,7 @@ func (s *RegistryService) handleHeartbeat(ctx context.Context, session *activeSe
 		return status.Error(codes.Internal, "failed to update heartbeat")
 	}
 
-	if err := session.enqueueControl(ctx, newHeartbeatAck(now, s.heartbeatIntervalSec, s.offlineTTLSec)); err != nil {
+	if err := session.enqueueControl(ctx, newHeartbeatAck(s.heartbeatIntervalSec)); err != nil {
 		if status.Code(err) != codes.Unknown {
 			return err
 		}
@@ -994,9 +989,6 @@ func (s *activeSession) resolvePending(result *registryv1.CommandResult) {
 		if message, ok := parseEchoPayload(payload); ok {
 			outcome.message = message
 		}
-	} else if echo := result.GetEcho(); echo != nil {
-		outcome.message = echo.GetMessage()
-		outcome.payloadJSON = buildEchoPayload(echo.GetMessage())
 	} else {
 		outcome.err = &CommandExecutionError{
 			Code:    "empty_result",
@@ -1079,18 +1071,6 @@ func capabilitiesFromHello(hello *registryv1.ConnectHello) map[string]*sessionCa
 		capabilitySet[name] = &sessionCapability{maxInflight: maxInflight}
 	}
 
-	if len(capabilitySet) == 0 {
-		for _, language := range hello.GetLanguages() {
-			if language == nil {
-				continue
-			}
-			name := normalizeCapability(language.GetLanguage())
-			if name == "" {
-				continue
-			}
-			capabilitySet[name] = &sessionCapability{maxInflight: defaultCapabilityMaxInflight}
-		}
-	}
 	return capabilitySet
 }
 
@@ -1126,26 +1106,22 @@ func buildEchoPayload(message string) []byte {
 	return encoded
 }
 
-func newConnectAck(sessionID string, now time.Time, heartbeatIntervalSec int32, offlineTTLSec int32) *registryv1.ConnectResponse {
+func newConnectAck(sessionID string, heartbeatIntervalSec int32) *registryv1.ConnectResponse {
 	return &registryv1.ConnectResponse{
 		Payload: &registryv1.ConnectResponse_ConnectAck{
 			ConnectAck: &registryv1.ConnectAck{
 				SessionId:            sessionID,
-				ServerTimeUnixMs:     now.UnixMilli(),
 				HeartbeatIntervalSec: heartbeatIntervalSec,
-				OfflineTtlSec:        offlineTTLSec,
 			},
 		},
 	}
 }
 
-func newHeartbeatAck(now time.Time, heartbeatIntervalSec int32, offlineTTLSec int32) *registryv1.ConnectResponse {
+func newHeartbeatAck(heartbeatIntervalSec int32) *registryv1.ConnectResponse {
 	return &registryv1.ConnectResponse{
 		Payload: &registryv1.ConnectResponse_HeartbeatAck{
 			HeartbeatAck: &registryv1.HeartbeatAck{
-				ServerTimeUnixMs:     now.UnixMilli(),
 				HeartbeatIntervalSec: heartbeatIntervalSec,
-				OfflineTtlSec:        offlineTTLSec,
 			},
 		},
 	}

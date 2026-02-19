@@ -145,9 +145,6 @@ func TestBuildCommandResultEcho(t *testing.T) {
 	if result.GetCommandId() != "cmd-1" {
 		t.Fatalf("expected command_id cmd-1, got %s", result.GetCommandId())
 	}
-	if result.GetEcho() == nil || result.GetEcho().GetMessage() != "hello" {
-		t.Fatalf("expected echo payload, got %#v", result)
-	}
 	if string(result.GetPayloadJson()) != `{"message":"hello"}` {
 		t.Fatalf("expected payload_json to roundtrip, got %s", string(result.GetPayloadJson()))
 	}
@@ -208,9 +205,6 @@ func TestBuildCommandResultPythonExecSuccess(t *testing.T) {
 	}
 	if result.GetError() != nil {
 		t.Fatalf("expected success, got error %#v", result.GetError())
-	}
-	if result.GetEcho() != nil {
-		t.Fatalf("expected empty legacy echo field, got %#v", result.GetEcho())
 	}
 	if !called {
 		t.Fatalf("expected python executor to be called")
@@ -763,9 +757,7 @@ func (s *fakeRegistryService) Connect(stream grpc.BidiStreamingServer[registryv1
 		Payload: &registryv1.ConnectResponse_ConnectAck{
 			ConnectAck: &registryv1.ConnectAck{
 				SessionId:            "session-1",
-				ServerTimeUnixMs:     time.Now().UnixMilli(),
 				HeartbeatIntervalSec: 1,
-				OfflineTtlSec:        15,
 			},
 		},
 	}); err != nil {
@@ -780,9 +772,14 @@ func (s *fakeRegistryService) Connect(stream grpc.BidiStreamingServer[registryv1
 		heartbeat := req.GetHeartbeat()
 		commandResult := req.GetCommandResult()
 		if commandResult != nil {
-			if commandResult.GetEcho() != nil && commandResult.GetEcho().GetMessage() == "echo-from-console" {
-				atomic.AddInt32(&s.echoResultCount, 1)
-				return status.Error(codes.FailedPrecondition, "session replaced after command roundtrip")
+			var echoResult struct {
+				Message string `json:"message"`
+			}
+			if err := json.Unmarshal(commandResult.GetPayloadJson(), &echoResult); err == nil {
+				if echoResult.Message == "echo-from-console" {
+					atomic.AddInt32(&s.echoResultCount, 1)
+					return status.Error(codes.FailedPrecondition, "session replaced after command roundtrip")
+				}
 			}
 			if s.dispatchPython {
 				decoded := pythonExecResult{}
@@ -837,9 +834,7 @@ func (s *fakeRegistryService) Connect(stream grpc.BidiStreamingServer[registryv1
 		if err := stream.Send(&registryv1.ConnectResponse{
 			Payload: &registryv1.ConnectResponse_HeartbeatAck{
 				HeartbeatAck: &registryv1.HeartbeatAck{
-					ServerTimeUnixMs:     time.Now().UnixMilli(),
 					HeartbeatIntervalSec: 1,
-					OfflineTtlSec:        15,
 				},
 			},
 		}); err != nil {

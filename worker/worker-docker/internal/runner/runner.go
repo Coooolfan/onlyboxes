@@ -165,9 +165,6 @@ func runSession(ctx context.Context, cfg config.Config) error {
 	}
 	ack := resp.GetConnectAck()
 	if ack == nil {
-		if streamErr := resp.GetError(); streamErr != nil {
-			return fmt.Errorf("connect rejected: code=%s message=%s", streamErr.GetCode(), streamErr.GetMessage())
-		}
 		return fmt.Errorf("unexpected first response frame")
 	}
 	sessionID := strings.TrimSpace(ack.GetSessionId())
@@ -250,13 +247,13 @@ func receiverLoop(
 			capability := strings.TrimSpace(strings.ToLower(dispatch.GetCapability()))
 			commandID := strings.TrimSpace(dispatch.GetCommandId())
 			switch {
-			case capability == echoCapabilityName && dispatch.GetEcho() != nil:
+			case capability == echoCapabilityName:
 				log.Printf(
-					"command dispatch received: node_id=%s command_id=%s capability=%s message_len=%d",
+					"command dispatch received: node_id=%s command_id=%s capability=%s payload_len=%d",
 					nodeID,
 					commandID,
 					capability,
-					len(dispatch.GetEcho().GetMessage()),
+					len(dispatch.GetPayloadJson()),
 				)
 			case capability == pythonExecCapabilityName:
 				log.Printf(
@@ -306,10 +303,6 @@ func receiverLoop(
 					reportSessionErr(errCh, fmt.Errorf("enqueue command result: %w", sendErr))
 				}
 			}(dispatchCopy)
-		case resp.GetError() != nil:
-			streamErr := resp.GetError()
-			reportSessionErr(errCh, fmt.Errorf("stream error frame: code=%s message=%s", streamErr.GetCode(), streamErr.GetMessage()))
-			return
 		default:
 			reportSessionErr(errCh, errors.New("unexpected response frame"))
 			return
@@ -344,9 +337,8 @@ func heartbeatLoop(
 		if err := enqueueRequest(ctx, outbound, &registryv1.ConnectRequest{
 			Payload: &registryv1.ConnectRequest_Heartbeat{
 				Heartbeat: &registryv1.HeartbeatFrame{
-					NodeId:       cfg.WorkerID,
-					SessionId:    sessionID,
-					SentAtUnixMs: time.Now().UnixMilli(),
+					NodeId:    cfg.WorkerID,
+					SessionId: sessionID,
 				},
 			},
 		}); err != nil {
@@ -425,9 +417,6 @@ func buildEchoCommandResult(commandID string, dispatch *registryv1.CommandDispat
 		}
 		message = decoded.Message
 	}
-	if strings.TrimSpace(message) == "" && dispatch.GetEcho() != nil {
-		message = dispatch.GetEcho().GetMessage()
-	}
 	if strings.TrimSpace(message) == "" {
 		return commandErrorResult(commandID, "invalid_payload", "echo payload is required")
 	}
@@ -449,9 +438,6 @@ func buildEchoCommandResult(commandID string, dispatch *registryv1.CommandDispat
 				CommandId:       commandID,
 				PayloadJson:     resultPayload,
 				CompletedUnixMs: time.Now().UnixMilli(),
-				Echo: &registryv1.EchoResult{
-					Message: message,
-				},
 			},
 		},
 	}

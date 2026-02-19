@@ -41,7 +41,6 @@ func main() {
 	dashboardCredentials, err := httpapi.InitializeDashboardCredentials(
 		context.Background(),
 		db.Queries,
-		db.Hasher,
 		cfg.DashboardUsername,
 		cfg.DashboardPassword,
 	)
@@ -88,7 +87,6 @@ func main() {
 		Username:     dashboardCredentials.Username,
 		PasswordHash: dashboardCredentials.PasswordHash,
 		HashAlgo:     dashboardCredentials.HashAlgo,
-		Hasher:       db.Hasher,
 	})
 	mcpAuth := httpapi.NewMCPAuthWithPersistence(db)
 	httpSrv := &http.Server{
