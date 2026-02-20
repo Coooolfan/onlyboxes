@@ -42,7 +42,17 @@ const emit = defineEmits<{
             <div class="node-sub">{{ worker.node_id }}</div>
           </td>
           <td>{{ worker.executor_kind || '--' }}</td>
-          <td>{{ formatCapabilities(worker) }}</td>
+          <td>
+            <div
+              class="capabilities-list"
+              v-if="worker.capabilities && worker.capabilities.length > 0"
+            >
+              <span class="capability-badge" v-for="cap in worker.capabilities" :key="cap.name">{{
+                cap.name
+              }}</span>
+            </div>
+            <span v-else>--</span>
+          </td>
           <td>{{ formatLabels(worker) }}</td>
           <td>
             <span :class="['status-pill', worker.status]">{{ worker.status }}</span>
@@ -117,6 +127,25 @@ tr:hover {
 
 .node-main {
   font-weight: 600;
+}
+
+.capabilities-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.capability-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  background: var(--surface-soft);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text-secondary);
 }
 
 .node-sub {
