@@ -69,6 +69,6 @@ Defaults:
 - Heartbeat interval: `5s`
 - Heartbeat jitter: `20%`
 - pythonExec image: `python:slim`
-- terminalExec image: `python:slim`
+- terminalExec image: `coolfan1024/onlyboxes-default-worker:0.0.3`
 - terminal lease min/max/default: `60s` / `1800s` / `60s`
 - terminal output limit: `1048576` bytes per stream (`stdout`/`stderr`)

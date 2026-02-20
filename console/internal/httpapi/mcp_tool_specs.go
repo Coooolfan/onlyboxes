@@ -71,7 +71,7 @@ var mcpEchoToolDescription = "Echoes the input message exactly as returned by an
 
 var mcpPythonExecToolDescription = "Executes Python code in the worker sandbox via the pythonExec capability and returns stdout, stderr, and exit_code. Use this for short, self-contained snippets. Do not use it for long-running jobs or persistent state. timeout_ms is a synchronous execution timeout in milliseconds (1-600000, default 60000). A non-zero exit_code is returned as normal tool output, not as a protocol error."
 
-var mcpTerminalExecToolDescription = "Executes shell commands in a persistent Docker-backed terminal session via the terminalExec capability. Reuse session_id to preserve filesystem state across calls. create_if_missing controls missing-session behavior. lease_ttl_sec extends session lease within worker-configured bounds. timeout_ms is a synchronous execution timeout in milliseconds (1-600000, default 60000)."
+var mcpTerminalExecToolDescription = "Executes shell commands in a persistent Docker-backed terminal session via the terminalExec capability. Sessions run on onlyboxes default-work-image (ubuntu:24.04), commands are executed with sh -lc, and common tools are preinstalled (python3/pip/venv, git, curl/wget, jq, ripgrep, fd-find, tree, file, zip/unzip, sqlite3). Reuse session_id to preserve filesystem state across calls. create_if_missing controls missing-session behavior. lease_ttl_sec extends session lease within configured bounds. timeout_ms is a synchronous execution timeout in milliseconds (1-600000, default 60000)."
 
 var mcpReadImageToolDescription = "Reads a file from an existing terminal session and returns it as inline image content when mime type is image/*. For unsupported mime types, returns a text explanation."
 
@@ -152,7 +152,7 @@ var mcpTerminalExecInputSchema = map[string]any{
 	"properties": map[string]any{
 		"command": map[string]any{
 			"type":        "string",
-			"description": "Shell command to run in the session container. Empty or whitespace-only values are rejected.",
+			"description": "Shell command to run in the session container via sh -lc. Empty or whitespace-only values are rejected.",
 		},
 		"session_id": map[string]any{
 			"type":        "string",

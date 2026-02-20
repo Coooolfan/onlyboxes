@@ -15,7 +15,7 @@ const (
 	defaultExecutorKind      = "docker"
 	defaultWorkerVersion     = "dev"
 	defaultPythonExecImage   = "python:slim"
-	defaultTerminalExecImage = "python:slim"
+	defaultTerminalExecImage = "coolfan1024/onlyboxes-default-worker:0.0.3"
 	defaultTerminalLeaseMin  = 60
 	defaultTerminalLeaseMax  = 1800
 	defaultTerminalLeaseTTL  = 60
