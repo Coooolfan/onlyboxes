@@ -378,6 +378,7 @@ onBeforeUnmount(() => {
   padding: 2px 6px;
   font-size: 12px;
   word-break: break-all;
+  white-space: pre-wrap;
 }
 
 .token-meta span:not(.token-meta-label) {
@@ -512,6 +513,7 @@ onBeforeUnmount(() => {
   font-size: 13px;
   line-height: 1.6;
   word-break: break-all;
+  white-space: pre-wrap;
 }
 
 .token-result-meta {
@@ -522,12 +524,14 @@ onBeforeUnmount(() => {
 .token-result-meta p {
   margin: 0;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
   font-size: 14px;
+  word-break: break-all;
 }
 
 .token-result-meta span {
+  flex-shrink: 0;
   width: 64px;
   color: var(--text-secondary);
   font-size: 13px;

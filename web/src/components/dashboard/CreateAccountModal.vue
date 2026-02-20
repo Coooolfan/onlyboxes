@@ -86,21 +86,26 @@ function closeModal(): void {
 
           <p v-if="createAccountError" class="account-error">{{ createAccountError }}</p>
           <p v-if="createAccountSuccess" class="account-success">{{ createAccountSuccess }}</p>
-
-          <div class="account-modal-actions">
-            <button
-              type="button"
-              class="ghost-btn small"
-              :disabled="creatingAccount"
-              @click="closeModal"
-            >
-              Cancel
-            </button>
-            <button type="submit" class="primary-btn small" :disabled="creatingAccount">
-              {{ creatingAccount ? 'Creating...' : 'Create Account' }}
-            </button>
-          </div>
         </form>
+      </div>
+
+      <div class="account-modal-actions">
+        <button
+          type="button"
+          class="ghost-btn small"
+          :disabled="creatingAccount"
+          @click="closeModal"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          class="primary-btn small"
+          :disabled="creatingAccount"
+          @click="submitCreateAccount"
+        >
+          {{ creatingAccount ? 'Creating...' : 'Create Account' }}
+        </button>
       </div>
     </div>
   </div>
@@ -213,7 +218,10 @@ function closeModal(): void {
   display: flex;
   justify-content: flex-end;
   gap: 12px;
-  padding-top: 20px;
+  padding: 20px 24px;
+  border-top: 1px solid var(--stroke);
+  border-bottom-left-radius: var(--radius-lg);
+  border-bottom-right-radius: var(--radius-lg);
 }
 
 @media (max-width: 600px) {

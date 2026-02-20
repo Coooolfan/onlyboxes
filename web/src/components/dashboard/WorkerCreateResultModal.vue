@@ -262,11 +262,12 @@ onBeforeUnmount(() => {
 .worker-meta p {
   margin: 0;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
 }
 
 .worker-meta span {
+  flex-shrink: 0;
   width: 120px;
   color: var(--text-secondary);
   font-size: 13px;
@@ -283,6 +284,7 @@ onBeforeUnmount(() => {
   border-radius: var(--radius);
   padding: 4px 8px;
   word-break: break-all;
+  white-space: pre-wrap;
 }
 
 .worker-command-block {
@@ -308,13 +310,17 @@ onBeforeUnmount(() => {
   font-size: 13px;
   line-height: 1.6;
   word-break: break-all;
+  white-space: pre-wrap;
 }
 
 .worker-modal-actions {
   display: flex;
   justify-content: flex-end;
   gap: 12px;
-  padding-top: 20px;
+  padding: 20px 24px;
+  border-top: 1px solid var(--stroke);
+  border-bottom-left-radius: var(--radius-lg);
+  border-bottom-right-radius: var(--radius-lg);
 }
 
 @media (max-width: 700px) {
