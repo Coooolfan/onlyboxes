@@ -44,22 +44,23 @@ const emit = defineEmits<{
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 12px;
-  padding: 16px 20px;
-  background: #fafbfd;
+  gap: 16px;
+  padding: 16px 24px;
+  background: var(--surface-soft);
+  border-top: 1px solid var(--stroke);
 }
 
 .footer-meta,
 .page-indicator {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 12px;
+  font-family: 'Inter', sans-serif;
+  font-size: 13px;
   color: var(--text-secondary);
 }
 
 .pager {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 @media (max-width: 960px) {

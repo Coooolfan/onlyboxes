@@ -90,51 +90,53 @@ async function submitLogin(): Promise<void> {
 
 <style scoped>
 .auth-panel {
-  width: min(520px, 100%);
-  margin: 48px auto 0;
-  background: linear-gradient(135deg, #fcfdff 0%, #f2f5f9 100%);
+  width: min(440px, 100%);
+  margin: 80px auto 0;
+  background: var(--surface);
   border: 1px solid var(--stroke);
-  border-radius: 24px;
-  padding: 28px;
+  border-radius: var(--radius-lg);
+  padding: 32px;
   box-shadow: var(--shadow);
   animation: rise-in 500ms ease-out;
 }
 
 .eyebrow {
   margin: 0;
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-secondary);
 }
 
 h1 {
-  margin: 8px 0 10px;
-  font-size: clamp(1.8rem, 3.3vw, 2.8rem);
-  line-height: 1.1;
+  margin: 12px 0 8px;
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.2;
   letter-spacing: -0.02em;
 }
 
 .subtitle {
   margin: 0;
   color: var(--text-secondary);
-  max-width: 62ch;
+  font-size: 14px;
+  line-height: 1.5;
 }
 
 .login-form {
-  margin-top: 18px;
+  margin-top: 24px;
   display: grid;
-  gap: 12px;
+  gap: 16px;
 }
 
 .auth-error {
   margin: 0;
-  border: 1px solid #ffccc7;
-  border-radius: 10px;
-  background: #fff4f2;
-  color: #9f2f24;
+  border: 1px solid #fca5a5;
+  border-radius: var(--radius);
+  background: #fef2f2;
+  color: #e00;
   padding: 10px 12px;
-  font-size: 13px;
+  font-size: 14px;
 }
 </style>

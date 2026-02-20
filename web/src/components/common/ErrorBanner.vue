@@ -11,11 +11,11 @@ defineProps<{
 <style scoped>
 .error-banner {
   margin: 0;
-  border: 1px solid #ffccc7;
-  border-radius: 12px;
-  background: #fff4f2;
-  color: #9f2f24;
-  padding: 10px 12px;
-  font-size: 13px;
+  border: 1px solid #fca5a5;
+  border-radius: var(--radius);
+  background: #fef2f2;
+  color: #e00;
+  padding: 10px 16px;
+  font-size: 14px;
 }
 </style>

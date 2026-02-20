@@ -49,27 +49,34 @@ const emit = defineEmits<{
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 12px;
-  padding: 18px 22px;
+  gap: 16px;
+  padding: 16px 24px;
   border-bottom: 1px solid var(--stroke);
-  background: linear-gradient(180deg, #ffffff 0%, #f8f9fc 100%);
+  background: var(--surface-soft);
 }
 
 .tabs {
   display: inline-flex;
-  gap: 8px;
-  background: var(--surface-soft);
-  border-radius: 999px;
+  gap: 4px;
+  background: var(--surface);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius);
   padding: 4px;
 }
 
 .tab-btn {
-  border-radius: 999px;
-  padding: 8px 14px;
-  font-size: 12px;
-  font-weight: 600;
+  border-radius: calc(var(--radius) - 2px);
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 500;
   color: var(--text-secondary);
   background: transparent;
+  transition: all 0.2s ease;
+}
+
+.tab-btn:hover:not(.active) {
+  color: var(--text-primary);
+  background: var(--surface-soft);
 }
 
 .tab-btn.active {
@@ -85,7 +92,7 @@ const emit = defineEmits<{
 
 .panel-meta span {
   color: var(--text-primary);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 @media (max-width: 960px) {

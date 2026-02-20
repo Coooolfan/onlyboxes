@@ -94,7 +94,7 @@ onBeforeUnmount(() => {
   margin: 0 auto;
   width: min(960px, 100%);
   display: grid;
-  gap: 20px;
+  gap: 24px;
 }
 
 .tokens-header {
@@ -102,44 +102,47 @@ onBeforeUnmount(() => {
   align-items: flex-start;
   justify-content: space-between;
   gap: 20px;
-  background: linear-gradient(135deg, #fcfdff 0%, #f2f5f9 100%);
+  background: var(--surface);
   border: 1px solid var(--stroke);
-  border-radius: 24px;
-  padding: 26px 28px;
+  border-radius: var(--radius-lg);
+  padding: 32px;
   box-shadow: var(--shadow);
   animation: rise-in 500ms ease-out;
 }
 
 .eyebrow {
   margin: 0;
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-secondary);
 }
 
 h1 {
-  margin: 8px 0 10px;
-  font-size: clamp(1.8rem, 3.3vw, 2.8rem);
-  line-height: 1.1;
+  margin: 12px 0 8px;
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.2;
   letter-spacing: -0.02em;
 }
 
 .subtitle {
   margin: 0;
   color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.5;
 }
 
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .board-panel {
   border: 1px solid var(--stroke);
-  border-radius: 24px;
+  border-radius: var(--radius-lg);
   background: var(--surface);
   box-shadow: var(--shadow);
   overflow: hidden;
@@ -149,9 +152,9 @@ h1 {
   display: flex;
   justify-content: flex-end;
   align-items: center;
-  padding: 16px 20px;
+  padding: 12px 24px;
   border-bottom: 1px solid var(--stroke);
-  background: linear-gradient(180deg, #ffffff 0%, #f8f9fc 100%);
+  background: var(--surface-soft);
 }
 
 .panel-meta {
@@ -162,15 +165,15 @@ h1 {
 
 .panel-meta span {
   color: var(--text-primary);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .panel-error {
-  margin: 16px 20px 0;
+  margin: 16px 24px 0;
 }
 
 .panel-body {
-  padding: 18px;
+  padding: 24px;
 }
 
 @media (max-width: 960px) {

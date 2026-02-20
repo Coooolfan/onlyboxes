@@ -81,18 +81,16 @@ table {
 th,
 td {
   text-align: left;
-  padding: 14px 16px;
+  padding: 16px 24px;
   border-bottom: 1px solid var(--stroke);
-  vertical-align: top;
+  vertical-align: middle;
 }
 
 th {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  font-size: 13px;
+  font-weight: 500;
   color: var(--text-secondary);
-  background: #fafbfd;
+  background: var(--surface-soft);
   position: sticky;
   top: 0;
   z-index: 1;
@@ -100,7 +98,15 @@ th {
 
 td {
   font-size: 14px;
-  color: #1b2230;
+  color: var(--text-primary);
+}
+
+tr {
+  transition: background-color 0.2s ease;
+}
+
+tr:hover {
+  background-color: var(--surface-soft);
 }
 
 .row-actions {
@@ -110,13 +116,13 @@ td {
 }
 
 .node-main {
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .node-sub {
   margin-top: 4px;
   color: var(--text-secondary);
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
 }
 
@@ -124,27 +130,28 @@ td {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 999px;
+  border-radius: var(--radius);
   padding: 4px 10px;
   font-size: 12px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-weight: 500;
+  text-transform: capitalize;
 }
 
 .status-pill.online {
-  color: #05563d;
-  background: #d7f8eb;
+  color: #166534;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
 }
 
 .status-pill.offline {
-  color: #7f1f1f;
-  background: #ffe2de;
+  color: #991b1b;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
 }
 
 .empty-cell {
   color: var(--text-secondary);
   text-align: center;
-  padding: 36px 12px;
+  padding: 48px 24px;
 }
 </style>

@@ -8,9 +8,9 @@ import PaginationBar from '@/components/dashboard/PaginationBar.vue'
 import StatsGrid from '@/components/dashboard/StatsGrid.vue'
 import TrustedTokensPanel from '@/components/dashboard/TrustedTokensPanel.vue'
 import WorkerCreateResultModal from '@/components/dashboard/WorkerCreateResultModal.vue'
+import CreateAccountModal from '@/components/dashboard/CreateAccountModal.vue'
 import WorkersTable from '@/components/dashboard/WorkersTable.vue'
 import WorkersToolbar from '@/components/dashboard/WorkersToolbar.vue'
-import { createAccountAPI } from '@/services/auth.api'
 import { useAuthStore } from '@/stores/auth'
 import { useTokensStore } from '@/stores/tokens'
 import { useWorkersStore } from '@/stores/workers'
@@ -22,11 +22,7 @@ const workersStore = useWorkersStore()
 const route = useRoute()
 const router = useRouter()
 const createdWorkerPayload = ref<WorkerStartupCommandResponse | null>(null)
-const createAccountUsername = ref('')
-const createAccountPassword = ref('')
-const creatingAccount = ref(false)
-const createAccountError = ref('')
-const createAccountSuccess = ref('')
+const showCreateAccountModal = ref(false)
 
 const showCreateAccountPanel = computed(() => authStore.isAdmin && authStore.registrationEnabled)
 
@@ -120,31 +116,12 @@ function closeWorkerCreateResultModal(): void {
   createdWorkerPayload.value = null
 }
 
-async function submitCreateAccount(): Promise<void> {
-  if (creatingAccount.value) {
-    return
-  }
-  const username = createAccountUsername.value.trim()
-  const password = createAccountPassword.value
-  if (!username || !password) {
-    createAccountError.value = 'username and password are required'
-    createAccountSuccess.value = ''
-    return
-  }
+function openCreateAccountModal(): void {
+  showCreateAccountModal.value = true
+}
 
-  createAccountError.value = ''
-  createAccountSuccess.value = ''
-  creatingAccount.value = true
-  try {
-    const payload = await createAccountAPI(username, password)
-    createAccountUsername.value = ''
-    createAccountPassword.value = ''
-    createAccountSuccess.value = `Created account ${payload.account.username}`
-  } catch (error) {
-    createAccountError.value = error instanceof Error ? error.message : 'Failed to create account.'
-  } finally {
-    creatingAccount.value = false
-  }
+function closeCreateAccountModal(): void {
+  showCreateAccountModal.value = false
 }
 
 watch(
@@ -181,10 +158,12 @@ onBeforeUnmount(() => {
       :creating-worker="workersStore.creatingWorker"
       :auto-refresh-enabled="workersStore.autoRefreshEnabled"
       :loading="workersStore.loading"
+      :show-create-account="showCreateAccountPanel"
       @add-worker="handleAddWorker"
       @toggle-auto-refresh="workersStore.toggleAutoRefresh"
       @refresh="handleRefresh"
       @logout="handleLogout"
+      @create-account="openCreateAccountModal"
     />
 
     <StatsGrid
@@ -204,43 +183,6 @@ onBeforeUnmount(() => {
       :format-date-time="tokensStore.formatDateTime"
       @delete-token="tokensStore.deleteTrustedToken"
     />
-
-    <section v-if="showCreateAccountPanel" class="account-panel">
-      <div class="account-panel-head">
-        <h2>Create Account</h2>
-        <p>Registration is enabled. New accounts are always non-admin.</p>
-      </div>
-
-      <form class="account-form" @submit.prevent="submitCreateAccount">
-        <label class="field-label" for="create-account-username">Username</label>
-        <input
-          id="create-account-username"
-          v-model="createAccountUsername"
-          class="field-input"
-          type="text"
-          autocomplete="off"
-          spellcheck="false"
-        />
-
-        <label class="field-label" for="create-account-password">Password</label>
-        <input
-          id="create-account-password"
-          v-model="createAccountPassword"
-          class="field-input"
-          type="password"
-          autocomplete="new-password"
-        />
-
-        <p v-if="createAccountError" class="account-error">{{ createAccountError }}</p>
-        <p v-if="createAccountSuccess" class="account-success">{{ createAccountSuccess }}</p>
-
-        <div class="account-actions">
-          <button class="primary-btn small" type="submit" :disabled="creatingAccount">
-            {{ creatingAccount ? 'Creating...' : 'Create Account' }}
-          </button>
-        </div>
-      </form>
-    </section>
 
     <section class="board-panel">
       <WorkersToolbar
@@ -283,6 +225,8 @@ onBeforeUnmount(() => {
       :payload="createdWorkerPayload"
       @close="closeWorkerCreateResultModal"
     />
+
+    <CreateAccountModal v-if="showCreateAccountModal" @close="closeCreateAccountModal" />
   </main>
 </template>
 
@@ -293,12 +237,12 @@ onBeforeUnmount(() => {
   margin: 0 auto;
   width: min(1240px, 100%);
   display: grid;
-  gap: 20px;
+  gap: 24px;
 }
 
 .board-panel {
   border: 1px solid var(--stroke);
-  border-radius: 24px;
+  border-radius: var(--radius-lg);
   background: var(--surface);
   box-shadow: var(--shadow);
   overflow: hidden;
@@ -306,63 +250,12 @@ onBeforeUnmount(() => {
 }
 
 .panel-error {
-  margin: 16px 20px 0;
-}
-
-.account-panel {
-  border: 1px solid var(--stroke);
-  border-radius: 18px;
-  background: var(--surface);
-  box-shadow: var(--shadow);
-  padding: 18px 20px;
-  display: grid;
-  gap: 14px;
-}
-
-.account-panel-head h2 {
-  margin: 0;
-  font-size: 1.1rem;
-}
-
-.account-panel-head p {
-  margin: 6px 0 0;
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-
-.account-form {
-  display: grid;
-  gap: 10px;
-}
-
-.account-error {
-  margin: 0;
-  border: 1px solid #ffccc7;
-  border-radius: 10px;
-  background: #fff4f2;
-  color: #9f2f24;
-  padding: 10px 12px;
-  font-size: 13px;
-}
-
-.account-success {
-  margin: 0;
-  border: 1px solid #c7efd4;
-  border-radius: 10px;
-  background: #f3fff8;
-  color: #0e5f3a;
-  padding: 10px 12px;
-  font-size: 13px;
-}
-
-.account-actions {
-  display: flex;
-  justify-content: flex-end;
+  margin: 16px 24px 0;
 }
 
 @media (max-width: 620px) {
   .board-panel {
-    border-radius: 16px;
+    border-radius: var(--radius);
   }
 }
 </style>

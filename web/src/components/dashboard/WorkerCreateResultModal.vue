@@ -160,31 +160,33 @@ onBeforeUnmount(() => {
         <button type="button" class="ghost-btn small" @click="closeModal">Done</button>
       </div>
 
-      <p class="worker-modal-note">启动信息仅在创建时返回，请立即复制并安全保存。</p>
+      <div class="worker-modal-content">
+        <p class="worker-modal-note">启动信息仅在创建时返回，请立即复制并安全保存。</p>
 
-      <div class="worker-meta">
-        <p>
-          <span>Node ID</span>
-          <code>{{ payload.node_id }}</code>
-        </p>
-        <p>
-          <span>Worker Secret</span>
-          <code>{{ workerSecretDisplay }}</code>
-          <button
-            v-if="workerSecret"
-            type="button"
-            class="ghost-btn small"
-            :disabled="copyingCommand"
-            @click="secretVisible = !secretVisible"
-          >
-            {{ secretVisible ? 'Hide' : 'Show' }}
-          </button>
-        </p>
-      </div>
+        <div class="worker-meta">
+          <p>
+            <span>Node ID</span>
+            <code>{{ payload.node_id }}</code>
+          </p>
+          <p>
+            <span>Worker Secret</span>
+            <code>{{ workerSecretDisplay }}</code>
+            <button
+              v-if="workerSecret"
+              type="button"
+              class="ghost-btn small"
+              :disabled="copyingCommand"
+              @click="secretVisible = !secretVisible"
+            >
+              {{ secretVisible ? 'Hide' : 'Show' }}
+            </button>
+          </p>
+        </div>
 
-      <div class="worker-command-block">
-        <p>Startup Command</p>
-        <code>{{ commandText }}</code>
+        <div class="worker-command-block">
+          <p>Startup Command</p>
+          <code>{{ commandText }}</code>
+        </div>
       </div>
 
       <div class="worker-modal-actions">
@@ -207,107 +209,118 @@ onBeforeUnmount(() => {
   position: fixed;
   inset: 0;
   z-index: 1000;
-  background: rgba(10, 14, 22, 0.45);
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 16px;
+  padding: 24px;
 }
 
 .worker-modal {
-  width: min(620px, 100%);
-  border-radius: 16px;
+  width: min(640px, 100%);
+  border-radius: var(--radius-lg);
   border: 1px solid var(--stroke);
   background: var(--surface);
-  box-shadow: 0 24px 80px rgba(10, 14, 22, 0.26);
-  padding: 18px;
-  display: grid;
-  gap: 12px;
+  box-shadow: var(--shadow-modal);
+  display: flex;
+  flex-direction: column;
 }
 
 .worker-modal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--stroke);
 }
 
 .worker-modal-header h3 {
   margin: 0;
-  font-size: 1.1rem;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.worker-modal-content {
+  padding: 24px;
+  display: grid;
+  gap: 20px;
 }
 
 .worker-modal-note {
   margin: 0;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 14px;
+  line-height: 1.5;
 }
 
 .worker-meta {
   display: grid;
-  gap: 8px;
+  gap: 12px;
 }
 
 .worker-meta p {
   margin: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
 }
 
 .worker-meta span {
-  width: 96px;
+  width: 120px;
   color: var(--text-secondary);
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .worker-meta code {
   flex: 1;
   min-width: 0;
-  font-family: 'IBM Plex Mono', monospace;
-  background: #f1f4f8;
-  border-radius: 6px;
-  padding: 2px 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  background: var(--surface-soft);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius);
+  padding: 4px 8px;
   word-break: break-all;
 }
 
 .worker-command-block {
   display: grid;
-  gap: 6px;
+  gap: 8px;
 }
 
 .worker-command-block p {
   margin: 0;
-  color: var(--text-secondary);
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 500;
 }
 
 .worker-command-block code {
   display: block;
   border: 1px solid var(--stroke);
-  border-radius: 10px;
-  background: #f8faff;
-  padding: 10px;
-  font-family: 'IBM Plex Mono', monospace;
+  border-radius: var(--radius);
+  background: #000;
+  color: #fff;
+  padding: 16px;
+  font-family: 'JetBrains Mono', monospace;
   font-size: 13px;
-  line-height: 1.5;
+  line-height: 1.6;
   word-break: break-all;
 }
 
 .worker-modal-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 12px;
+  padding-top: 20px;
 }
 
 @media (max-width: 700px) {
   .worker-meta p {
     flex-wrap: wrap;
+    gap: 4px;
   }
 
   .worker-meta span {
@@ -315,11 +328,11 @@ onBeforeUnmount(() => {
   }
 
   .worker-modal-actions {
-    justify-content: stretch;
+    flex-direction: column-reverse;
   }
 
   .worker-modal-actions button {
-    flex: 1;
+    width: 100%;
   }
 }
 </style>
