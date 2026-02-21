@@ -5,7 +5,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 ARG TARGETARCH
-COPY onlyboxes-console-${TARGETARCH} /usr/local/bin/onlyboxes-console
+COPY --chmod=755 onlyboxes-console-${TARGETARCH} /usr/local/bin/onlyboxes-console
 
 EXPOSE 8089 50051
 
