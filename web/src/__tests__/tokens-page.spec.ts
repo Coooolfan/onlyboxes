@@ -27,6 +27,11 @@ describe('Tokens Page', () => {
       'confirm',
       vi.fn(() => true),
     )
+    const writeText = vi.fn(async (_text: string) => {})
+    Object.defineProperty(window.navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    })
 
     let tokens = defaultTokensPayload().items
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -68,45 +73,75 @@ describe('Tokens Page', () => {
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch)
 
     const wrapper = await mountApp('/tokens')
+    try {
+      await waitForRoute('/tokens', 30)
+      const newTokenBtn = wrapper.findAll('button').find((button) => button.text() === 'New Token')
+      expect(newTokenBtn).toBeTruthy()
+      await newTokenBtn?.trigger('click')
+      await flushPromises()
 
-    const newTokenBtn = wrapper.findAll('button').find((button) => button.text() === 'New Token')
-    expect(newTokenBtn).toBeTruthy()
-    await newTokenBtn?.trigger('click')
-    await flushPromises()
+      const nameInput = wrapper.find('.token-modal input')
+      expect(nameInput.exists()).toBe(true)
+      await nameInput.setValue('ci-staging')
 
-    const nameInput = wrapper.find('.token-modal input')
-    expect(nameInput.exists()).toBe(true)
-    await nameInput.setValue('ci-staging')
+      const modalForm = wrapper.find('form.token-modal-form')
+      expect(modalForm.exists()).toBe(true)
+      await modalForm.trigger('submit.prevent')
+      await flushPromises()
 
-    const modalForm = wrapper.find('form.token-modal-form')
-    expect(modalForm.exists()).toBe(true)
-    await modalForm.trigger('submit.prevent')
-    await flushPromises()
+      expect(wrapper.text()).toContain('obx_plaintext_once')
+      expect(wrapper.findAll('.token-usage-label').map((node) => node.text())).toEqual([
+        'claude code',
+        'http header',
+        'mcp json',
+      ])
 
-    expect(wrapper.text()).toContain('obx_plaintext_once')
+      const claudeUsageItem = wrapper
+        .findAll('.token-usage-item')
+        .find((node) => node.text().includes('claude code'))
+      expect(claudeUsageItem).toBeTruthy()
 
-    const doneBtn = wrapper.findAll('button').find((button) => button.text() === 'Done')
-    expect(doneBtn).toBeTruthy()
-    await doneBtn?.trigger('click')
-    await flushPromises()
+      const claudeUsageToggle = claudeUsageItem?.find('.token-usage-trigger')
+      expect(claudeUsageToggle?.exists()).toBe(true)
+      expect(claudeUsageToggle?.text()).toContain('Expand')
+      await claudeUsageToggle?.trigger('click')
+      await flushPromises()
 
-    const expandBtn = wrapper.findAll('button').find((button) => button.text() === 'Expand')
-    expect(expandBtn).toBeTruthy()
-    await expandBtn?.trigger('click')
-    await flushPromises()
+      expect(claudeUsageToggle?.text()).toContain('Collapse')
+      const claudeCopyButton = claudeUsageItem
+        ?.findAll('button')
+        .find((button) => button.text() === 'Copy')
+      expect(claudeCopyButton).toBeTruthy()
+      await claudeCopyButton?.trigger('click')
+      await flushPromises()
+      expect(writeText).toHaveBeenCalledTimes(1)
+      expect(String(writeText.mock.calls[0]?.[0] ?? '')).toContain(
+        'claude mcp add --transport http onlyboxes',
+      )
 
-    expect(wrapper.text()).toContain('ci-staging')
-    expect(wrapper.text()).toContain('ci-prod')
+      const doneBtn = wrapper.findAll('button').find((button) => button.text() === 'Done')
+      expect(doneBtn).toBeTruthy()
+      await doneBtn?.trigger('click')
+      await flushPromises()
 
-    const deleteBtn = wrapper.find('.token-panel .token-actions button')
-    expect(deleteBtn.exists()).toBe(true)
-    await deleteBtn.trigger('click')
-    await flushPromises()
+      const expandBtn = wrapper.findAll('button').find((button) => button.text() === 'Expand')
+      expect(expandBtn).toBeTruthy()
+      await expandBtn?.trigger('click')
+      await flushPromises()
 
-    expect(wrapper.text()).not.toContain('ci-prod')
-    expect(wrapper.text()).toContain('ci-staging')
+      expect(wrapper.text()).toContain('ci-staging')
+      expect(wrapper.text()).toContain('ci-prod')
 
-    wrapper.unmount()
+      const deleteBtn = wrapper.find('.token-panel .token-actions button')
+      expect(deleteBtn.exists()).toBe(true)
+      await deleteBtn.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.text()).not.toContain('ci-prod')
+      expect(wrapper.text()).toContain('ci-staging')
+    } finally {
+      wrapper.unmount()
+    }
   })
 
   it('returns to login when tokens refresh receives 401', async () => {
@@ -124,18 +159,20 @@ describe('Tokens Page', () => {
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch)
 
     const wrapper = await mountApp('/tokens')
+    try {
+      await waitForRoute('/tokens', 30)
+      forceUnauthorized = true
+      const refreshBtn = wrapper.findAll('button').find((button) => button.text() === 'Refresh')
+      expect(refreshBtn).toBeTruthy()
+      await refreshBtn?.trigger('click')
+      await flushPromises()
+      await flushPromises()
+      await waitForRoute('/login', 40)
 
-    forceUnauthorized = true
-    const refreshBtn = wrapper.findAll('button').find((button) => button.text() === 'Refresh')
-    expect(refreshBtn).toBeTruthy()
-    await refreshBtn?.trigger('click')
-    await flushPromises()
-    await flushPromises()
-    await waitForRoute('/login')
-
-    expect(router.currentRoute.value.path).toBe('/login')
-
-    wrapper.unmount()
+      expect(router.currentRoute.value.path).toBe('/login')
+    } finally {
+      wrapper.unmount()
+    }
   })
 
   it('logs out from tokens page and returns to login', async () => {
@@ -157,19 +194,21 @@ describe('Tokens Page', () => {
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch)
 
     const wrapper = await mountApp('/tokens')
+    try {
+      await waitForRoute('/tokens', 30)
+      const logoutBtn = wrapper.findAll('button').find((button) => button.text() === 'Logout')
+      expect(logoutBtn).toBeTruthy()
+      await logoutBtn?.trigger('click')
+      await flushPromises()
+      await flushPromises()
+      await waitForRoute('/login', 40)
 
-    const logoutBtn = wrapper.findAll('button').find((button) => button.text() === 'Logout')
-    expect(logoutBtn).toBeTruthy()
-    await logoutBtn?.trigger('click')
-    await flushPromises()
-    await flushPromises()
-    await waitForRoute('/login')
-
-    expect(router.currentRoute.value.path).toBe('/login')
-    expect(fetchMock.mock.calls.some(([url]) => String(url) === '/api/v1/console/logout')).toBe(
-      true,
-    )
-
-    wrapper.unmount()
+      expect(router.currentRoute.value.path).toBe('/login')
+      expect(fetchMock.mock.calls.some(([url]) => String(url) === '/api/v1/console/logout')).toBe(
+        true,
+      )
+    } finally {
+      wrapper.unmount()
+    }
   })
 })

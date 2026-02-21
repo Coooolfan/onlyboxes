@@ -25,8 +25,20 @@ const createdToken = ref<TrustedTokenCreateResponse | null>(null)
 const copyingCreatedToken = ref(false)
 const copiedCreatedToken = ref(false)
 const copyFailed = ref(false)
+const expandedUsageKey = ref('')
+const copyingUsageKey = ref('')
+const copiedUsageKey = ref('')
+const copyUsageFailedKey = ref('')
 
 let createdTokenCopyFeedbackTimer: ReturnType<typeof setTimeout> | null = null
+let usageCopyFeedbackTimer: ReturnType<typeof setTimeout> | null = null
+
+type TokenUsageSnippet = {
+  key: 'claude-code' | 'http-header' | 'mcp-json'
+  label: string
+  kind: 'Command' | 'Parameter'
+  value: string
+}
 
 const createdTokenCopyButtonText = computed(() => {
   if (copyingCreatedToken.value) {
@@ -41,6 +53,67 @@ const createdTokenCopyButtonText = computed(() => {
   return 'Copy Token'
 })
 
+const tokenUsageSnippets = computed<TokenUsageSnippet[]>(() => {
+  const tokenValue = createdToken.value?.token?.trim() ?? ''
+  if (!tokenValue) {
+    return []
+  }
+
+  const consoleOrigin =
+    typeof window !== 'undefined' && window.location?.origin
+      ? window.location.origin
+      : 'http://127.0.0.1:8089'
+  const mcpURL = new URL('/mcp', consoleOrigin).toString()
+  const tokenHeader = `X-Onlyboxes-Token: ${tokenValue}`
+
+  return [
+    {
+      key: 'claude-code',
+      label: 'claude code',
+      kind: 'Command',
+      value: `claude mcp add --transport http onlyboxes "${mcpURL}" --header "${tokenHeader}"`,
+    },
+    {
+      key: 'http-header',
+      label: 'http header',
+      kind: 'Parameter',
+      value: tokenHeader,
+    },
+    {
+      key: 'mcp-json',
+      label: 'mcp json',
+      kind: 'Parameter',
+      value: JSON.stringify(
+        {
+          mcpServers: {
+            onlyboxes: {
+              url: mcpURL,
+              headers: {
+                'X-Onlyboxes-Token': tokenValue,
+              },
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    },
+  ]
+})
+
+function usageCopyButtonText(key: string): string {
+  if (copyingUsageKey.value === key) {
+    return 'Copying...'
+  }
+  if (copiedUsageKey.value === key) {
+    return 'Copied'
+  }
+  if (copyUsageFailedKey.value === key) {
+    return 'Copy Failed'
+  }
+  return 'Copy'
+}
+
 function resetCreatedTokenCopyFeedback(): void {
   if (createdTokenCopyFeedbackTimer) {
     clearTimeout(createdTokenCopyFeedbackTimer)
@@ -51,9 +124,21 @@ function resetCreatedTokenCopyFeedback(): void {
   copyFailed.value = false
 }
 
+function resetUsageCopyFeedback(): void {
+  if (usageCopyFeedbackTimer) {
+    clearTimeout(usageCopyFeedbackTimer)
+    usageCopyFeedbackTimer = null
+  }
+  copyingUsageKey.value = ''
+  copiedUsageKey.value = ''
+  copyUsageFailedKey.value = ''
+}
+
 function clearSensitiveToken(): void {
   createdToken.value = null
+  expandedUsageKey.value = ''
   resetCreatedTokenCopyFeedback()
+  resetUsageCopyFeedback()
 }
 
 function openCreateModal(): void {
@@ -81,6 +166,21 @@ function scheduleCreatedTokenCopyFeedbackReset(): void {
   }, 1500)
 }
 
+function scheduleUsageCopyFeedbackReset(): void {
+  if (usageCopyFeedbackTimer) {
+    clearTimeout(usageCopyFeedbackTimer)
+  }
+  usageCopyFeedbackTimer = setTimeout(() => {
+    copiedUsageKey.value = ''
+    copyUsageFailedKey.value = ''
+    usageCopyFeedbackTimer = null
+  }, 1500)
+}
+
+function toggleUsageSnippet(key: string): void {
+  expandedUsageKey.value = expandedUsageKey.value === key ? '' : key
+}
+
 async function submitCreateToken(): Promise<void> {
   if (props.creatingToken) {
     return
@@ -104,6 +204,8 @@ async function submitCreateToken(): Promise<void> {
       ...payload,
       token: tokenValue,
     }
+    expandedUsageKey.value = ''
+    resetUsageCopyFeedback()
   } catch (error) {
     modalError.value = error instanceof Error ? error.message : 'Failed to create trusted token.'
   }
@@ -128,6 +230,30 @@ async function copyCreatedToken(): Promise<void> {
     scheduleCreatedTokenCopyFeedbackReset()
   } finally {
     copyingCreatedToken.value = false
+  }
+}
+
+async function copyUsageSnippet(key: string, value: string): Promise<void> {
+  const trimmed = value.trim()
+  if (!trimmed || copyingUsageKey.value === key) {
+    return
+  }
+
+  resetUsageCopyFeedback()
+  copyingUsageKey.value = key
+  try {
+    await writeTextToClipboard(trimmed, {
+      fallbackErrorMessage: 'Failed to copy template.',
+    })
+    copiedUsageKey.value = key
+    scheduleUsageCopyFeedbackReset()
+  } catch {
+    copyUsageFailedKey.value = key
+    scheduleUsageCopyFeedbackReset()
+  } finally {
+    if (copyingUsageKey.value === key) {
+      copyingUsageKey.value = ''
+    }
   }
 }
 
@@ -252,6 +378,47 @@ onBeforeUnmount(() => {
             <p><span>ID</span>{{ createdToken.id }}</p>
             <p><span>Masked</span>{{ createdToken.token_masked }}</p>
           </div>
+
+          <section class="token-usage-guide">
+            <p class="token-usage-title">Quick Setup</p>
+            <ul class="token-usage-list">
+              <li
+                v-for="snippet in tokenUsageSnippets"
+                :key="snippet.key"
+                class="token-usage-item"
+              >
+                <button
+                  type="button"
+                  class="token-usage-trigger"
+                  @click="toggleUsageSnippet(snippet.key)"
+                >
+                  <span class="token-usage-label-row">
+                    <span class="token-usage-label">{{ snippet.label }}</span>
+                    <span class="token-usage-kind">{{ snippet.kind }}</span>
+                  </span>
+                  <span class="token-usage-toggle">
+                    {{ expandedUsageKey === snippet.key ? 'Collapse' : 'Expand' }}
+                  </span>
+                </button>
+
+                <transition name="expand">
+                  <div v-show="expandedUsageKey === snippet.key" class="token-usage-body">
+                    <code class="token-usage-value">{{ snippet.value }}</code>
+                    <div class="token-usage-actions">
+                      <button
+                        type="button"
+                        class="ghost-btn small"
+                        :disabled="copyingUsageKey === snippet.key"
+                        @click="copyUsageSnippet(snippet.key, snippet.value)"
+                      >
+                        {{ usageCopyButtonText(snippet.key) }}
+                      </button>
+                    </div>
+                  </div>
+                </transition>
+              </li>
+            </ul>
+          </section>
 
           <div class="token-modal-actions">
             <button
@@ -538,6 +705,106 @@ onBeforeUnmount(() => {
   font-weight: 500;
 }
 
+.token-usage-guide {
+  display: grid;
+  gap: 12px;
+}
+
+.token-usage-title {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.token-usage-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.token-usage-item {
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+  overflow: hidden;
+}
+
+.token-usage-trigger {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.token-usage-trigger:not(:disabled):hover {
+  background: #efefef;
+}
+
+.token-usage-label-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.token-usage-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  border-radius: var(--radius);
+  border: 1px solid var(--stroke);
+  background: var(--surface);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-transform: lowercase;
+}
+
+.token-usage-kind {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.token-usage-toggle {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.token-usage-body {
+  border-top: 1px solid var(--stroke);
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.token-usage-value {
+  display: block;
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius);
+  background: #000;
+  color: #fff;
+  padding: 12px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+.token-usage-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 @media (max-width: 700px) {
   .token-panel-header {
     flex-direction: column;
@@ -553,6 +820,10 @@ onBeforeUnmount(() => {
 
   .token-modal-actions button {
     width: 100%;
+  }
+
+  .token-usage-trigger {
+    align-items: flex-start;
   }
 }
 </style>

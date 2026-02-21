@@ -279,24 +279,40 @@ describe('Workers Page', () => {
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch)
 
     const wrapper = await mountApp('/workers')
+    try {
+      const openCreateAccountBtn = wrapper
+        .findAll('button')
+        .find(
+          (button) => button.text() === 'Create Account' && button.classes().includes('ghost-btn'),
+        )
+      expect(openCreateAccountBtn).toBeTruthy()
+      await openCreateAccountBtn?.trigger('click')
+      await flushPromises()
 
-    expect(wrapper.find('#create-account-username').exists()).toBe(true)
-    await wrapper.get('#create-account-username').setValue('member-new')
-    await wrapper.get('#create-account-password').setValue('member-pass')
-    await wrapper.get('form.account-form').trigger('submit.prevent')
-    await flushPromises()
+      const createAccountModal = wrapper.find('.account-modal')
+      expect(createAccountModal.exists()).toBe(true)
 
-    expect(wrapper.text()).toContain('Created account member-new')
-    expect((wrapper.get('#create-account-username').element as HTMLInputElement).value).toBe('')
-    expect((wrapper.get('#create-account-password').element as HTMLInputElement).value).toBe('')
-    const registerCall = fetchMock.mock.calls.find(
-      ([url, init]) =>
-        String(url) === '/api/v1/console/register' &&
-        String((init as RequestInit | undefined)?.method).toUpperCase() === 'POST',
-    )
-    expect(registerCall).toBeTruthy()
+      const createAccountNameInput = createAccountModal.find('input[type="text"]')
+      const createAccountPasswordInput = createAccountModal.find('input[type="password"]')
+      expect(createAccountNameInput.exists()).toBe(true)
+      expect(createAccountPasswordInput.exists()).toBe(true)
+      await createAccountNameInput.setValue('member-new')
+      await createAccountPasswordInput.setValue('member-pass')
+      await createAccountModal.get('form.account-form').trigger('submit.prevent')
+      await flushPromises()
 
-    wrapper.unmount()
+      expect(wrapper.text()).toContain('Created account member-new')
+      expect((createAccountNameInput.element as HTMLInputElement).value).toBe('')
+      expect((createAccountPasswordInput.element as HTMLInputElement).value).toBe('')
+      const registerCall = fetchMock.mock.calls.find(
+        ([url, init]) =>
+          String(url) === '/api/v1/console/register' &&
+          String((init as RequestInit | undefined)?.method).toUpperCase() === 'POST',
+      )
+      expect(registerCall).toBeTruthy()
+    } finally {
+      wrapper.unmount()
+    }
   })
 
   it('hides create-account panel when registration is disabled', async () => {
@@ -346,10 +362,12 @@ describe('Workers Page', () => {
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch)
 
     const wrapper = await mountApp('/workers')
-
-    expect(router.currentRoute.value.path).toBe('/tokens')
-    expect(wrapper.text()).toContain('Trusted Token Management')
-
-    wrapper.unmount()
+    try {
+      await waitForRoute('/tokens')
+      expect(router.currentRoute.value.path).toBe('/tokens')
+      expect(wrapper.text()).toContain('Trusted Token Management')
+    } finally {
+      wrapper.unmount()
+    }
   })
 })
