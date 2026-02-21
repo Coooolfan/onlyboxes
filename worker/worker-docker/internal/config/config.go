@@ -24,6 +24,7 @@ const (
 
 type Config struct {
 	ConsoleGRPCTarget        string
+	ConsoleTLS               bool
 	WorkerID                 string
 	WorkerSecret             string
 	HeartbeatInterval        time.Duration
@@ -58,6 +59,7 @@ func Load() Config {
 
 	return Config{
 		ConsoleGRPCTarget:        getEnv("WORKER_CONSOLE_GRPC_TARGET", defaultConsoleTarget),
+		ConsoleTLS:               os.Getenv("WORKER_CONSOLE_INSECURE") != "true",
 		WorkerID:                 strings.TrimSpace(os.Getenv("WORKER_ID")),
 		WorkerSecret:             strings.TrimSpace(os.Getenv("WORKER_SECRET")),
 		HeartbeatInterval:        time.Duration(heartbeatSec) * time.Second,

@@ -225,7 +225,7 @@ func (h *WorkerHandler) GetWorkerStartupCommand(c *gin.Context) {
 
 func (h *WorkerHandler) buildWorkerStartupCommand(nodeID string, workerSecret string, req *http.Request) string {
 	return fmt.Sprintf(
-		"WORKER_CONSOLE_GRPC_TARGET=%s WORKER_ID=%s WORKER_SECRET=%s WORKER_HEARTBEAT_INTERVAL_SEC=%d WORKER_HEARTBEAT_JITTER_PCT=%d go run ./cmd/worker-docker",
+		"WORKER_CONSOLE_GRPC_TARGET=%s WORKER_ID=%s WORKER_SECRET=%s WORKER_HEARTBEAT_INTERVAL_SEC=%d WORKER_HEARTBEAT_JITTER_PCT=%d ./path-to-binary",
 		resolveWorkerGRPCTarget(h.consoleGRPCAddr, req),
 		nodeID,
 		workerSecret,

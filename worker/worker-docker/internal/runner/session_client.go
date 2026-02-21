@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log"
@@ -13,6 +14,7 @@ import (
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
 	"github.com/onlyboxes/onlyboxes/worker/worker-docker/internal/config"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/proto"
 )
@@ -75,10 +77,13 @@ func dial(ctx context.Context, cfg config.Config) (*grpc.ClientConn, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return grpc.NewClient(
-		cfg.ConsoleGRPCTarget,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+	var creds grpc.DialOption
+	if cfg.ConsoleTLS {
+		creds = grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{}))
+	} else {
+		creds = grpc.WithTransportCredentials(insecure.NewCredentials())
+	}
+	return grpc.NewClient(cfg.ConsoleGRPCTarget, creds)
 }
 
 func senderLoop(
