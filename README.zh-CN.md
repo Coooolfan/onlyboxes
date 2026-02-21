@@ -7,8 +7,11 @@ Onlyboxes 是一个面向个人与小型团队的自托管代码执行沙箱平�
 
 > [!WARNING]
 > 当前版本中，console gRPC 不提供内建 TLS/mTLS。
+>
 > `worker-docker` 默认会拒绝不安全的 console 端点；只有显式设置 `WORKER_CONSOLE_INSECURE=true` 才允许明文连接。
+>
 > 请将 console 的 HTTP（`:8089`）和 gRPC（`:50051`）端点放在反向代理/网关之后，并对外部流量强制开启 TLS。
+>
 > 仅可部署在可信内网或加密隧道中，禁止将 gRPC 端口直接暴露到公网。
 
 ## 架构

@@ -7,8 +7,11 @@ It uses a control-plane (`console`) and execution-plane (`worker-docker`) archit
 
 > [!WARNING]
 > In the current release, console gRPC does not provide built-in TLS/mTLS.
+>
 > `worker-docker` rejects insecure console endpoints by default; plaintext is allowed only when `WORKER_CONSOLE_INSECURE=true` is explicitly set.
+>
 > Put both console HTTP (`:8089`) and gRPC (`:50051`) endpoints behind your reverse proxy/gateway and enforce TLS for external traffic.
+>
 > Deploy only on trusted private networks or encrypted tunnels, and do not expose the gRPC port directly to the public internet.
 
 ## Architecture
