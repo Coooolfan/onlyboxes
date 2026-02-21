@@ -35,44 +35,50 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="tokens-content">
-    <header class="tokens-header">
+  <main class="relative z-2 mx-auto w-[min(960px,100%)] grid gap-6">
+    <header class="flex items-start justify-between gap-5 bg-surface border border-stroke rounded-lg p-8 shadow-card animate-rise-in max-[960px]:flex-col">
       <div>
-        <p class="eyebrow">Onlyboxes / Token Console</p>
-        <h1>Trusted Token Management</h1>
-        <p class="subtitle">
+        <p class="m-0 font-mono text-xs tracking-[0.05em] uppercase text-secondary">Onlyboxes / Token Console</p>
+        <h1 class="mt-3 mb-2 text-2xl font-semibold leading-[1.2] tracking-[-0.02em]">Trusted Token Management</h1>
+        <p class="m-0 text-secondary text-sm leading-normal">
           Account: <strong>{{ authStore.currentAccount?.username ?? '--' }}</strong>
         </p>
       </div>
 
-      <div class="header-actions">
+      <div class="flex items-center gap-3 max-[960px]:w-full max-[960px]:flex-wrap">
         <button
-          class="primary-btn"
+          class="rounded-md px-3.5 py-2 text-sm font-medium h-9 inline-flex items-center justify-center text-white bg-accent border border-accent transition-all duration-200 hover:not-disabled:bg-[#333] hover:not-disabled:border-[#333] disabled:cursor-not-allowed disabled:opacity-50"
           type="button"
           :disabled="tokensStore.loading"
           @click="tokensStore.loadTokens"
         >
           {{ tokensStore.loading ? 'Refreshing...' : 'Refresh' }}
         </button>
-        <button class="ghost-btn" type="button" @click="handleLogout">Logout</button>
+        <button
+          class="rounded-md px-3.5 py-2 text-sm font-medium h-9 inline-flex items-center justify-center text-primary bg-surface border border-stroke transition-all duration-200 hover:not-disabled:border-stroke-hover hover:not-disabled:bg-surface-soft disabled:cursor-not-allowed disabled:opacity-50"
+          type="button"
+          @click="handleLogout"
+        >
+          Logout
+        </button>
       </div>
     </header>
 
-    <section class="board-panel">
-      <div class="panel-topbar">
-        <p class="panel-meta">
+    <section class="border border-stroke rounded-lg bg-surface shadow-card overflow-hidden">
+      <div class="flex justify-end items-center px-6 py-3 border-b border-stroke bg-surface-soft">
+        <p class="m-0 text-secondary text-[13px]">
           Last refresh:
-          <span>{{ refreshedAtText }}</span>
+          <span class="text-primary font-medium">{{ refreshedAtText }}</span>
         </p>
       </div>
 
       <ErrorBanner
         v-if="tokensStore.errorMessage"
         :message="tokensStore.errorMessage"
-        class="panel-error"
+        class="mx-6 mt-4"
       />
 
-      <div class="panel-body">
+      <div class="p-6">
         <TrustedTokensPanel
           :tokens="tokensStore.trustedTokens"
           :creating-token="tokensStore.creatingTrustedToken"
@@ -86,104 +92,3 @@ onBeforeUnmount(() => {
     </section>
   </main>
 </template>
-
-<style scoped>
-.tokens-content {
-  position: relative;
-  z-index: 2;
-  margin: 0 auto;
-  width: min(960px, 100%);
-  display: grid;
-  gap: 24px;
-}
-
-.tokens-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 20px;
-  background: var(--surface);
-  border: 1px solid var(--stroke);
-  border-radius: var(--radius-lg);
-  padding: 32px;
-  box-shadow: var(--shadow);
-  animation: rise-in 500ms ease-out;
-}
-
-.eyebrow {
-  margin: 0;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--text-secondary);
-}
-
-h1 {
-  margin: 12px 0 8px;
-  font-size: 24px;
-  font-weight: 600;
-  line-height: 1.2;
-  letter-spacing: -0.02em;
-}
-
-.subtitle {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 14px;
-  line-height: 1.5;
-}
-
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.board-panel {
-  border: 1px solid var(--stroke);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  box-shadow: var(--shadow);
-  overflow: hidden;
-}
-
-.panel-topbar {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  padding: 12px 24px;
-  border-bottom: 1px solid var(--stroke);
-  background: var(--surface-soft);
-}
-
-.panel-meta {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-
-.panel-meta span {
-  color: var(--text-primary);
-  font-weight: 500;
-}
-
-.panel-error {
-  margin: 16px 24px 0;
-}
-
-.panel-body {
-  padding: 24px;
-}
-
-@media (max-width: 960px) {
-  .tokens-header {
-    flex-direction: column;
-  }
-
-  .header-actions {
-    width: 100%;
-    flex-wrap: wrap;
-  }
-}
-</style>

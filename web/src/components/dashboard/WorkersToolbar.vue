@@ -12,93 +12,49 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <div class="panel-topbar">
-    <div class="tabs">
+  <div class="flex justify-between items-center gap-4 px-6 py-4 border-b border-stroke bg-surface-soft max-[960px]:flex-col max-[960px]:items-start">
+    <div class="inline-flex gap-1 bg-surface border border-stroke rounded-default p-1">
       <button
         type="button"
-        :class="['tab-btn', { active: statusFilter === 'all' }]"
+        :class="[
+          'rounded-[6px] px-4 py-1.5 text-[13px] font-medium transition-all duration-200 border-0 cursor-pointer',
+          statusFilter === 'all'
+            ? 'text-white bg-accent'
+            : 'text-secondary bg-transparent hover:text-primary hover:bg-surface-soft'
+        ]"
         @click="emit('setStatus', 'all')"
       >
         All
       </button>
       <button
         type="button"
-        :class="['tab-btn', { active: statusFilter === 'online' }]"
+        :class="[
+          'rounded-[6px] px-4 py-1.5 text-[13px] font-medium transition-all duration-200 border-0 cursor-pointer',
+          statusFilter === 'online'
+            ? 'text-white bg-accent'
+            : 'text-secondary bg-transparent hover:text-primary hover:bg-surface-soft'
+        ]"
         @click="emit('setStatus', 'online')"
       >
         Online
       </button>
       <button
         type="button"
-        :class="['tab-btn', { active: statusFilter === 'offline' }]"
+        :class="[
+          'rounded-[6px] px-4 py-1.5 text-[13px] font-medium transition-all duration-200 border-0 cursor-pointer',
+          statusFilter === 'offline'
+            ? 'text-white bg-accent'
+            : 'text-secondary bg-transparent hover:text-primary hover:bg-surface-soft'
+        ]"
         @click="emit('setStatus', 'offline')"
       >
         Offline
       </button>
     </div>
 
-    <p class="panel-meta">
+    <p class="m-0 text-secondary text-[13px]">
       Last refresh:
-      <span>{{ refreshedAtText }}</span>
+      <span class="text-primary font-medium">{{ refreshedAtText }}</span>
     </p>
   </div>
 </template>
-
-<style scoped>
-.panel-topbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
-  padding: 16px 24px;
-  border-bottom: 1px solid var(--stroke);
-  background: var(--surface-soft);
-}
-
-.tabs {
-  display: inline-flex;
-  gap: 4px;
-  background: var(--surface);
-  border: 1px solid var(--stroke);
-  border-radius: var(--radius);
-  padding: 4px;
-}
-
-.tab-btn {
-  border-radius: calc(var(--radius) - 2px);
-  padding: 6px 16px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  background: transparent;
-  transition: all 0.2s ease;
-}
-
-.tab-btn:hover:not(.active) {
-  color: var(--text-primary);
-  background: var(--surface-soft);
-}
-
-.tab-btn.active {
-  color: #ffffff;
-  background: var(--accent);
-}
-
-.panel-meta {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-
-.panel-meta span {
-  color: var(--text-primary);
-  font-weight: 500;
-}
-
-@media (max-width: 960px) {
-  .panel-topbar {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-}
-</style>

@@ -153,7 +153,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="dashboard-content">
+  <main class="relative z-2 mx-auto w-[min(1240px,100%)] grid gap-6">
     <DashboardHeader
       :creating-worker="workersStore.creatingWorker"
       :auto-refresh-enabled="workersStore.autoRefreshEnabled"
@@ -184,7 +184,7 @@ onBeforeUnmount(() => {
       @delete-token="tokensStore.deleteTrustedToken"
     />
 
-    <section class="board-panel">
+    <section class="border border-stroke rounded-lg bg-surface shadow-card overflow-hidden animate-[rise-in_620ms_ease-out] max-[620px]:rounded-default">
       <WorkersToolbar
         :status-filter="workersStore.statusFilter"
         :refreshed-at-text="refreshedAtText"
@@ -194,7 +194,7 @@ onBeforeUnmount(() => {
       <ErrorBanner
         v-if="workersStore.errorMessage"
         :message="workersStore.errorMessage"
-        class="panel-error"
+        class="mx-6 mt-4"
       />
 
       <WorkersTable
@@ -230,33 +230,3 @@ onBeforeUnmount(() => {
     <CreateAccountModal v-if="showCreateAccountModal" @close="closeCreateAccountModal" />
   </main>
 </template>
-
-<style scoped>
-.dashboard-content {
-  position: relative;
-  z-index: 2;
-  margin: 0 auto;
-  width: min(1240px, 100%);
-  display: grid;
-  gap: 24px;
-}
-
-.board-panel {
-  border: 1px solid var(--stroke);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  box-shadow: var(--shadow);
-  overflow: hidden;
-  animation: rise-in 620ms ease-out;
-}
-
-.panel-error {
-  margin: 16px 24px 0;
-}
-
-@media (max-width: 620px) {
-  .board-panel {
-    border-radius: var(--radius);
-  }
-}
-</style>

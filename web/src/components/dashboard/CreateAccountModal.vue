@@ -45,54 +45,62 @@ function closeModal(): void {
 </script>
 
 <template>
-  <div class="account-modal-backdrop" @click.self="closeModal">
+  <div class="fixed inset-0 z-1000 bg-black/40 backdrop-blur-xs flex items-center justify-center p-6" @click.self="closeModal">
     <div
-      class="account-modal"
+      class="w-[min(480px,100%)] rounded-lg border border-stroke bg-surface shadow-modal flex flex-col"
       role="dialog"
       aria-modal="true"
       aria-labelledby="account-modal-title"
     >
-      <div class="account-modal-header">
-        <h3 id="account-modal-title">Create Account</h3>
-        <button type="button" class="ghost-btn small" @click="closeModal">Close</button>
+      <div class="flex items-center justify-between px-6 py-5 border-b border-stroke">
+        <h3 id="account-modal-title" class="m-0 text-xl font-semibold">Create Account</h3>
+        <button
+          type="button"
+          class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-primary bg-surface border border-stroke transition-all duration-200 hover:not-disabled:border-stroke-hover hover:not-disabled:bg-surface-soft disabled:cursor-not-allowed disabled:opacity-50"
+          @click="closeModal"
+        >
+          Close
+        </button>
       </div>
 
-      <div class="account-modal-content">
-        <p class="account-modal-note">
+      <div class="p-6 grid gap-5">
+        <p class="m-0 text-secondary text-sm leading-normal">
           Registration is enabled. New accounts are always non-admin.
         </p>
 
-        <form class="account-form" @submit.prevent="submitCreateAccount">
-          <label class="account-field">
-            <span>Username</span>
+        <form class="grid gap-4" @submit.prevent="submitCreateAccount">
+          <label class="grid gap-2">
+            <span class="text-primary text-sm font-medium">Username</span>
             <input
               v-model="createAccountUsername"
               type="text"
               autocomplete="off"
               spellcheck="false"
               required
+              class="border border-stroke rounded-default px-3 py-2.5 text-sm font-[inherit] transition-[border-color,box-shadow] duration-200 outline-none focus:border-secondary focus:shadow-[0_0_0_1px_var(--color-secondary)]"
             />
           </label>
 
-          <label class="account-field">
-            <span>Password</span>
+          <label class="grid gap-2">
+            <span class="text-primary text-sm font-medium">Password</span>
             <input
               v-model="createAccountPassword"
               type="password"
               autocomplete="new-password"
               required
+              class="border border-stroke rounded-default px-3 py-2.5 text-sm font-[inherit] transition-[border-color,box-shadow] duration-200 outline-none focus:border-secondary focus:shadow-[0_0_0_1px_var(--color-secondary)]"
             />
           </label>
 
-          <p v-if="createAccountError" class="account-error">{{ createAccountError }}</p>
-          <p v-if="createAccountSuccess" class="account-success">{{ createAccountSuccess }}</p>
+          <p v-if="createAccountError" class="m-0 border border-[#fca5a5] rounded-default bg-[#fef2f2] text-offline px-3 py-2.5 text-sm">{{ createAccountError }}</p>
+          <p v-if="createAccountSuccess" class="m-0 border border-[#86efac] rounded-default bg-[#f0fdf4] text-[#166534] px-3 py-2.5 text-sm">{{ createAccountSuccess }}</p>
         </form>
       </div>
 
-      <div class="account-modal-actions">
+      <div class="flex justify-end gap-3 px-6 py-5 border-t border-stroke rounded-b-lg max-[600px]:flex-col-reverse max-[600px]:[&>button]:w-full">
         <button
           type="button"
-          class="ghost-btn small"
+          class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-primary bg-surface border border-stroke transition-all duration-200 hover:not-disabled:border-stroke-hover hover:not-disabled:bg-surface-soft disabled:cursor-not-allowed disabled:opacity-50"
           :disabled="creatingAccount"
           @click="closeModal"
         >
@@ -100,7 +108,7 @@ function closeModal(): void {
         </button>
         <button
           type="button"
-          class="primary-btn small"
+          class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-white bg-accent border border-accent transition-all duration-200 hover:not-disabled:bg-[#333] hover:not-disabled:border-[#333] disabled:cursor-not-allowed disabled:opacity-50"
           :disabled="creatingAccount"
           @click="submitCreateAccount"
         >
@@ -110,127 +118,3 @@ function closeModal(): void {
     </div>
   </div>
 </template>
-
-<style scoped>
-.account-modal-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  background: rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(4px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-}
-
-.account-modal {
-  width: min(480px, 100%);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--stroke);
-  background: var(--surface);
-  box-shadow: var(--shadow-modal);
-  display: flex;
-  flex-direction: column;
-}
-
-.account-modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 20px 24px;
-  border-bottom: 1px solid var(--stroke);
-}
-
-.account-modal-header h3 {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 600;
-}
-
-.account-modal-content {
-  padding: 24px;
-  display: grid;
-  gap: 20px;
-}
-
-.account-modal-note {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 14px;
-  line-height: 1.5;
-}
-
-.account-form {
-  display: grid;
-  gap: 16px;
-}
-
-.account-field {
-  display: grid;
-  gap: 8px;
-}
-
-.account-field span {
-  color: var(--text-primary);
-  font-size: 14px;
-  font-weight: 500;
-}
-
-.account-field input {
-  border: 1px solid var(--stroke);
-  border-radius: var(--radius);
-  padding: 10px 12px;
-  font-size: 14px;
-  font-family: inherit;
-  transition:
-    border-color 0.2s ease,
-    box-shadow 0.2s ease;
-}
-
-.account-field input:focus {
-  outline: none;
-  border-color: var(--text-secondary);
-  box-shadow: 0 0 0 1px var(--text-secondary);
-}
-
-.account-error {
-  margin: 0;
-  border: 1px solid #fca5a5;
-  border-radius: var(--radius);
-  background: #fef2f2;
-  color: #e00;
-  padding: 10px 12px;
-  font-size: 14px;
-}
-
-.account-success {
-  margin: 0;
-  border: 1px solid #86efac;
-  border-radius: var(--radius);
-  background: #f0fdf4;
-  color: #166534;
-  padding: 10px 12px;
-  font-size: 14px;
-}
-
-.account-modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
-  padding: 20px 24px;
-  border-top: 1px solid var(--stroke);
-  border-bottom-left-radius: var(--radius-lg);
-  border-bottom-right-radius: var(--radius-lg);
-}
-
-@media (max-width: 600px) {
-  .account-modal-actions {
-    flex-direction: column-reverse;
-  }
-
-  .account-modal-actions button {
-    width: 100%;
-  }
-}
-</style>

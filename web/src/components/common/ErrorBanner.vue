@@ -5,17 +5,5 @@ defineProps<{
 </script>
 
 <template>
-  <p class="error-banner">{{ message }}</p>
+  <p class="m-0 border border-[#fca5a5] rounded-default bg-[#fef2f2] text-offline px-4 py-2.5 text-sm">{{ message }}</p>
 </template>
-
-<style scoped>
-.error-banner {
-  margin: 0;
-  border: 1px solid #fca5a5;
-  border-radius: var(--radius);
-  background: #fef2f2;
-  color: #e00;
-  padding: 10px 16px;
-  font-size: 14px;
-}
-</style>

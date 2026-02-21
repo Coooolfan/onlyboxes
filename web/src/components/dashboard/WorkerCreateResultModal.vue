@@ -148,33 +148,39 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div v-if="payload" class="worker-modal-backdrop" @click.self="closeModal">
+  <div v-if="payload" class="fixed inset-0 z-1000 bg-black/40 backdrop-blur-xs flex items-center justify-center p-6" @click.self="closeModal">
     <div
-      class="worker-modal"
+      class="w-[min(640px,100%)] rounded-lg border border-stroke bg-surface shadow-modal flex flex-col"
       role="dialog"
       aria-modal="true"
       aria-labelledby="worker-created-dialog-title"
     >
-      <div class="worker-modal-header">
-        <h3 id="worker-created-dialog-title">Worker Created</h3>
-        <button type="button" class="ghost-btn small" @click="closeModal">Done</button>
+      <div class="flex items-center justify-between px-6 py-5 border-b border-stroke">
+        <h3 id="worker-created-dialog-title" class="m-0 text-xl font-semibold">Worker Created</h3>
+        <button
+          type="button"
+          class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-primary bg-surface border border-stroke transition-all duration-200 hover:not-disabled:border-stroke-hover hover:not-disabled:bg-surface-soft disabled:cursor-not-allowed disabled:opacity-50"
+          @click="closeModal"
+        >
+          Done
+        </button>
       </div>
 
-      <div class="worker-modal-content">
-        <p class="worker-modal-note">Startup details are returned only once at creation time. Copy and store them securely now.</p>
+      <div class="p-6 grid gap-5">
+        <p class="m-0 text-secondary text-sm leading-normal">Startup details are returned only once at creation time. Copy and store them securely now.</p>
 
-        <div class="worker-meta">
-          <p>
-            <span>Node ID</span>
-            <code>{{ payload.node_id }}</code>
+        <div class="grid gap-3">
+          <p class="m-0 flex items-start gap-3 max-[700px]:flex-wrap max-[700px]:gap-1">
+            <span class="shrink-0 w-[120px] text-secondary text-[13px] font-medium max-[700px]:w-full">Node ID</span>
+            <code class="flex-1 min-w-0 font-mono text-[13px] bg-surface-soft border border-stroke rounded-default px-2 py-1 break-all whitespace-pre-wrap">{{ payload.node_id }}</code>
           </p>
-          <p>
-            <span>Worker Secret</span>
-            <code>{{ workerSecretDisplay }}</code>
+          <p class="m-0 flex items-start gap-3 max-[700px]:flex-wrap max-[700px]:gap-1">
+            <span class="shrink-0 w-[120px] text-secondary text-[13px] font-medium max-[700px]:w-full">Worker Secret</span>
+            <code class="flex-1 min-w-0 font-mono text-[13px] bg-surface-soft border border-stroke rounded-default px-2 py-1 break-all whitespace-pre-wrap">{{ workerSecretDisplay }}</code>
             <button
               v-if="workerSecret"
               type="button"
-              class="ghost-btn small"
+              class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-primary bg-surface border border-stroke transition-all duration-200 hover:not-disabled:border-stroke-hover hover:not-disabled:bg-surface-soft disabled:cursor-not-allowed disabled:opacity-50"
               :disabled="copyingCommand"
               @click="secretVisible = !secretVisible"
             >
@@ -183,162 +189,29 @@ onBeforeUnmount(() => {
           </p>
         </div>
 
-        <div class="worker-command-block">
-          <p>Startup Command</p>
-          <code>{{ commandText }}</code>
+        <div class="grid gap-2">
+          <p class="m-0 text-primary text-sm font-medium">Startup Command</p>
+          <code class="block border border-stroke rounded-default bg-black text-white p-4 font-mono text-[13px] leading-[1.6] break-all whitespace-pre-wrap">{{ commandText }}</code>
         </div>
       </div>
 
-      <div class="worker-modal-actions">
+      <div class="flex justify-end gap-3 px-6 py-5 border-t border-stroke rounded-b-lg max-[700px]:flex-col-reverse max-[700px]:[&>button]:w-full">
         <button
           type="button"
-          class="ghost-btn small"
+          class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-primary bg-surface border border-stroke transition-all duration-200 hover:not-disabled:border-stroke-hover hover:not-disabled:bg-surface-soft disabled:cursor-not-allowed disabled:opacity-50"
           :disabled="copyingCommand || !commandText"
           @click="copyStartupCommand"
         >
           {{ copyButtonText }}
         </button>
-        <button type="button" class="primary-btn small" @click="closeModal">Done</button>
+        <button
+          type="button"
+          class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-white bg-accent border border-accent transition-all duration-200 hover:not-disabled:bg-[#333] hover:not-disabled:border-[#333] disabled:cursor-not-allowed disabled:opacity-50"
+          @click="closeModal"
+        >
+          Done
+        </button>
       </div>
     </div>
   </div>
 </template>
-
-<style scoped>
-.worker-modal-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  background: rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(4px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-}
-
-.worker-modal {
-  width: min(640px, 100%);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--stroke);
-  background: var(--surface);
-  box-shadow: var(--shadow-modal);
-  display: flex;
-  flex-direction: column;
-}
-
-.worker-modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 20px 24px;
-  border-bottom: 1px solid var(--stroke);
-}
-
-.worker-modal-header h3 {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 600;
-}
-
-.worker-modal-content {
-  padding: 24px;
-  display: grid;
-  gap: 20px;
-}
-
-.worker-modal-note {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 14px;
-  line-height: 1.5;
-}
-
-.worker-meta {
-  display: grid;
-  gap: 12px;
-}
-
-.worker-meta p {
-  margin: 0;
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-}
-
-.worker-meta span {
-  flex-shrink: 0;
-  width: 120px;
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.worker-meta code {
-  flex: 1;
-  min-width: 0;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 13px;
-  background: var(--surface-soft);
-  border: 1px solid var(--stroke);
-  border-radius: var(--radius);
-  padding: 4px 8px;
-  word-break: break-all;
-  white-space: pre-wrap;
-}
-
-.worker-command-block {
-  display: grid;
-  gap: 8px;
-}
-
-.worker-command-block p {
-  margin: 0;
-  color: var(--text-primary);
-  font-size: 14px;
-  font-weight: 500;
-}
-
-.worker-command-block code {
-  display: block;
-  border: 1px solid var(--stroke);
-  border-radius: var(--radius);
-  background: #000;
-  color: #fff;
-  padding: 16px;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 13px;
-  line-height: 1.6;
-  word-break: break-all;
-  white-space: pre-wrap;
-}
-
-.worker-modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
-  padding: 20px 24px;
-  border-top: 1px solid var(--stroke);
-  border-bottom-left-radius: var(--radius-lg);
-  border-bottom-right-radius: var(--radius-lg);
-}
-
-@media (max-width: 700px) {
-  .worker-meta p {
-    flex-wrap: wrap;
-    gap: 4px;
-  }
-
-  .worker-meta span {
-    width: 100%;
-  }
-
-  .worker-modal-actions {
-    flex-direction: column-reverse;
-  }
-
-  .worker-modal-actions button {
-    width: 100%;
-  }
-}
-</style>

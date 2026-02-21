@@ -51,48 +51,53 @@ function getInflight(nodeId: string, capName: string): InflightCapability | null
 </script>
 
 <template>
-  <div class="table-wrap">
-    <table>
+  <div class="overflow-auto">
+    <table class="w-full border-collapse min-w-[920px]">
       <thead>
         <tr>
-          <th>Node</th>
-          <th>Runtime</th>
-          <th>Capabilities</th>
-          <th>Labels</th>
-          <th>Status</th>
-          <th>Registered / Last Heartbeat</th>
-          <th>Actions</th>
+          <th class="text-left px-6 py-4 border-b border-stroke text-[13px] font-medium text-secondary bg-surface-soft sticky top-0 z-1 align-middle">Node</th>
+          <th class="text-left px-6 py-4 border-b border-stroke text-[13px] font-medium text-secondary bg-surface-soft sticky top-0 z-1 align-middle">Runtime</th>
+          <th class="text-left px-6 py-4 border-b border-stroke text-[13px] font-medium text-secondary bg-surface-soft sticky top-0 z-1 align-middle">Capabilities</th>
+          <th class="text-left px-6 py-4 border-b border-stroke text-[13px] font-medium text-secondary bg-surface-soft sticky top-0 z-1 align-middle">Labels</th>
+          <th class="text-left px-6 py-4 border-b border-stroke text-[13px] font-medium text-secondary bg-surface-soft sticky top-0 z-1 align-middle">Status</th>
+          <th class="text-left px-6 py-4 border-b border-stroke text-[13px] font-medium text-secondary bg-surface-soft sticky top-0 z-1 align-middle">Registered / Last Heartbeat</th>
+          <th class="text-left px-6 py-4 border-b border-stroke text-[13px] font-medium text-secondary bg-surface-soft sticky top-0 z-1 align-middle">Actions</th>
         </tr>
       </thead>
       <tbody>
         <tr v-if="!loading && workerRows.length === 0">
-          <td colspan="7" class="empty-cell">No workers found in current filter.</td>
+          <td colspan="7" class="text-secondary text-center px-6 py-12 text-sm border-b border-stroke align-middle">No workers found in current filter.</td>
         </tr>
-        <tr v-for="worker in workerRows" :key="worker.node_id">
-          <td>
-            <div class="node-main">{{ worker.node_name || worker.node_id }}</div>
-            <div class="node-sub">{{ worker.node_id }}</div>
+        <tr v-for="worker in workerRows" :key="worker.node_id" class="transition-colors duration-200 hover:bg-surface-soft">
+          <td class="text-left px-6 py-4 border-b border-stroke text-sm text-primary align-middle">
+            <div class="font-semibold">{{ worker.node_name || worker.node_id }}</div>
+            <div class="mt-1 text-secondary font-mono text-xs">{{ worker.node_id }}</div>
           </td>
-          <td>
-            <div class="runtime-main">{{ worker.executor_kind || '--' }}</div>
-            <div class="runtime-sub">version: {{ worker.version || '--' }}</div>
+          <td class="text-left px-6 py-4 border-b border-stroke text-sm text-primary align-middle">
+            <div>{{ worker.executor_kind || '--' }}</div>
+            <div class="mt-1 text-secondary font-mono text-xs">version: {{ worker.version || '--' }}</div>
           </td>
-          <td>
+          <td class="text-left px-6 py-4 border-b border-stroke text-sm text-primary align-middle">
             <div
-              class="capabilities-list"
+              class="flex flex-wrap gap-1.5"
               v-if="worker.capabilities && worker.capabilities.length > 0"
             >
-              <span class="capability-badge" v-for="cap in worker.capabilities" :key="cap.name">
+              <span
+                class="inline-flex items-center justify-center px-2 py-1 bg-surface-soft border border-stroke rounded-default font-mono text-[11px] text-secondary gap-1.5"
+                v-for="cap in worker.capabilities"
+                :key="cap.name"
+              >
                 {{ cap.name }}
                 <span
                   v-if="getInflight(worker.node_id, cap.name)"
-                  class="inflight-tag"
-                  :class="{
-                    active: getInflight(worker.node_id, cap.name)!.inflight > 0,
-                    full:
-                      getInflight(worker.node_id, cap.name)!.inflight >=
-                      getInflight(worker.node_id, cap.name)!.max_inflight,
-                  }"
+                  :class="[
+                    'text-[10px] px-1 py-px rounded-[4px] border',
+                    getInflight(worker.node_id, cap.name)!.inflight >= getInflight(worker.node_id, cap.name)!.max_inflight
+                      ? 'text-[#b45309] bg-[#fffbeb] border-[#fcd34d]'
+                      : getInflight(worker.node_id, cap.name)!.inflight > 0
+                        ? 'text-primary border-stroke-hover bg-surface-soft'
+                        : 'text-(--text-tertiary) bg-surface border-stroke'
+                  ]"
                 >
                   {{ getInflight(worker.node_id, cap.name)!.inflight }}/{{
                     getInflight(worker.node_id, cap.name)!.max_inflight
@@ -102,19 +107,24 @@ function getInflight(nodeId: string, capName: string): InflightCapability | null
             </div>
             <span v-else>--</span>
           </td>
-          <td>{{ formatLabels(worker) }}</td>
-          <td>
-            <span :class="['status-pill', worker.status]">{{ worker.status }}</span>
+          <td class="text-left px-6 py-4 border-b border-stroke text-sm text-primary align-middle">{{ formatLabels(worker) }}</td>
+          <td class="text-left px-6 py-4 border-b border-stroke text-sm text-primary align-middle">
+            <span :class="[
+              'inline-flex items-center justify-center rounded-default px-2.5 py-1 text-xs font-medium capitalize',
+              worker.status === 'online'
+                ? 'text-[#166534] bg-[#f0fdf4] border border-[#bbf7d0]'
+                : 'text-[#991b1b] bg-[#fef2f2] border border-[#fecaca]'
+            ]">{{ worker.status }}</span>
           </td>
-          <td>
-            <div class="time-main">{{ formatDateTime(worker.registered_at) }}</div>
-            <div class="time-sub">{{ formatAge(worker.last_seen_at) }}</div>
+          <td class="text-left px-6 py-4 border-b border-stroke text-sm text-primary align-middle">
+            <div>{{ formatDateTime(worker.registered_at) }}</div>
+            <div class="mt-1 text-secondary font-mono text-xs">{{ formatAge(worker.last_seen_at) }}</div>
           </td>
-          <td>
-            <div class="row-actions">
+          <td class="text-left px-6 py-4 border-b border-stroke text-sm text-primary align-middle">
+            <div class="inline-flex gap-2 items-center">
               <button
                 type="button"
-                class="ghost-btn small danger"
+                class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-offline bg-white border border-[#fca5a5] transition-all duration-200 hover:not-disabled:bg-[#fef2f2] hover:not-disabled:border-[#f87171] disabled:cursor-not-allowed disabled:opacity-50"
                 :disabled="deletingNodeId === worker.node_id"
                 @click="emit('deleteWorker', worker.node_id)"
               >
@@ -127,155 +137,3 @@ function getInflight(nodeId: string, capName: string): InflightCapability | null
     </table>
   </div>
 </template>
-
-<style scoped>
-.table-wrap {
-  overflow: auto;
-}
-
-table {
-  width: 100%;
-  border-collapse: collapse;
-  min-width: 920px;
-}
-
-th,
-td {
-  text-align: left;
-  padding: 16px 24px;
-  border-bottom: 1px solid var(--stroke);
-  vertical-align: middle;
-}
-
-th {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  background: var(--surface-soft);
-  position: sticky;
-  top: 0;
-  z-index: 1;
-}
-
-td {
-  font-size: 14px;
-  color: var(--text-primary);
-}
-
-tr {
-  transition: background-color 0.2s ease;
-}
-
-tr:hover {
-  background-color: var(--surface-soft);
-}
-
-.row-actions {
-  display: inline-flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.node-main {
-  font-weight: 600;
-}
-
-.capabilities-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.capability-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 4px 8px;
-  background: var(--surface-soft);
-  border: 1px solid var(--stroke);
-  border-radius: var(--radius);
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
-  color: var(--text-secondary);
-  gap: 6px;
-}
-
-.inflight-tag {
-  font-size: 10px;
-  padding: 1px 4px;
-  border-radius: 4px;
-  background: var(--surface);
-  border: 1px solid var(--stroke);
-  color: var(--text-tertiary);
-}
-
-.inflight-tag.active {
-  color: var(--text-primary);
-  border-color: var(--stroke-hover);
-  background: var(--surface-soft);
-}
-
-.inflight-tag.full {
-  color: #b45309;
-  background: #fffbeb;
-  border-color: #fcd34d;
-}
-
-.node-sub {
-  margin-top: 4px;
-  color: var(--text-secondary);
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
-}
-
-.runtime-main {
-  font-size: 14px;
-}
-
-.runtime-sub {
-  margin-top: 4px;
-  color: var(--text-secondary);
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
-}
-
-.time-main {
-  font-size: 14px;
-}
-
-.time-sub {
-  margin-top: 4px;
-  color: var(--text-secondary);
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
-}
-
-.status-pill {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius);
-  padding: 4px 10px;
-  font-size: 12px;
-  font-weight: 500;
-  text-transform: capitalize;
-}
-
-.status-pill.online {
-  color: #166534;
-  background: #f0fdf4;
-  border: 1px solid #bbf7d0;
-}
-
-.status-pill.offline {
-  color: #991b1b;
-  background: #fef2f2;
-  border: 1px solid #fecaca;
-}
-
-.empty-cell {
-  color: var(--text-secondary);
-  text-align: center;
-  padding: 48px 24px;
-}
-</style>

@@ -263,48 +263,62 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="token-panel">
-    <div class="token-panel-header">
-      <div class="token-title-block">
-        <h2>Trusted Tokens</h2>
-        <p>Total: {{ tokens.length }}</p>
+  <section class="border border-stroke rounded-lg bg-surface shadow-card p-6 animate-[rise-in_540ms_ease-out]">
+    <div class="flex items-start justify-between gap-4 max-[700px]:flex-col">
+      <div>
+        <h2 class="m-0 text-lg font-semibold">Trusted Tokens</h2>
+        <p class="mt-1 mb-0 text-secondary text-sm">Total: {{ tokens.length }}</p>
       </div>
-      <div class="token-header-actions">
-        <button type="button" class="primary-btn small" @click="openCreateModal">New Token</button>
-        <button type="button" class="ghost-btn small" @click="collapsed = !collapsed">
+      <div class="flex gap-3">
+        <button
+          type="button"
+          class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-white bg-accent border border-accent transition-all duration-200 hover:not-disabled:bg-[#333] hover:not-disabled:border-[#333] disabled:cursor-not-allowed disabled:opacity-50"
+          @click="openCreateModal"
+        >
+          New Token
+        </button>
+        <button
+          type="button"
+          class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-primary bg-surface border border-stroke transition-all duration-200 hover:not-disabled:border-stroke-hover hover:not-disabled:bg-surface-soft disabled:cursor-not-allowed disabled:opacity-50"
+          @click="collapsed = !collapsed"
+        >
           {{ collapsed ? 'Expand' : 'Collapse' }}
         </button>
       </div>
     </div>
 
     <transition name="expand">
-      <div v-show="!collapsed" class="collapsible-content">
-        <p v-if="tokens.length === 0" class="empty-hint">
-          未配置，MCP 与受保护 HTTP 端点当前全部拒绝。
+      <div v-show="!collapsed" class="overflow-hidden pt-5">
+        <p v-if="tokens.length === 0" class="m-0 text-secondary text-sm bg-surface-soft px-4 py-3 rounded-default border border-dashed border-stroke">
+          No tokens configured. All MCP and protected HTTP endpoints are currently rejected.
         </p>
 
-        <ul v-else class="token-list">
-          <li v-for="item in tokens" :key="item.id" class="token-item">
-            <div class="token-summary">
-              <p class="token-name">{{ item.name }}</p>
-              <p class="token-meta">
-                <span class="token-meta-label">ID</span>
-                <code>{{ item.id }}</code>
+        <ul v-else class="list-none m-0 p-0 grid gap-3">
+          <li
+            v-for="item in tokens"
+            :key="item.id"
+            class="flex items-start justify-between gap-4 border border-stroke bg-surface rounded-lg px-5 py-4 transition-[box-shadow,border-color] duration-200 hover:border-stroke-hover hover:shadow-card-hover max-[700px]:flex-col"
+          >
+            <div class="min-w-0 grid gap-2">
+              <p class="m-0 mb-1 text-[15px] font-semibold text-primary">{{ item.name }}</p>
+              <p class="m-0 flex items-center gap-3 text-primary text-[13px]">
+                <span class="w-16 text-secondary text-[13px] font-medium">ID</span>
+                <code class="font-mono bg-surface-soft border border-stroke rounded-default px-1.5 py-0.5 text-xs break-all whitespace-pre-wrap">{{ item.id }}</code>
               </p>
-              <p class="token-meta">
-                <span class="token-meta-label">Masked</span>
-                <code>{{ item.token_masked }}</code>
+              <p class="m-0 flex items-center gap-3 text-primary text-[13px]">
+                <span class="w-16 text-secondary text-[13px] font-medium">Masked</span>
+                <code class="font-mono bg-surface-soft border border-stroke rounded-default px-1.5 py-0.5 text-xs break-all whitespace-pre-wrap">{{ item.token_masked }}</code>
               </p>
-              <p class="token-meta">
-                <span class="token-meta-label">Created</span>
-                <span>{{ formatDateTime(item.created_at) }}</span>
+              <p class="m-0 flex items-center gap-3 text-primary text-[13px]">
+                <span class="w-16 text-secondary text-[13px] font-medium">Created</span>
+                <span class="text-secondary">{{ formatDateTime(item.created_at) }}</span>
               </p>
             </div>
 
-            <div class="token-actions">
+            <div>
               <button
                 type="button"
-                class="ghost-btn small danger"
+                class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-offline bg-white border border-[#fca5a5] transition-all duration-200 hover:not-disabled:bg-[#fef2f2] hover:not-disabled:border-[#f87171] disabled:cursor-not-allowed disabled:opacity-50"
                 :disabled="deletingTokenId === item.id"
                 @click="emit('deleteToken', item.id)"
               >
@@ -317,43 +331,48 @@ onBeforeUnmount(() => {
     </transition>
   </section>
 
-  <div v-if="showCreateModal" class="token-modal-backdrop" @click.self="closeCreateModal">
+  <div v-if="showCreateModal" class="fixed inset-0 z-1000 bg-black/40 backdrop-blur-xs flex items-center justify-center p-6" @click.self="closeCreateModal">
     <div
-      class="token-modal"
+      class="w-[min(560px,100%)] rounded-lg border border-stroke bg-surface shadow-modal flex flex-col"
       role="dialog"
       aria-modal="true"
       aria-labelledby="trusted-token-dialog-title"
     >
-      <div class="token-modal-header">
-        <h3 id="trusted-token-dialog-title">
+      <div class="flex items-center justify-between px-6 py-5 border-b border-stroke">
+        <h3 id="trusted-token-dialog-title" class="m-0 text-xl font-semibold">
           {{ createdToken ? 'Token Created' : 'New Trusted Token' }}
         </h3>
-        <button type="button" class="ghost-btn small" @click="closeCreateModal">
+        <button
+          type="button"
+          class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-primary bg-surface border border-stroke transition-all duration-200 hover:not-disabled:border-stroke-hover hover:not-disabled:bg-surface-soft disabled:cursor-not-allowed disabled:opacity-50"
+          @click="closeCreateModal"
+        >
           {{ createdToken ? 'Done' : 'Cancel' }}
         </button>
       </div>
 
-      <div class="token-modal-content-wrapper">
+      <div class="p-6 grid gap-5">
         <template v-if="!createdToken">
-          <p class="token-modal-copy">The plaintext token is shown only once after creation and cannot be viewed again after closing this dialog.</p>
-          <form class="token-modal-form" @submit.prevent="submitCreateToken">
-            <label class="token-field">
-              <span>Name</span>
+          <p class="m-0 text-secondary text-sm leading-normal">The plaintext token is shown only once after creation and cannot be viewed again after closing this dialog.</p>
+          <form class="grid gap-4" @submit.prevent="submitCreateToken">
+            <label class="grid gap-2">
+              <span class="text-primary text-sm font-medium">Name</span>
               <input
                 v-model="nameInput"
                 type="text"
                 maxlength="64"
                 required
                 placeholder="ci-prod"
+                class="border border-stroke rounded-default px-3 py-2.5 text-sm font-[inherit] transition-[border-color,box-shadow] duration-200 outline-none focus:border-secondary focus:shadow-[0_0_0_1px_var(--color-secondary)]"
               />
             </label>
 
-            <p v-if="modalError" class="token-modal-error">{{ modalError }}</p>
+            <p v-if="modalError" class="m-0 border border-[#fca5a5] rounded-default bg-[#fef2f2] text-offline px-3 py-2.5 text-sm">{{ modalError }}</p>
 
-            <div class="token-modal-actions">
+            <div class="flex justify-end gap-3 pt-5 max-[700px]:flex-col-reverse max-[700px]:[&>button]:w-full">
               <button
                 type="button"
-                class="ghost-btn small"
+                class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-primary bg-surface border border-stroke transition-all duration-200 hover:not-disabled:border-stroke-hover hover:not-disabled:bg-surface-soft disabled:cursor-not-allowed disabled:opacity-50"
                 :disabled="creatingToken"
                 @click="closeCreateModal"
               >
@@ -361,7 +380,7 @@ onBeforeUnmount(() => {
               </button>
               <button
                 type="submit"
-                class="primary-btn small"
+                class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-white bg-accent border border-accent transition-all duration-200 hover:not-disabled:bg-[#333] hover:not-disabled:border-[#333] disabled:cursor-not-allowed disabled:opacity-50"
                 :disabled="creatingToken || nameInput.trim() === ''"
               >
                 {{ creatingToken ? 'Creating...' : 'Create Token' }}
@@ -371,43 +390,43 @@ onBeforeUnmount(() => {
         </template>
 
         <template v-else>
-          <p class="token-modal-copy">This is the only time the plaintext token is shown. Copy and store it securely now.</p>
-          <code class="token-plain-value">{{ createdToken.token }}</code>
-          <div class="token-result-meta">
-            <p><span>Name</span>{{ createdToken.name }}</p>
-            <p><span>ID</span>{{ createdToken.id }}</p>
-            <p><span>Masked</span>{{ createdToken.token_masked }}</p>
+          <p class="m-0 text-secondary text-sm leading-normal">This is the only time the plaintext token is shown. Copy and store it securely now.</p>
+          <code class="block border border-stroke rounded-default bg-black text-white p-4 font-mono text-[13px] leading-[1.6] break-all whitespace-pre-wrap">{{ createdToken.token }}</code>
+          <div class="grid gap-3">
+            <p class="m-0 flex items-start gap-3 text-sm break-all"><span class="shrink-0 w-16 text-secondary text-[13px] font-medium">Name</span>{{ createdToken.name }}</p>
+            <p class="m-0 flex items-start gap-3 text-sm break-all"><span class="shrink-0 w-16 text-secondary text-[13px] font-medium">ID</span>{{ createdToken.id }}</p>
+            <p class="m-0 flex items-start gap-3 text-sm break-all"><span class="shrink-0 w-16 text-secondary text-[13px] font-medium">Masked</span>{{ createdToken.token_masked }}</p>
           </div>
 
-          <section class="token-usage-guide">
-            <p class="token-usage-title">Quick Setup</p>
-            <ul class="token-usage-list">
+          <section class="grid gap-3">
+            <p class="m-0 text-primary text-sm font-semibold">Quick Setup</p>
+            <ul class="list-none m-0 p-0 grid gap-2.5">
               <li
                 v-for="snippet in tokenUsageSnippets"
                 :key="snippet.key"
-                class="token-usage-item"
+                class="border border-stroke rounded-default bg-surface-soft overflow-hidden"
               >
                 <button
                   type="button"
-                  class="token-usage-trigger"
+                  class="w-full border-0 bg-transparent px-3 py-2.5 flex items-center justify-between gap-3 cursor-pointer transition-all duration-200 hover:bg-[#efefef] max-[700px]:items-start"
                   @click="toggleUsageSnippet(snippet.key)"
                 >
-                  <span class="token-usage-label-row">
-                    <span class="token-usage-label">{{ snippet.label }}</span>
-                    <span class="token-usage-kind">{{ snippet.kind }}</span>
+                  <span class="inline-flex items-center gap-2 min-w-0">
+                    <span class="inline-flex items-center justify-center px-2 py-1 rounded-default border border-stroke bg-surface font-mono text-[11px] text-secondary lowercase">{{ snippet.label }}</span>
+                    <span class="text-secondary text-xs">{{ snippet.kind }}</span>
                   </span>
-                  <span class="token-usage-toggle">
+                  <span class="text-secondary text-xs font-medium">
                     {{ expandedUsageKey === snippet.key ? 'Collapse' : 'Expand' }}
                   </span>
                 </button>
 
                 <transition name="expand">
-                  <div v-show="expandedUsageKey === snippet.key" class="token-usage-body">
-                    <code class="token-usage-value">{{ snippet.value }}</code>
-                    <div class="token-usage-actions">
+                  <div v-show="expandedUsageKey === snippet.key" class="border-t border-stroke p-3 grid gap-2.5">
+                    <code class="block border border-stroke rounded-default bg-black text-white p-3 font-mono text-xs leading-[1.55] break-all whitespace-pre-wrap">{{ snippet.value }}</code>
+                    <div class="flex justify-end">
                       <button
                         type="button"
-                        class="ghost-btn small"
+                        class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-primary bg-surface border border-stroke transition-all duration-200 hover:not-disabled:border-stroke-hover hover:not-disabled:bg-surface-soft disabled:cursor-not-allowed disabled:opacity-50"
                         :disabled="copyingUsageKey === snippet.key"
                         @click="copyUsageSnippet(snippet.key, snippet.value)"
                       >
@@ -420,16 +439,22 @@ onBeforeUnmount(() => {
             </ul>
           </section>
 
-          <div class="token-modal-actions">
+          <div class="flex justify-end gap-3 pt-5 max-[700px]:flex-col-reverse max-[700px]:[&>button]:w-full">
             <button
               type="button"
-              class="ghost-btn small"
+              class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-primary bg-surface border border-stroke transition-all duration-200 hover:not-disabled:border-stroke-hover hover:not-disabled:bg-surface-soft disabled:cursor-not-allowed disabled:opacity-50"
               :disabled="copyingCreatedToken"
               @click="copyCreatedToken"
             >
               {{ createdTokenCopyButtonText }}
             </button>
-            <button type="button" class="primary-btn small" @click="closeCreateModal">Done</button>
+            <button
+              type="button"
+              class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-white bg-accent border border-accent transition-all duration-200 hover:not-disabled:bg-[#333] hover:not-disabled:border-[#333] disabled:cursor-not-allowed disabled:opacity-50"
+              @click="closeCreateModal"
+            >
+              Done
+            </button>
           </div>
         </template>
       </div>
@@ -438,125 +463,6 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.token-panel {
-  border: 1px solid var(--stroke);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  box-shadow: var(--shadow);
-  padding: 24px;
-  animation: rise-in 540ms ease-out;
-}
-
-.token-panel-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.token-title-block h2 {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-}
-
-.token-title-block p {
-  margin: 4px 0 0;
-  color: var(--text-secondary);
-  font-size: 14px;
-}
-
-.token-header-actions {
-  display: flex;
-  gap: 12px;
-}
-
-.empty-hint {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 14px;
-  background: var(--surface-soft);
-  padding: 12px 16px;
-  border-radius: var(--radius);
-  border: 1px dashed var(--stroke);
-}
-
-.token-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 12px;
-}
-
-.token-item {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  border: 1px solid var(--stroke);
-  background: var(--surface);
-  border-radius: var(--radius-lg);
-  padding: 16px 20px;
-  transition:
-    box-shadow 0.2s ease,
-    border-color 0.2s ease;
-}
-
-.token-item:hover {
-  border-color: var(--stroke-hover);
-  box-shadow: var(--shadow-hover);
-}
-
-.token-summary {
-  min-width: 0;
-  display: grid;
-  gap: 8px;
-}
-
-.token-name {
-  margin: 0 0 4px;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.token-meta {
-  margin: 0;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  color: var(--text-primary);
-  font-size: 13px;
-}
-
-.token-meta-label {
-  width: 64px;
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.token-meta code {
-  font-family: 'JetBrains Mono', monospace;
-  background: var(--surface-soft);
-  border: 1px solid var(--stroke);
-  border-radius: var(--radius);
-  padding: 2px 6px;
-  font-size: 12px;
-  word-break: break-all;
-  white-space: pre-wrap;
-}
-
-.token-meta span:not(.token-meta-label) {
-  color: var(--text-secondary);
-}
-
-.collapsible-content {
-  overflow: hidden;
-  padding-top: 20px;
-}
-
 .expand-enter-active,
 .expand-leave-active {
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -568,262 +474,5 @@ onBeforeUnmount(() => {
 .expand-leave-to {
   max-height: 0;
   opacity: 0;
-}
-
-.token-modal-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  background: rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(4px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-}
-
-.token-modal {
-  width: min(560px, 100%);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--stroke);
-  background: var(--surface);
-  box-shadow: var(--shadow-modal);
-  display: flex;
-  flex-direction: column;
-}
-
-.token-modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 20px 24px;
-  border-bottom: 1px solid var(--stroke);
-}
-
-.token-modal-header h3 {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 600;
-}
-
-.token-modal-content-wrapper {
-  padding: 24px;
-  display: grid;
-  gap: 20px;
-}
-
-.token-modal-copy {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 14px;
-  line-height: 1.5;
-}
-
-.token-modal-form {
-  display: grid;
-  gap: 16px;
-}
-
-.token-field {
-  display: grid;
-  gap: 8px;
-}
-
-.token-field span {
-  color: var(--text-primary);
-  font-size: 14px;
-  font-weight: 500;
-}
-
-.token-field input {
-  border: 1px solid var(--stroke);
-  border-radius: var(--radius);
-  padding: 10px 12px;
-  font-size: 14px;
-  font-family: inherit;
-  transition:
-    border-color 0.2s ease,
-    box-shadow 0.2s ease;
-}
-
-.token-field input:focus {
-  outline: none;
-  border-color: var(--text-secondary);
-  box-shadow: 0 0 0 1px var(--text-secondary);
-}
-
-.token-modal-error {
-  margin: 0;
-  border: 1px solid #fca5a5;
-  border-radius: var(--radius);
-  background: #fef2f2;
-  color: #e00;
-  padding: 10px 12px;
-  font-size: 14px;
-}
-
-.token-modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
-  padding-top: 20px;
-}
-
-.token-plain-value {
-  display: block;
-  border: 1px solid var(--stroke);
-  border-radius: var(--radius);
-  background: #000;
-  color: #fff;
-  padding: 16px;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 13px;
-  line-height: 1.6;
-  word-break: break-all;
-  white-space: pre-wrap;
-}
-
-.token-result-meta {
-  display: grid;
-  gap: 12px;
-}
-
-.token-result-meta p {
-  margin: 0;
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  font-size: 14px;
-  word-break: break-all;
-}
-
-.token-result-meta span {
-  flex-shrink: 0;
-  width: 64px;
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.token-usage-guide {
-  display: grid;
-  gap: 12px;
-}
-
-.token-usage-title {
-  margin: 0;
-  color: var(--text-primary);
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.token-usage-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 10px;
-}
-
-.token-usage-item {
-  border: 1px solid var(--stroke);
-  border-radius: var(--radius);
-  background: var(--surface-soft);
-  overflow: hidden;
-}
-
-.token-usage-trigger {
-  width: 100%;
-  border: 0;
-  background: transparent;
-  padding: 10px 12px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.token-usage-trigger:not(:disabled):hover {
-  background: #efefef;
-}
-
-.token-usage-label-row {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.token-usage-label {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 4px 8px;
-  border-radius: var(--radius);
-  border: 1px solid var(--stroke);
-  background: var(--surface);
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
-  color: var(--text-secondary);
-  text-transform: lowercase;
-}
-
-.token-usage-kind {
-  color: var(--text-secondary);
-  font-size: 12px;
-}
-
-.token-usage-toggle {
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 500;
-}
-
-.token-usage-body {
-  border-top: 1px solid var(--stroke);
-  padding: 12px;
-  display: grid;
-  gap: 10px;
-}
-
-.token-usage-value {
-  display: block;
-  border: 1px solid var(--stroke);
-  border-radius: var(--radius);
-  background: #000;
-  color: #fff;
-  padding: 12px;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
-  line-height: 1.55;
-  word-break: break-all;
-  white-space: pre-wrap;
-}
-
-.token-usage-actions {
-  display: flex;
-  justify-content: flex-end;
-}
-
-@media (max-width: 700px) {
-  .token-panel-header {
-    flex-direction: column;
-  }
-
-  .token-item {
-    flex-direction: column;
-  }
-
-  .token-modal-actions {
-    flex-direction: column-reverse;
-  }
-
-  .token-modal-actions button {
-    width: 100%;
-  }
-
-  .token-usage-trigger {
-    align-items: flex-start;
-  }
 }
 </style>

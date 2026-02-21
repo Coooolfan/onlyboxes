@@ -132,7 +132,7 @@ jobs:
       - name: Upload console workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: onlyboxes-console-linux-${{ matrix.arch }}-${{ env.VERSION_SAFE }}
+          name: onlyboxes-console-linux-${{ matrix.arch }}-${{ env.VERSION_SAFE }}.zip
           path: build/${{ env.CONSOLE_BIN }}
           if-no-files-found: error
 
@@ -142,7 +142,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release upload "${VERSION_RAW}" "build/${CONSOLE_BIN}" --clobber
+          (
+            cd build
+            zip -q -j "${CONSOLE_BIN}.zip" "${CONSOLE_BIN}"
+          )
+          gh release upload "${VERSION_RAW}" "build/${CONSOLE_BIN}.zip" --clobber
 
   build-worker:
     runs-on: ${{ matrix.os }}
@@ -231,7 +235,7 @@ jobs:
       - name: Upload worker workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: onlyboxes-worker-docker-${{ matrix.os_name }}-${{ matrix.arch }}-${{ env.VERSION_SAFE }}
+          name: onlyboxes-worker-docker-${{ matrix.os_name }}-${{ matrix.arch }}-${{ env.VERSION_SAFE }}.zip
           path: build/${{ env.WORKER_BIN }}
           if-no-files-found: error
 
@@ -241,7 +245,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release upload "${VERSION_RAW}" "build/${WORKER_BIN}" --clobber
+          (
+            cd build
+            zip -q -j "${WORKER_BIN}.zip" "${WORKER_BIN}"
+          )
+          gh release upload "${VERSION_RAW}" "build/${WORKER_BIN}.zip" --clobber
 
   docker-console:
     runs-on: ubuntu-latest
@@ -259,13 +267,13 @@ jobs:
       - name: Download console linux x64 binary artifact
         uses: actions/download-artifact@v4
         with:
-          name: onlyboxes-console-linux-x64-${{ env.VERSION_SAFE }}
+          name: onlyboxes-console-linux-x64-${{ env.VERSION_SAFE }}.zip
           path: build/console-linux-x64
 
       - name: Download console linux arm64 binary artifact
         uses: actions/download-artifact@v4
         with:
-          name: onlyboxes-console-linux-arm64-${{ env.VERSION_SAFE }}
+          name: onlyboxes-console-linux-arm64-${{ env.VERSION_SAFE }}.zip
           path: build/console-linux-arm64
 
       - name: Setup QEMU
