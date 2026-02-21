@@ -9,11 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const (
-	embeddedWebDistDir  = "web_dist"
-	embeddedWebIndex    = "index.html"
-	webAssetsPathPrefix = "/assets/"
-)
+const embeddedWebDistDir = "web_dist"
 
 //go:embed web_dist
 var embeddedWebDist embed.FS
@@ -31,55 +27,23 @@ func mustEmbeddedWebFS() fs.FS {
 func registerEmbeddedWebRoutes(router *gin.Engine) {
 	fileServer := http.FileServer(http.FS(embeddedWebFS))
 
-	router.GET("/", func(c *gin.Context) {
-		serveEmbeddedWebIndex(c)
-	})
-	router.HEAD("/", func(c *gin.Context) {
-		serveEmbeddedWebIndex(c)
-	})
+	router.GET("/", gin.WrapH(fileServer))
+	router.HEAD("/", gin.WrapH(fileServer))
 	router.GET("/favicon.ico", gin.WrapH(fileServer))
+	router.GET("/onlyboxes.avif", gin.WrapH(fileServer))
 	router.GET("/assets/*filepath", gin.WrapH(fileServer))
 
 	router.NoRoute(func(c *gin.Context) {
-		if !isEmbeddedWebFallbackRequest(c) {
+		method := c.Request.Method
+		if method != http.MethodGet && method != http.MethodHead {
 			c.Status(http.StatusNotFound)
 			return
 		}
-		serveEmbeddedWebIndex(c)
+		path := c.Request.URL.Path
+		if strings.HasPrefix(path, "/api/") || strings.HasPrefix(path, "/mcp/") {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		c.Status(http.StatusNotFound)
 	})
-}
-
-func serveEmbeddedWebIndex(c *gin.Context) {
-	index, err := fs.ReadFile(embeddedWebFS, embeddedWebIndex)
-	if err != nil {
-		c.Status(http.StatusInternalServerError)
-		return
-	}
-	c.Data(http.StatusOK, "text/html; charset=utf-8", index)
-}
-
-func isEmbeddedWebFallbackRequest(c *gin.Context) bool {
-	if c == nil || c.Request == nil || c.Request.URL == nil {
-		return false
-	}
-	method := c.Request.Method
-	if method != http.MethodGet && method != http.MethodHead {
-		return false
-	}
-
-	path := c.Request.URL.Path
-	if path == "" {
-		path = "/"
-	}
-	if path == "/api" || strings.HasPrefix(path, "/api/") {
-		return false
-	}
-	if path == "/mcp" || strings.HasPrefix(path, "/mcp/") {
-		return false
-	}
-	if path == "/favicon.ico" || path == "/assets" || strings.HasPrefix(path, webAssetsPathPrefix) {
-		return false
-	}
-
-	return true
 }
