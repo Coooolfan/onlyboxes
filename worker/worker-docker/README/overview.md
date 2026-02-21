@@ -3,7 +3,9 @@
 `worker-docker` connects to console over gRPC bidi stream `Connect`, sends a hello frame (including `worker_secret`), then sends periodic heartbeat frames and handles command dispatch/result in the same stream.
 
 Security warning (high risk):
-- worker-to-console gRPC is currently plaintext by default (no TLS/mTLS).
+- console gRPC currently has no built-in TLS/mTLS.
+- `worker-docker` rejects insecure console endpoints by default; plaintext is allowed only with `WORKER_CONSOLE_INSECURE=true`.
+- place console HTTP (`:8089`) and gRPC (`:50051`) behind a reverse proxy/gateway and enforce TLS for all external traffic.
 - `worker_secret` in hello is visible on the network path without transport encryption.
 - run only inside trusted private networks or encrypted tunnels; never expose this channel directly on public internet.
 - full mitigation requires TLS/mTLS support (not implemented in this release).

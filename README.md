@@ -1,204 +1,186 @@
 # Onlyboxes
 
-面向个人与小型团队的代码执行沙箱平台解决方案
+[简体中文文档](README.zh-CN.md)
 
-## 安全告警（高危）
+Onlyboxes is a self-hosted code execution sandbox platform for individuals and small teams.
+It uses a control-plane (`console`) and execution-plane (`worker-docker`) architecture, and exposes both REST APIs and MCP tools.
 
-- `worker -> console` 的 gRPC 连接当前默认是明文传输（未启用 TLS/mTLS）。
-- `ConnectHello` 中包含 `worker_secret`，在不受信网络路径上可能被窃听。
-- 仅建议部署在受信私网或已加密隧道内，禁止跨公网裸连。
-- 根治方案需要引入 TLS/mTLS（本版本尚未实现）。
+> [!WARNING]
+> In the current release, console gRPC does not provide built-in TLS/mTLS.
+> `worker-docker` rejects insecure console endpoints by default; plaintext is allowed only when `WORKER_CONSOLE_INSECURE=true` is explicitly set.
+> Put both console HTTP (`:8089`) and gRPC (`:50051`) endpoints behind your reverse proxy/gateway and enforce TLS for external traffic.
+> Deploy only on trusted private networks or encrypted tunnels, and do not expose the gRPC port directly to the public internet.
 
-## 本地启动（console + worker-docker）
+## Architecture
 
-1. 启动 `console`（终端 1）：
+```text
+                                              +-----------------+      +----------------------+
+                                       /----> | worker (Docker) | ---> | Docker containers    |
+                                      /       +-----------------+      +----------------------+
+Developer          +---------+       /        +-----------------+      +----------------------+
+API Client   <---> | console | <--->{  -----> | worker (Boxlite)| ---> | Boxlite environments |
+MCP Client         +---------+       \        +-----------------+      +----------------------+
+                                      \       +-----------------+      +----------------------+
+                                       \----> | worker (OS sys) | ---> | OS Processes         |
+                                              +-----------------+      +----------------------+
+```
+
+## Key Features
+
+- Self-hosted control plane with web dashboard (embedded in `console`)
+- Worker provisioning with one-time `WORKER_SECRET` delivery
+- Account-based token management for execution APIs and MCP
+- Capability-based execution (`echo`, `pythonExec`, `terminalExec`, `readImage`)
+- Task lifecycle API for sync/async execution (`/api/v1/tasks`)
+- SQLite persistence for accounts, tokens, workers, and tasks
+
+## Quick Start (Self-Hosted)
+
+### 1) Prerequisites
+
+- Docker Engine (required by `worker-docker` runtime)
+- Go `1.24+` (if you run worker from source)
+
+### 2) Start the console service
+
+1. Edit `docker/docker-compose.yml` and replace at least:
+   - `CONSOLE_HASH_KEY`
+   - `CONSOLE_DASHBOARD_PASSWORD`
+2. Start console:
+
+```bash
+docker compose -f docker/docker-compose.yml up -d
+```
+
+View live logs:
+
+```bash
+docker compose -f docker/docker-compose.yml logs -f console
+```
+
+Console endpoints:
+
+- Dashboard/API: `http://127.0.0.1:8089`
+
+### 3) Sign in and create an access token
+
+- Open `http://127.0.0.1:8089` in your browser.
+- Sign in with the initialized admin account.
+- Go to the token management page and create an access token.
+- Save the plaintext token immediately (it is returned only once).
+
+### 4) Create a worker identity in dashboard
+
+- Go to Workers page and create a worker.
+- Copy and securely store the startup command from the creation dialog (`WORKER_SECRET` is one-time visible).
+
+### 5) Run `worker-docker`
+
+- Download the latest worker binary from GitHub Releases:
+  - `https://github.com/onlyboxes/onlyboxes/releases/latest`
+- Use the startup command values from dashboard, and replace binary path with your downloaded executable.
+
+```bash
+# Example
+WORKER_CONSOLE_INSECURE=true \
+WORKER_CONSOLE_GRPC_TARGET=127.0.0.1:50051 \
+WORKER_ID=<worker_id> \
+WORKER_SECRET=<worker_secret> \
+./onlyboxes-worker-docker
+```
+
+### 6) Verify readiness
+
+- Confirm the worker is `online` on the dashboard Workers page.
+- For REST/MCP request examples, use `API.md`.
+- If no tokens are configured, `/mcp` and execution APIs return `401` by design.
+
+## Production Checklist
+
+- Replace all default credentials and rotate them regularly.
+- Keep `:50051` private; expose only `:8089` through your trusted ingress/reverse proxy.
+- Persist and back up the SQLite data directory (`CONSOLE_DB_PATH`).
+- Run workers on isolated hosts and limit Docker daemon access to trusted operators only.
+- Centralize logs and monitor worker online/offline events.
+
+## Configuration Reference
+
+### Console (`console`)
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `CONSOLE_HTTP_ADDR` | `:8089` | Dashboard + REST API listen address |
+| `CONSOLE_GRPC_ADDR` | `:50051` | Worker registry gRPC listen address |
+| `CONSOLE_HASH_KEY` | _(required)_ | HMAC key for hashing worker secrets and access tokens |
+| `CONSOLE_DB_PATH` | `./db/onlyboxes-console.db` | SQLite database path |
+| `CONSOLE_DB_BUSY_TIMEOUT_MS` | `5000` | SQLite busy timeout |
+| `CONSOLE_TASK_RETENTION_DAYS` | `30` | Retention for completed task records |
+| `CONSOLE_ENABLE_REGISTRATION` | `false` | Allow admin to register non-admin accounts |
+| `CONSOLE_DASHBOARD_USERNAME` | _(empty)_ | Used only for first admin initialization |
+| `CONSOLE_DASHBOARD_PASSWORD` | _(empty)_ | Used only for first admin initialization |
+
+### Worker (`worker-docker`)
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `WORKER_ID` | _(required)_ | Issued by `POST /api/v1/workers` |
+| `WORKER_SECRET` | _(required)_ | Issued once by `POST /api/v1/workers` |
+| `WORKER_CONSOLE_GRPC_TARGET` | `127.0.0.1:50051` | Console gRPC target |
+| `WORKER_CONSOLE_INSECURE` | `false` | `false` enforces TLS endpoint; set `true` only to allow plaintext console gRPC |
+| `WORKER_HEARTBEAT_INTERVAL_SEC` | `5` | Worker heartbeat interval |
+| `WORKER_HEARTBEAT_JITTER_PCT` | `20` | Heartbeat jitter percent |
+| `WORKER_PYTHON_EXEC_DOCKER_IMAGE` | `python:slim` | Runtime image for `pythonExec` |
+| `WORKER_TERMINAL_EXEC_DOCKER_IMAGE` | `coolfan1024/onlyboxes-default-worker:0.0.3` | Runtime image for `terminalExec` |
+| `WORKER_TERMINAL_OUTPUT_LIMIT_BYTES` | `1048576` | Per-stream output limit |
+
+## API Surfaces
+
+- Dashboard auth: `/api/v1/console/*`
+- Worker management (admin): `/api/v1/workers*`
+- Command execution: `/api/v1/commands/echo`, `/api/v1/commands/terminal`
+- Task execution: `/api/v1/tasks*`
+- MCP (Streamable HTTP): `POST /mcp`
+
+## Development
+
+### Run backend from source
 
 ```bash
 cd console
-CONSOLE_HTTP_ADDR=:8089 \
-CONSOLE_GRPC_ADDR=:50051 \
-CONSOLE_HEARTBEAT_INTERVAL_SEC=5 \
-CONSOLE_HASH_KEY=replace-with-long-random-key \
-CONSOLE_DASHBOARD_USERNAME=admin \
-CONSOLE_DASHBOARD_PASSWORD=change-me \
-CONSOLE_ENABLE_REGISTRATION=false \
-go run ./cmd/console
+CONSOLE_HASH_KEY=$(openssl rand -hex 32) go run ./cmd/console
 ```
 
-`console` 启动后，worker 数量默认为 `0`。worker 凭据（`worker_id/worker_secret`）由控制台 UI（或对应 API）按需新增生成，并以哈希形式持久化到 SQLite。
-
-账号体系说明：
-- `console` 首次初始化会创建一个管理员账号。
-- 首次初始化时，账号来源是 `CONSOLE_DASHBOARD_USERNAME` / `CONSOLE_DASHBOARD_PASSWORD`；缺失项会随机生成并打印。
-- 一旦数据库中已存在账号，后续启动会忽略上述环境变量并打印忽略日志。
-- 管理员可在 `CONSOLE_ENABLE_REGISTRATION=true` 时创建非管理员账号；默认关闭。
-
-可信 token 由控制台 API/UI 管理并持久化到 SQLite（仅存哈希，不存明文）。  
-若当前未配置任何 token，`/mcp` 与执行类 API 会返回 `401`。
-
-权限与隔离说明：
-- `GET/POST/DELETE /api/v1/workers*` 仅管理员可调用（非管理员返回 `403`）。
-- `GET/POST/DELETE /api/v1/console/tokens*` 始终仅作用于当前登录账号自己的 token。
-- MCP/commands/tasks 鉴权使用 `Authorization: Bearer <access-token>`，owner 隔离单位为 `account_id`：同账号多个 token 共享 task/terminal session，跨账号隔离。
-
-数据库相关环境变量：
-- `CONSOLE_DB_PATH`（默认 `./onlyboxes-console.db`）
-- `CONSOLE_DB_BUSY_TIMEOUT_MS`（默认 `5000`）
-- `CONSOLE_TASK_RETENTION_DAYS`（默认 `30`）
-- `CONSOLE_ENABLE_REGISTRATION`（默认 `false`）
-
-2. 登录控制台（保存 Cookie）：
+### Run web dev server
 
 ```bash
-curl -c /tmp/onlyboxes-console.cookie -X POST "http://127.0.0.1:8089/api/v1/console/login" \
-  -H "Content-Type: application/json" \
-  -d '{"username":"<dashboard_username>","password":"<dashboard_password>"}'
-```
-
-可选：查看当前会话与角色信息：
-
-```bash
-curl -b /tmp/onlyboxes-console.cookie "http://127.0.0.1:8089/api/v1/console/session"
-```
-
-3. 查看当前可信 token（接口需登录）：
-
-```bash
-curl -b /tmp/onlyboxes-console.cookie "http://127.0.0.1:8089/api/v1/console/tokens"
-```
-
-4. 新增可信 token（可手动指定 token，或省略 token 自动生成）：
-
-```bash
-curl -b /tmp/onlyboxes-console.cookie -X POST "http://127.0.0.1:8089/api/v1/console/tokens" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"ci-prod"}'
-```
-
-5. 新增 worker 并获取启动命令（接口需登录）：
-
-```bash
-curl -b /tmp/onlyboxes-console.cookie -X POST "http://127.0.0.1:8089/api/v1/workers"
-```
-
-说明：worker 管理接口仅管理员可调用。
-
-响应示例：
-
-```json
-{
-  "node_id": "2f51f8f9-77f2-4c1a-a4f5-2036fc9fcb9e",
-  "command": "WORKER_CONSOLE_GRPC_TARGET=127.0.0.1:50051 WORKER_ID=... WORKER_SECRET=... WORKER_HEARTBEAT_INTERVAL_SEC=5 WORKER_HEARTBEAT_JITTER_PCT=20 go run ./cmd/worker-docker"
-}
-```
-
-6. 启动 `worker-docker`（终端 2，使用上一步返回的 `command`）：
-
-```bash
-cd worker/worker-docker
-<command_from_create_worker_api>
-```
-
-7. 查看已注册 worker（仪表盘接口需登录）：
-
-```bash
-curl -b /tmp/onlyboxes-console.cookie "http://127.0.0.1:8089/api/v1/workers?page=1&page_size=20&status=all"
-```
-
-8. 按 worker 获取启动命令（接口需登录）：
-
-```bash
-curl -b /tmp/onlyboxes-console.cookie "http://127.0.0.1:8089/api/v1/workers/<worker_id>/startup-command"
-```
-
-该接口固定返回 `410 Gone`。`worker_secret` 仅在创建 worker 时返回一次，恢复路径为删除后重建 worker。
-
-9. 删除 worker（接口需登录，若 worker 在线将被立即断开）：
-
-```bash
-curl -b /tmp/onlyboxes-console.cookie -X DELETE "http://127.0.0.1:8089/api/v1/workers/<worker_id>"
-```
-
-10. 调用 echo 命令链路（阻塞等待 worker 返回，执行类接口需携带可信 token）：
-
-```bash
-curl -X POST "http://127.0.0.1:8089/api/v1/commands/echo" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <access-token>" \
-  -d '{"message":"hello onlyboxes","timeout_ms":5000}'
-```
-
-成功响应示例：
-
-```json
-{
-  "message": "hello onlyboxes"
-}
-```
-
-11. 提交通用任务（`mode=auto`，先等 `wait_ms`，未完成则返回 `202`）：
-
-```bash
-curl -X POST "http://127.0.0.1:8089/api/v1/tasks" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <access-token>" \
-  -d '{"capability":"echo","input":{"message":"hello task"},"mode":"auto","wait_ms":1500,"timeout_ms":60000}'
-```
-
-12. 查询任务状态：
-
-```bash
-curl -H "Authorization: Bearer <access-token>" "http://127.0.0.1:8089/api/v1/tasks/<task_id>"
-```
-
-13. 调用 MCP 接口（必须带可信 token）：
-
-```bash
-curl -X POST "http://127.0.0.1:8089/mcp" \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json, text/event-stream" \
-  -H "Authorization: Bearer <access-token>" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
-```
-
-补充说明：
-- `GET /api/v1/console/tokens/:token_id/value` 固定返回 `410 Gone`，token 明文仅在 `POST /api/v1/console/tokens` 创建响应返回一次。
-- dashboard 登录会话为内存态，`console` 重启后会失效，需要重新登录。
-
-## 发布打包（GitHub Actions）
-
-仓库提供 `package-release` 工作流（`.github/workflows/package-release.yml`）：
-
-- `workflow_dispatch`：手动触发，必须传入 `version`，上传二进制 artifact，并推送 Docker 镜像版本标签（不推 `latest`）。
-- `release.published`：发布触发，自动构建并上传二进制到对应 GitHub Release，同时推送 Docker 镜像版本标签与 `latest` 标签。
-
-产物按平台生成以下可执行文件：
-
-- `onlyboxes-console_<version>_linux_amd64`
-- `onlyboxes-console_<version>_linux_arm64`
-- `onlyboxes-worker-docker_<version>_linux_amd64`
-- `onlyboxes-worker-docker_<version>_linux_arm64`
-- `onlyboxes-worker-docker_<version>_macos_amd64`
-- `onlyboxes-worker-docker_<version>_macos_arm64`
-
-其中 `console` 二进制内嵌 `web` 前端静态资源，部署后可直接提供页面服务。
-
-Docker Hub 镜像仓库：`coolfan1024/onlyboxes`，仅推送 `console` 镜像（多架构 `linux/amd64`、`linux/arm64`），标签策略如下：
-
-- `<version>`：手动触发与 release 均推送
-- `latest`：仅 release 推送（不带前缀）
-
-## 前端开发（Vite 反向代理）
-
-`web` 项目开发服务器会将 `/api/*` 代理到 `http://127.0.0.1:8089`。
-首次访问仪表盘需要先登录，登录凭据来自 `console` 启动日志。
-
-```bash
+yarn --cwd web install
 yarn --cwd web dev
 ```
 
-如需改代理目标可设置：
+Web dev URL defaults to `http://127.0.0.1:5178` and proxies `/api/*` to `http://127.0.0.1:8089`.
 
-```bash
-VITE_API_TARGET=http://127.0.0.1:8089 yarn --cwd web dev
-```
+### Useful docs
+
+- Unified API reference: `API.md`
+- Console internals: `console/README/overview.md`
+- Worker internals: `worker/worker-docker/README/overview.md`
+- API/proto guide: `api/README/proto.md`
+- Web app guide: `web/README.md`
+
+## Release & Images
+
+- GitHub workflow: `.github/workflows/package-release.yml`
+- Console Docker image: `coolfan1024/onlyboxes:<version>` and `coolfan1024/onlyboxes:latest`
+- Console binary includes embedded web assets
+
+## Security and Operational Notes
+
+- Console gRPC has no built-in TLS/mTLS in this release; `worker-docker` requires explicit `WORKER_CONSOLE_INSECURE=true` to connect over plaintext.
+- Put console HTTP (`:8089`) and gRPC (`:50051`) behind a reverse proxy/gateway and enforce TLS on public/external links.
+- `WORKER_SECRET` and access token plaintext values are returned only at creation time.
+- `GET /api/v1/workers/:node_id/startup-command` and `GET /api/v1/console/tokens/:token_id/value` intentionally return `410 Gone`.
+- Dashboard login sessions are in-memory and are invalidated when `console` restarts.
+
+## License
+
+[GNU AGPL v3.0](LICENSE)

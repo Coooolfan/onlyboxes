@@ -75,8 +75,10 @@ The console service hosts:
     - `DELETE /api/v1/console/tokens/:token_id` delete token (current account only, cross-account returns `404`).
 
 Security warning (high risk):
-- worker-to-console gRPC is currently plaintext by default (no TLS/mTLS).
-- `worker_secret` is sent in `ConnectHello`; on untrusted networks it can be observed in transit.
+- console gRPC currently has no built-in TLS/mTLS.
+- `worker-docker` rejects insecure console endpoints by default; plaintext is allowed only with `WORKER_CONSOLE_INSECURE=true`.
+- place console HTTP (`:8089`) and gRPC (`:50051`) behind a reverse proxy/gateway and enforce TLS for all external traffic.
+- `worker_secret` is sent in `ConnectHello`; on untrusted networks it can still be observed in transit when plaintext is enabled.
 - deploy only on trusted private networks or encrypted tunnels; do not expose gRPC directly to the public internet.
 - fully mitigating this risk requires TLS/mTLS support (not implemented in this release).
 
