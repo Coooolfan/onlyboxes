@@ -2,6 +2,7 @@ package persistence
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -150,5 +151,36 @@ func TestAccountsTableSupportsInsertAndLookup(t *testing.T) {
 	}
 	if stored.IsAdmin != 1 {
 		t.Fatalf("expected is_admin=1, got %d", stored.IsAdmin)
+	}
+}
+
+func TestOpenCreatesParentDirectoryWhenMissing(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "nested", "db", "console.db")
+	parentDir := filepath.Dir(dbPath)
+
+	if _, err := os.Stat(parentDir); !os.IsNotExist(err) {
+		t.Fatalf("expected parent directory to not exist before open")
+	}
+
+	db, err := Open(ctx, Options{
+		Path:             dbPath,
+		BusyTimeoutMS:    5000,
+		HashKey:          "test-hash-key",
+		TaskRetentionDay: 30,
+	})
+	if err != nil {
+		t.Fatalf("open db with missing parent directory: %v", err)
+	}
+	defer func() {
+		_ = db.Close()
+	}()
+
+	info, err := os.Stat(parentDir)
+	if err != nil {
+		t.Fatalf("stat parent directory after open: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("expected %q to be a directory", parentDir)
 	}
 }

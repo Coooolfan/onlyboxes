@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -15,7 +17,7 @@ import (
 )
 
 const (
-	defaultDBPath         = "./onlyboxes-console.db"
+	defaultDBPath         = "./db/onlyboxes-console.db"
 	defaultBusyTimeoutMS  = 5000
 	defaultTaskRetentionD = 30
 )
@@ -48,6 +50,9 @@ func Open(ctx context.Context, opts Options) (*DB, error) {
 	taskRetentionDays := opts.TaskRetentionDay
 	if taskRetentionDays <= 0 {
 		taskRetentionDays = defaultTaskRetentionD
+	}
+	if err := ensureParentDir(path); err != nil {
+		return nil, err
 	}
 
 	hasher, err := NewHasher(opts.HashKey)
@@ -127,6 +132,21 @@ func runMigrations(ctx context.Context, db *sql.DB) error {
 	}
 	if err := goose.UpContext(ctx, db, "."); err != nil {
 		return fmt.Errorf("goose up: %w", err)
+	}
+	return nil
+}
+
+func ensureParentDir(path string) error {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" || trimmed == ":memory:" || strings.HasPrefix(trimmed, "file:") {
+		return nil
+	}
+	parentDir := filepath.Dir(trimmed)
+	if parentDir == "." || parentDir == "" {
+		return nil
+	}
+	if err := os.MkdirAll(parentDir, 0o755); err != nil {
+		return fmt.Errorf("create sqlite parent directory %q: %w", parentDir, err)
 	}
 	return nil
 }

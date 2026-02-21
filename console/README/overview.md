@@ -91,7 +91,7 @@ Defaults:
 - HTTP: `:8089`
 - gRPC: `:50051`
 - Heartbeat interval: `5s`
-- SQLite DB path: `./onlyboxes-console.db`
+- SQLite DB path: `./db/onlyboxes-console.db`
 - SQLite busy timeout: `5000ms`
 - Task retention: `30 days`
 - Registration enabled: `false` (`CONSOLE_ENABLE_REGISTRATION`)
@@ -123,7 +123,7 @@ Task persistence behavior:
 - non-expired terminal tasks are retained for `CONSOLE_TASK_RETENTION_DAYS` (default `30`) and cleaned by periodic pruner.
 
 Persistence config:
-- `CONSOLE_DB_PATH`: SQLite file path (default `./onlyboxes-console.db`)
+- `CONSOLE_DB_PATH`: SQLite file path (default `./db/onlyboxes-console.db`)
 - `CONSOLE_DB_BUSY_TIMEOUT_MS`: SQLite busy timeout in milliseconds (default `5000`)
 - `CONSOLE_TASK_RETENTION_DAYS`: terminal task retention days (default `30`)
 - `CONSOLE_HASH_KEY`: required HMAC key for hashing worker secret and trusted token; missing value fails startup

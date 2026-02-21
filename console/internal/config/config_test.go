@@ -11,6 +11,7 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("CONSOLE_OFFLINE_TTL_SEC", "")
 	t.Setenv("CONSOLE_REPLAY_WINDOW_SEC", "")
 	t.Setenv("CONSOLE_HEARTBEAT_INTERVAL_SEC", "")
+	t.Setenv("CONSOLE_DB_PATH", "")
 	t.Setenv("CONSOLE_DASHBOARD_USERNAME", "")
 	t.Setenv("CONSOLE_DASHBOARD_PASSWORD", "")
 	t.Setenv("CONSOLE_ENABLE_REGISTRATION", "")
@@ -31,6 +32,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.HeartbeatIntervalSec != int32(defaultHeartbeatIntervalSec) {
 		t.Fatalf("unexpected HeartbeatIntervalSec: %d", cfg.HeartbeatIntervalSec)
 	}
+	if cfg.DBPath != defaultDBPath {
+		t.Fatalf("expected DBPath=%q, got %q", defaultDBPath, cfg.DBPath)
+	}
 	if cfg.DashboardUsername != "" || cfg.DashboardPassword != "" {
 		t.Fatalf("expected empty dashboard credentials, got username=%q password=%q", cfg.DashboardUsername, cfg.DashboardPassword)
 	}
@@ -45,6 +49,7 @@ func TestLoadReadsDashboardCredentialsAndDurations(t *testing.T) {
 	t.Setenv("CONSOLE_OFFLINE_TTL_SEC", "30")
 	t.Setenv("CONSOLE_REPLAY_WINDOW_SEC", "120")
 	t.Setenv("CONSOLE_HEARTBEAT_INTERVAL_SEC", "10")
+	t.Setenv("CONSOLE_DB_PATH", "/var/lib/onlyboxes/console.db")
 	t.Setenv("CONSOLE_ENABLE_REGISTRATION", "true")
 
 	cfg := Load()
@@ -62,6 +67,9 @@ func TestLoadReadsDashboardCredentialsAndDurations(t *testing.T) {
 	}
 	if cfg.HeartbeatIntervalSec != 10 {
 		t.Fatalf("expected HeartbeatIntervalSec=10, got %d", cfg.HeartbeatIntervalSec)
+	}
+	if cfg.DBPath != "/var/lib/onlyboxes/console.db" {
+		t.Fatalf("expected DBPath override to be used, got %q", cfg.DBPath)
 	}
 	if !cfg.EnableRegistration {
 		t.Fatalf("expected registration enabled")

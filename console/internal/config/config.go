@@ -13,7 +13,7 @@ const (
 	defaultOfflineTTLSec        = 15
 	defaultReplayWindowSec      = 60
 	defaultHeartbeatIntervalSec = 5
-	defaultDBPath               = "./onlyboxes-console.db"
+	defaultDBPath               = "./db/onlyboxes-console.db"
 	defaultDBBusyTimeoutMS      = 5000
 	defaultTaskRetentionDays    = 30
 )
