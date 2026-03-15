@@ -404,10 +404,30 @@ export function buildWorkerSysStartupCommand(
   }
 }
 
-export function useWorkerStartupTool() {
-  const workerKind = ref<WorkerStartupKind>('worker-docker')
+export interface WorkerStartupToolInitialValues {
+  workerKind?: WorkerStartupKind
+  workerID?: string
+  workerSecret?: string
+  consoleGRPCTarget?: string
+}
+
+export function useWorkerStartupTool(initial?: WorkerStartupToolInitialValues) {
+  const workerKind = ref<WorkerStartupKind>(initial?.workerKind ?? 'worker-docker')
   const workerDockerConfig = reactive<WorkerDockerStartupConfig>(createDefaultWorkerDockerStartupConfig())
   const workerSysConfig = reactive<WorkerSysStartupConfig>(createDefaultWorkerSysStartupConfig())
+
+  if (initial) {
+    const target = workerKind.value === 'worker-docker' ? workerDockerConfig : workerSysConfig
+    if (initial.workerID !== undefined) {
+      target.workerID = initial.workerID
+    }
+    if (initial.workerSecret !== undefined) {
+      target.workerSecret = initial.workerSecret
+    }
+    if (initial.consoleGRPCTarget !== undefined) {
+      target.consoleGRPCTarget = initial.consoleGRPCTarget
+    }
+  }
 
   const workerDockerResult = computed(() => buildWorkerDockerStartupCommand(workerDockerConfig))
   const workerSysResult = computed(() => buildWorkerSysStartupCommand(workerSysConfig))

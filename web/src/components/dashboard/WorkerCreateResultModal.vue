@@ -1,8 +1,18 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 
-import type { WorkerStartupCommandResponse } from '@/types/workers'
+import { setPrefill } from '@/composables/useWorkerStartupPrefill'
+import type { WorkerStartupKind } from '@/types/worker-startup-tool'
+import type { WorkerStartupCommandResponse, WorkerType } from '@/types/workers'
 import { writeTextToClipboard } from '@/utils/clipboard'
+
+const workerTypeToStartupKind: Record<WorkerType, WorkerStartupKind> = {
+  normal: 'worker-docker',
+  'worker-sys': 'worker-sys',
+}
+
+const router = useRouter()
 
 const props = defineProps<{
   payload: WorkerStartupCommandResponse | null
@@ -128,6 +138,26 @@ async function copyStartupCommand(): Promise<void> {
   }
 }
 
+async function goToStartupTool(): Promise<void> {
+  if (!props.payload) {
+    return
+  }
+  const workerKind = workerTypeToStartupKind[props.payload.type] ?? 'worker-docker'
+  const workerID = extractEnvValue(commandText.value, 'WORKER_ID')
+  const secret = workerSecret.value
+  const consoleGRPCTarget = extractEnvValue(commandText.value, 'WORKER_CONSOLE_GRPC_TARGET')
+  setPrefill({
+    workerKind,
+    workerID,
+    workerSecret: secret,
+    consoleGRPCTarget: consoleGRPCTarget || undefined,
+  })
+  const failure = await router.push('/tools/worker-startup')
+  if (!failure) {
+    closeModal()
+  }
+}
+
 function closeModal(): void {
   secretVisible.value = false
   resetCopyFeedback()
@@ -223,6 +253,14 @@ onBeforeUnmount(() => {
         <div
           class="flex justify-end gap-3 px-6 py-5 border-t border-stroke rounded-b-lg max-[700px]:flex-col-reverse max-[700px]:[&>button]:w-full"
         >
+          <button
+            type="button"
+            class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-primary bg-surface border border-stroke transition-all duration-200 hover:not-disabled:border-stroke-hover hover:not-disabled:bg-surface-soft disabled:cursor-not-allowed disabled:opacity-50"
+            data-testid="open-in-startup-tool"
+            @click="goToStartupTool"
+          >
+            Open in Startup Tool
+          </button>
           <button
             type="button"
             class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-primary bg-surface border border-stroke transition-all duration-200 hover:not-disabled:border-stroke-hover hover:not-disabled:bg-surface-soft disabled:cursor-not-allowed disabled:opacity-50"

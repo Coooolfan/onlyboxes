@@ -11,6 +11,7 @@ import type {
 const props = defineProps<{
   config: WorkerSysStartupConfig
   autoCallTimeoutSec: number
+  showPrefilledCredentialHint: boolean
   whitelistModeDescription: string
 }>()
 
@@ -45,7 +46,16 @@ function handleWhitelistModeUpdate(value: string): void {
     <h2 class="text-base font-semibold m-0">Core Configuration</h2>
     <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
       <label class="grid gap-1.5">
-        <span class="text-sm text-secondary">WORKER_ID</span>
+        <span class="flex items-center gap-2 text-sm text-secondary">
+          <span>WORKER_ID</span>
+          <span
+            v-if="props.showPrefilledCredentialHint"
+            data-testid="worker-id-prefilled-hint"
+            class="inline-flex items-center rounded-full border border-stale/40 bg-stale/10 px-2 py-0.5 text-[11px] font-medium text-stale"
+          >
+            Already Filled
+          </span>
+        </span>
         <span class="text-xs text-secondary">Worker identity issued by console.</span>
         <input
           v-model.trim="props.config.workerID"
@@ -56,7 +66,16 @@ function handleWhitelistModeUpdate(value: string): void {
       </label>
 
       <label class="grid gap-1.5">
-        <span class="text-sm text-secondary">WORKER_SECRET</span>
+        <span class="flex items-center gap-2 text-sm text-secondary">
+          <span>WORKER_SECRET</span>
+          <span
+            v-if="props.showPrefilledCredentialHint"
+            data-testid="worker-secret-prefilled-hint"
+            class="inline-flex items-center rounded-full border border-stale/40 bg-stale/10 px-2 py-0.5 text-[11px] font-medium text-stale"
+          >
+            Already Filled
+          </span>
+        </span>
         <span class="text-xs text-secondary">One-time credential returned during worker creation.</span>
         <div class="flex items-center gap-2">
           <input

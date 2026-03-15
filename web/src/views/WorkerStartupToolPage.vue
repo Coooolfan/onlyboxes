@@ -1,13 +1,20 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
 
 import ConsoleHeader from '@/components/dashboard/ConsoleHeader.vue'
 import WorkerCommandPreviewPanel from '@/components/worker-tool/WorkerCommandPreviewPanel.vue'
 import WorkerDockerConfigForm from '@/components/worker-tool/WorkerDockerConfigForm.vue'
 import WorkerProfileSelector from '@/components/worker-tool/WorkerProfileSelector.vue'
 import WorkerSysConfigForm from '@/components/worker-tool/WorkerSysConfigForm.vue'
+import { consumePrefill } from '@/composables/useWorkerStartupPrefill'
 import { useWorkerStartupTool } from '@/composables/useWorkerStartupTool'
 import { writeTextToClipboard } from '@/utils/clipboard'
+
+const prefill = consumePrefill()
+const openedFromGoToStartupTool = prefill !== null
+const leavePromptMessage =
+  'WORKER_ID and WORKER_SECRET are already filled in. This is the last time the key will be visible. Please confirm you have saved them before leaving this page.'
 
 const {
   workerKind,
@@ -17,7 +24,7 @@ const {
   errorMessages,
   warningMessages,
   canCopyCommand,
-} = useWorkerStartupTool()
+} = useWorkerStartupTool(prefill ?? undefined)
 
 const copyingCommand = ref(false)
 const copiedCommand = ref(false)
@@ -183,8 +190,33 @@ async function copyStartupCommand(): Promise<void> {
   }
 }
 
+function handleBeforeUnload(event: BeforeUnloadEvent): void {
+  if (!openedFromGoToStartupTool) {
+    return
+  }
+  event.preventDefault()
+  event.returnValue = leavePromptMessage
+}
+
+onMounted(() => {
+  if (!openedFromGoToStartupTool) {
+    return
+  }
+  window.addEventListener('beforeunload', handleBeforeUnload)
+})
+
+onBeforeRouteLeave(() => {
+  if (!openedFromGoToStartupTool) {
+    return true
+  }
+  return window.confirm(leavePromptMessage)
+})
+
 onBeforeUnmount(() => {
   resetCopyFeedback()
+  if (openedFromGoToStartupTool) {
+    window.removeEventListener('beforeunload', handleBeforeUnload)
+  }
 })
 </script>
 
@@ -204,18 +236,28 @@ onBeforeUnmount(() => {
       <div class="rounded-lg border border-stroke bg-surface shadow-card p-5 overflow-y-auto grid gap-5">
         <WorkerProfileSelector v-model="workerKind" />
 
+        <div
+          v-if="openedFromGoToStartupTool"
+          data-testid="prefilled-credentials-notice"
+          class="rounded-md border border-stale/40 bg-stale/10 px-3 py-2 text-sm text-primary"
+        >
+          WORKER_ID and WORKER_SECRET are already filled in from the worker creation result.
+        </div>
+
         <div class="h-px bg-stroke/80"></div>
 
         <WorkerDockerConfigForm
           v-if="workerKind === 'worker-docker'"
           :config="workerDockerConfig"
           :auto-call-timeout-sec="dockerAutoCallTimeoutSec"
+          :show-prefilled-credential-hint="openedFromGoToStartupTool"
         />
         <WorkerSysConfigForm
           v-else
           :config="workerSysConfig"
           :auto-call-timeout-sec="sysAutoCallTimeoutSec"
           :whitelist-mode-description="whitelistModeDescription"
+          :show-prefilled-credential-hint="openedFromGoToStartupTool"
         />
 
         <div

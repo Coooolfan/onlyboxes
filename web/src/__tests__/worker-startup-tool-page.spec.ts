@@ -5,6 +5,7 @@ import { createPinia, setActivePinia } from 'pinia'
 
 import App from '../App.vue'
 import router from '../router'
+import { setPrefill } from '../composables/useWorkerStartupPrefill'
 import { jsonResponse, memberSessionPayload } from './testkit'
 
 async function settleUI(rounds = 4) {
@@ -92,6 +93,48 @@ describe('Worker Startup Tool Page', () => {
     expect(wrapper.get('[data-testid="startup-command-preview"]').text()).toContain(
       './onlyboxes-worker-sys',
     )
+
+    wrapper.unmount()
+  })
+
+  it('shows prefilled credential hints and blocks route leave when opened from goToStartupTool', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/v1/console/session') {
+        return jsonResponse(memberSessionPayload)
+      }
+      throw new Error(`unexpected url: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch)
+    const confirmMock = vi.fn(() => false)
+    vi.stubGlobal('confirm', confirmMock)
+
+    setPrefill({
+      workerKind: 'worker-docker',
+      workerID: 'node-2',
+      workerSecret: 'secret-2',
+      consoleGRPCTarget: '127.0.0.1:50051',
+    })
+
+    const wrapper = await mountRoute('/tools/worker-startup')
+
+    expect(wrapper.get('[data-testid="prefilled-credentials-notice"]').text()).toContain(
+      'WORKER_ID and WORKER_SECRET are already filled in',
+    )
+    expect(wrapper.get('[data-testid="worker-id-prefilled-hint"]').text()).toContain(
+      'Already Filled',
+    )
+    expect(wrapper.get('[data-testid="worker-secret-prefilled-hint"]').text()).toContain(
+      'Already Filled',
+    )
+
+    await router.push('/tokens')
+    await settleUI()
+
+    expect(confirmMock).toHaveBeenCalledWith(
+      'WORKER_ID and WORKER_SECRET are already filled in. This is the last time the key will be visible. Please confirm you have saved them before leaving this page.',
+    )
+    expect(router.currentRoute.value.path).toBe('/tools/worker-startup')
 
     wrapper.unmount()
   })

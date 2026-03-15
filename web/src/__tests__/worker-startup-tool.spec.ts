@@ -5,6 +5,7 @@ import {
   buildWorkerSysStartupCommand,
   createDefaultWorkerDockerStartupConfig,
   createDefaultWorkerSysStartupConfig,
+  useWorkerStartupTool,
 } from '@/composables/useWorkerStartupTool'
 
 describe('worker startup tool command builder', () => {
@@ -88,5 +89,50 @@ describe('worker startup tool command builder', () => {
       'WORKER_COMPUTER_USE_COMMAND_WHITELIST_MODE=allow_all approves all commands and disables whitelist checks.',
     )
     expect(result.command).not.toContain('WORKER_COMPUTER_USE_COMMAND_WHITELIST=')
+  })
+})
+
+describe('useWorkerStartupTool with initial values', () => {
+  it('fills worker-sys config when workerKind is worker-sys', () => {
+    const { workerKind, workerSysConfig, workerDockerConfig } = useWorkerStartupTool({
+      workerKind: 'worker-sys',
+      workerID: 'test-id',
+      workerSecret: 'test-secret',
+    })
+
+    expect(workerKind.value).toBe('worker-sys')
+    expect(workerSysConfig.workerID).toBe('test-id')
+    expect(workerSysConfig.workerSecret).toBe('test-secret')
+    expect(workerDockerConfig.workerID).toBe('')
+  })
+
+  it('fills worker-docker config when workerKind is worker-docker', () => {
+    const { workerKind, workerDockerConfig, workerSysConfig } = useWorkerStartupTool({
+      workerKind: 'worker-docker',
+      workerID: 'test-id',
+    })
+
+    expect(workerKind.value).toBe('worker-docker')
+    expect(workerDockerConfig.workerID).toBe('test-id')
+    expect(workerSysConfig.workerID).toBe('')
+  })
+
+  it('fills consoleGRPCTarget when provided', () => {
+    const { workerDockerConfig } = useWorkerStartupTool({
+      workerKind: 'worker-docker',
+      workerID: 'test-id',
+      workerSecret: 'test-secret',
+      consoleGRPCTarget: 'example.com:50051',
+    })
+
+    expect(workerDockerConfig.consoleGRPCTarget).toBe('example.com:50051')
+  })
+
+  it('uses defaults when no initial values provided', () => {
+    const { workerKind, workerDockerConfig } = useWorkerStartupTool()
+
+    expect(workerKind.value).toBe('worker-docker')
+    expect(workerDockerConfig.workerID).toBe('')
+    expect(workerDockerConfig.workerSecret).toBe('')
   })
 })
