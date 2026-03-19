@@ -258,7 +258,7 @@
                 <rect x="4" y="14" width="16" height="6" rx="1" />
             </svg>
             <text x="64" y="30" font-size="10" font-weight="600" fill="#888888" letter-spacing="1.5">TARGET</text>
-            <text x="64" y="48" font-size="14" font-weight="500" fill="#000000">OS Processes  (TODO)</text>
+            <text x="64" y="48" font-size="14" font-weight="500" fill="#000000">OS Processes  (WIP)</text>
         </g>
     </g>
 </svg>

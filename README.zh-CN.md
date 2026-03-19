@@ -38,7 +38,7 @@ Onlyboxes 是一个面向个人与小型团队的自托管代码执行沙箱平�
 ### 1）前置条件
 
 - 控制节点：
-  - Docker Engine（如果使用 docker 部署，控制节点无依赖）
+  - Docker Engine（release 中也提供二进制文件，使用二进制文件部署无需安装 Docker）
 - 执行节点
   - Docker Engine（`worker-docker` 依赖）
 
@@ -75,12 +75,16 @@ Onlyboxes 是一个面向个人与小型团队的自托管代码执行沙箱平�
 ![Token 创建完成弹窗（一次性明文）](static/docs/quickstart-token-modal.png)
 - token 明文只返回一次，请立即安全保存。
 
-### 4）创建 worker 身份
+### 4）创建 worker
 
 - 在 Workers 页面创建 worker。
 ![Workers 页面](static/docs/quickstart-workers-page.png)
 - 在创建弹窗中复制并安全保存启动命令（`WORKER_SECRET` 仅一次可见）。
-![Worker 创建完成弹窗（启动命令与一次性密钥）](static/docs/quickstart-worker-created-modal.png)
+![Worker 创建完成弹窗（启动命令与一次性密钥）](static/docs/quickstart-worker-created-modal.jpg)
+- （可选）点击 `Open in Startup Tool with Id and Secret` 携带 id 与 key 进入启动命令编辑工具
+  - 在弹出的页面中，你可以编辑所有可用的选项，页面最下方会生成对应的启动命令，复制并保存
+![启动命令编辑工具](static/docs/quickstart-worker-startup-tool.jpg)
+
 
 ### 5）启动 worker
 
@@ -92,7 +96,7 @@ Onlyboxes 是一个面向个人与小型团队的自托管代码执行沙箱平�
     - 确保 worker 可以访问 console gRPC 端点。
 2. 从 GitHub Releases 下载最新 `worker-docker` 二进制：
     - `https://github.com/onlyboxes/onlyboxes/releases/latest`
-3. 将控制台中创建 worker 返回的参数替换到启动命令中，并将可执行文件路径替换为你下载的二进制。
+3. 将控制台中创建 worker 返回的参数替换到启动命令中，并将最后一行的可执行文件路径替换为你下载的二进制文件。
     - worker 默认拒绝不安全的 console 端点；只有显式设置 `WORKER_CONSOLE_INSECURE=true` 才允许明文连接。
 
     ```bash
@@ -101,7 +105,7 @@ Onlyboxes 是一个面向个人与小型团队的自托管代码执行沙箱平�
     WORKER_CONSOLE_GRPC_TARGET=127.0.0.1:50051 \
     WORKER_ID=<worker_id> \
     WORKER_SECRET=<worker_secret> \
-    ./onlyboxes-worker-docker
+    /path/to/onlyboxes-worker-docker
     ```
 
 ### 6）验证运行状态
@@ -110,8 +114,20 @@ Onlyboxes 是一个面向个人与小型团队的自托管代码执行沙箱平�
 - REST API 调用示例请参考 `API.zh-CN.md`。
 - 若系统中没有任何 token，`/mcp` 与执行类 API 会按预期返回 `401`。
 - 在任意 LLM Chat Client 中添加 MCP 端点 `http://127.0.0.1:8089/mcp`，并设置 token，确认可以正常工作。
+![claude-code-demo](static/claude-code-demo.jpg)
 
-## 生产部署检查清单
+## 常见问题
+
+- Q: worker 启动后状态一直是 `offline`？
+  A: 检查 worker 的 `WORKER_CONSOLE_GRPC_TARGET` 是否正确指向 console 的 gRPC 地址，确保网络连通性。
+
+- Q: worker 可以部署在控制台所在的机器上吗？
+  A: 可以。
+
+- Q: worker 可以使用 docker 部署/运行吗？
+  A: 理论可以。但不推荐，因为 worker 需要访问宿主机的 Docker 守护进程。或者您需要自行解决 docker in docker 的问题。
+
+## 检查清单
 
 - 替换所有默认账号和默认密钥。
 - 使用反向代理为 `:8089`、`:50051` 提供强制 TLS 支持。

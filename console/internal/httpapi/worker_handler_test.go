@@ -190,11 +190,8 @@ func TestCreateWorkerSuccess(t *testing.T) {
 	if payload.Type != registry.WorkerTypeNormal {
 		t.Fatalf("expected type %q, got %q", registry.WorkerTypeNormal, payload.Type)
 	}
-	if !strings.Contains(payload.Command, "WORKER_ID=node-new-1") {
-		t.Fatalf("expected WORKER_ID in command, got %q", payload.Command)
-	}
-	if !strings.Contains(payload.Command, "WORKER_SECRET=secret-new-1") {
-		t.Fatalf("expected WORKER_SECRET in command, got %q", payload.Command)
+	if payload.WorkerSecret != "secret-new-1" {
+		t.Fatalf("expected worker_secret secret-new-1, got %q", payload.WorkerSecret)
 	}
 	if provisioning.lastType != registry.WorkerTypeNormal {
 		t.Fatalf("expected provisioning type %q, got %q", registry.WorkerTypeNormal, provisioning.lastType)
@@ -638,32 +635,3 @@ func TestDeleteTrustedTokenSuccess(t *testing.T) {
 	}
 }
 
-func TestResolveWorkerGRPCTargetPortOnlyUsesRequestHost(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/workers/node-copy-1/startup-command", nil)
-	req.Host = "panel.example.com:8089"
-
-	target := resolveWorkerGRPCTarget(":50051", req)
-	if target != "panel.example.com:50051" {
-		t.Fatalf("expected panel.example.com:50051, got %s", target)
-	}
-}
-
-func TestResolveWorkerGRPCTargetWildcardHostUsesRequestHost(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/workers/node-copy-1/startup-command", nil)
-	req.Host = "panel.example.com:8089"
-
-	target := resolveWorkerGRPCTarget("0.0.0.0:50051", req)
-	if target != "panel.example.com:50051" {
-		t.Fatalf("expected panel.example.com:50051, got %s", target)
-	}
-}
-
-func TestResolveWorkerGRPCTargetFallbackHost(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/workers/node-copy-1/startup-command", nil)
-	req.Host = ""
-
-	target := resolveWorkerGRPCTarget(":50051", req)
-	if target != "127.0.0.1:50051" {
-		t.Fatalf("expected 127.0.0.1:50051, got %s", target)
-	}
-}

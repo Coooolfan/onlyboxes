@@ -93,15 +93,15 @@ export async function createWorkerAPI(workerType: WorkerType): Promise<WorkerSta
   const payload = (await response.json()) as WorkerStartupCommandResponse
   const nodeID = payload.node_id?.trim()
   const type = payload.type
-  const command = payload.command?.trim()
-  if (!nodeID || (type !== 'normal' && type !== 'worker-sys') || !command) {
+  const workerSecret = payload.worker_secret?.trim()
+  if (!nodeID || (type !== 'normal' && type !== 'worker-sys') || !workerSecret) {
     throw new Error('API returned invalid worker startup payload.')
   }
 
   return {
     node_id: nodeID,
     type,
-    command,
+    worker_secret: workerSecret,
   }
 }
 

@@ -2,8 +2,6 @@ package httpapi
 
 import (
 	"errors"
-	"fmt"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -15,11 +13,7 @@ import (
 )
 
 const (
-	maxPageSize                     = 100
-	defaultWorkerGRPCHost           = "127.0.0.1"
-	defaultWorkerGRPCPort           = "50051"
-	startupCommandHeartbeatInterval = 5
-	startupCommandHeartbeatJitter   = 20
+	maxPageSize = 100
 )
 
 var ErrMCPAuthRequired = errors.New("mcp auth is required")
@@ -59,9 +53,9 @@ type listWorkersResponse struct {
 }
 
 type workerStartupCommandResponse struct {
-	NodeID  string `json:"node_id"`
-	Type    string `json:"type"`
-	Command string `json:"command"`
+	NodeID       string `json:"node_id"`
+	Type         string `json:"type"`
+	WorkerSecret string `json:"worker_secret"`
 }
 
 type createWorkerRequest struct {
@@ -255,9 +249,9 @@ func (h *WorkerHandler) CreateWorker(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, workerStartupCommandResponse{
-		NodeID:  nodeID,
-		Type:    workerType,
-		Command: h.buildWorkerStartupCommand(nodeID, workerSecret, c.Request),
+		NodeID:       nodeID,
+		Type:         workerType,
+		WorkerSecret: workerSecret,
 	})
 }
 
@@ -307,17 +301,6 @@ func (h *WorkerHandler) GetWorkerStartupCommand(c *gin.Context) {
 	})
 }
 
-func (h *WorkerHandler) buildWorkerStartupCommand(nodeID string, workerSecret string, req *http.Request) string {
-	return fmt.Sprintf(
-		"WORKER_CONSOLE_GRPC_TARGET=%s WORKER_ID=%s WORKER_SECRET=%s WORKER_HEARTBEAT_INTERVAL_SEC=%d WORKER_HEARTBEAT_JITTER_PCT=%d ./path-to-binary",
-		resolveWorkerGRPCTarget(h.consoleGRPCAddr, req),
-		nodeID,
-		workerSecret,
-		startupCommandHeartbeatInterval,
-		startupCommandHeartbeatJitter,
-	)
-}
-
 func parsePositiveIntQuery(c *gin.Context, key string, defaultValue int) (int, bool) {
 	raw := c.Query(key)
 	if raw == "" {
@@ -328,23 +311,6 @@ func parsePositiveIntQuery(c *gin.Context, key string, defaultValue int) (int, b
 		return 0, false
 	}
 	return value, true
-}
-
-func resolveWorkerGRPCTarget(consoleGRPCAddr string, req *http.Request) string {
-	rawAddr := strings.TrimSpace(consoleGRPCAddr)
-
-	host, port := parseAddrHostPort(rawAddr)
-	if port == "" {
-		port = defaultWorkerGRPCPort
-	}
-	if host == "" || isWildcardHost(host) {
-		host = parseRequestHost(req)
-	}
-	if host == "" || isWildcardHost(host) {
-		host = defaultWorkerGRPCHost
-	}
-
-	return net.JoinHostPort(host, port)
 }
 
 func resolveWorkerAccessScope(c *gin.Context) (string, bool, bool) {
@@ -360,51 +326,3 @@ func resolveWorkerAccessScope(c *gin.Context) (string, bool, bool) {
 	return "system", true, true
 }
 
-func parseAddrHostPort(addr string) (string, string) {
-	if addr == "" {
-		return "", ""
-	}
-
-	if strings.HasPrefix(addr, ":") {
-		return "", strings.TrimPrefix(addr, ":")
-	}
-
-	host, port, err := net.SplitHostPort(addr)
-	if err == nil {
-		return strings.TrimSpace(host), strings.TrimSpace(port)
-	}
-
-	if _, convErr := strconv.Atoi(addr); convErr == nil {
-		return "", addr
-	}
-	return "", ""
-}
-
-func parseRequestHost(req *http.Request) string {
-	if req == nil {
-		return ""
-	}
-
-	rawHost := strings.TrimSpace(req.Host)
-	if rawHost == "" {
-		return ""
-	}
-
-	host, _, err := net.SplitHostPort(rawHost)
-	if err == nil {
-		return strings.TrimSpace(host)
-	}
-
-	if strings.HasPrefix(rawHost, "[") && strings.Contains(rawHost, "]") {
-		trimmed := strings.TrimPrefix(rawHost, "[")
-		trimmed = strings.SplitN(trimmed, "]", 2)[0]
-		return strings.TrimSpace(trimmed)
-	}
-
-	return rawHost
-}
-
-func isWildcardHost(host string) bool {
-	trimmed := strings.TrimSpace(host)
-	return trimmed == "" || trimmed == "0.0.0.0" || trimmed == "::"
-}

@@ -52,7 +52,7 @@ export interface WorkerInflightResponse {
 export interface WorkerStartupCommandResponse {
   node_id: string
   type: WorkerType
-  command: string
+  worker_secret: string
 }
 
 export interface TrustedTokenItem {

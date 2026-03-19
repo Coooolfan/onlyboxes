@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { setPrefill } from '@/composables/useWorkerStartupPrefill'
 import type { WorkerStartupKind } from '@/types/worker-startup-tool'
 import type { WorkerStartupCommandResponse, WorkerType } from '@/types/workers'
-import { writeTextToClipboard } from '@/utils/clipboard'
 
 const workerTypeToStartupKind: Record<WorkerType, WorkerStartupKind> = {
   normal: 'worker-docker',
@@ -23,14 +22,8 @@ const emit = defineEmits<{
 }>()
 
 const secretVisible = ref(false)
-const copyingCommand = ref(false)
-const copiedCommand = ref(false)
-const copyFailed = ref(false)
 
-let copyFeedbackTimer: ReturnType<typeof setTimeout> | null = null
-
-const commandText = computed(() => props.payload?.command?.trim() ?? '')
-const workerSecret = computed(() => extractEnvValue(commandText.value, 'WORKER_SECRET'))
+const workerSecret = computed(() => props.payload?.worker_secret ?? '')
 
 const workerSecretDisplay = computed(() => {
   if (!workerSecret.value) {
@@ -41,49 +34,6 @@ const workerSecretDisplay = computed(() => {
   }
   return maskSecret(workerSecret.value)
 })
-
-const copyButtonText = computed(() => {
-  if (copyingCommand.value) {
-    return 'Copying...'
-  }
-  if (copiedCommand.value) {
-    return 'Copied'
-  }
-  if (copyFailed.value) {
-    return 'Copy Failed'
-  }
-  return 'Copy Startup Command'
-})
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
-function extractEnvValue(command: string, key: string): string {
-  const trimmedCommand = command.trim()
-  if (!trimmedCommand || !key.trim()) {
-    return ''
-  }
-
-  const pattern = new RegExp(`(?:^|\\s)${escapeRegExp(key)}=([^\\s]+)`)
-  const matched = trimmedCommand.match(pattern)
-  if (!matched || matched.length < 2) {
-    return ''
-  }
-
-  const capturedValue = matched[1]
-  if (typeof capturedValue !== 'string') {
-    return ''
-  }
-  let value = capturedValue.trim()
-  if (
-    (value.startsWith('"') && value.endsWith('"')) ||
-    (value.startsWith("'") && value.endsWith("'"))
-  ) {
-    value = value.slice(1, -1)
-  }
-  return value
-}
 
 function maskSecret(secret: string): string {
   const trimmed = secret.trim()
@@ -97,60 +47,15 @@ function maskSecret(secret: string): string {
   return `${trimmed.slice(0, 4)}${'*'.repeat(middleMaskLength)}${trimmed.slice(-4)}`
 }
 
-function resetCopyFeedback(): void {
-  if (copyFeedbackTimer) {
-    clearTimeout(copyFeedbackTimer)
-    copyFeedbackTimer = null
-  }
-  copyingCommand.value = false
-  copiedCommand.value = false
-  copyFailed.value = false
-}
-
-function scheduleCopyFeedbackReset(): void {
-  if (copyFeedbackTimer) {
-    clearTimeout(copyFeedbackTimer)
-  }
-  copyFeedbackTimer = setTimeout(() => {
-    copiedCommand.value = false
-    copyFailed.value = false
-    copyFeedbackTimer = null
-  }, 1500)
-}
-
-async function copyStartupCommand(): Promise<void> {
-  if (!commandText.value || copyingCommand.value) {
-    return
-  }
-  resetCopyFeedback()
-  copyingCommand.value = true
-  try {
-    await writeTextToClipboard(commandText.value, {
-      fallbackErrorMessage: 'Failed to copy startup command.',
-    })
-    copiedCommand.value = true
-    scheduleCopyFeedbackReset()
-  } catch {
-    copyFailed.value = true
-    scheduleCopyFeedbackReset()
-  } finally {
-    copyingCommand.value = false
-  }
-}
-
 async function goToStartupTool(): Promise<void> {
   if (!props.payload) {
     return
   }
   const workerKind = workerTypeToStartupKind[props.payload.type] ?? 'worker-docker'
-  const workerID = extractEnvValue(commandText.value, 'WORKER_ID')
-  const secret = workerSecret.value
-  const consoleGRPCTarget = extractEnvValue(commandText.value, 'WORKER_CONSOLE_GRPC_TARGET')
   setPrefill({
     workerKind,
-    workerID,
-    workerSecret: secret,
-    consoleGRPCTarget: consoleGRPCTarget || undefined,
+    workerID: props.payload.node_id,
+    workerSecret: workerSecret.value,
   })
   const failure = await router.push('/tools/worker-startup')
   if (!failure) {
@@ -160,7 +65,6 @@ async function goToStartupTool(): Promise<void> {
 
 function closeModal(): void {
   secretVisible.value = false
-  resetCopyFeedback()
   emit('close')
 }
 
@@ -168,13 +72,8 @@ watch(
   () => props.payload,
   () => {
     secretVisible.value = false
-    resetCopyFeedback()
   },
 )
-
-onBeforeUnmount(() => {
-  resetCopyFeedback()
-})
 </script>
 
 <template>
@@ -233,7 +132,6 @@ onBeforeUnmount(() => {
                 v-if="workerSecret"
                 type="button"
                 class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-primary bg-surface border border-stroke transition-all duration-200 hover:not-disabled:border-stroke-hover hover:not-disabled:bg-surface-soft disabled:cursor-not-allowed disabled:opacity-50"
-                :disabled="copyingCommand"
                 @click="secretVisible = !secretVisible"
               >
                 {{ secretVisible ? 'Hide' : 'Show' }}
@@ -241,34 +139,33 @@ onBeforeUnmount(() => {
             </p>
           </div>
 
-          <div class="grid gap-2">
-            <p class="m-0 text-primary text-sm font-medium">Startup Command</p>
-            <code
-              class="block border border-stroke rounded-default bg-black text-white p-4 font-mono text-[13px] leading-[1.6] break-all whitespace-pre-wrap"
-              >{{ commandText }}</code
-            >
+          <div class="mt-1 bg-surface-soft border border-stroke rounded-xl p-5">
+            <div class="flex items-start gap-4">
+              <div class="bg-surface p-2.5 rounded-lg border border-stroke text-secondary shrink-0 mt-0.5">
+                <svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5" /><line x1="12" x2="20" y1="19" y2="19" /></svg>
+              </div>
+              <div class="flex-1">
+                <h4 class="text-sm font-semibold text-primary m-0 mb-1">Quick Startup</h4>
+                <p class="text-[13px] text-secondary m-0 mb-3.5 leading-normal">
+                  Use the startup tool to quickly configure and generate a startup script for this worker.
+                </p>
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-2 px-4 py-2.5 bg-surface border border-stroke text-primary rounded-lg text-sm font-medium transition-all duration-200 hover:border-stroke-hover hover:bg-surface-soft active:scale-95 group"
+                  data-testid="open-in-startup-tool"
+                  @click="goToStartupTool"
+                >
+                  Open in Startup Tool with Id and Secret
+                  <svg class="w-4 h-4 text-secondary group-hover:text-primary transition-colors" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6" /><path d="M10 14 21 3" /><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /></svg>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
         <div
-          class="flex justify-end gap-3 px-6 py-5 border-t border-stroke rounded-b-lg max-[700px]:flex-col-reverse max-[700px]:[&>button]:w-full"
+          class="flex justify-end gap-3 px-6 py-5 border-t border-stroke rounded-b-lg"
         >
-          <button
-            type="button"
-            class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-primary bg-surface border border-stroke transition-all duration-200 hover:not-disabled:border-stroke-hover hover:not-disabled:bg-surface-soft disabled:cursor-not-allowed disabled:opacity-50"
-            data-testid="open-in-startup-tool"
-            @click="goToStartupTool"
-          >
-            Open in Startup Tool
-          </button>
-          <button
-            type="button"
-            class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-primary bg-surface border border-stroke transition-all duration-200 hover:not-disabled:border-stroke-hover hover:not-disabled:bg-surface-soft disabled:cursor-not-allowed disabled:opacity-50"
-            :disabled="copyingCommand || !commandText"
-            @click="copyStartupCommand"
-          >
-            {{ copyButtonText }}
-          </button>
           <button
             type="button"
             class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-white bg-accent border border-accent transition-all duration-200 hover:not-disabled:bg-[#333] hover:not-disabled:border-[#333] disabled:cursor-not-allowed disabled:opacity-50"

@@ -38,7 +38,7 @@ It uses a control-plane (`console`) and execution-plane (`worker`) architecture,
 ### 1) Prerequisites
 
 - Control node:
-  - Docker Engine (no dependencies if deployed via Docker)
+  - Docker Engine (binaries are also available in releases — no Docker needed if deploying via binary)
 - Worker node:
   - Docker Engine (required by `worker-docker`)
 
@@ -75,12 +75,16 @@ Default endpoints:
 ![Token created dialog (one-time plaintext token)](static/docs/quickstart-token-modal.png)
 - Save the plaintext token immediately (it is returned only once).
 
-### 4) Create a worker identity in dashboard
+### 4) Create a worker
 
 - Go to Workers page and create a worker.
 ![Workers page](static/docs/quickstart-workers-page.png)
 - Copy and securely store the startup command from the creation dialog (`WORKER_SECRET` is one-time visible).
-![Worker created dialog (startup command and one-time secret)](static/docs/quickstart-worker-created-modal.png)
+![Worker created dialog (startup command and one-time secret)](static/docs/quickstart-worker-created-modal.jpg)
+- (Optional) Click `Open in Startup Tool with Id and Secret` to open the startup command builder with the worker id and secret pre-filled.
+  - On the opened page, you can edit all available options. The generated startup command appears at the bottom of the page — copy and save it.
+![Startup command builder](static/docs/quickstart-worker-startup-tool.jpg)
+
 
 ### 5) Run worker
 
@@ -92,7 +96,7 @@ Default endpoints:
     - Ensure the worker can reach the console gRPC endpoint.
 2. Download the latest `worker-docker` binary from GitHub Releases:
     - `https://github.com/onlyboxes/onlyboxes/releases/latest`
-3. Use the startup command values from the dashboard, and replace the binary path with your downloaded executable.
+3. Use the startup command values from the dashboard, and replace the executable path on the last line with your downloaded binary.
     - Workers reject insecure console endpoints by default; set `WORKER_CONSOLE_INSECURE=true` only to allow plaintext connections.
 
     ```bash
@@ -101,7 +105,7 @@ Default endpoints:
     WORKER_CONSOLE_GRPC_TARGET=127.0.0.1:50051 \
     WORKER_ID=<worker_id> \
     WORKER_SECRET=<worker_secret> \
-    ./onlyboxes-worker-docker
+    /path/to/onlyboxes-worker-docker
     ```
 
 ### 6) Verify readiness
@@ -110,6 +114,18 @@ Default endpoints:
 - For REST API request examples, see `API.md`.
 - If no tokens are configured, `/mcp` and execution APIs return `401` by design.
 - Add the MCP endpoint `http://127.0.0.1:8089/mcp` in any LLM Chat Client, set the token, and verify it works correctly.
+![claude-code-demo](static/claude-code-demo.jpg)
+
+## FAQ
+
+- Q: Worker stays `offline` after starting?
+  A: Check that `WORKER_CONSOLE_GRPC_TARGET` points to the correct console gRPC address and verify network connectivity.
+
+- Q: Can a worker be deployed on the same machine as the console?
+  A: Yes.
+
+- Q: Can a worker run inside Docker?
+  A: In theory, yes. However, it is not recommended because the worker needs access to the host Docker daemon. You would need to handle Docker-in-Docker yourself.
 
 ## Production Checklist
 

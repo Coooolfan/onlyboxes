@@ -119,9 +119,6 @@ describe('Workers Page', () => {
       configurable: true,
     })
 
-    const createCommand =
-      'WORKER_CONSOLE_GRPC_TARGET=127.0.0.1:50051 WORKER_ID=node-2 WORKER_SECRET=secret-2 WORKER_HEARTBEAT_INTERVAL_SEC=5 WORKER_HEARTBEAT_JITTER_PCT=20 ./path-to-binary'
-
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       const method = String(init?.method ?? 'GET').toUpperCase()
@@ -140,7 +137,7 @@ describe('Workers Page', () => {
       if (url === '/api/v1/workers' && method === 'POST') {
         const parsedBody = JSON.parse(String(init?.body ?? '{}'))
         expect(parsedBody).toEqual({ type: 'normal' })
-        return jsonResponse({ node_id: 'node-2', type: 'normal', command: createCommand })
+        return jsonResponse({ node_id: 'node-2', type: 'normal', worker_secret: 'secret-2' })
       }
       throw new Error(`unexpected url: ${url} method=${method}`)
     })
@@ -163,9 +160,6 @@ describe('Workers Page', () => {
   })
 
   it('navigates to startup tool with prefill when clicking Open in Startup Tool', async () => {
-    const createCommand =
-      'WORKER_CONSOLE_GRPC_TARGET=127.0.0.1:50051 WORKER_ID=node-2 WORKER_SECRET=secret-2 WORKER_HEARTBEAT_INTERVAL_SEC=5 WORKER_HEARTBEAT_JITTER_PCT=20 ./path-to-binary'
-
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       const method = String(init?.method ?? 'GET').toUpperCase()
@@ -182,7 +176,7 @@ describe('Workers Page', () => {
         return jsonResponse(workersPayload)
       }
       if (url === '/api/v1/workers' && method === 'POST') {
-        return jsonResponse({ node_id: 'node-2', type: 'normal', command: createCommand })
+        return jsonResponse({ node_id: 'node-2', type: 'normal', worker_secret: 'secret-2' })
       }
       throw new Error(`unexpected url: ${url} method=${method}`)
     })
@@ -204,11 +198,9 @@ describe('Workers Page', () => {
       expect(startupToolBtn).toBeTruthy()
       expect(startupToolBtn!.textContent?.trim()).toBe('Open in Startup Tool')
 
-      // Native click fires goToStartupTool which synchronously parses env
-      // values and calls setPrefill. The async router.push it initiates doesn't
+      // Native click fires goToStartupTool which calls setPrefill with the
+      // structured payload fields. The async router.push it initiates doesn't
       // fully resolve under jsdom, so we complete the navigation explicitly.
-      // The page still reads prefill data set by the real handler — verifiable
-      // by checking the rendered command preview contains the created worker's ID.
       startupToolBtn!.click()
       await router.push('/tools/worker-startup')
       await flushPromises()
@@ -525,9 +517,6 @@ describe('Workers Page', () => {
   })
 
   it('allows non-admin workers page and creates worker-sys only', async () => {
-    const createCommand =
-      'WORKER_CONSOLE_GRPC_TARGET=127.0.0.1:50051 WORKER_ID=node-sys-1 WORKER_SECRET=secret-sys-1 WORKER_HEARTBEAT_INTERVAL_SEC=5 WORKER_HEARTBEAT_JITTER_PCT=20 ./path-to-binary'
-
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       const method = String(init?.method ?? 'GET').toUpperCase()
@@ -546,7 +535,7 @@ describe('Workers Page', () => {
       if (url === '/api/v1/workers' && method === 'POST') {
         const parsedBody = JSON.parse(String(init?.body ?? '{}'))
         expect(parsedBody).toEqual({ type: 'worker-sys' })
-        return jsonResponse({ node_id: 'node-sys-1', type: 'worker-sys', command: createCommand })
+        return jsonResponse({ node_id: 'node-sys-1', type: 'worker-sys', worker_secret: 'secret-sys-1' })
       }
       throw new Error(`unexpected url: ${url}`)
     })
