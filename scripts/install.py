@@ -161,7 +161,7 @@ def prepare_workdir(workdir: Path, service_name: str) -> None:
             "  Found: " + ", ".join(existing),
         )
 
-    for sub in ["db", "bin", "run", "logs", "install-artifacts"]:
+    for sub in ["db", "bin", "run", "install-artifacts"]:
         (workdir / sub).mkdir(parents=True, exist_ok=True)
 
     info(f"Working directory ready: {workdir}")
@@ -512,6 +512,9 @@ def main() -> None:
 
     # Step 9
     wait_worker_online(opener, http_port, worker_id, service_name)
+
+    # Cleanup
+    shutil.rmtree(workdir / "install-artifacts", ignore_errors=True)
 
     # Step 10
     print_summary(http_port, admin_password, worker_id, worker_secret, service_name)
