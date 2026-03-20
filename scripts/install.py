@@ -374,7 +374,7 @@ def wait_worker_online(
     while time.monotonic() < deadline:
         try:
             result = api_request(opener, url)
-            workers = result.get("workers") or []
+            workers = result.get("items") or []
             for w in workers:
                 if w.get("node_id") == worker_id:
                     info("Worker is online!")
