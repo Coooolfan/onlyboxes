@@ -202,7 +202,7 @@ def download_and_render_compose(
     info(f"Compose file written to {compose_path}")
 
 
-def start_console(workdir: Path, http_port: int) -> None:
+def start_console(workdir: Path, http_port: int, admin_password: str) -> None:
     step(4, "Start console")
 
     run_cmd(["docker", "compose", "up", "-d"], cwd=str(workdir))
@@ -216,9 +216,15 @@ def start_console(workdir: Path, http_port: int) -> None:
             with urllib.request.urlopen(req, timeout=5):
                 pass
             info("Console is ready.")
+            info(f"Console:  http://127.0.0.1:{http_port}")
+            info(f"Username: admin")
+            info(f"Password: {admin_password}")
             return
         except urllib.error.HTTPError:
             info("Console is ready.")
+            info(f"Console:  http://127.0.0.1:{http_port}")
+            info(f"Username: admin")
+            info(f"Password: {admin_password}")
             return
         except (urllib.error.URLError, OSError):
             time.sleep(POLL_INTERVAL)
@@ -410,14 +416,23 @@ def print_summary(
   ⚠ Save the password and worker secret now.
     They cannot be retrieved later.
 
-  Service status:
-    systemctl status {service_name}
+  Start service:
+    systemctl start {service_name}
 
   Stop service:
     systemctl stop {service_name}
 
+  Service status:
+    systemctl status {service_name}
+
   View logs:
     journalctl -u {service_name} -n 200 --no-pager
+
+  Uninstall service:
+    systemctl stop {service_name}
+    systemctl disable {service_name}
+    rm /etc/systemd/system/{service_name}.service
+    systemctl daemon-reload
 """
     )
 
@@ -481,7 +496,7 @@ def main() -> None:
     download_and_render_compose(workdir, tag, hash_key, admin_password, http_port, grpc_port)
 
     # Step 4
-    start_console(workdir, http_port)
+    start_console(workdir, http_port, admin_password)
 
     # Step 5
     opener = login_and_save_cookie(workdir, http_port, admin_password)
