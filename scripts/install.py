@@ -45,9 +45,15 @@ WORKER_ONLINE_TIMEOUT = 60
 # Helpers
 # ---------------------------------------------------------------------------
 
+USE_COLOR = sys.stdout.isatty() and sys.stderr.isatty()
+
+
+def _c(code: str, text: str) -> str:
+    return f"\033[{code}m{text}\033[0m" if USE_COLOR else text
+
 
 def fatal(stage: str, message: str) -> None:
-    print(f"\n✗ [{stage}] {message}", file=sys.stderr)
+    print(f"\n{_c('31', '✗')} [{stage}] {message}", file=sys.stderr)
     sys.exit(1)
 
 
@@ -56,7 +62,7 @@ def info(message: str) -> None:
 
 
 def step(number: int, title: str) -> None:
-    print(f"\n● Step {number}: {title}")
+    print(f"\n{_c('36', '●')} Step {number}: {_c('1', title)}")
 
 
 def generate_password(length: int = 24) -> str:
