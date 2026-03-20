@@ -33,7 +33,7 @@ fi
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR"' EXIT
 
-INSTALL_PY_URL="https://raw.githubusercontent.com/Coooolfan/onlyboxes/${TAG}/scripts/install.py"
+INSTALL_PY_URL="https://raw.githubusercontent.com/Coooolfan/onlyboxes/refs/heads/main/scripts/install.py"
 echo "Downloading install.py ..."
 
 if command -v curl >/dev/null 2>&1; then
