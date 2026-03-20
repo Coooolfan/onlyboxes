@@ -45,4 +45,4 @@ else
   exit 1
 fi
 
-exec python3 "$TMPDIR/install.py" "${ORIG_ARGS[@]}"
+exec python3 "$TMPDIR/install.py" "${ORIG_ARGS[@]}" < /dev/tty
