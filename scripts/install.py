@@ -458,7 +458,7 @@ def main() -> None:
     print(f"  gRPC port: {grpc_port}")
     print(f"  Service:   {service_name}")
 
-    if not args.yes:
+    if not args.yes and sys.stdin.isatty():
         try:
             answer = input("\nProceed? [Y/n] ").strip().lower()
         except (EOFError, KeyboardInterrupt):
