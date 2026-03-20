@@ -33,8 +33,10 @@ describe('worker startup tool command builder', () => {
     const result = buildWorkerSysStartupCommand(config)
 
     expect(result.errors).toEqual([])
-    expect(result.command).toContain("WORKER_COMPUTER_USE_COMMAND_WHITELIST='[\"echo\",\"time\"]' \\")
-    expect(result.command).toContain("WORKER_READ_IMAGE_ALLOWED_PATHS='[\"/data/images\",\"/tmp/a.png\"]' \\")
+    expect(result.command).toContain('WORKER_COMPUTER_USE_COMMAND_WHITELIST=\'["echo","time"]\' \\')
+    expect(result.command).toContain(
+      'WORKER_READ_IMAGE_ALLOWED_PATHS=\'["/data/images","/tmp/a.png"]\' \\',
+    )
   })
 
   it('includes call timeout only in manual mode', () => {

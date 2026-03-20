@@ -59,7 +59,9 @@ function handleCallTimeoutModeUpdate(value: string): void {
             Already Filled
           </span>
         </span>
-        <span class="text-xs text-secondary">One-time credential returned during worker creation.</span>
+        <span class="text-xs text-secondary"
+          >One-time credential returned during worker creation.</span
+        >
         <div class="flex items-center gap-2">
           <input
             v-model.trim="props.config.workerSecret"
@@ -93,7 +95,9 @@ function handleCallTimeoutModeUpdate(value: string): void {
         <span class="text-xs text-secondary">
           Allow plaintext gRPC transport. Use only in trusted private networks.
         </span>
-        <div class="flex items-center justify-between rounded-md border border-stroke bg-surface px-3 py-2">
+        <div
+          class="flex items-center justify-between rounded-md border border-stroke bg-surface px-3 py-2"
+        >
           <span class="text-sm text-primary">Set to true</span>
           <input
             v-model="props.config.consoleInsecure"
@@ -129,7 +133,8 @@ function handleCallTimeoutModeUpdate(value: string): void {
             v-if="props.config.callTimeoutMode === 'auto'"
             class="m-0 text-sm text-primary rounded-md border border-stroke bg-surface px-3 py-2"
           >
-            Derived timeout: <strong>{{ props.autoCallTimeoutSec }}s</strong> (ceil(2.5 x heartbeat))
+            Derived timeout: <strong>{{ props.autoCallTimeoutSec }}s</strong> (ceil(2.5 x
+            heartbeat))
           </p>
           <label v-else class="grid gap-1.5">
             <span class="text-xs text-secondary">Manual timeout in seconds.</span>
@@ -155,14 +160,19 @@ function handleCallTimeoutModeUpdate(value: string): void {
       </label>
     </div>
 
-    <details data-testid="docker-advanced-section" class="rounded-md border border-stroke bg-surface">
+    <details
+      data-testid="docker-advanced-section"
+      class="rounded-md border border-stroke bg-surface"
+    >
       <summary class="cursor-pointer px-3 py-2 text-sm font-medium text-primary">
         Advanced Configuration
       </summary>
       <div class="grid grid-cols-1 gap-4 border-t border-stroke p-3 md:grid-cols-2">
         <label class="grid gap-1.5">
           <span class="text-sm text-secondary">WORKER_HEARTBEAT_INTERVAL_SEC</span>
-          <span class="text-xs text-secondary">Heartbeat interval in seconds; must be positive.</span>
+          <span class="text-xs text-secondary"
+            >Heartbeat interval in seconds; must be positive.</span
+          >
           <input
             v-model.number="props.config.heartbeatIntervalSec"
             type="number"
@@ -173,7 +183,9 @@ function handleCallTimeoutModeUpdate(value: string): void {
 
         <label class="grid gap-1.5">
           <span class="text-sm text-secondary">WORKER_HEARTBEAT_JITTER_PCT</span>
-          <span class="text-xs text-secondary">Random jitter percent applied to heartbeat scheduling.</span>
+          <span class="text-xs text-secondary"
+            >Random jitter percent applied to heartbeat scheduling.</span
+          >
           <input
             v-model.number="props.config.heartbeatJitterPct"
             type="number"
@@ -185,7 +197,9 @@ function handleCallTimeoutModeUpdate(value: string): void {
 
         <label class="grid gap-1.5">
           <span class="text-sm text-secondary">WORKER_PYTHON_EXEC_DOCKER_IMAGE</span>
-          <span class="text-xs text-secondary">Container image used for pythonExec capability.</span>
+          <span class="text-xs text-secondary"
+            >Container image used for pythonExec capability.</span
+          >
           <input
             v-model.trim="props.config.pythonExecDockerImage"
             type="text"
@@ -195,7 +209,9 @@ function handleCallTimeoutModeUpdate(value: string): void {
 
         <label class="grid gap-1.5">
           <span class="text-sm text-secondary">WORKER_TERMINAL_EXEC_DOCKER_IMAGE</span>
-          <span class="text-xs text-secondary">Container image used for terminalExec sessions.</span>
+          <span class="text-xs text-secondary"
+            >Container image used for terminalExec sessions.</span
+          >
           <input
             v-model.trim="props.config.terminalExecDockerImage"
             type="text"
@@ -216,7 +232,9 @@ function handleCallTimeoutModeUpdate(value: string): void {
 
         <label class="grid gap-1.5">
           <span class="text-sm text-secondary">WORKER_TERMINAL_LEASE_MAX_SEC</span>
-          <span class="text-xs text-secondary">Maximum lease duration. Auto-raised to min if lower.</span>
+          <span class="text-xs text-secondary"
+            >Maximum lease duration. Auto-raised to min if lower.</span
+          >
           <input
             v-model.number="props.config.terminalLeaseMaxSec"
             type="number"
@@ -238,7 +256,9 @@ function handleCallTimeoutModeUpdate(value: string): void {
 
         <label class="grid gap-1.5">
           <span class="text-sm text-secondary">WORKER_TERMINAL_OUTPUT_LIMIT_BYTES</span>
-          <span class="text-xs text-secondary">Per-stream stdout/stderr truncation limit in bytes.</span>
+          <span class="text-xs text-secondary"
+            >Per-stream stdout/stderr truncation limit in bytes.</span
+          >
           <input
             v-model.number="props.config.terminalOutputLimitBytes"
             type="number"

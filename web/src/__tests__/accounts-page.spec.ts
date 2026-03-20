@@ -119,7 +119,9 @@ describe('Accounts Page', () => {
       const createAccountPasswordInput = document.body.querySelector<HTMLInputElement>(
         '.account-modal input[type="password"]',
       )
-      const createAccountForm = document.body.querySelector<HTMLFormElement>('.account-modal form.account-form')
+      const createAccountForm = document.body.querySelector<HTMLFormElement>(
+        '.account-modal form.account-form',
+      )
       expect(createAccountNameInput).toBeTruthy()
       expect(createAccountPasswordInput).toBeTruthy()
       expect(createAccountForm).toBeTruthy()

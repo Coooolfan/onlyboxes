@@ -101,8 +101,8 @@ describe('Tokens Page', () => {
       expect(document.body.textContent ?? '').toContain('http header')
       expect(document.body.textContent ?? '').toContain('mcp json')
 
-      const httpHeaderTab = Array.from(document.body.querySelectorAll('button')).find(
-        (button) => (button.textContent ?? '').includes('http header'),
+      const httpHeaderTab = Array.from(document.body.querySelectorAll('button')).find((button) =>
+        (button.textContent ?? '').includes('http header'),
       )
       expect(httpHeaderTab).toBeTruthy()
       httpHeaderTab?.dispatchEvent(new MouseEvent('click', { bubbles: true }))

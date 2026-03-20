@@ -535,7 +535,11 @@ describe('Workers Page', () => {
       if (url === '/api/v1/workers' && method === 'POST') {
         const parsedBody = JSON.parse(String(init?.body ?? '{}'))
         expect(parsedBody).toEqual({ type: 'worker-sys' })
-        return jsonResponse({ node_id: 'node-sys-1', type: 'worker-sys', worker_secret: 'secret-sys-1' })
+        return jsonResponse({
+          node_id: 'node-sys-1',
+          type: 'worker-sys',
+          worker_secret: 'secret-sys-1',
+        })
       }
       throw new Error(`unexpected url: ${url}`)
     })

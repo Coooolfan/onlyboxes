@@ -394,7 +394,10 @@ export function buildWorkerSysStartupCommand(
     ])
   }
   if (readImageAllowedPaths.length > 0) {
-    state.envEntries.push(['WORKER_READ_IMAGE_ALLOWED_PATHS', JSON.stringify(readImageAllowedPaths)])
+    state.envEntries.push([
+      'WORKER_READ_IMAGE_ALLOWED_PATHS',
+      JSON.stringify(readImageAllowedPaths),
+    ])
   }
 
   return {
@@ -413,7 +416,9 @@ export interface WorkerStartupToolInitialValues {
 
 export function useWorkerStartupTool(initial?: WorkerStartupToolInitialValues) {
   const workerKind = ref<WorkerStartupKind>(initial?.workerKind ?? 'worker-docker')
-  const workerDockerConfig = reactive<WorkerDockerStartupConfig>(createDefaultWorkerDockerStartupConfig())
+  const workerDockerConfig = reactive<WorkerDockerStartupConfig>(
+    createDefaultWorkerDockerStartupConfig(),
+  )
   const workerSysConfig = reactive<WorkerSysStartupConfig>(createDefaultWorkerSysStartupConfig())
 
   if (initial) {

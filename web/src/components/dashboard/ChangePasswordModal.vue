@@ -69,12 +69,15 @@ function closeModal(): void {
         aria-labelledby="change-password-modal-title"
       >
         <div class="flex items-center justify-between px-6 py-5 border-b border-stroke">
-          <h3 id="change-password-modal-title" class="m-0 text-xl font-semibold">Change Password</h3>
+          <h3 id="change-password-modal-title" class="m-0 text-xl font-semibold">
+            Change Password
+          </h3>
         </div>
 
         <div class="p-6 grid gap-5">
           <p class="m-0 text-secondary text-sm leading-normal">
-            Update your console account password. Existing sessions for this account will be rotated.
+            Update your console account password. Existing sessions for this account will be
+            rotated.
           </p>
 
           <form

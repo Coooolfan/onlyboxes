@@ -15,7 +15,9 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <footer class="flex justify-between items-center gap-4 px-6 py-4 bg-surface-soft border-t border-stroke max-[960px]:flex-col max-[960px]:items-start">
+  <footer
+    class="flex justify-between items-center gap-4 px-6 py-4 bg-surface-soft border-t border-stroke max-[960px]:flex-col max-[960px]:items-start"
+  >
     <span class="font-sans text-[13px] text-secondary">Showing {{ footerText }}</span>
     <div class="inline-flex items-center gap-3">
       <button

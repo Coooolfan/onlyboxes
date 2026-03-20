@@ -163,8 +163,8 @@ describe('Worker Startup Tool Page', () => {
     await settleUI()
 
     const previewText = wrapper.get('[data-testid="startup-command-preview"]').text()
-    expect(previewText).toContain("WORKER_COMPUTER_USE_COMMAND_WHITELIST='[\"echo\",\"time\"]' \\")
-    expect(previewText).toContain("WORKER_READ_IMAGE_ALLOWED_PATHS='[\"/tmp/a.png\"]' \\")
+    expect(previewText).toContain('WORKER_COMPUTER_USE_COMMAND_WHITELIST=\'["echo","time"]\' \\')
+    expect(previewText).toContain('WORKER_READ_IMAGE_ALLOWED_PATHS=\'["/tmp/a.png"]\' \\')
 
     wrapper.unmount()
   })
@@ -200,7 +200,9 @@ describe('Worker Startup Tool Page', () => {
     await allowAllButton.trigger('click')
     await settleUI()
 
-    expect(wrapper.get('[data-testid="sys-whitelist-textarea"]').attributes('disabled')).toBeDefined()
+    expect(
+      wrapper.get('[data-testid="sys-whitelist-textarea"]').attributes('disabled'),
+    ).toBeDefined()
     expect(wrapper.text()).toContain('Disabled because allow_all mode ignores whitelist entries.')
 
     wrapper.unmount()

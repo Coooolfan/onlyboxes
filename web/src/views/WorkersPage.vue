@@ -264,7 +264,10 @@ onBeforeUnmount(() => {
     <section
       class="border border-stroke rounded-lg bg-surface shadow-card overflow-hidden animate-[rise-in_620ms_ease-out] max-[620px]:rounded-default"
     >
-      <WorkersToolbar :status-filter="workersStore.statusFilter" @set-status="workersStore.setFilter" />
+      <WorkersToolbar
+        :status-filter="workersStore.statusFilter"
+        @set-status="workersStore.setFilter"
+      />
 
       <ErrorBanner
         v-if="workersStore.errorMessage"

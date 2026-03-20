@@ -84,14 +84,14 @@ function handleCollapsedSidebarHeaderClick() {
 async function handleLogout() {
   closeUserMenu()
   await authStore.logout()
-  
+
   accountsStore.teardown()
   accountsStore.reset()
   workersStore.teardown()
   workersStore.reset()
   tokensStore.teardown()
   tokensStore.reset()
-  
+
   await router.replace('/login')
 }
 
@@ -129,7 +129,9 @@ watch(sidebarCollapsed, (collapsed) => {
           />
           <span
             class="font-bold text-lg tracking-tight whitespace-nowrap overflow-hidden transition-[max-width,opacity,margin] duration-200 ease-out"
-            :class="sidebarCollapsed ? 'max-w-0 opacity-0 ml-0' : 'max-w-[140px] opacity-100 ml-0.5'"
+            :class="
+              sidebarCollapsed ? 'max-w-0 opacity-0 ml-0' : 'max-w-[140px] opacity-100 ml-0.5'
+            "
           >
             Onlyboxes
           </span>
@@ -181,7 +183,9 @@ watch(sidebarCollapsed, (collapsed) => {
       <div
         :class="[
           'border-t border-stroke/50 text-xs text-secondary font-mono',
-          sidebarCollapsed ? 'p-3 flex justify-center' : 'p-3.5 flex items-center justify-between gap-2',
+          sidebarCollapsed
+            ? 'p-3 flex justify-center'
+            : 'p-3.5 flex items-center justify-between gap-2',
         ]"
       >
         <span
@@ -251,13 +255,9 @@ watch(sidebarCollapsed, (collapsed) => {
               Logout
             </button>
           </div>
-          
+
           <!-- Backdrop for closing menu -->
-          <div 
-             v-if="showUserMenu" 
-             class="fixed inset-0 z-40" 
-             @click="closeUserMenu"
-          ></div>
+          <div v-if="showUserMenu" class="fixed inset-0 z-40" @click="closeUserMenu"></div>
         </div>
       </header>
 

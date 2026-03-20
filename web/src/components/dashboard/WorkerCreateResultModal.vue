@@ -95,7 +95,8 @@ watch(
 
         <div class="p-6 grid gap-5">
           <p class="m-0 text-secondary text-sm leading-normal">
-            Startup details are returned only once at creation time. Copy and store them securely now.
+            Startup details are returned only once at creation time. Copy and store them securely
+            now.
           </p>
 
           <div class="grid gap-3">
@@ -141,13 +142,28 @@ watch(
 
           <div class="mt-1 bg-surface-soft border border-stroke rounded-xl p-5">
             <div class="flex items-start gap-4">
-              <div class="bg-surface p-2.5 rounded-lg border border-stroke text-secondary shrink-0 mt-0.5">
-                <svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5" /><line x1="12" x2="20" y1="19" y2="19" /></svg>
+              <div
+                class="bg-surface p-2.5 rounded-lg border border-stroke text-secondary shrink-0 mt-0.5"
+              >
+                <svg
+                  class="w-5 h-5"
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <polyline points="4 17 10 11 4 5" />
+                  <line x1="12" x2="20" y1="19" y2="19" />
+                </svg>
               </div>
               <div class="flex-1">
                 <h4 class="text-sm font-semibold text-primary m-0 mb-1">Quick Startup</h4>
                 <p class="text-[13px] text-secondary m-0 mb-3.5 leading-normal">
-                  Use the startup tool to quickly configure and generate a startup script for this worker.
+                  Use the startup tool to quickly configure and generate a startup script for this
+                  worker.
                 </p>
                 <button
                   type="button"
@@ -156,16 +172,27 @@ watch(
                   @click="goToStartupTool"
                 >
                   Open in Startup Tool with Id and Secret
-                  <svg class="w-4 h-4 text-secondary group-hover:text-primary transition-colors" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6" /><path d="M10 14 21 3" /><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /></svg>
+                  <svg
+                    class="w-4 h-4 text-secondary group-hover:text-primary transition-colors"
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M15 3h6v6" />
+                    <path d="M10 14 21 3" />
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                  </svg>
                 </button>
               </div>
             </div>
           </div>
         </div>
 
-        <div
-          class="flex justify-end gap-3 px-6 py-5 border-t border-stroke rounded-b-lg"
-        >
+        <div class="flex justify-end gap-3 px-6 py-5 border-t border-stroke rounded-b-lg">
           <button
             type="button"
             class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-white bg-accent border border-accent transition-all duration-200 hover:not-disabled:bg-[#333] hover:not-disabled:border-[#333] disabled:cursor-not-allowed disabled:opacity-50"

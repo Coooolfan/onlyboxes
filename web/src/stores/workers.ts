@@ -235,7 +235,9 @@ export const useWorkersStore = defineStore('workers', () => {
     return worker.capabilities.map((item) => item.name).join(', ')
   }
 
-  async function createWorker(workerType: WorkerType): Promise<WorkerStartupCommandResponse | null> {
+  async function createWorker(
+    workerType: WorkerType,
+  ): Promise<WorkerStartupCommandResponse | null> {
     if (creatingWorker.value) {
       return null
     }

@@ -59,9 +59,7 @@ export async function fetchWorkerStatsAPI(
   }
 }
 
-export async function fetchWorkerInflightAPI(
-  signal: AbortSignal,
-): Promise<WorkerInflightResponse> {
+export async function fetchWorkerInflightAPI(signal: AbortSignal): Promise<WorkerInflightResponse> {
   const response = await request('/api/v1/workers/inflight', { signal })
   if (!response.ok) {
     throw new Error(await parseAPIError(response))
@@ -74,7 +72,9 @@ export async function fetchWorkerInflightAPI(
   }
 }
 
-export async function createWorkerAPI(workerType: WorkerType): Promise<WorkerStartupCommandResponse> {
+export async function createWorkerAPI(
+  workerType: WorkerType,
+): Promise<WorkerStartupCommandResponse> {
   const response = await request('/api/v1/workers', {
     method: 'POST',
     headers: {

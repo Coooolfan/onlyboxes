@@ -19,7 +19,7 @@ const emit = defineEmits<{
           'rounded-[6px] px-4 py-1.5 text-[13px] font-medium transition-all duration-200 border-0 cursor-pointer',
           statusFilter === 'all'
             ? 'text-white bg-accent'
-            : 'text-secondary bg-transparent hover:text-primary hover:bg-surface-soft'
+            : 'text-secondary bg-transparent hover:text-primary hover:bg-surface-soft',
         ]"
         @click="emit('setStatus', 'all')"
       >
@@ -31,7 +31,7 @@ const emit = defineEmits<{
           'rounded-[6px] px-4 py-1.5 text-[13px] font-medium transition-all duration-200 border-0 cursor-pointer',
           statusFilter === 'online'
             ? 'text-white bg-accent'
-            : 'text-secondary bg-transparent hover:text-primary hover:bg-surface-soft'
+            : 'text-secondary bg-transparent hover:text-primary hover:bg-surface-soft',
         ]"
         @click="emit('setStatus', 'online')"
       >
@@ -43,7 +43,7 @@ const emit = defineEmits<{
           'rounded-[6px] px-4 py-1.5 text-[13px] font-medium transition-all duration-200 border-0 cursor-pointer',
           statusFilter === 'offline'
             ? 'text-white bg-accent'
-            : 'text-secondary bg-transparent hover:text-primary hover:bg-surface-soft'
+            : 'text-secondary bg-transparent hover:text-primary hover:bg-surface-soft',
         ]"
         @click="emit('setStatus', 'offline')"
       >

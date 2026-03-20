@@ -222,18 +222,17 @@ onBeforeUnmount(() => {
 
 <template>
   <main class="relative z-2 mx-auto w-[min(1240px,100%)] grid gap-6">
-    <ConsoleHeader
-      eyebrow="Onlyboxes / Worker Tool"
-      title="Worker Startup Tool"
-      hide-refresh
-    >
+    <ConsoleHeader eyebrow="Onlyboxes / Worker Tool" title="Worker Startup Tool" hide-refresh>
       <template #subtitle>
-        Configure startup parameters for worker-docker and worker-sys, then copy a ready-to-run startup command.
+        Configure startup parameters for worker-docker and worker-sys, then copy a ready-to-run
+        startup command.
       </template>
     </ConsoleHeader>
 
     <section class="grid gap-4">
-      <div class="rounded-lg border border-stroke bg-surface shadow-card p-5 overflow-y-auto grid gap-5">
+      <div
+        class="rounded-lg border border-stroke bg-surface shadow-card p-5 overflow-y-auto grid gap-5"
+      >
         <WorkerProfileSelector v-model="workerKind" />
 
         <div
@@ -265,9 +264,7 @@ onBeforeUnmount(() => {
           class="rounded-md border px-3 py-2 text-sm"
           :class="hasErrors ? 'border-offline/30 bg-offline/5' : 'border-stale/40 bg-stale/10'"
         >
-          <p class="m-0 text-primary font-medium mb-2">
-            Validation
-          </p>
+          <p class="m-0 text-primary font-medium mb-2">Validation</p>
           <ul class="m-0 pl-4 grid gap-1 text-secondary">
             <li
               v-for="item in issueItems"
