@@ -404,7 +404,7 @@ def wait_worker_online(
 
 
 def print_summary(
-    http_port: int, admin_password: str,
+    workdir: Path, http_port: int, admin_password: str,
     worker_id: str, worker_secret: str, service_name: str,
 ) -> None:
     print(
@@ -434,11 +434,13 @@ def print_summary(
   View logs:
     journalctl -u {service_name} -n 200 --no-pager
 
-  Uninstall service:
+  Uninstall:
     systemctl stop {service_name}
     systemctl disable {service_name}
     rm /etc/systemd/system/{service_name}.service
     systemctl daemon-reload
+    docker compose -f {workdir}/docker-compose.yml down
+    rm -rf {workdir}
 
   Next:
     - Open the console in your browser: http://127.0.0.1:{http_port}
@@ -529,7 +531,7 @@ def main() -> None:
     shutil.rmtree(workdir / "install-artifacts", ignore_errors=True)
 
     # Step 10
-    print_summary(http_port, admin_password, worker_id, worker_secret, service_name)
+    print_summary(workdir, http_port, admin_password, worker_id, worker_secret, service_name)
 
 
 if __name__ == "__main__":
