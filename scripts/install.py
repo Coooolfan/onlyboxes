@@ -439,6 +439,12 @@ def print_summary(
     systemctl disable {service_name}
     rm /etc/systemd/system/{service_name}.service
     systemctl daemon-reload
+
+  Next:
+    - Open the console in your browser: http://127.0.0.1:{http_port}
+    - Log in with username "admin" and the password shown above
+    - Create a mcp token and configure it in your MCP client
+    - Also see: https://github.com/Coooolfan/onlyboxes?tab=readme-ov-file#6-verify-readiness
 """
     )
 
