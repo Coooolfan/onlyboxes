@@ -217,7 +217,10 @@ def start_console(workdir: Path, http_port: int) -> None:
                 pass
             info("Console is ready.")
             return
-        except Exception:
+        except urllib.error.HTTPError:
+            info("Console is ready.")
+            return
+        except (urllib.error.URLError, OSError):
             time.sleep(POLL_INTERVAL)
 
     fatal("console", f"Console did not become ready within {CONSOLE_READY_TIMEOUT}s.")
