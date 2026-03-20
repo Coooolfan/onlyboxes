@@ -38,7 +38,7 @@ Onlyboxes 是一个面向个人与小型团队的自托管代码执行沙箱平�
 在单台机器上部署 `console` + `worker-docker`：
 
 ```bash
-curl -fsSL https://github.com/Coooolfan/onlyboxes/blob/main/scripts/install.sh | bash -s -- --tag 0.1.5
+curl -fsSL https://raw.githubusercontent.com/Coooolfan/onlyboxes/refs/heads/main/scripts/install.sh | bash -s -- --tag 0.1.5
 ```
 
 安装器将自动完成：

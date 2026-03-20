@@ -38,7 +38,7 @@ It uses a control-plane (`console`) and execution-plane (`worker`) architecture,
 For a single-machine deployment of `console` + `worker-docker`, run:
 
 ```bash
-curl -fsSL https://github.com/Coooolfan/onlyboxes/blob/main/scripts/install.sh | bash -s -- --tag 0.1.5
+curl -fsSL https://raw.githubusercontent.com/Coooolfan/onlyboxes/refs/heads/main/scripts/install.sh | bash -s -- --tag 0.1.5
 ```
 
 The installer will:
