@@ -33,7 +33,38 @@ Onlyboxes 是一个面向个人与小型团队的自托管代码执行沙箱平�
 ![架构](static/architecture.zh-CN.svg#gh-light-mode-only)
 ![架构](static/architecture.zh-CN-dark.svg#gh-dark-mode-only)
 
-## 快速开始（自托管）
+## 一键安装脚本（Linux）
+
+在单台机器上部署 `console` + `worker-docker`：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Coooolfan/onlyboxes/0.1.3/scripts/install.sh | bash -s -- --tag 0.1.3
+```
+
+安装器将自动完成：
+
+1. 环境检查（Linux、Docker、Docker Compose v2、systemd）
+2. 下载 compose 模板并使用自动生成的凭据渲染
+3. 通过 `docker compose up -d` 启动 console
+4. 登录并创建 `normal` worker
+5. 下载与当前架构匹配的 `worker-docker` release 二进制
+6. 生成并启用 systemd 服务
+7. 轮询直到 worker 上线，输出安装结果摘要
+
+可用参数：
+
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `--tag` | _(必填)_ | Release 版本标签，如 `v0.1.0` |
+| `--workdir` | `$PWD/onlyboxes` | 工作目录 |
+| `--yes` / `-y` | `false` | 非交互模式，跳过确认 |
+| `--console-http-port` | `8089` | Console HTTP 端口（宿主机侧） |
+| `--console-grpc-port` | `50051` | Console gRPC 端口（宿主机侧） |
+| `--service-name` | `onlyboxes-worker-docker` | systemd 服务名称 |
+
+运行要求：Linux、systemd、Docker Engine、Docker Compose v2、Python 3。
+
+## 快速开始（手动部署）
 
 ### 1）前置条件
 

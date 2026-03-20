@@ -33,7 +33,38 @@ It uses a control-plane (`console`) and execution-plane (`worker`) architecture,
 ![Architecture](static/architecture.svg#gh-light-mode-only)
 ![Architecture](static/architecture-dark.svg#gh-dark-mode-only)
 
-## Quick Start (Self-Hosted)
+## One-Click Installer (Linux)
+
+For a single-machine deployment of `console` + `worker-docker`, run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Coooolfan/onlyboxes/0.1.3/scripts/install.sh | bash -s -- --tag 0.1.3
+```
+
+The installer will:
+
+1. Check the environment (Linux, Docker, Docker Compose v2, systemd)
+2. Download and render the compose template with auto-generated credentials
+3. Start the console via `docker compose up -d`
+4. Log in and create a `normal` worker
+5. Download the architecture-matched `worker-docker` release binary
+6. Generate and enable a systemd service for the worker
+7. Poll until the worker comes online and print a result summary
+
+Available options:
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--tag` | _(required)_ | Release version tag, e.g. `v0.1.0` |
+| `--workdir` | `$PWD/onlyboxes` | Working directory |
+| `--yes` / `-y` | `false` | Non-interactive mode, skip confirmations |
+| `--console-http-port` | `8089` | Console HTTP port (host side) |
+| `--console-grpc-port` | `50051` | Console gRPC port (host side) |
+| `--service-name` | `onlyboxes-worker-docker` | systemd service name |
+
+Requirements: Linux, systemd, Docker Engine, Docker Compose v2, Python 3.
+
+## Quick Start (Manual)
 
 ### 1) Prerequisites
 
