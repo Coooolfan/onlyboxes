@@ -43,3 +43,10 @@ worker-credentials.json
 *.db
 *.db-shm
 *.db-wal
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example
