@@ -10,6 +10,8 @@ Onlyboxes 是一个面向个人与小型团队的代码执行沙箱平台解决�
 - **控制节点**：于`console`目录下，Go, Gin。
 - **执行节点**：于`worker`目录下，此目录中的不同文件夹表示不同的执行节点实现。
     - `worker-docker`：以 Docker 容器为执行后端
+    - `worker-boxlite`：以 boxlite 为执行后端
+    - `worker-sys`：以操作系统进程作为执行后端，用于直接控制真实设备
 - **前端**：于`web`目录下，Vue, TypeScript, Vite, Pinia, Tailwind CSS。
 
 
