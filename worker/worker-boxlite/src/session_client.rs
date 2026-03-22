@@ -92,13 +92,19 @@ impl SessionClient {
         let mut client = WorkerRegistryServiceClient::new(channel);
 
         // 2. Setup bidirectional stream
+        // Pre-send Hello into the channel buffer so the server receives it
+        // immediately when the stream opens. Go's gRPC server defers response
+        // headers until the first Send(), while tonic's .await blocks on
+        // response headers — pre-loading Hello avoids this deadlock.
         let (outbound_tx, outbound_rx) = mpsc::channel::<proto::ConnectRequest>(OUTBOUND_BUFFER);
+        outbound_tx
+            .send(self.build_hello())
+            .await
+            .map_err(|_| "failed to queue hello")?;
+
         let request_stream = ReceiverStream::new(outbound_rx);
         let response = client.connect(request_stream).await?;
         let mut inbound = response.into_inner();
-
-        // 3. Send Hello
-        outbound_tx.send(self.build_hello()).await?;
 
         // 4. Wait for ConnectAck
         let ack = tokio::time::timeout(self.cfg.call_timeout, inbound.message())

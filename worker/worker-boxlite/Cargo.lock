@@ -276,6 +276,8 @@ dependencies = [
 [[package]]
 name = "boxlite"
 version = "0.7.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb5e02dc92e4ce6f3445c54be8f4f0b014937310cb8df82ab0fc073ea7053797"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -298,6 +300,7 @@ dependencies = [
  "hyper-util",
  "inventory",
  "libc",
+ "libgvproxy-sys",
  "libkrun-sys",
  "nanoid",
  "nix 0.30.1",
@@ -339,6 +342,8 @@ dependencies = [
 [[package]]
 name = "boxlite-shared"
 version = "0.7.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da4006b12022b2dfc08ddcdeece8ce03236f1137551c84a1ca0ba0cbce0e53eb"
 dependencies = [
  "prost",
  "serde",
@@ -353,6 +358,8 @@ dependencies = [
 [[package]]
 name = "bubblewrap-sys"
 version = "0.7.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f813a314331b13de69d3af0e9432449876094cbc0bd97f2f50b7fa1df28856be"
 dependencies = [
  "num_cpus",
 ]
@@ -686,6 +693,8 @@ dependencies = [
 [[package]]
 name = "e2fsprogs-sys"
 version = "0.7.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8c0de6656e54b4a4c83515747aca1c4df87a0eb5e7fbbce4fd31c29d32d1120a"
 dependencies = [
  "num_cpus",
 ]
@@ -1475,8 +1484,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5b646652bf6661599e1da8901b3b9522896f01e736bad5f723fe7a3a27f899d"
 
 [[package]]
+name = "libgvproxy-sys"
+version = "0.7.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9c433613dcee1337c9a9bd944ad5d2502233844d6ca16b61a7300756c9c1a164"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "libkrun-sys"
 version = "0.7.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b5487920a12bbf4a9f3304c440f45def43ec3188d26b7ac83b9a640124249d9"
 dependencies = [
  "libc",
  "num_cpus",

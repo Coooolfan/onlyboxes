@@ -6,7 +6,7 @@ publish = false
 
 [dependencies]
 # Boxlite native SDK
-boxlite = { path = "../../../boxlite/boxlite" }
+boxlite = { version = "0.7.5", features = ["gvproxy"] }
 
 # gRPC
 tonic = { version = "0.12", features = ["tls", "tls-webpki-roots"] }
