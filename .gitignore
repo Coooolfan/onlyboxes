@@ -23,6 +23,9 @@ coverage.out
 go.work
 go.work.sum
 
+# Rust build artifacts
+target/
+
 # Python artifacts
 *.pyc
 
