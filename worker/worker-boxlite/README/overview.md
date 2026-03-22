@@ -1,13 +1,143 @@
 # Worker Boxlite Overview
 
-Boxlite is a local-first micro-VM sandbox for **AI agents**. It is stateful, lightweight,
-provides hardware-level isolation, and **requires no daemon**.
+`worker-boxlite` connects to console over the gRPC bidi stream `Connect`, sends a hello frame (including `worker_secret`), then sends periodic heartbeat frames and handles command dispatch/result in the same stream.
+- heartbeat reconnect policy: worker tolerates one heartbeat ack timeout and reconnects after two consecutive heartbeat ack timeouts.
+- `WORKER_CALL_TIMEOUT_SEC` default is dynamic: `ceil(2.5 * WORKER_HEARTBEAT_INTERVAL_SEC)`.
 
-This worker implements the Onlyboxes worker protocol to connect to the console and execute tasks in Boxlite VMs.
+Security warning (high risk):
+- console gRPC currently has no built-in TLS/mTLS.
+- `worker-boxlite` rejects insecure console endpoints by default; plaintext is allowed only with `WORKER_CONSOLE_INSECURE=true`.
+- place console HTTP (`:8089`) and gRPC (`:50051`) behind a reverse proxy/gateway and enforce TLS for all external traffic.
+- `worker_secret` in hello is visible on the network path without transport encryption.
+- run only inside trusted private networks or encrypted tunnels; never expose this channel directly on public internet.
+- full mitigation requires TLS/mTLS support (not implemented in this release).
 
-Boxlite is a Rust-based project. Its source code is available at https://github.com/boxlite-ai/boxlite.
+Build and runtime prerequisites:
+- supported host matrix follows current Boxlite support: `linux/amd64`, `linux/arm64`, `darwin/arm64`.
+- the crate depends on `boxlite-ai/boxlite` git tag `v0.7.5`; local compilation fetches that tag directly through Cargo.
+- a local clone of Boxlite is optional and is only useful for reading upstream source or local debugging; it is not required to build `worker-boxlite`.
+- terminal images must contain `/bin/sh` and `python`.
 
-Notes:
-- For local development, the Boxlite source repository must be cloned to `~/Documents/code/boxlite`.
-- If the source code is not available locally, ask the user to clone it first.
-- If the Boxlite SDK does not provide functionality required by this worker, forking Boxlite is permitted as a last resort. However, the user must confirm the requirement and coordinate the development roadmap of both Onlyboxes and Boxlite accordingly.
+Required identity:
+- `WORKER_ID`
+- `WORKER_SECRET`
+
+These values are returned by `console` when calling `POST /api/v1/workers` (startup command response).
+`WORKER_SECRET` is only returned once at creation time; if lost, delete and recreate the worker in dashboard/API.
+
+Version report:
+- worker registers `version` in `ConnectHello`.
+- default source is binary embedded build version (`dev` when not injected).
+- can be overridden with `WORKER_VERSION`.
+
+Capability behavior:
+- `worker-boxlite` hardcodes capability declarations to `echo`, `pythonExec`, `terminalExec`, and `terminalResource`.
+- each capability declaration includes `max_inflight=4`.
+- startup logs include execution config summaries for `pythonExec` and `terminalExec` (image/lease/output-limit).
+- command dispatch logs are summary-only and do not include raw command/code/path/message content.
+- when receiving an `echo` command, worker returns the exact input string unchanged.
+- when receiving a `pythonExec` command, worker expects `payload_json` with `{"code":"..."}` and runs `python -c <code>` inside a one-shot Boxlite box.
+- `pythonExec` image is configured by `WORKER_PYTHON_EXEC_BOXLITE_IMAGE`.
+- if command deadline/cancel happens during execution, worker kills the Boxlite execution, force-removes the box, then returns `deadline_exceeded`.
+- `pythonExec` result always uses JSON payload:
+  - `{"output":"...","stderr":"...","exit_code":0}`
+- non-zero Python exit code is returned in `exit_code` and does not become command error by itself.
+- when receiving a `terminalExec` command, worker expects `payload_json` with:
+  - `{"command":"...","session_id":"optional","create_if_missing":false,"lease_ttl_sec":60}`
+- `terminalExec` image is configured by `WORKER_TERMINAL_EXEC_BOXLITE_IMAGE`.
+- `terminalExec` session behavior:
+  - same `session_id` reuses the same box and keeps filesystem state.
+  - missing `session_id` creates a new box/session automatically.
+  - unknown `session_id` returns `session_not_found`, unless `create_if_missing=true`.
+  - concurrent execution on the same `session_id` returns `session_busy`.
+  - lease extension is monotonic: shorter `lease_ttl_sec` does not reduce current expiry.
+- `terminalExec` cleanup behavior:
+  - command timeout/cancel destroys the session box.
+  - idle sessions are reaped after lease expiry by an internal janitor loop.
+  - worker shutdown force-removes all managed terminal boxes.
+  - `SIGINT`/`SIGTERM` performs best-effort cleanup; `SIGKILL`/process crash does not guarantee cleanup.
+- `terminalExec` result uses JSON payload:
+  - `{"session_id":"...","created":true,"stdout":"...","stderr":"...","exit_code":0,"stdout_truncated":false,"stderr_truncated":false,"lease_expires_unix_ms":...}`
+- output truncation:
+  - `stdout` and `stderr` are individually truncated by `WORKER_TERMINAL_OUTPUT_LIMIT_BYTES`.
+  - truncation flags are exposed via `stdout_truncated` and `stderr_truncated`.
+- when receiving a `terminalResource` command, worker expects `payload_json` with:
+  - `{"session_id":"required","file_path":"required","action":"validate|read"}`
+  - `action` defaults to `validate` when omitted.
+  - target `file_path` must exist and must not be a directory.
+  - `read` action returns file content in `blob` as a base64 JSON string.
+  - `read` action rejects files larger than `WORKER_TERMINAL_OUTPUT_LIMIT_BYTES` with `file_too_large`.
+  - session concurrency follows terminal session rules:
+    - unknown `session_id` returns `session_not_found`.
+    - concurrent operation on same `session_id` returns `session_busy`.
+- `terminalResource` result uses JSON payload:
+  - validate: `{"session_id":"...","file_path":"...","mime_type":"...","size_bytes":123}`
+  - read: `{"session_id":"...","file_path":"...","mime_type":"...","size_bytes":123,"blob":"...base64..."}`
+- `terminalResource` domain error codes:
+  - `file_not_found`
+  - `path_is_directory`
+  - `file_too_large`
+
+Defaults:
+- Console target: `127.0.0.1:50051`
+- Heartbeat interval: `5s`
+- Heartbeat jitter: `20%`
+- Call timeout: `ceil(2.5 * WORKER_HEARTBEAT_INTERVAL_SEC)` (default heartbeat `5s` => `13s`)
+- pythonExec image: `python:slim`
+- terminalExec image: `coolfan1024/onlyboxes-default-worker:0.0.3`
+- pythonExec memory / cpus / max processes: `256 MiB` / `1` / `128`
+- terminalExec memory / cpus / max processes: `256 MiB` / `1` / `128`
+- terminal lease min/max/default: `60s` / `1800s` / `60s`
+- terminal output limit: `1048576` bytes per stream (`stdout`/`stderr`) and per `terminalResource read`
+- log level: `info`
+- log format: `json`
+- log add source: `false`
+
+Main environment variables:
+- `WORKER_CONSOLE_GRPC_TARGET`
+- `WORKER_CONSOLE_INSECURE`
+- `WORKER_NODE_NAME`
+- `WORKER_VERSION`
+- `WORKER_LABELS`
+- `WORKER_HEARTBEAT_INTERVAL_SEC`
+- `WORKER_HEARTBEAT_JITTER_PCT`
+- `WORKER_CALL_TIMEOUT_SEC`
+- `WORKER_BOXLITE_HOME`
+- `WORKER_PYTHON_EXEC_BOXLITE_IMAGE`
+- `WORKER_PYTHON_EXEC_MEMORY_MIB`
+- `WORKER_PYTHON_EXEC_CPUS`
+- `WORKER_PYTHON_EXEC_MAX_PROCESSES`
+- `WORKER_TERMINAL_EXEC_BOXLITE_IMAGE`
+- `WORKER_TERMINAL_EXEC_MEMORY_MIB`
+- `WORKER_TERMINAL_EXEC_CPUS`
+- `WORKER_TERMINAL_EXEC_MAX_PROCESSES`
+- `WORKER_TERMINAL_LEASE_MIN_SEC`
+- `WORKER_TERMINAL_LEASE_MAX_SEC`
+- `WORKER_TERMINAL_LEASE_DEFAULT_SEC`
+- `WORKER_TERMINAL_OUTPUT_LIMIT_BYTES`
+- `WORKER_LOG_LEVEL`
+- `WORKER_LOG_FORMAT`
+- `WORKER_LOG_ADD_SOURCE`
+
+Build and run:
+- build from `worker/worker-boxlite` with `cargo build --release`
+- run with `cargo run --release`
+- production packaging should inject the build version through the existing binary version mechanism; otherwise the worker reports `dev`
+
+Logging config:
+- `WORKER_LOG_LEVEL`: `debug|info|warn|error` (default `info`)
+- `WORKER_LOG_FORMAT`: `json|text` (default `json`)
+- `WORKER_LOG_ADD_SOURCE`: include source file/line in logs (default `false`)
+
+Recommended setting:
+- `WORKER_CALL_TIMEOUT_SEC >= 2 * WORKER_HEARTBEAT_INTERVAL_SEC`
+
+Manual smoke checklist:
+- start `console`, create a `worker-boxlite`, and launch the worker with the returned `WORKER_ID` and `WORKER_SECRET`
+- verify startup logs show `pythonExec configured`, `terminalExec configured`, and `worker connected`
+- send `echo` with `{"message":"hello"}` and verify the same payload is returned
+- send `pythonExec` with `{"code":"print('hello')"}`
+- send a timeout-bounded `pythonExec` and verify the worker returns `deadline_exceeded`
+- send `terminalExec` without `session_id`, write a file, then send another `terminalExec` with the returned `session_id` and verify the file is still present
+- send `terminalResource` validate/read against that file and verify MIME, size, and base64 blob
+- send `terminalResource` against a missing file, a directory, and an oversized file and verify `file_not_found`, `path_is_directory`, and `file_too_large`
