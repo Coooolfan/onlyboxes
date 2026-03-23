@@ -121,7 +121,7 @@ function getInflight(nodeId: string, capName: string): InflightCapability | null
               v-if="worker.capabilities && worker.capabilities.length > 0"
             >
               <span
-                class="capability-badge inline-flex items-center justify-center px-2 py-1 bg-surface-soft border border-stroke rounded-default font-mono text-[11px] text-secondary gap-1.5"
+                class="ui-badge-soft capability-badge inline-flex items-center justify-center px-2 py-1 border rounded-default font-mono text-[11px] gap-1.5"
                 v-for="cap in worker.capabilities"
                 :key="cap.name"
               >
@@ -132,10 +132,10 @@ function getInflight(nodeId: string, capName: string): InflightCapability | null
                     'text-[10px] px-1 py-px rounded-[4px] border',
                     getInflight(worker.node_id, cap.name)!.inflight >=
                     getInflight(worker.node_id, cap.name)!.max_inflight
-                      ? 'text-[#b45309] bg-[#fffbeb] border-[#fcd34d]'
+                      ? 'ui-status-badge-stale'
                       : getInflight(worker.node_id, cap.name)!.inflight > 0
                         ? 'text-primary border-stroke-hover bg-surface-soft'
-                        : 'text-(--text-tertiary) bg-surface border-stroke',
+                        : 'text-tertiary bg-surface border-stroke',
                   ]"
                 >
                   {{ getInflight(worker.node_id, cap.name)!.inflight }}/{{
@@ -154,7 +154,7 @@ function getInflight(nodeId: string, capName: string): InflightCapability | null
               <span
                 v-for="(value, key) in worker.labels"
                 :key="`${worker.node_id}-${key}`"
-                class="worker-label-badge inline-flex w-fit items-center rounded-default border border-stroke bg-surface-soft px-2 py-1 font-mono text-[11px] leading-4 text-secondary"
+                class="ui-badge-soft worker-label-badge inline-flex w-fit items-center rounded-default border px-2 py-1 font-mono text-[11px] leading-4"
               >
                 {{ key }}={{ value }}
               </span>
@@ -164,10 +164,8 @@ function getInflight(nodeId: string, capName: string): InflightCapability | null
           <td class="text-left px-6 py-4 border-b border-stroke text-sm text-primary align-middle">
             <span
               :class="[
-                'inline-flex items-center justify-center rounded-default px-2.5 py-1 text-xs font-medium capitalize',
-                worker.status === 'online'
-                  ? 'text-[#166534] bg-[#f0fdf4] border border-[#bbf7d0]'
-                  : 'text-[#991b1b] bg-[#fef2f2] border border-[#fecaca]',
+                'inline-flex items-center justify-center rounded-default px-2.5 py-1 text-xs font-medium capitalize border',
+                worker.status === 'online' ? 'ui-status-badge-online' : 'ui-status-badge-offline',
               ]"
               >{{ worker.status }}</span
             >
@@ -182,7 +180,7 @@ function getInflight(nodeId: string, capName: string): InflightCapability | null
             <div class="inline-flex gap-2 items-center">
               <button
                 type="button"
-                class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-offline bg-white border border-[#fca5a5] transition-all duration-200 hover:not-disabled:bg-[#fef2f2] hover:not-disabled:border-[#f87171] disabled:cursor-not-allowed disabled:opacity-50"
+                class="ui-btn-danger rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
                 :disabled="deletingNodeId === worker.node_id"
                 @click="emit('deleteWorker', worker.node_id)"
               >

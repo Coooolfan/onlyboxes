@@ -197,7 +197,7 @@ onBeforeUnmount(() => {
           <select
             v-model="selectedWorkerType"
             data-testid="create-worker-type-select"
-            class="rounded border border-stroke bg-surface px-2 py-1 text-sm text-primary outline-none focus:border-stroke-hover"
+            class="ui-input rounded border px-2 py-1 text-sm"
             :disabled="workersStore.creatingWorker"
           >
             <option value="normal">normal</option>
@@ -206,7 +206,7 @@ onBeforeUnmount(() => {
         </label>
         <button
           data-testid="create-worker-button"
-          class="rounded-md px-3.5 py-2 text-sm font-medium h-9 inline-flex items-center justify-center text-white bg-accent border border-accent transition-all duration-200 hover:not-disabled:bg-[#333] hover:not-disabled:border-[#333] disabled:cursor-not-allowed disabled:opacity-50"
+          class="ui-btn-primary rounded-md px-3.5 py-2 text-sm font-medium h-9 inline-flex items-center justify-center border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
           type="button"
           :disabled="workersStore.creatingWorker"
           @click="handleAddWorker"
@@ -215,7 +215,7 @@ onBeforeUnmount(() => {
         </button>
         <div ref="refreshControlRef" class="relative">
           <button
-            class="rounded-md px-3.5 py-2 text-sm font-medium h-9 inline-flex items-center justify-center text-primary bg-surface border border-stroke transition-all duration-200 hover:not-disabled:border-stroke-hover hover:not-disabled:bg-surface-soft disabled:cursor-not-allowed disabled:opacity-50"
+            class="ui-btn-secondary rounded-md px-3.5 py-2 text-sm font-medium h-9 inline-flex items-center justify-center border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
             type="button"
             aria-haspopup="menu"
             :aria-expanded="showRefreshControlMenu"

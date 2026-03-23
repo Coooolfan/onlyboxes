@@ -80,7 +80,7 @@ watch(
   <Teleport to="body">
     <div
       v-if="payload"
-      class="fixed inset-0 z-1000 bg-black/40 backdrop-blur-xs flex items-center justify-center p-6"
+      class="ui-modal-overlay fixed inset-0 z-1000 flex items-center justify-center p-6"
     >
       <div
         class="worker-modal w-[min(640px,100%)] rounded-lg border border-stroke bg-surface shadow-modal flex flex-col"
@@ -105,7 +105,7 @@ watch(
                 >Node ID</span
               >
               <code
-                class="flex-1 min-w-0 font-mono text-[13px] bg-surface-soft border border-stroke rounded-default px-2 py-1 break-all whitespace-pre-wrap"
+                class="ui-code-inline flex-1 min-w-0 font-mono text-[13px] border rounded-default px-2 py-1 break-all whitespace-pre-wrap"
                 >{{ payload.node_id }}</code
               >
             </p>
@@ -115,7 +115,7 @@ watch(
                 >Worker Type</span
               >
               <code
-                class="flex-1 min-w-0 font-mono text-[13px] bg-surface-soft border border-stroke rounded-default px-2 py-1 break-all whitespace-pre-wrap"
+                class="ui-code-inline flex-1 min-w-0 font-mono text-[13px] border rounded-default px-2 py-1 break-all whitespace-pre-wrap"
                 >{{ payload.type }}</code
               >
             </p>
@@ -125,13 +125,13 @@ watch(
                 >Worker Secret</span
               >
               <code
-                class="flex-1 min-w-0 font-mono text-[13px] bg-surface-soft border border-stroke rounded-default px-2 py-1 break-all whitespace-pre-wrap"
+                class="ui-code-inline flex-1 min-w-0 font-mono text-[13px] border rounded-default px-2 py-1 break-all whitespace-pre-wrap"
                 >{{ workerSecretDisplay }}</code
               >
               <button
                 v-if="workerSecret"
                 type="button"
-                class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-primary bg-surface border border-stroke transition-all duration-200 hover:not-disabled:border-stroke-hover hover:not-disabled:bg-surface-soft disabled:cursor-not-allowed disabled:opacity-50"
+                class="ui-btn-secondary rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
                 @click="secretVisible = !secretVisible"
               >
                 {{ secretVisible ? 'Hide' : 'Show' }}
@@ -139,11 +139,9 @@ watch(
             </p>
           </div>
 
-          <div class="mt-1 bg-surface-soft border border-stroke rounded-xl p-5">
+          <div class="ui-inset-surface mt-1 border rounded-xl p-5">
             <div class="flex items-start gap-4">
-              <div
-                class="bg-surface p-2.5 rounded-lg border border-stroke text-secondary shrink-0 mt-0.5"
-              >
+              <div class="ui-strong-surface p-2.5 rounded-lg border text-secondary shrink-0 mt-0.5">
                 <svg
                   class="w-5 h-5"
                   xmlns="http://www.w3.org/2000/svg"
@@ -166,7 +164,7 @@ watch(
                 </p>
                 <button
                   type="button"
-                  class="inline-flex items-center gap-2 px-4 py-2.5 bg-surface border border-stroke text-primary rounded-lg text-sm font-medium transition-all duration-200 hover:border-stroke-hover hover:bg-surface-soft active:scale-95 group"
+                  class="ui-btn-secondary inline-flex items-center gap-2 px-4 py-2.5 border rounded-lg text-sm font-medium transition-all duration-200 active:scale-95 group"
                   data-testid="open-in-startup-tool"
                   @click="goToStartupTool"
                 >
@@ -194,7 +192,7 @@ watch(
         <div class="flex justify-end gap-3 px-6 py-5 border-t border-stroke rounded-b-lg">
           <button
             type="button"
-            class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-white bg-accent border border-accent transition-all duration-200 hover:not-disabled:bg-[#333] hover:not-disabled:border-[#333] disabled:cursor-not-allowed disabled:opacity-50"
+            class="ui-btn-primary rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
             @click="closeModal"
           >
             Done

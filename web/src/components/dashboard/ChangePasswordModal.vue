@@ -59,7 +59,7 @@ function closeModal(): void {
 <template>
   <Teleport to="body">
     <div
-      class="fixed inset-0 z-1000 bg-black/40 backdrop-blur-xs flex items-center justify-center p-6"
+      class="ui-modal-overlay fixed inset-0 z-1000 flex items-center justify-center p-6"
     >
       <div
         class="password-modal w-[min(480px,100%)] rounded-lg border border-stroke bg-surface shadow-modal flex flex-col"
@@ -92,7 +92,7 @@ function closeModal(): void {
                 type="password"
                 autocomplete="current-password"
                 required
-                class="border border-stroke rounded-default px-3 py-2.5 text-sm font-[inherit] transition-[border-color,box-shadow] duration-200 outline-none focus:border-secondary focus:shadow-[0_0_0_1px_var(--color-secondary)]"
+                class="ui-input border rounded-default px-3 py-2.5 text-sm font-[inherit]"
               />
             </label>
 
@@ -104,19 +104,19 @@ function closeModal(): void {
                 type="password"
                 autocomplete="new-password"
                 required
-                class="border border-stroke rounded-default px-3 py-2.5 text-sm font-[inherit] transition-[border-color,box-shadow] duration-200 outline-none focus:border-secondary focus:shadow-[0_0_0_1px_var(--color-secondary)]"
+                class="ui-input border rounded-default px-3 py-2.5 text-sm font-[inherit]"
               />
             </label>
 
             <p
               v-if="changePasswordError"
-              class="m-0 border border-[#fca5a5] rounded-default bg-[#fef2f2] text-offline px-3 py-2.5 text-sm"
+              class="ui-alert ui-alert-error m-0 rounded-default px-3 py-2.5 text-sm"
             >
               {{ changePasswordError }}
             </p>
             <p
               v-if="changePasswordSuccess"
-              class="m-0 border border-[#86efac] rounded-default bg-[#f0fdf4] text-[#166534] px-3 py-2.5 text-sm"
+              class="ui-alert ui-alert-success m-0 rounded-default px-3 py-2.5 text-sm"
             >
               {{ changePasswordSuccess }}
             </p>
@@ -128,7 +128,7 @@ function closeModal(): void {
         >
           <button
             type="button"
-            class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-primary bg-surface border border-stroke transition-all duration-200 hover:not-disabled:border-stroke-hover hover:not-disabled:bg-surface-soft disabled:cursor-not-allowed disabled:opacity-50"
+            class="ui-btn-secondary rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
             :disabled="changingPassword"
             @click="closeModal"
           >
@@ -137,7 +137,7 @@ function closeModal(): void {
           <button
             type="submit"
             form="change-password-form"
-            class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-white bg-accent border border-accent transition-all duration-200 hover:not-disabled:bg-[#333] hover:not-disabled:border-[#333] disabled:cursor-not-allowed disabled:opacity-50"
+            class="ui-btn-primary rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
             :disabled="changingPassword"
           >
             {{ changingPassword ? 'Saving...' : 'Save Password' }}

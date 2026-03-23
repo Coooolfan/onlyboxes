@@ -22,7 +22,7 @@ const emit = defineEmits<{
     <div class="inline-flex items-center gap-3">
       <button
         type="button"
-        class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-primary bg-surface border border-stroke transition-all duration-200 hover:not-disabled:border-stroke-hover hover:not-disabled:bg-surface-soft disabled:cursor-not-allowed disabled:opacity-50"
+        class="ui-btn-secondary rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
         :disabled="!canPrev || loading"
         @click="emit('prev')"
       >
@@ -31,7 +31,7 @@ const emit = defineEmits<{
       <span class="font-sans text-[13px] text-secondary">Page {{ page }} / {{ totalPages }}</span>
       <button
         type="button"
-        class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-primary bg-surface border border-stroke transition-all duration-200 hover:not-disabled:border-stroke-hover hover:not-disabled:bg-surface-soft disabled:cursor-not-allowed disabled:opacity-50"
+        class="ui-btn-secondary rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
         :disabled="!canNext || loading"
         @click="emit('next')"
       >

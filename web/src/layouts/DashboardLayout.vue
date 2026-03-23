@@ -104,7 +104,7 @@ watch(sidebarCollapsed, (collapsed) => {
 </script>
 
 <template>
-  <div class="flex h-screen bg-surface text-primary font-sans">
+  <div class="flex h-screen bg-bg text-primary font-sans">
     <!-- Sidebar -->
     <aside
       :class="[
@@ -166,7 +166,7 @@ watch(sidebarCollapsed, (collapsed) => {
           :class="[
             sidebarCollapsed ? 'justify-center px-0' : 'justify-start px-3',
             isNavItemActive(item.to)
-              ? 'bg-accent text-white'
+              ? 'bg-accent ui-on-accent'
               : 'text-secondary hover:text-primary hover:bg-surface-soft',
           ]"
         >
@@ -221,7 +221,7 @@ watch(sidebarCollapsed, (collapsed) => {
             @click="toggleUserMenu"
           >
             <div
-              class="w-8 h-8 rounded-full bg-accent text-white flex items-center justify-center text-sm font-bold"
+              class="w-8 h-8 rounded-full bg-accent ui-on-accent flex items-center justify-center text-sm font-bold"
             >
               {{ authStore.currentAccount?.username?.charAt(0).toUpperCase() || 'U' }}
             </div>
@@ -230,7 +230,7 @@ watch(sidebarCollapsed, (collapsed) => {
           <!-- Dropdown -->
           <div
             v-if="showUserMenu"
-            class="absolute right-0 mt-2 w-48 bg-surface border border-stroke rounded-md shadow-lg py-1 z-50 animate-in fade-in zoom-in-95 duration-100"
+            class="absolute right-0 mt-2 w-48 bg-surface border border-stroke rounded-md shadow-card py-1 z-50 animate-in fade-in zoom-in-95 duration-100"
           >
             <div class="px-4 py-2 border-b border-stroke/50">
               <p class="text-sm font-medium text-primary truncate">

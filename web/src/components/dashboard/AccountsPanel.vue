@@ -61,7 +61,7 @@ const emit = defineEmits<{
                 <span>{{ item.username }}</span>
                 <span
                   v-if="item.account_id === currentAccountId"
-                  class="inline-flex items-center rounded-full bg-surface-soft border border-stroke px-2 py-0.5 text-[11px] text-secondary"
+                  class="ui-badge-soft inline-flex items-center rounded-full border px-2 py-0.5 text-[11px]"
                 >
                   Current
                 </span>
@@ -70,10 +70,8 @@ const emit = defineEmits<{
             </td>
             <td class="px-6 py-3 text-primary">
               <span
-                class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium"
-                :class="
-                  item.is_admin ? 'bg-[#ecfeff] text-[#155e75]' : 'bg-[#f1f5f9] text-[#334155]'
-                "
+                class="inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium"
+                :class="item.is_admin ? 'ui-role-badge-admin' : 'ui-role-badge-member'"
               >
                 {{ item.is_admin ? 'Admin' : 'Member' }}
               </span>
@@ -84,7 +82,7 @@ const emit = defineEmits<{
               <button
                 v-if="!item.is_admin && item.account_id !== currentAccountId"
                 type="button"
-                class="account-delete-btn rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-offline bg-[#fef2f2] border border-[#fca5a5] transition-all duration-200 hover:not-disabled:bg-[#fee2e2] disabled:cursor-not-allowed disabled:opacity-50"
+                class="ui-btn-danger account-delete-btn rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
                 :disabled="deletingAccountId === item.account_id"
                 @click="emit('deleteAccount', item.account_id)"
               >
@@ -106,7 +104,7 @@ const emit = defineEmits<{
       <div class="flex items-center gap-2">
         <button
           type="button"
-          class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-primary bg-surface border border-stroke transition-all duration-200 hover:not-disabled:border-stroke-hover hover:not-disabled:bg-surface-soft disabled:cursor-not-allowed disabled:opacity-50"
+          class="ui-btn-secondary rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
           :disabled="!canPrev || loading"
           @click="emit('prevPage')"
         >
@@ -114,7 +112,7 @@ const emit = defineEmits<{
         </button>
         <button
           type="button"
-          class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-primary bg-surface border border-stroke transition-all duration-200 hover:not-disabled:border-stroke-hover hover:not-disabled:bg-surface-soft disabled:cursor-not-allowed disabled:opacity-50"
+          class="ui-btn-secondary rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
           :disabled="!canNext || loading"
           @click="emit('nextPage')"
         >

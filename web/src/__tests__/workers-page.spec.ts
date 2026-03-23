@@ -196,7 +196,7 @@ describe('Workers Page', () => {
         '[data-testid="open-in-startup-tool"]',
       )
       expect(startupToolBtn).toBeTruthy()
-      expect(startupToolBtn!.textContent?.trim()).toBe('Open in Startup Tool')
+      expect(startupToolBtn!.textContent?.trim()).toContain('Open in Startup Tool')
 
       // Native click fires goToStartupTool which calls setPrefill with the
       // structured payload fields. The async router.push it initiates doesn't

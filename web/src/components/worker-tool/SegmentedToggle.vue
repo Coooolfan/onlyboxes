@@ -27,7 +27,7 @@ function handleSelect(value: string): void {
       class="rounded px-3 py-1 text-sm transition-colors"
       :class="
         props.modelValue === option.value
-          ? 'bg-accent text-white'
+          ? 'bg-accent ui-on-accent'
           : 'text-secondary hover:text-primary'
       "
       @click="handleSelect(option.value)"

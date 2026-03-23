@@ -35,7 +35,7 @@ const emit = defineEmits<{
 
         <button
           v-if="!hideRefresh"
-          class="rounded-md px-3.5 py-2 text-sm font-medium h-9 inline-flex items-center justify-center text-white bg-accent border border-accent transition-all duration-200 hover:not-disabled:bg-[#333] hover:not-disabled:border-[#333] disabled:cursor-not-allowed disabled:opacity-50"
+          class="ui-btn-primary rounded-md px-3.5 py-2 text-sm font-medium h-9 inline-flex items-center justify-center border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
           type="button"
           :disabled="loading"
           @click="emit('refresh')"

@@ -51,7 +51,7 @@ function handleWhitelistModeUpdate(value: string): void {
           <span
             v-if="props.showPrefilledCredentialHint"
             data-testid="worker-id-prefilled-hint"
-            class="inline-flex items-center rounded-full border border-stale/40 bg-stale/10 px-2 py-0.5 text-[11px] font-medium text-stale"
+            class="ui-badge-warning inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium"
           >
             Already Filled
           </span>
@@ -60,7 +60,7 @@ function handleWhitelistModeUpdate(value: string): void {
         <input
           v-model.trim="props.config.workerID"
           type="text"
-          class="rounded-md border border-stroke bg-surface px-3 py-2 text-sm text-primary outline-none focus:border-stroke-hover"
+          class="ui-input rounded-md border px-3 py-2 text-sm"
           placeholder="worker-id"
         />
       </label>
@@ -71,7 +71,7 @@ function handleWhitelistModeUpdate(value: string): void {
           <span
             v-if="props.showPrefilledCredentialHint"
             data-testid="worker-secret-prefilled-hint"
-            class="inline-flex items-center rounded-full border border-stale/40 bg-stale/10 px-2 py-0.5 text-[11px] font-medium text-stale"
+            class="ui-badge-warning inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium"
           >
             Already Filled
           </span>
@@ -83,12 +83,12 @@ function handleWhitelistModeUpdate(value: string): void {
           <input
             v-model.trim="props.config.workerSecret"
             :type="showSecret ? 'text' : 'password'"
-            class="min-w-0 flex-1 rounded-md border border-stroke bg-surface px-3 py-2 text-sm text-primary outline-none focus:border-stroke-hover"
+            class="ui-input min-w-0 flex-1 rounded-md border px-3 py-2 text-sm"
             placeholder="worker-secret"
           />
           <button
             type="button"
-            class="h-[36px] rounded-md border border-stroke bg-surface px-3 text-xs text-primary transition-colors hover:border-stroke-hover"
+            class="ui-btn-secondary h-[36px] rounded-md border px-3 text-xs transition-colors"
             @click="showSecret = !showSecret"
           >
             {{ showSecret ? 'Hide' : 'Show' }}
@@ -102,7 +102,7 @@ function handleWhitelistModeUpdate(value: string): void {
         <input
           v-model.trim="props.config.consoleGRPCTarget"
           type="text"
-          class="rounded-md border border-stroke bg-surface px-3 py-2 text-sm text-primary outline-none focus:border-stroke-hover"
+          class="ui-input rounded-md border px-3 py-2 text-sm"
           placeholder="127.0.0.1:50051"
         />
       </label>
@@ -112,14 +112,12 @@ function handleWhitelistModeUpdate(value: string): void {
         <span class="text-xs text-secondary">
           Allow plaintext gRPC transport. Use only in trusted private networks.
         </span>
-        <div
-          class="flex items-center justify-between rounded-md border border-stroke bg-surface px-3 py-2"
-        >
+        <div class="ui-input flex items-center justify-between rounded-md border px-3 py-2">
           <span class="text-sm text-primary">Set to true</span>
           <input
             v-model="props.config.consoleInsecure"
             type="checkbox"
-            class="h-4 w-4 rounded border-stroke"
+            class="ui-checkbox h-4 w-4 rounded"
           />
         </div>
       </label>
@@ -130,7 +128,7 @@ function handleWhitelistModeUpdate(value: string): void {
         <input
           v-model.trim="props.config.nodeName"
           type="text"
-          class="rounded-md border border-stroke bg-surface px-3 py-2 text-sm text-primary outline-none focus:border-stroke-hover"
+          class="ui-input rounded-md border px-3 py-2 text-sm"
         />
       </label>
 
@@ -148,7 +146,7 @@ function handleWhitelistModeUpdate(value: string): void {
 
           <p
             v-if="props.config.callTimeoutMode === 'auto'"
-            class="m-0 text-sm text-primary rounded-md border border-stroke bg-surface px-3 py-2"
+            class="ui-inset-surface m-0 text-sm text-primary rounded-md border px-3 py-2"
           >
             Derived timeout: <strong>{{ props.autoCallTimeoutSec }}s</strong> (ceil(2.5 x
             heartbeat))
@@ -159,7 +157,7 @@ function handleWhitelistModeUpdate(value: string): void {
               v-model.number="props.config.callTimeoutSec"
               type="number"
               min="1"
-              class="w-[220px] rounded-md border border-stroke bg-surface px-3 py-2 text-sm text-primary outline-none focus:border-stroke-hover"
+              class="ui-input w-[220px] rounded-md border px-3 py-2 text-sm"
             />
           </label>
         </div>
@@ -171,7 +169,7 @@ function handleWhitelistModeUpdate(value: string): void {
         <input
           v-model.trim="props.config.binaryPath"
           type="text"
-          class="rounded-md border border-stroke bg-surface px-3 py-2 text-sm text-primary outline-none focus:border-stroke-hover"
+          class="ui-input rounded-md border px-3 py-2 text-sm"
           placeholder="./onlyboxes-worker-sys"
         />
       </label>
@@ -191,7 +189,7 @@ function handleWhitelistModeUpdate(value: string): void {
             v-model.number="props.config.heartbeatIntervalSec"
             type="number"
             min="1"
-            class="rounded-md border border-stroke bg-surface px-3 py-2 text-sm text-primary outline-none focus:border-stroke-hover"
+            class="ui-input rounded-md border px-3 py-2 text-sm"
           />
         </label>
 
@@ -205,7 +203,7 @@ function handleWhitelistModeUpdate(value: string): void {
             type="number"
             min="0"
             max="100"
-            class="rounded-md border border-stroke bg-surface px-3 py-2 text-sm text-primary outline-none focus:border-stroke-hover"
+            class="ui-input rounded-md border px-3 py-2 text-sm"
           />
         </label>
 
@@ -218,7 +216,7 @@ function handleWhitelistModeUpdate(value: string): void {
             v-model.number="props.config.computerUseOutputLimitBytes"
             type="number"
             min="1"
-            class="rounded-md border border-stroke bg-surface px-3 py-2 text-sm text-primary outline-none focus:border-stroke-hover"
+            class="ui-input rounded-md border px-3 py-2 text-sm"
           />
         </label>
 
@@ -246,7 +244,7 @@ function handleWhitelistModeUpdate(value: string): void {
             data-testid="sys-whitelist-textarea"
             rows="3"
             :disabled="props.config.computerUseCommandWhitelistMode === 'allow_all'"
-            class="rounded-md border border-stroke bg-surface px-3 py-2 text-sm text-primary outline-none focus:border-stroke-hover disabled:cursor-not-allowed disabled:opacity-60"
+            class="ui-input rounded-md border px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
             placeholder="echo&#10;time"
           ></textarea>
           <span
@@ -268,7 +266,7 @@ function handleWhitelistModeUpdate(value: string): void {
             v-model="props.config.readImageAllowedPathsText"
             data-testid="sys-paths-textarea"
             rows="3"
-            class="rounded-md border border-stroke bg-surface px-3 py-2 text-sm text-primary outline-none focus:border-stroke-hover"
+            class="ui-input rounded-md border px-3 py-2 text-sm"
             placeholder="/data/images&#10;/tmp/a.png"
           ></textarea>
         </label>

@@ -103,9 +103,7 @@ describe('Accounts Page', () => {
     try {
       const openCreateAccountBtn = wrapper
         .findAll('button')
-        .find(
-          (button) => button.text() === 'Create Account' && button.classes().includes('ghost-btn'),
-        )
+        .find((button) => button.text() === 'Create Account')
       expect(openCreateAccountBtn).toBeTruthy()
       await openCreateAccountBtn?.trigger('click')
       await flushPromises()

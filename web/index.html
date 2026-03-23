@@ -4,6 +4,18 @@
     <meta charset="UTF-8">
     <link rel="icon" href="/favicon.ico">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script>
+      (() => {
+        const root = document.documentElement
+        const mediaQuery =
+          typeof window.matchMedia === 'function'
+            ? window.matchMedia('(prefers-color-scheme: dark)')
+            : null
+        const mode = mediaQuery && mediaQuery.matches ? 'dark' : 'light'
+        root.dataset.theme = mode
+        root.style.colorScheme = mode
+      })()
+    </script>
     <link href="/src/style/main.css" rel="stylesheet" />
     <link rel="icon" type="image/png" href="/onlyboxes.avif" />
     <title>Onlyboxes</title>

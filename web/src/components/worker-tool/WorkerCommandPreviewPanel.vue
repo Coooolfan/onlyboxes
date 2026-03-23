@@ -27,7 +27,7 @@ const emit = defineEmits<{
       <button
         data-testid="copy-startup-command"
         type="button"
-        class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-white bg-accent border border-accent transition-all duration-200 hover:not-disabled:bg-[#333] hover:not-disabled:border-[#333] disabled:cursor-not-allowed disabled:opacity-50"
+        class="ui-btn-primary rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
         :disabled="props.copyDisabled"
         @click="emit('copy')"
       >
@@ -38,14 +38,14 @@ const emit = defineEmits<{
     <div class="p-4 grid gap-3">
       <code
         data-testid="startup-command-preview"
-        class="block rounded-default bg-black text-white p-4 font-mono text-[13px] leading-[1.6] whitespace-pre-wrap break-all"
+        class="ui-code-block block rounded-default border p-4 font-mono text-[13px] leading-[1.6] whitespace-pre-wrap break-all"
         >{{ props.commandText }}</code
       >
 
       <div
         v-if="props.issueItems.length > 0"
-        class="rounded-md border px-3 py-2 text-xs"
-        :class="props.hasErrors ? 'border-offline/30 bg-offline/5' : 'border-stale/40 bg-stale/10'"
+        class="ui-alert rounded-md px-3 py-2 text-xs"
+        :class="props.hasErrors ? 'ui-alert-error' : 'ui-alert-warning'"
       >
         <p class="m-0 text-primary font-medium mb-1">Command Notice</p>
         <ul class="m-0 pl-4 grid gap-1 text-secondary">

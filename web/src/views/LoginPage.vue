@@ -70,7 +70,7 @@ async function submitLogin(): Promise<void> {
       <input
         id="dashboard-username"
         v-model="loginUsername"
-        class="w-full border border-stroke rounded-md bg-white text-primary px-3 py-2 text-sm font-[inherit] outline-none transition-[border-color,box-shadow] duration-200 h-10 focus:border-secondary focus:shadow-[0_0_0_1px_var(--color-secondary)]"
+        class="ui-input w-full border rounded-md px-3 py-2 text-sm font-[inherit] h-10"
         type="text"
         name="username"
         autocomplete="username"
@@ -83,7 +83,7 @@ async function submitLogin(): Promise<void> {
       <input
         id="dashboard-password"
         v-model="loginPassword"
-        class="w-full border border-stroke rounded-md bg-white text-primary px-3 py-2 text-sm font-[inherit] outline-none transition-[border-color,box-shadow] duration-200 h-10 focus:border-secondary focus:shadow-[0_0_0_1px_var(--color-secondary)]"
+        class="ui-input w-full border rounded-md px-3 py-2 text-sm font-[inherit] h-10"
         type="password"
         name="password"
         autocomplete="current-password"
@@ -91,13 +91,13 @@ async function submitLogin(): Promise<void> {
 
       <p
         v-if="loginErrorMessage"
-        class="m-0 border border-[#fca5a5] rounded-default bg-[#fef2f2] text-offline px-3 py-2.5 text-sm"
+        class="ui-alert ui-alert-error m-0 rounded-default px-3 py-2.5 text-sm"
       >
         {{ loginErrorMessage }}
       </p>
 
       <button
-        class="rounded-md px-3.5 py-2 text-sm font-medium h-9 inline-flex items-center justify-center text-white bg-accent border border-accent transition-all duration-200 hover:not-disabled:bg-[#333] hover:not-disabled:border-[#333] disabled:cursor-not-allowed disabled:opacity-50"
+        class="ui-btn-primary rounded-md px-3.5 py-2 text-sm font-medium h-9 inline-flex items-center justify-center border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
         type="submit"
         :disabled="loginSubmitting"
       >

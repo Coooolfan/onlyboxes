@@ -238,7 +238,7 @@ onBeforeUnmount(() => {
         <div
           v-if="openedFromGoToStartupTool"
           data-testid="prefilled-credentials-notice"
-          class="rounded-md border border-stale/40 bg-stale/10 px-3 py-2 text-sm text-primary"
+          class="ui-alert ui-alert-warning rounded-md px-3 py-2 text-sm"
         >
           WORKER_ID and WORKER_SECRET are already filled in from the worker creation result.
         </div>
@@ -261,8 +261,8 @@ onBeforeUnmount(() => {
 
         <div
           v-if="issueItems.length > 0"
-          class="rounded-md border px-3 py-2 text-sm"
-          :class="hasErrors ? 'border-offline/30 bg-offline/5' : 'border-stale/40 bg-stale/10'"
+          class="ui-alert rounded-md px-3 py-2 text-sm"
+          :class="hasErrors ? 'ui-alert-error' : 'ui-alert-warning'"
         >
           <p class="m-0 text-primary font-medium mb-2">Validation</p>
           <ul class="m-0 pl-4 grid gap-1 text-secondary">

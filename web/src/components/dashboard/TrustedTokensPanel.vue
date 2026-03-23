@@ -286,7 +286,7 @@ onBeforeUnmount(() => {
       <div class="flex gap-3">
         <button
           type="button"
-          class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-white bg-accent border border-accent transition-all duration-200 hover:not-disabled:bg-[#333] hover:not-disabled:border-[#333] disabled:cursor-not-allowed disabled:opacity-50"
+          class="ui-btn-primary rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
           @click="openCreateModal"
         >
           New Token
@@ -297,7 +297,7 @@ onBeforeUnmount(() => {
     <div class="pt-5">
       <p
         v-if="tokens.length === 0"
-        class="m-0 text-secondary text-sm bg-surface-soft px-4 py-3 rounded-default border border-dashed border-stroke"
+        class="ui-empty-state m-0 text-sm px-4 py-3 rounded-default border border-dashed"
       >
         No tokens configured. All MCP and protected HTTP endpoints are currently rejected.
       </p>
@@ -313,14 +313,14 @@ onBeforeUnmount(() => {
             <p class="m-0 flex items-center gap-3 text-primary text-[13px]">
               <span class="w-16 text-secondary text-[13px] font-medium">ID</span>
               <code
-                class="font-mono bg-surface-soft border border-stroke rounded-default px-1.5 py-0.5 text-xs break-all whitespace-pre-wrap"
+                class="ui-code-inline font-mono border rounded-default px-1.5 py-0.5 text-xs break-all whitespace-pre-wrap"
                 >{{ item.id }}</code
               >
             </p>
             <p class="m-0 flex items-center gap-3 text-primary text-[13px]">
               <span class="w-16 text-secondary text-[13px] font-medium">Masked</span>
               <code
-                class="font-mono bg-surface-soft border border-stroke rounded-default px-1.5 py-0.5 text-xs break-all whitespace-pre-wrap"
+                class="ui-code-inline font-mono border rounded-default px-1.5 py-0.5 text-xs break-all whitespace-pre-wrap"
                 >{{ item.token_masked }}</code
               >
             </p>
@@ -333,7 +333,7 @@ onBeforeUnmount(() => {
           <div class="token-actions">
             <button
               type="button"
-              class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-offline bg-white border border-[#fca5a5] transition-all duration-200 hover:not-disabled:bg-[#fef2f2] hover:not-disabled:border-[#f87171] disabled:cursor-not-allowed disabled:opacity-50"
+              class="ui-btn-danger rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
               :disabled="deletingTokenId === item.id"
               @click="emit('deleteToken', item.id)"
             >
@@ -348,7 +348,7 @@ onBeforeUnmount(() => {
   <Teleport to="body">
     <div
       v-if="showCreateModal"
-      class="fixed inset-0 z-1000 bg-black/40 backdrop-blur-xs flex items-center justify-center p-6"
+      class="ui-modal-overlay fixed inset-0 z-1000 flex items-center justify-center p-6"
       @click.self="closeCreateModal"
     >
       <div
@@ -378,13 +378,13 @@ onBeforeUnmount(() => {
                   maxlength="64"
                   required
                   placeholder="ci-prod"
-                  class="border border-stroke rounded-default px-3 py-2.5 text-sm font-[inherit] transition-[border-color,box-shadow] duration-200 outline-none focus:border-secondary focus:shadow-[0_0_0_1px_var(--color-secondary)]"
+                  class="ui-input border rounded-default px-3 py-2.5 text-sm font-[inherit]"
                 />
               </label>
 
               <p
                 v-if="modalError"
-                class="m-0 border border-[#fca5a5] rounded-default bg-[#fef2f2] text-offline px-3 py-2.5 text-sm"
+                class="ui-alert ui-alert-error m-0 rounded-default px-3 py-2.5 text-sm"
               >
                 {{ modalError }}
               </p>
@@ -394,7 +394,7 @@ onBeforeUnmount(() => {
               >
                 <button
                   type="button"
-                  class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-primary bg-surface border border-stroke transition-all duration-200 hover:not-disabled:border-stroke-hover hover:not-disabled:bg-surface-soft disabled:cursor-not-allowed disabled:opacity-50"
+                  class="ui-btn-secondary rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
                   :disabled="creatingToken"
                   @click="closeCreateModal"
                 >
@@ -402,7 +402,7 @@ onBeforeUnmount(() => {
                 </button>
                 <button
                   type="submit"
-                  class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-white bg-accent border border-accent transition-all duration-200 hover:not-disabled:bg-[#333] hover:not-disabled:border-[#333] disabled:cursor-not-allowed disabled:opacity-50"
+                  class="ui-btn-primary rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
                   :disabled="creatingToken || nameInput.trim() === ''"
                 >
                   {{ creatingToken ? 'Creating...' : 'Create Token' }}
@@ -416,7 +416,7 @@ onBeforeUnmount(() => {
               This is the only time the plaintext token is shown. Copy and store it securely now.
             </p>
             <code
-              class="block border border-stroke rounded-default bg-black text-white p-4 font-mono text-[13px] leading-[1.6] break-all whitespace-pre-wrap"
+              class="ui-code-block block border rounded-default p-4 font-mono text-[13px] leading-[1.6] break-all whitespace-pre-wrap"
               >{{ createdToken.token }}</code
             >
             <div class="grid gap-3">
@@ -440,7 +440,7 @@ onBeforeUnmount(() => {
                 <div
                   role="tablist"
                   aria-label="Token quick setup snippets"
-                  class="grid grid-cols-3 gap-2 rounded-default border border-stroke bg-surface-soft p-2 max-[700px]:grid-cols-1"
+                  class="ui-inset-surface grid grid-cols-3 gap-2 rounded-default border p-2 max-[700px]:grid-cols-1"
                 >
                   <button
                     v-for="snippet in tokenUsageSnippets"
@@ -449,11 +449,7 @@ onBeforeUnmount(() => {
                     role="tab"
                     :aria-selected="activeUsageKey === snippet.key"
                     class="rounded-default border px-3 py-2 text-left transition-all duration-200"
-                    :class="
-                      activeUsageKey === snippet.key
-                        ? 'border-accent bg-surface text-primary shadow-card'
-                        : 'border-transparent bg-transparent text-secondary hover:border-stroke hover:bg-surface'
-                    "
+                    :class="activeUsageKey === snippet.key ? 'ui-tab-active' : 'ui-tab-inactive'"
                     @click="selectUsageSnippet(snippet.key)"
                   >
                     <span class="block font-mono text-[11px] lowercase">{{ snippet.label }}</span>
@@ -463,16 +459,16 @@ onBeforeUnmount(() => {
 
                 <div
                   v-if="activeUsageSnippet"
-                  class="token-usage-item border border-stroke rounded-default bg-surface-soft p-3 grid gap-2.5"
+                  class="ui-inset-surface token-usage-item border rounded-default p-3 grid gap-2.5"
                 >
                   <code
-                    class="token-usage-value block border border-stroke rounded-default bg-black text-white p-3 font-mono text-xs leading-[1.55] break-all whitespace-pre-wrap"
+                    class="ui-code-block token-usage-value block border rounded-default p-3 font-mono text-xs leading-[1.55] break-all whitespace-pre-wrap"
                     >{{ activeUsageSnippet.value }}</code
                   >
                   <div class="flex justify-end">
                     <button
                       type="button"
-                      class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-primary bg-surface border border-stroke transition-all duration-200 hover:not-disabled:border-stroke-hover hover:not-disabled:bg-surface-soft disabled:cursor-not-allowed disabled:opacity-50"
+                      class="ui-btn-secondary rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
                       :disabled="copyingUsageKey === activeUsageSnippet.key"
                       @click="copyUsageSnippet(activeUsageSnippet.key, activeUsageSnippet.value)"
                     >
@@ -488,7 +484,7 @@ onBeforeUnmount(() => {
             >
               <button
                 type="button"
-                class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-primary bg-surface border border-stroke transition-all duration-200 hover:not-disabled:border-stroke-hover hover:not-disabled:bg-surface-soft disabled:cursor-not-allowed disabled:opacity-50"
+                class="ui-btn-secondary rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
                 :disabled="copyingCreatedToken"
                 @click="copyCreatedToken"
               >
@@ -496,7 +492,7 @@ onBeforeUnmount(() => {
               </button>
               <button
                 type="button"
-                class="rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center text-white bg-accent border border-accent transition-all duration-200 hover:not-disabled:bg-[#333] hover:not-disabled:border-[#333] disabled:cursor-not-allowed disabled:opacity-50"
+                class="ui-btn-primary rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
                 @click="closeCreateModal"
               >
                 Done
