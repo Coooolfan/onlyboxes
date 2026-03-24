@@ -196,7 +196,7 @@ const InstallCommand = ({ isDark }: { isDark: boolean }) => {
   };
 
   return (
-    <div className={`mt-6 max-w-full flex items-center rounded-lg border px-3 py-2.5 font-mono text-sm ${isDark ? 'bg-neutral-900/60 border-neutral-800 text-neutral-300' : 'bg-neutral-50 border-neutral-200 text-neutral-600'} transition-colors duration-300`}>
+    <div className={`mt-6 w-fit max-w-full flex items-center rounded-lg border px-3 py-2.5 font-mono text-sm ${isDark ? 'bg-neutral-900/60 border-neutral-800 text-neutral-300' : 'bg-neutral-50 border-neutral-200 text-neutral-600'} transition-colors duration-300`}>
       <span className={`select-none mr-1.5 ${isDark ? 'text-neutral-600' : 'text-neutral-400'}`}>$</span>
       <code className="overflow-x-auto whitespace-nowrap min-w-0">{INSTALL_CMD}</code>
       <button
