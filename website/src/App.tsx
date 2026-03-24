@@ -81,6 +81,25 @@ const SvgNode = ({ x, y, width = 220, height = 56, title, subtitle, icon: Icon, 
 );
 
 const ArchitectureDiagram = ({ isDark }: { isDark: boolean }) => {
+  const [isCompact, setIsCompact] = useState(() => window.matchMedia('(max-width: 767px)').matches);
+
+  useEffect(() => {
+    const mql = window.matchMedia('(max-width: 767px)');
+    const handler = (e: MediaQueryListEvent) => setIsCompact(e.matches);
+    mql.addEventListener('change', handler);
+    return () => mql.removeEventListener('change', handler);
+  }, []);
+
+  const clientW = isCompact ? 160 : 220;
+  const clientRight = 20 + clientW;
+  const consoleX = isCompact ? 300 : 320;
+  const consoleRight = consoleX + 120;
+  const clientMid = Math.round((clientRight + consoleX) / 2);
+  const envX = isCompact ? 540 : 820;
+  const envW = isCompact ? 160 : 220;
+  const nextX = isCompact ? envX : 520;
+  const consoleMid = Math.round((consoleRight + nextX) / 2);
+
   return (
     <div className="w-full relative overflow-visible">
       {/* Background Grid Pattern */}
@@ -93,7 +112,7 @@ const ArchitectureDiagram = ({ isDark }: { isDark: boolean }) => {
       <div className={`absolute inset-0 bg-linear-to-r ${isDark ? 'from-black via-transparent to-black' : 'from-white via-transparent to-white'} z-0 pointer-events-none transition-colors duration-300`}></div>
       <div className={`absolute inset-0 bg-linear-to-b ${isDark ? 'from-black via-transparent to-black' : 'from-white via-transparent to-white'} z-0 pointer-events-none transition-colors duration-300`}></div>
 
-      <svg viewBox="0 0 1060 400" className="w-full h-auto relative z-10 overflow-visible">
+      <svg viewBox={isCompact ? "0 0 720 400" : "0 0 1060 400"} className="w-full h-auto relative z-10 overflow-visible">
         <defs>
           <filter id="shadow-sm" x="-10%" y="-10%" width="120%" height="120%">
             <feDropShadow dx="0" dy="2" stdDeviation="4" floodColor="#000" floodOpacity="0.05" />
@@ -110,25 +129,27 @@ const ArchitectureDiagram = ({ isDark }: { isDark: boolean }) => {
         </defs>
 
         {/* Lines */}
-        <FlowLine isDark={isDark} d="M 240 108 C 280 108, 280 188, 320 188" />
-        <FlowLine isDark={isDark} d="M 240 188 L 320 188" />
-        <FlowLine isDark={isDark} d="M 240 268 C 280 268, 280 188, 320 188" />
+        <FlowLine isDark={isDark} d={`M ${clientRight} 108 C ${clientMid} 108, ${clientMid} 188, ${consoleX} 188`} />
+        <FlowLine isDark={isDark} d={`M ${clientRight} 188 L ${consoleX} 188`} />
+        <FlowLine isDark={isDark} d={`M ${clientRight} 268 C ${clientMid} 268, ${clientMid} 188, ${consoleX} 188`} />
         
-        <FlowLine isDark={isDark} d="M 440 188 C 480 188, 480 108, 520 108" />
-        <FlowLine isDark={isDark} d="M 440 188 L 520 188" />
-        <FlowLine isDark={isDark} d="M 440 188 C 480 188, 480 268, 520 268" />
+        <FlowLine isDark={isDark} d={`M ${consoleRight} 188 C ${consoleMid} 188, ${consoleMid} 108, ${nextX} 108`} />
+        <FlowLine isDark={isDark} d={`M ${consoleRight} 188 L ${nextX} 188`} />
+        <FlowLine isDark={isDark} d={`M ${consoleRight} 188 C ${consoleMid} 188, ${consoleMid} 268, ${nextX} 268`} />
         
-        <FlowLine isDark={isDark} d="M 740 108 L 820 108" />
-        <FlowLine isDark={isDark} d="M 740 188 L 820 188" />
-        <FlowLine isDark={isDark} d="M 740 268 L 820 268" />
+        {!isCompact && <>
+          <FlowLine isDark={isDark} d="M 740 108 L 820 108" />
+          <FlowLine isDark={isDark} d="M 740 188 L 820 188" />
+          <FlowLine isDark={isDark} d="M 740 268 L 820 268" />
+        </>}
 
         {/* Nodes Col 1: Clients */}
-        <SvgNode isDark={isDark} x={20} y={80} title="Developer" subtitle="Client" icon={User} />
-        <SvgNode isDark={isDark} x={20} y={160} title="API Client" subtitle="Client" icon={Terminal} />
-        <SvgNode isDark={isDark} x={20} y={240} title="MCP Client" subtitle="Client" icon={Blocks} active />
+        <SvgNode isDark={isDark} x={20} y={80} width={clientW} title="Developer" subtitle="Client" icon={User} />
+        <SvgNode isDark={isDark} x={20} y={160} width={clientW} title="API Client" subtitle="Client" icon={Terminal} />
+        <SvgNode isDark={isDark} x={20} y={240} width={clientW} title="MCP Client" subtitle="Client" icon={Blocks} active />
 
         {/* Node Col 2: Console Hub */}
-        <g transform={`translate(320, 130)`} filter={isDark ? "url(#shadow-dark-lg)" : "url(#shadow-lg)"} className="transition-all duration-300">
+        <g transform={`translate(${consoleX}, 130)`} filter={isDark ? "url(#shadow-dark-lg)" : "url(#shadow-lg)"} className="transition-all duration-300">
           <rect width={120} height={116} rx={16} fill={isDark ? "#141414" : "#FFFFFF"} stroke={isDark ? "#333" : "#E5E5E5"} strokeWidth={1} className="transition-colors duration-300" />
           <rect x={36} y={24} width={48} height={48} rx={12} fill={isDark ? "#1A1A1A" : "#F5F5F5"} stroke={isDark ? "#444" : "#E5E5E5"} strokeWidth={1} className="transition-colors duration-300" />
           <svg x={48} y={36} width={24} height={24}>
@@ -137,36 +158,40 @@ const ArchitectureDiagram = ({ isDark }: { isDark: boolean }) => {
           <text x={60} y={96} textAnchor="middle" fontSize={14} fill={isDark ? "#EDEDED" : "#171717"} fontWeight={600} letterSpacing={0.5} className="transition-colors duration-300">Console</text>
         </g>
 
-        {/* Nodes Col 3: Workers */}
-        <SvgNode isDark={isDark} x={520} y={80} title="Worker Node" subtitle="Execution" icon={Cpu} />
-        <SvgNode isDark={isDark} x={520} y={160} title="Worker Node" subtitle="Execution" icon={Cpu} />
-        <SvgNode isDark={isDark} x={520} y={240} title="Worker Node" subtitle="Execution" icon={Cpu} />
+        {!isCompact && <>
+          {/* Nodes Col 3: Workers */}
+          <SvgNode isDark={isDark} x={520} y={80} title="Worker Node" subtitle="Execution" icon={Cpu} />
+          <SvgNode isDark={isDark} x={520} y={160} title="Worker Node" subtitle="Execution" icon={Cpu} />
+          <SvgNode isDark={isDark} x={520} y={240} title="Worker Node" subtitle="Execution" icon={Cpu} />
+        </>}
 
         {/* Nodes Col 4: Environments */}
-        <SvgNode isDark={isDark} x={820} y={80} title="Docker" subtitle="Environment" icon={Box} />
-        <SvgNode isDark={isDark} x={820} y={160} title="Boxlite (WIP)" subtitle="Environment" icon={Package} dashed />
-        <SvgNode isDark={isDark} x={820} y={240} title="OS Process" subtitle="Environment" icon={Terminal} dashed />
+        <SvgNode isDark={isDark} x={envX} y={80} width={envW} title="Docker" subtitle="Environment" icon={Box} />
+        <SvgNode isDark={isDark} x={envX} y={160} width={envW} title="Boxlite" subtitle="Environment" icon={Package} dashed />
+        <SvgNode isDark={isDark} x={envX} y={240} width={envW} title="OS Process" subtitle="Environment" icon={Terminal} dashed />
 
         {/* Anchors */}
         <g fill={isDark ? "#0A0A0A" : "#FFFFFF"} stroke={isDark ? "#555" : "#A3A3A3"} strokeWidth={1.5} className="transition-colors duration-300">
-          <circle cx={240} cy={108} r={3} />
-          <circle cx={240} cy={188} r={3} />
-          <circle cx={240} cy={268} r={3} />
+          <circle cx={clientRight} cy={108} r={3} />
+          <circle cx={clientRight} cy={188} r={3} />
+          <circle cx={clientRight} cy={268} r={3} />
           
-          <circle cx={320} cy={188} r={3} />
-          <circle cx={440} cy={188} r={3} />
+          <circle cx={consoleX} cy={188} r={3} />
+          <circle cx={consoleRight} cy={188} r={3} />
           
-          <circle cx={520} cy={108} r={3} />
-          <circle cx={520} cy={188} r={3} />
-          <circle cx={520} cy={268} r={3} />
+          <circle cx={nextX} cy={108} r={3} />
+          <circle cx={nextX} cy={188} r={3} />
+          <circle cx={nextX} cy={268} r={3} />
           
-          <circle cx={740} cy={108} r={3} />
-          <circle cx={740} cy={188} r={3} />
-          <circle cx={740} cy={268} r={3} />
+          {!isCompact && <>
+            <circle cx={740} cy={108} r={3} />
+            <circle cx={740} cy={188} r={3} />
+            <circle cx={740} cy={268} r={3} />
 
-          <circle cx={820} cy={108} r={3} />
-          <circle cx={820} cy={188} r={3} />
-          <circle cx={820} cy={268} r={3} />
+            <circle cx={820} cy={108} r={3} />
+            <circle cx={820} cy={188} r={3} />
+            <circle cx={820} cy={268} r={3} />
+          </>}
         </g>
       </svg>
       
