@@ -3,8 +3,9 @@ import { Github, BookOpen, Copy, Check, Terminal, Blocks, Server, Cpu, Box, Pack
 
 const RotatingText = ({ isDark }: { isDark: boolean }) => {
   const texts = [
-    "Run LLM-generated code safely?",
-    "Build a sandbox service?"
+    "Run untrusted code safely?",
+    "Self-host your code sandbox?",
+    "Power your AI agents with skills?"
   ];
   const [index, setIndex] = useState(0);
   const [fade, setFade] = useState(true);
