@@ -81,7 +81,6 @@ watch(
     <div
       v-if="payload"
       class="fixed inset-0 z-1000 bg-black/40 backdrop-blur-xs flex items-center justify-center p-6"
-      @click.self="closeModal"
     >
       <div
         class="worker-modal w-[min(640px,100%)] rounded-lg border border-stroke bg-surface shadow-modal flex flex-col"

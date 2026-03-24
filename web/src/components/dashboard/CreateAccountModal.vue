@@ -48,7 +48,6 @@ function closeModal(): void {
   <Teleport to="body">
     <div
       class="fixed inset-0 z-1000 bg-black/40 backdrop-blur-xs flex items-center justify-center p-6"
-      @click.self="closeModal"
     >
       <div
         class="account-modal w-[min(480px,100%)] rounded-lg border border-stroke bg-surface shadow-modal flex flex-col"
