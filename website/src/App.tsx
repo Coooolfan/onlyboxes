@@ -295,7 +295,7 @@ function App() {
           </div>
         </div>
 
-        {/* Install Command - Full Width */}
+        {/* Install Command - auto fit width */}
         <InstallCommand isDark={isDark} />
       </main>
     </div>
