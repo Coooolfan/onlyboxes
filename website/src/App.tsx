@@ -23,7 +23,7 @@ const RotatingText = ({ isDark }: { isDark: boolean }) => {
 
   return (
     <div className="h-6 mb-4 flex items-center">
-      <span 
+      <span
         className={`text-sm ${isDark ? 'text-neutral-500' : 'text-neutral-500'} transition-opacity duration-500 ease-in-out ${fade ? 'opacity-100' : 'opacity-0'}`}
       >
         {texts[index]}
@@ -56,18 +56,18 @@ interface SvgNodeProps {
 
 const SvgNode = ({ x, y, width = 220, height = 56, title, subtitle, icon: Icon, dashed = false, active = false, isDark }: SvgNodeProps) => (
   <g transform={`translate(${x}, ${y})`} filter={isDark ? "url(#shadow-dark)" : "url(#shadow-sm)"} className="transition-all duration-300">
-    <rect 
-      width={width} height={height} rx={8} 
-      fill={isDark ? "#141414" : "#FFFFFF"} 
-      stroke={active ? (isDark ? "#555" : "#A3A3A3") : (isDark ? "#2A2A2A" : "#E5E5E5")} 
-      strokeWidth={1} strokeDasharray={dashed ? "4 4" : "none"} 
+    <rect
+      width={width} height={height} rx={8}
+      fill={isDark ? "#141414" : "#FFFFFF"}
+      stroke={active ? (isDark ? "#555" : "#A3A3A3") : (isDark ? "#2A2A2A" : "#E5E5E5")}
+      strokeWidth={1} strokeDasharray={dashed ? "4 4" : "none"}
       className="transition-colors duration-300"
     />
-    <rect 
-      x={12} y={12} width={32} height={32} rx={6} 
-      fill={isDark ? "#1A1A1A" : "#F5F5F5"} 
-      stroke={isDark ? "#2A2A2A" : "#E5E5E5"} 
-      strokeWidth={1} 
+    <rect
+      x={12} y={12} width={32} height={32} rx={6}
+      fill={isDark ? "#1A1A1A" : "#F5F5F5"}
+      stroke={isDark ? "#2A2A2A" : "#E5E5E5"}
+      strokeWidth={1}
       className="transition-colors duration-300"
     />
     {Icon && (
@@ -106,11 +106,11 @@ const ArchitectureDiagram = ({ isDark }: { isDark: boolean }) => {
         Architecture
       </div>
       {/* Background Grid Pattern */}
-      <div 
-        className={`absolute inset-0 transition-opacity duration-300 ${isDark ? 'opacity-[0.15]' : 'opacity-[0.4]'}`} 
+      <div
+        className={`absolute inset-0 transition-opacity duration-300 ${isDark ? 'opacity-[0.15]' : 'opacity-[0.4]'}`}
         style={{ backgroundImage: `radial-gradient(${isDark ? '#444' : '#D4D4D4'} 1px, transparent 1px)`, backgroundSize: '24px 24px' }}
       ></div>
-      
+
       {/* Fade out edges */}
       <div className={`absolute inset-0 bg-linear-to-r ${isDark ? 'from-black via-transparent to-black' : 'from-white via-transparent to-white'} z-0 pointer-events-none transition-colors duration-300`}></div>
       <div className={`absolute inset-0 bg-linear-to-b ${isDark ? 'from-black via-transparent to-black' : 'from-white via-transparent to-white'} z-0 pointer-events-none transition-colors duration-300`}></div>
@@ -135,11 +135,11 @@ const ArchitectureDiagram = ({ isDark }: { isDark: boolean }) => {
         <FlowLine isDark={isDark} d={`M ${clientRight} 108 C ${clientMid} 108, ${clientMid} 188, ${consoleX} 188`} />
         <FlowLine isDark={isDark} d={`M ${clientRight} 188 L ${consoleX} 188`} />
         <FlowLine isDark={isDark} d={`M ${clientRight} 268 C ${clientMid} 268, ${clientMid} 188, ${consoleX} 188`} />
-        
+
         <FlowLine isDark={isDark} d={`M ${consoleRight} 188 C ${consoleMid} 188, ${consoleMid} 108, ${nextX} 108`} />
         <FlowLine isDark={isDark} d={`M ${consoleRight} 188 L ${nextX} 188`} />
         <FlowLine isDark={isDark} d={`M ${consoleRight} 188 C ${consoleMid} 188, ${consoleMid} 268, ${nextX} 268`} />
-        
+
         {!isCompact && <>
           <FlowLine isDark={isDark} d="M 740 108 L 820 108" />
           <FlowLine isDark={isDark} d="M 740 188 L 820 188" />
@@ -178,14 +178,14 @@ const ArchitectureDiagram = ({ isDark }: { isDark: boolean }) => {
           <circle cx={clientRight} cy={108} r={3} />
           <circle cx={clientRight} cy={188} r={3} />
           <circle cx={clientRight} cy={268} r={3} />
-          
+
           <circle cx={consoleX} cy={188} r={3} />
           <circle cx={consoleRight} cy={188} r={3} />
-          
+
           <circle cx={nextX} cy={108} r={3} />
           <circle cx={nextX} cy={188} r={3} />
           <circle cx={nextX} cy={268} r={3} />
-          
+
           {!isCompact && <>
             <circle cx={740} cy={108} r={3} />
             <circle cx={740} cy={188} r={3} />
@@ -246,7 +246,7 @@ function App() {
           <span className="font-semibold text-sm tracking-tight">OnlyBoxes</span>
         </div>
         <div className="flex items-center gap-4">
-          <button 
+          <button
             onClick={() => setIsDark(!isDark)}
             className={`p-2 rounded-md ${isDark ? 'hover:bg-neutral-900 text-neutral-400 hover:text-white' : 'hover:bg-neutral-100 text-neutral-500 hover:text-black'} transition-colors duration-300`}
             aria-label="Toggle theme"
@@ -262,15 +262,15 @@ function App() {
           {/* Left Column - Copy */}
           <div className="w-full xl:w-[450px] shrink-0 z-10 flex flex-col justify-center">
             <RotatingText isDark={isDark} />
-            
+
             <h1 className={`text-6xl md:text-7xl lg:text-8xl font-bold tracking-tighter mb-6 ${isDark ? 'text-white' : 'text-black'} leading-none transition-colors duration-300`}>
               OnlyBoxes
             </h1>
-            
+
             <p className={`text-lg ${isDark ? 'text-neutral-400' : 'text-neutral-500'} mb-10 leading-relaxed font-light transition-colors duration-300`}>
               A self-hosted code execution sandbox platform for individuals and small teams.
             </p>
-            
+
             <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
               <a href="https://github.com/Coooolfan/onlyboxes#readme" target="_blank" rel="noopener noreferrer" className={`w-full sm:w-auto flex items-center justify-center gap-2 ${isDark ? 'bg-white text-black hover:bg-neutral-200' : 'bg-black text-white hover:bg-neutral-800'} px-6 py-3 rounded-md font-medium transition-colors shadow-md`}>
                 <BookOpen className="w-4 h-4" />
@@ -287,9 +287,9 @@ function App() {
           <div className="w-full xl:w-auto flex-1 relative flex items-center justify-center min-w-0">
             {/* Subtle background glow for dark mode */}
             <div className={`absolute inset-0 bg-neutral-900/20 rounded-full blur-3xl -z-10 transition-opacity duration-500 ${isDark ? 'opacity-100' : 'opacity-0'}`}></div>
-            
+
             <div className="w-full max-w-[1000px] relative">
-               <ArchitectureDiagram isDark={isDark} />
+              <ArchitectureDiagram isDark={isDark} />
             </div>
           </div>
         </div>
