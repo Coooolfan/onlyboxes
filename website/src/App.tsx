@@ -102,6 +102,9 @@ const ArchitectureDiagram = ({ isDark }: { isDark: boolean }) => {
 
   return (
     <div className="w-full relative overflow-visible">
+      <div className={`absolute top-0 left-0 z-20 text-[10px] font-mono tracking-wider uppercase ${isDark ? 'text-neutral-500' : 'text-neutral-400'} transition-colors duration-300`}>
+        Architecture
+      </div>
       {/* Background Grid Pattern */}
       <div 
         className={`absolute inset-0 transition-opacity duration-300 ${isDark ? 'opacity-[0.15]' : 'opacity-[0.4]'}`} 
@@ -194,17 +197,6 @@ const ArchitectureDiagram = ({ isDark }: { isDark: boolean }) => {
           </>}
         </g>
       </svg>
-      
-      {/* Labels */}
-      <div className="absolute top-0 left-0 flex gap-2 z-20">
-        <div className={`flex items-center gap-1.5 text-[10px] text-neutral-500 font-mono tracking-wider uppercase ${isDark ? 'bg-black/50 border-neutral-800' : 'bg-white/80 border-neutral-200'} px-2 py-1 rounded-md border backdrop-blur-sm shadow-sm transition-colors duration-300`}>
-           <div className={`w-1.5 h-1.5 rounded-full ${isDark ? 'bg-white' : 'bg-black'} animate-pulse transition-colors duration-300`}></div>
-           Control Plane
-        </div>
-        <div className={`flex items-center gap-1.5 text-[10px] text-neutral-500 font-mono tracking-wider uppercase ${isDark ? 'bg-black/50 border-neutral-800' : 'bg-white/80 border-neutral-200'} px-2 py-1 rounded-md border backdrop-blur-sm shadow-sm transition-colors duration-300`}>
-           Execution Plane
-        </div>
-      </div>
     </div>
   );
 };
