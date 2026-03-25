@@ -88,7 +88,7 @@ type pythonExecPayload struct {
 
 var mcpEchoToolDescription = "Echoes the input message exactly as returned by an online worker supporting the echo capability. Use this tool for connectivity checks, request tracing, and latency baselines. Do not use it for code execution, file operations, or long-running work. timeout_ms is an end-to-end dispatch timeout in milliseconds (1-60000, default 5000)."
 
-var mcpPythonExecToolDescription = "Executes Python code in the worker sandbox via the pythonExec capability and returns stdout, stderr, and exit_code. Use this for short, self-contained snippets. Do not use it for long-running jobs or persistent state. timeout_ms is a synchronous execution timeout in milliseconds (1-600000, default 60000). A non-zero exit_code is returned as normal tool output, not as a protocol error."
+var mcpPythonExecToolDescription = "Executes Python code in the worker sandbox via the pythonExec capability and returns stdout, stderr, and exit_code. Use this for short, self-contained snippets. Supports PEP 723 inline script metadata: add a '# /// script' block at the top of your code to declare dependencies (e.g. '# dependencies = [\"requests\"]') which will be automatically installed before execution. Do not use it for long-running jobs or persistent state. timeout_ms is a synchronous execution timeout in milliseconds (1-600000, default 60000). A non-zero exit_code is returned as normal tool output, not as a protocol error."
 
 var mcpTerminalExecToolDescription = "Executes shell commands in a persistent Docker-backed terminal session via the terminalExec capability. Sessions run on onlyboxes default-work-image (ubuntu:24.04), commands are executed with sh -lc, and common tools are preinstalled (python3/pip/venv, git, curl/wget, jq, ripgrep, fd-find, tree, file, zip/unzip, sqlite3). Reuse session_id to preserve filesystem state across calls. create_if_missing controls missing-session behavior. lease_ttl_sec extends session lease within configured bounds. timeout_ms is a synchronous execution timeout in milliseconds (1-600000, default 60000)."
 
@@ -134,7 +134,7 @@ var mcpPythonExecInputSchema = map[string]any{
 	"properties": map[string]any{
 		"code": map[string]any{
 			"type":        "string",
-			"description": "Python source code to execute in the worker sandbox. Empty or whitespace-only values are rejected.",
+			"description": "Python source code to execute in the worker sandbox. Supports PEP 723 inline script metadata for declaring dependencies. Empty or whitespace-only values are rejected.",
 		},
 		"timeout_ms": map[string]any{
 			"type":        "integer",

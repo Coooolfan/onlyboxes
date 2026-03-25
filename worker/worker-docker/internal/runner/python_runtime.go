@@ -154,9 +154,11 @@ func pythonExecDockerCreateArgsWithImage(containerName string, dockerImage strin
 		"--memory", defaultPythonExecMemoryLimit,
 		"--cpus", defaultPythonExecCPULimit,
 		"--pids-limit", strconv.Itoa(defaultPythonExecPidsLimit),
+		"--entrypoint", "sh",
 		resolvedDockerImage,
-		"python",
 		"-c",
+		`printf '%s' "$1" > /tmp/script.py && uv run /tmp/script.py`,
+		"_",
 		code,
 	}
 }

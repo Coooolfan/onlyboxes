@@ -19,7 +19,7 @@ const (
 	echoCapabilityName             = "echo"
 	pythonExecCapabilityName       = "pythonexec"
 	pythonExecCapabilityDeclared   = "pythonExec"
-	defaultPythonExecDockerImage   = "python:slim"
+	defaultPythonExecDockerImage   = "ghcr.io/astral-sh/uv:python3.12-bookworm-slim"
 	defaultPythonExecMemoryLimit   = "256m"
 	defaultPythonExecCPULimit      = "1.0"
 	defaultPythonExecPidsLimit     = 128

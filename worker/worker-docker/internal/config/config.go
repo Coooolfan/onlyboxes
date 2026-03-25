@@ -14,7 +14,7 @@ const (
 	defaultHeartbeatInterval = 5
 	defaultHeartbeatJitter   = 20
 	defaultExecutorKind      = "docker"
-	defaultPythonExecImage   = "python:slim"
+	defaultPythonExecImage   = "ghcr.io/astral-sh/uv:python3.12-bookworm-slim"
 	defaultTerminalExecImage = "coolfan1024/onlyboxes-default-worker:0.0.3"
 	defaultTerminalLeaseMin  = 60
 	defaultTerminalLeaseMax  = 1800

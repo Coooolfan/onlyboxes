@@ -419,9 +419,11 @@ func TestPythonExecDockerCreateArgsIncludesResourceLimitsAndLabels(t *testing.T)
 		"--memory", defaultPythonExecMemoryLimit,
 		"--cpus", defaultPythonExecCPULimit,
 		"--pids-limit", fmt.Sprint(defaultPythonExecPidsLimit),
+		"--entrypoint", "sh",
 		defaultPythonExecDockerImage,
-		"python",
 		"-c",
+		`printf '%s' "$1" > /tmp/script.py && uv run /tmp/script.py`,
+		"_",
 		code,
 	}
 	if !reflect.DeepEqual(got, want) {

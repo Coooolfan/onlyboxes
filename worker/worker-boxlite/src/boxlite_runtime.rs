@@ -58,6 +58,13 @@ pub(crate) async fn run_python_exec(
         })?;
 
     let box_id = litebox.id().as_str().to_owned();
+    if let Err(err) = litebox.start().await {
+        remove_box(cfg, &box_id).await;
+        return Err(BoxliteCommandError::ExecutionFailed(format!(
+            "pythonExec start failed: {err}"
+        )));
+    }
+
     let execution_result = match run_command_in_box(
         runtime,
         &box_id,
@@ -208,6 +215,8 @@ fn build_python_exec_box_options(cfg: &Config) -> BoxOptions {
         memory_mib: Some(cfg.python_exec_memory_mib),
         rootfs: RootfsSpec::Image(cfg.python_exec_image.clone()),
         auto_remove: false,
+        entrypoint: Some(vec!["sleep".to_owned()]),
+        cmd: Some(vec!["infinity".to_owned()]),
         ..Default::default()
     };
     options.advanced.security.resource_limits.max_processes =
@@ -351,7 +360,12 @@ async fn box_exists(runtime: &BoxliteRuntime, box_id: &str) -> Result<bool, Boxl
 }
 
 fn python_command(code: &str) -> BoxCommand {
-    BoxCommand::new("python").args(["-c", code])
+    BoxCommand::new("sh").args([
+        "-c",
+        r#"printf '%s' "$1" > /tmp/script.py && uv run /tmp/script.py"#,
+        "_",
+        code,
+    ])
 }
 
 fn resource_probe_command(action: &str, file_path: &str, max_read_bytes: usize) -> BoxCommand {
@@ -514,6 +528,59 @@ mod tests {
             options.cmd,
             Some(vec![TERMINAL_EXEC_IDLE_COMMAND.to_owned()])
         );
+    }
+
+    #[test]
+    fn python_exec_box_options_override_entrypoint_to_sleep_infinity() {
+        let cfg = Config {
+            console_grpc_target: String::new(),
+            console_tls: false,
+            worker_id: String::new(),
+            worker_secret: String::new(),
+            heartbeat_interval: Duration::from_secs(5),
+            heartbeat_jitter_pct: 20,
+            call_timeout: Duration::from_secs(13),
+            node_name: String::new(),
+            executor_kind: "boxlite".to_owned(),
+            version: "dev".to_owned(),
+            labels: Default::default(),
+            boxlite_home: String::new(),
+            python_exec_image: "ghcr.io/astral-sh/uv:python3.12-bookworm-slim".to_owned(),
+            python_exec_memory_mib: 256,
+            python_exec_cpus: 1,
+            python_exec_max_processes: 128,
+            terminal_exec_image: "coolfan1024/onlyboxes-default-worker:0.0.3".to_owned(),
+            terminal_exec_memory_mib: 256,
+            terminal_exec_cpus: 1,
+            terminal_exec_max_processes: 128,
+            terminal_lease_min_sec: 60,
+            terminal_lease_max_sec: 1800,
+            terminal_lease_default_sec: 60,
+            terminal_output_limit_bytes: 1024 * 1024,
+            log_level: "info".to_owned(),
+            log_format: "json".to_owned(),
+            log_add_source: false,
+        };
+
+        let options = build_python_exec_box_options(&cfg);
+        assert_eq!(
+            options.entrypoint,
+            Some(vec!["sleep".to_owned()])
+        );
+        assert_eq!(
+            options.cmd,
+            Some(vec!["infinity".to_owned()])
+        );
+    }
+
+    #[test]
+    fn python_command_uses_uv_run_via_sh() {
+        let command = python_command("print('hello')");
+        let debug = format!("{command:?}");
+        assert!(debug.contains("command: \"sh\""));
+        assert!(debug.contains("\"-c\""));
+        assert!(debug.contains("uv run"));
+        assert!(debug.contains("print('hello')"));
     }
 
     #[test]
