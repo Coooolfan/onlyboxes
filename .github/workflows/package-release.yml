@@ -332,6 +332,11 @@ jobs:
         with:
           ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
 
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ github.token }}
+
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
