@@ -81,6 +81,7 @@ jobs:
     name: console (${{ matrix.os_name }}/${{ matrix.goarch }})
     runs-on: ${{ matrix.os }}
     needs:
+      - resolve-version
       - build-web
     defaults:
       run:
@@ -407,9 +408,10 @@ jobs:
           )
           gh release upload "${VERSION_RAW}" "build/${WORKER_BIN}.zip" --clobber
 
-  docker-console:
+  push-console-image:
     runs-on: ubuntu-latest
     needs:
+      - resolve-version
       - build-console
     env:
       VERSION_SAFE: ${{ needs.resolve-version.outputs.version_safe }}
