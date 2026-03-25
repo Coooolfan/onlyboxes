@@ -174,7 +174,7 @@ jobs:
           gh release upload "${VERSION_RAW}" "build/${CONSOLE_BIN}.zip" --clobber
 
   build-worker-docker:
-    name: ${{ matrix.worker_name }} (${{ matrix.os_name }}/${{ matrix.goarch }})
+    name: worker-docker (${{ matrix.os_name }}/${{ matrix.goarch }})
     runs-on: ${{ matrix.os }}
     needs: resolve-version
     defaults:
@@ -189,55 +189,27 @@ jobs:
             os_name: linux
             goos: linux
             goarch: amd64
-            worker_name: worker-docker
-          - os: ubuntu-24.04
-            arch: x64
-            os_name: linux
-            goos: linux
-            goarch: amd64
-            worker_name: worker-sys
           - os: ubuntu-24.04-arm
             arch: arm64
             os_name: linux
             goos: linux
             goarch: arm64
-            worker_name: worker-docker
-          - os: ubuntu-24.04-arm
-            arch: arm64
-            os_name: linux
-            goos: linux
-            goarch: arm64
-            worker_name: worker-sys
           - os: macos-15-intel
             arch: x64
             os_name: macos
             goos: darwin
             goarch: amd64
-            worker_name: worker-docker
-          - os: macos-15-intel
-            arch: x64
-            os_name: macos
-            goos: darwin
-            goarch: amd64
-            worker_name: worker-sys
           - os: macos-15
             arch: arm64
             os_name: macos
             goos: darwin
             goarch: arm64
-            worker_name: worker-docker
-          - os: macos-15
-            arch: arm64
-            os_name: macos
-            goos: darwin
-            goarch: arm64
-            worker_name: worker-sys
     env:
       VERSION_RAW: ${{ needs.resolve-version.outputs.version_raw }}
       VERSION_SAFE: ${{ needs.resolve-version.outputs.version_safe }}
       GOOS: ${{ matrix.goos }}
       GOARCH: ${{ matrix.goarch }}
-      WORKER_BIN: onlyboxes-${{ matrix.worker_name }}_${{ needs.resolve-version.outputs.version_safe }}_${{ matrix.os_name }}_${{ matrix.goarch }}
+      WORKER_BIN: onlyboxes-worker-docker_${{ needs.resolve-version.outputs.version_safe }}_${{ matrix.os_name }}_${{ matrix.goarch }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -248,18 +220,18 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.24.x"
-          cache-dependency-path: worker/${{ matrix.worker_name }}/go.sum
+          cache-dependency-path: worker/worker-docker/go.sum
 
       - name: Build worker binary
         run: |
           set -euo pipefail
           mkdir -p build
           (
-            cd worker/${{ matrix.worker_name }}
+            cd worker/worker-docker
             CGO_ENABLED=0 GOOS="${GOOS}" GOARCH="${GOARCH}" go build -trimpath \
-              -ldflags "-X github.com/onlyboxes/onlyboxes/worker/${{ matrix.worker_name }}/internal/buildinfo.Version=${VERSION_RAW}" \
+              -ldflags "-X github.com/onlyboxes/onlyboxes/worker/worker-docker/internal/buildinfo.Version=${VERSION_RAW}" \
               -o "../../build/${WORKER_BIN}" \
-              ./cmd/${{ matrix.worker_name }}
+              ./cmd/worker-docker
           )
 
       - name: Validate worker binary architecture
@@ -289,7 +261,111 @@ jobs:
       - name: Upload worker workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: onlyboxes-${{ matrix.worker_name }}-${{ matrix.os_name }}-${{ matrix.arch }}-${{ env.VERSION_SAFE }}.zip
+          name: onlyboxes-worker-docker-${{ matrix.os_name }}-${{ matrix.arch }}-${{ env.VERSION_SAFE }}.zip
+          path: build/${{ env.WORKER_BIN }}
+          if-no-files-found: error
+
+      - name: Upload worker release asset
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          (
+            cd build
+            zip -q -j "${WORKER_BIN}.zip" "${WORKER_BIN}"
+          )
+          gh release upload "${VERSION_RAW}" "build/${WORKER_BIN}.zip" --clobber
+
+  build-worker-sys:
+    name: worker-sys (${{ matrix.os_name }}/${{ matrix.goarch }})
+    runs-on: ${{ matrix.os }}
+    needs: resolve-version
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            arch: x64
+            os_name: linux
+            goos: linux
+            goarch: amd64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+            os_name: linux
+            goos: linux
+            goarch: arm64
+          - os: macos-15-intel
+            arch: x64
+            os_name: macos
+            goos: darwin
+            goarch: amd64
+          - os: macos-15
+            arch: arm64
+            os_name: macos
+            goos: darwin
+            goarch: arm64
+    env:
+      VERSION_RAW: ${{ needs.resolve-version.outputs.version_raw }}
+      VERSION_SAFE: ${{ needs.resolve-version.outputs.version_safe }}
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+      WORKER_BIN: onlyboxes-worker-sys_${{ needs.resolve-version.outputs.version_safe }}_${{ matrix.os_name }}_${{ matrix.goarch }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+          cache-dependency-path: worker/worker-sys/go.sum
+
+      - name: Build worker binary
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          (
+            cd worker/worker-sys
+            CGO_ENABLED=0 GOOS="${GOOS}" GOARCH="${GOARCH}" go build -trimpath \
+              -ldflags "-X github.com/onlyboxes/onlyboxes/worker/worker-sys/internal/buildinfo.Version=${VERSION_RAW}" \
+              -o "../../build/${WORKER_BIN}" \
+              ./cmd/worker-sys
+          )
+
+      - name: Validate worker binary architecture
+        run: |
+          set -euo pipefail
+          worker_info="$(file "build/${WORKER_BIN}")"
+          echo "${worker_info}"
+          case "${GOOS}/${GOARCH}" in
+            linux/amd64)
+              grep -Eq "ELF 64-bit.*x86-64" <<< "${worker_info}"
+              ;;
+            linux/arm64)
+              grep -Eq "ELF 64-bit.*ARM aarch64" <<< "${worker_info}"
+              ;;
+            darwin/amd64)
+              grep -Eq "Mach-O 64-bit executable x86_64" <<< "${worker_info}"
+              ;;
+            darwin/arm64)
+              grep -Eq "Mach-O 64-bit executable arm64" <<< "${worker_info}"
+              ;;
+            *)
+              echo "unsupported target: ${GOOS}/${GOARCH}" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Upload worker workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: onlyboxes-worker-sys-${{ matrix.os_name }}-${{ matrix.arch }}-${{ env.VERSION_SAFE }}.zip
           path: build/${{ env.WORKER_BIN }}
           if-no-files-found: error
 
