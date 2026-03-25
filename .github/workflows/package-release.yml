@@ -45,9 +45,42 @@ jobs:
           echo "version_raw=${version_raw}" >> "${GITHUB_OUTPUT}"
           echo "version_safe=${version_safe}" >> "${GITHUB_OUTPUT}"
 
+  build-web:
+    runs-on: ubuntu-latest
+    needs: resolve-version
+    env:
+      VERSION_RAW: ${{ needs.resolve-version.outputs.version_raw }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Build web
+        run: |
+          set -euo pipefail
+          yarn --cwd web install --immutable
+          VITE_CONSOLE_VERSION="${VERSION_RAW}" yarn --cwd web build
+
+      - name: Upload web dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+          if-no-files-found: error
+
   build-console:
     runs-on: ${{ matrix.os }}
-    needs: resolve-version
+    needs:
+      - build-web
     defaults:
       run:
         shell: bash
@@ -72,26 +105,11 @@ jobs:
         with:
           ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Download web dist artifact
+        uses: actions/download-artifact@v4
         with:
-          node-version: "24"
-
-      - name: Enable Corepack
-        run: corepack enable
-
-      - name: Build web
-        run: |
-          set -euo pipefail
-          yarn --cwd web install --immutable
-          VITE_CONSOLE_VERSION="${VERSION_RAW}" yarn --cwd web build
-
-      - name: Sync web dist into console embedded assets
-        run: |
-          set -euo pipefail
-          rm -rf console/internal/httpapi/web_dist
-          mkdir -p console/internal/httpapi/web_dist
-          cp -R web/dist/. console/internal/httpapi/web_dist/
+          name: web-dist
+          path: console/internal/httpapi/web_dist
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -148,7 +166,7 @@ jobs:
           )
           gh release upload "${VERSION_RAW}" "build/${CONSOLE_BIN}.zip" --clobber
 
-  build-worker:
+  build-worker-docker:
     runs-on: ${{ matrix.os }}
     needs: resolve-version
     defaults:
