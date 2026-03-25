@@ -78,6 +78,7 @@ jobs:
           if-no-files-found: error
 
   build-console:
+    name: console (${{ matrix.os_name }}/${{ matrix.goarch }})
     runs-on: ${{ matrix.os }}
     needs:
       - build-web
@@ -90,9 +91,11 @@ jobs:
         include:
           - os: ubuntu-24.04
             arch: x64
+            os_name: linux
             goarch: amd64
           - os: ubuntu-24.04-arm
             arch: arm64
+            os_name: linux
             goarch: arm64
     env:
       VERSION_RAW: ${{ needs.resolve-version.outputs.version_raw }}
@@ -167,6 +170,7 @@ jobs:
           gh release upload "${VERSION_RAW}" "build/${CONSOLE_BIN}.zip" --clobber
 
   build-worker-docker:
+    name: ${{ matrix.worker_name }} (${{ matrix.os_name }}/${{ matrix.goarch }})
     runs-on: ${{ matrix.os }}
     needs: resolve-version
     defaults:
@@ -298,6 +302,7 @@ jobs:
           gh release upload "${VERSION_RAW}" "build/${WORKER_BIN}.zip" --clobber
 
   build-worker-boxlite:
+    name: worker-boxlite (${{ matrix.os_name }}/${{ matrix.arch_name }})
     runs-on: ${{ matrix.os }}
     needs: resolve-version
     defaults:
@@ -405,7 +410,6 @@ jobs:
   docker-console:
     runs-on: ubuntu-latest
     needs:
-      - resolve-version
       - build-console
     env:
       VERSION_SAFE: ${{ needs.resolve-version.outputs.version_safe }}
