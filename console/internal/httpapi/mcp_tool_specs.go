@@ -1,7 +1,7 @@
 package httpapi
 
 const (
-	mcpServerName                  = "onlyboxes-console"
+	mcpServerName                  = "onlyboxes"
 	pythonExecCapabilityName       = "pythonExec"
 	terminalExecCapabilityName     = "terminalExec"
 	terminalResourceCapabilityName = "terminalResource"
