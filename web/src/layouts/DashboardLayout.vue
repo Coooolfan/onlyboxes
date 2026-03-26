@@ -211,7 +211,7 @@ watch(sidebarCollapsed, (collapsed) => {
     <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
       <!-- TopBar -->
       <header
-        class="h-16 flex items-center justify-between px-8 border-b border-stroke bg-surface z-10"
+        class="h-16 flex items-center justify-between px-8 border-b border-stroke bg-bg z-10"
       >
         <h1 class="text-lg font-semibold">{{ currentRouteName }}</h1>
 

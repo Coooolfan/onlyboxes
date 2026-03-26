@@ -352,7 +352,23 @@ def download_and_extract_release(workdir: Path, tag: str, asset_template: str, b
     try:
         req = urllib.request.Request(url)
         with urllib.request.urlopen(req) as resp:
-            zip_path.write_bytes(resp.read())
+            total = int(resp.headers.get("Content-Length", 0))
+            downloaded = 0
+            chunks = []
+            while True:
+                chunk = resp.read(64 * 1024)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                downloaded += len(chunk)
+                if total and sys.stdout.isatty():
+                    pct = downloaded * 100 // total
+                    mb = downloaded / 1024 / 1024
+                    total_mb = total / 1024 / 1024
+                    print(f"\r  Downloading... {mb:.1f}/{total_mb:.1f} MB ({pct}%)", end="", flush=True)
+            if total and sys.stdout.isatty():
+                print()
+            zip_path.write_bytes(b"".join(chunks))
     except urllib.error.HTTPError as exc:
         fatal("download", f"Failed to download release asset (HTTP {exc.code}): {filename}")
     except urllib.error.URLError as exc:
@@ -818,27 +834,28 @@ def main() -> None:
     sc.next("Prepare working directory")
     prepare_workdir(workdir, plan)
 
+    # --- Step: Download releases ---
+    if plan.console_start == "docker":
+        sc.next("Download releases")
+        download_and_render_compose(workdir, tag, hash_key, admin_password, http_port, grpc_port)
+        download_and_extract_release(workdir, tag, plan.worker_asset_template, plan.worker_binary_name)
+    else:
+        sc.next("Download releases")
+        download_and_extract_release(workdir, tag, CONSOLE_ASSET_TEMPLATE, "onlyboxes-console")
+        download_and_extract_release(workdir, tag, plan.worker_asset_template, plan.worker_binary_name)
+
     # --- Step: Deploy console ---
     if plan.console_start == "docker":
-        sc.next("Download and render compose template")
-        download_and_render_compose(workdir, tag, hash_key, admin_password, http_port, grpc_port)
-
         sc.next("Start console (Docker Compose)")
         run_cmd(["docker", "compose", "up", "-d"], cwd=str(workdir))
         # Track for cleanup only when the script will stay alive (foreground worker)
         if plan.has_foreground:
             _fg_compose_workdir = str(workdir)
     elif plan.console_start == "systemd":
-        sc.next("Download console binary")
-        download_and_extract_release(workdir, tag, CONSOLE_ASSET_TEMPLATE, "onlyboxes-console")
-
         sc.next("Setup console systemd service")
         unit = generate_console_binary_unit(workdir, hash_key, admin_password, http_port, grpc_port)
         install_systemd_service(CONSOLE_SERVICE_NAME, unit)
     else:  # foreground
-        sc.next("Download console binary")
-        download_and_extract_release(workdir, tag, CONSOLE_ASSET_TEMPLATE, "onlyboxes-console")
-
         sc.next("Start console (foreground)")
         console_env = build_console_env(workdir, hash_key, admin_password, http_port, grpc_port)
         console_bin = workdir / "bin" / "onlyboxes-console"
@@ -861,10 +878,6 @@ def main() -> None:
     # --- Step: Create worker ---
     sc.next("Create worker")
     worker_id, worker_secret = create_worker(opener, http_port)
-
-    # --- Step: Download worker ---
-    sc.next(f"Download worker-{plan.worker_runtime} release")
-    download_and_extract_release(workdir, tag, plan.worker_asset_template, plan.worker_binary_name)
 
     # --- Step: Start worker ---
     if plan.worker_start == "systemd":

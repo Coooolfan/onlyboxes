@@ -552,7 +552,7 @@ jobs:
           image_repo="coolfan1024/onlyboxes"
 
           console_tags="${image_repo}:${VERSION_SAFE}"
-          if [[ "${GITHUB_EVENT_NAME}" == "release" ]]; then
+          if [[ "${GITHUB_EVENT_NAME}" == "release" && "${{ github.event.release.prerelease }}" != "true" ]]; then
             console_tags+=$'\n'"${image_repo}:latest"
           fi
 
