@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Onlyboxes one-click installer for Linux."""
+"""Onlyboxes one-click installer for Linux and macOS."""
 
 import argparse
 import atexit
@@ -45,9 +45,11 @@ WORKER_ONLINE_TIMEOUT = 60
 
 CONSOLE_SERVICE_NAME = "onlyboxes-console"
 
-CONSOLE_ASSET_TEMPLATE = "onlyboxes-console_{version_safe}_linux_{arch}.zip"
-WORKER_DOCKER_ASSET_TEMPLATE = "onlyboxes-worker-docker_{version_safe}_linux_{arch}.zip"
-WORKER_BOXLITE_ASSET_TEMPLATE = "onlyboxes-worker-boxlite_{version_safe}_linux_{arch}.zip"
+PLATFORM_NAME = "macos" if platform.system() == "Darwin" else "linux"
+
+CONSOLE_ASSET_TEMPLATE = f"onlyboxes-console_{{version_safe}}_{PLATFORM_NAME}_{{arch}}.zip"
+WORKER_DOCKER_ASSET_TEMPLATE = f"onlyboxes-worker-docker_{{version_safe}}_{PLATFORM_NAME}_{{arch}}.zip"
+WORKER_BOXLITE_ASSET_TEMPLATE = f"onlyboxes-worker-boxlite_{{version_safe}}_{PLATFORM_NAME}_{{arch}}.zip"
 
 # ---------------------------------------------------------------------------
 # Deployment plan
@@ -234,8 +236,8 @@ def can_write_systemd() -> bool:
 
 
 def detect_environment(args: argparse.Namespace) -> DeploymentPlan:
-    if platform.system() != "Linux":
-        fatal("environment", "This installer only supports Linux.")
+    if platform.system() not in ("Linux", "Darwin"):
+        fatal("environment", "This installer only supports Linux and macOS.")
 
     machine = platform.machine()
     if ARCH_MAP.get(machine) is None:
@@ -271,6 +273,9 @@ def detect_environment(args: argparse.Namespace) -> DeploymentPlan:
         worker_runtime = args.worker_runtime
         if worker_runtime == "docker" and not docker_ok:
             fatal("environment", "--worker-runtime=docker requires Docker.")
+
+    if platform.system() == "Darwin" and worker_runtime == "boxlite" and ARCH_MAP.get(machine) == "amd64":
+        fatal("environment", "worker-boxlite is not available for macOS amd64. Use --worker-runtime=docker.")
 
     # Worker start mode
     if args.worker_start == "auto":
@@ -309,10 +314,11 @@ def prepare_workdir(workdir: Path, plan: DeploymentPlan) -> None:
         if path.exists():
             existing.append(str(path))
 
-    for svc in [CONSOLE_SERVICE_NAME, "onlyboxes-worker-docker", "onlyboxes-worker-boxlite"]:
-        path = Path(f"/etc/systemd/system/{svc}.service")
-        if path.exists():
-            existing.append(str(path))
+    if platform.system() == "Linux":
+        for svc in [CONSOLE_SERVICE_NAME, "onlyboxes-worker-docker", "onlyboxes-worker-boxlite"]:
+            path = Path(f"/etc/systemd/system/{svc}.service")
+            if path.exists():
+                existing.append(str(path))
 
     if existing:
         fatal(
@@ -737,7 +743,7 @@ def print_summary(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Onlyboxes installer – deploy console + worker on a single Linux host."
+        description="Onlyboxes installer – deploy console + worker on a single Linux or macOS host."
     )
     parser.add_argument("--tag", required=True, help="Release version tag, e.g. v0.1.0")
     parser.add_argument("--workdir", default=None, help="Working directory (default: $PWD/onlyboxes)")

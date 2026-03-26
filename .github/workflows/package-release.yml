@@ -96,16 +96,29 @@ jobs:
           - os: ubuntu-24.04
             arch: x64
             os_name: linux
+            goos: linux
             goarch: amd64
           - os: ubuntu-24.04-arm
             arch: arm64
             os_name: linux
+            goos: linux
+            goarch: arm64
+          - os: macos-15-intel
+            arch: x64
+            os_name: macos
+            goos: darwin
+            goarch: amd64
+          - os: macos-15
+            arch: arm64
+            os_name: macos
+            goos: darwin
             goarch: arm64
     env:
       VERSION_RAW: ${{ needs.resolve-version.outputs.version_raw }}
       VERSION_SAFE: ${{ needs.resolve-version.outputs.version_safe }}
+      GOOS: ${{ matrix.goos }}
       GOARCH: ${{ matrix.goarch }}
-      CONSOLE_BIN: onlyboxes-console_${{ needs.resolve-version.outputs.version_safe }}_linux_${{ matrix.goarch }}
+      CONSOLE_BIN: onlyboxes-console_${{ needs.resolve-version.outputs.version_safe }}_${{ matrix.os_name }}_${{ matrix.goarch }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -130,7 +143,7 @@ jobs:
           mkdir -p build
           (
             cd console
-            CGO_ENABLED=0 GOOS=linux GOARCH="${GOARCH}" go build -trimpath \
+            CGO_ENABLED=0 GOOS="${GOOS}" GOARCH="${GOARCH}" go build -trimpath \
               -ldflags "-X github.com/onlyboxes/onlyboxes/console/internal/buildinfo.Version=${VERSION_RAW}" \
               -o "../build/${CONSOLE_BIN}" \
               ./cmd/console
@@ -141,15 +154,21 @@ jobs:
           set -euo pipefail
           console_info="$(file "build/${CONSOLE_BIN}")"
           echo "${console_info}"
-          case "${GOARCH}" in
-            amd64)
+          case "${GOOS}/${GOARCH}" in
+            linux/amd64)
               grep -Eq "ELF 64-bit.*x86-64" <<< "${console_info}"
               ;;
-            arm64)
+            linux/arm64)
               grep -Eq "ELF 64-bit.*ARM aarch64" <<< "${console_info}"
               ;;
+            darwin/amd64)
+              grep -Eq "Mach-O 64-bit executable x86_64" <<< "${console_info}"
+              ;;
+            darwin/arm64)
+              grep -Eq "Mach-O 64-bit executable arm64" <<< "${console_info}"
+              ;;
             *)
-              echo "unsupported GOARCH: ${GOARCH}" >&2
+              echo "unsupported target: ${GOOS}/${GOARCH}" >&2
               exit 1
               ;;
           esac
@@ -157,7 +176,7 @@ jobs:
       - name: Upload console workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: onlyboxes-console-linux-${{ matrix.arch }}-${{ env.VERSION_SAFE }}.zip
+          name: onlyboxes-console-${{ matrix.os_name }}-${{ matrix.arch }}-${{ env.VERSION_SAFE }}.zip
           path: build/${{ env.CONSOLE_BIN }}
           if-no-files-found: error
 
