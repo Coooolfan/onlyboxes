@@ -81,3 +81,29 @@ export interface TrustedTokenCreateResponse {
 export interface TrustedTokenCreateInput {
   name: string
 }
+
+export interface APIKeyItem {
+  id: string
+  name: string
+  key_masked: string
+  created_at: string
+  updated_at: string
+}
+
+export interface APIKeyListResponse {
+  items: APIKeyItem[]
+  total: number
+}
+
+export interface APIKeyCreateResponse {
+  id: string
+  name: string
+  key: string
+  key_masked: string
+  created_at: string
+  updated_at: string
+}
+
+export interface APIKeyCreateInput {
+  name: string
+}

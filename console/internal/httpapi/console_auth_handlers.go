@@ -302,8 +302,41 @@ func (a *ConsoleAuth) Logout(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-func (a *ConsoleAuth) RequireAuth() gin.HandlerFunc {
+func (a *ConsoleAuth) RequireAuth(apiKeyAuth *APIKeyAuth) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		authHeader := c.GetHeader(trustedTokenHeader)
+		token, hasBearer := parseBearerToken(authHeader)
+		if hasBearer {
+			if apiKeyAuth == nil {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or missing api key"})
+				c.Abort()
+				return
+			}
+
+			record, ok := apiKeyAuth.lookupAPIKey(c.Request.Context(), token)
+			if !ok {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or missing api key"})
+				c.Abort()
+				return
+			}
+
+			accountRecord, err := a.queries.GetAccountByID(c.Request.Context(), strings.TrimSpace(record.AccountID))
+			if err != nil {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or missing api key"})
+				c.Abort()
+				return
+			}
+
+			setRequestSessionAccount(c, SessionAccount{
+				AccountID: strings.TrimSpace(accountRecord.AccountID),
+				Username:  strings.TrimSpace(accountRecord.Username),
+				IsAdmin:   accountRecord.IsAdmin == 1,
+			})
+			c.Set(requestAuthMethodGinKey, requestAuthMethodAPIKey)
+			c.Next()
+			return
+		}
+
 		sessionID, err := c.Cookie(dashboardSessionCookieName)
 		if err != nil || strings.TrimSpace(sessionID) == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
@@ -320,7 +353,37 @@ func (a *ConsoleAuth) RequireAuth() gin.HandlerFunc {
 		}
 
 		setRequestSessionAccount(c, sessionState.Account)
+		c.Set(requestAuthMethodGinKey, requestAuthMethodCookie)
 		c.Next()
+	}
+}
+
+func (a *ConsoleAuth) RequireCookieSession() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		methodValue, ok := c.Get(requestAuthMethodGinKey)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+			c.Abort()
+			return
+		}
+
+		method, ok := methodValue.(string)
+		if !ok || strings.TrimSpace(method) == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+			c.Abort()
+			return
+		}
+
+		switch method {
+		case requestAuthMethodCookie:
+			c.Next()
+		case requestAuthMethodAPIKey:
+			c.JSON(http.StatusForbidden, gin.H{"error": "this endpoint requires cookie session authentication"})
+			c.Abort()
+		default:
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+			c.Abort()
+		}
 	}
 }
 

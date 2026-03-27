@@ -1088,7 +1088,7 @@ func newMCPTestRouter(t *testing.T, dispatcher CommandDispatcher) http.Handler {
 	t.Helper()
 
 	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, dispatcher, nil, nil, "")
-	return mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t))
+	return mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
 }
 
 func mcpPostJSON(t *testing.T, router http.Handler, body string) map[string]any {

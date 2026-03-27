@@ -228,7 +228,7 @@ func TestInitializeAdminAccountReturnsConflictOnUsernameKeyCollision(t *testing.
 func TestConsoleAuthLoginLogoutLifecycle(t *testing.T) {
 	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, nil, nil, "")
 	auth := newTestConsoleAuth(t)
-	router := mustNewRouter(t, handler, auth, newTestMCPAuth(t))
+	router := mustNewRouter(t, handler, auth, newTestMCPAuth(t), nil)
 
 	failedReq := httptest.NewRequest(http.MethodPost, "/api/v1/console/login", strings.NewReader(`{"username":"wrong","password":"wrong"}`))
 	failedReq.Header.Set("Content-Type", "application/json")
@@ -268,7 +268,7 @@ func TestConsoleAuthLoginLogoutLifecycle(t *testing.T) {
 func TestConsoleAuthSessionEndpoint(t *testing.T) {
 	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, nil, nil, "")
 	auth := newTestConsoleAuthWithRegistration(t, true)
-	router := mustNewRouter(t, handler, auth, newTestMCPAuth(t))
+	router := mustNewRouter(t, handler, auth, newTestMCPAuth(t), nil)
 	cookie := loginSessionCookie(t, router)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/console/session", nil)
@@ -307,7 +307,7 @@ func TestConsoleAuthSessionExpires(t *testing.T) {
 	auth.nowFn = func() time.Time {
 		return now
 	}
-	router := mustNewRouter(t, handler, auth, newTestMCPAuth(t))
+	router := mustNewRouter(t, handler, auth, newTestMCPAuth(t), nil)
 	sessionCookie := loginSessionCookie(t, router)
 
 	now = now.Add(dashboardSessionTTL + time.Second)
@@ -325,7 +325,7 @@ func TestConsoleAuthSessionExpires(t *testing.T) {
 func TestConsoleAuthRegisterAndAdminGuard(t *testing.T) {
 	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, nil, nil, "")
 	auth := newTestConsoleAuthWithRegistration(t, true)
-	router := mustNewRouter(t, handler, auth, newTestMCPAuth(t))
+	router := mustNewRouter(t, handler, auth, newTestMCPAuth(t), nil)
 	adminCookie := loginSessionCookie(t, router)
 
 	registerBody := []byte(`{"username":"member-a","password":"member-a-pass"}`)
@@ -361,7 +361,7 @@ func TestConsoleAuthRegisterAndAdminGuard(t *testing.T) {
 func TestConsoleAuthRegisterDuplicateUsernameConflict(t *testing.T) {
 	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, nil, nil, "")
 	auth := newTestConsoleAuthWithRegistration(t, true)
-	router := mustNewRouter(t, handler, auth, newTestMCPAuth(t))
+	router := mustNewRouter(t, handler, auth, newTestMCPAuth(t), nil)
 	adminCookie := loginSessionCookie(t, router)
 
 	registerReqA := httptest.NewRequest(http.MethodPost, "/api/v1/console/register", strings.NewReader(`{"username":"member-dup","password":"member-pass"}`))
@@ -389,7 +389,7 @@ func TestConsoleAuthRegisterDuplicateUsernameConflict(t *testing.T) {
 func TestConsoleAuthRegisterDisabled(t *testing.T) {
 	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, nil, nil, "")
 	auth := newTestConsoleAuthWithRegistration(t, false)
-	router := mustNewRouter(t, handler, auth, newTestMCPAuth(t))
+	router := mustNewRouter(t, handler, auth, newTestMCPAuth(t), nil)
 	adminCookie := loginSessionCookie(t, router)
 
 	registerReq := httptest.NewRequest(http.MethodPost, "/api/v1/console/register", strings.NewReader(`{"username":"member-x","password":"pass"}`))
@@ -405,7 +405,7 @@ func TestConsoleAuthRegisterDisabled(t *testing.T) {
 func TestConsoleAuthChangePasswordLifecycle(t *testing.T) {
 	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, nil, nil, "")
 	auth := newTestConsoleAuth(t)
-	router := mustNewRouter(t, handler, auth, newTestMCPAuth(t))
+	router := mustNewRouter(t, handler, auth, newTestMCPAuth(t), nil)
 	originalCookie := loginSessionCookie(t, router)
 
 	changeReq := httptest.NewRequest(http.MethodPost, "/api/v1/console/password", strings.NewReader(`{"current_password":"password-test","new_password":"password-next"}`))
@@ -460,7 +460,7 @@ func TestConsoleAuthChangePasswordLifecycle(t *testing.T) {
 func TestConsoleAuthChangePasswordValidationAndCurrentPassword(t *testing.T) {
 	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, nil, nil, "")
 	auth := newTestConsoleAuth(t)
-	router := mustNewRouter(t, handler, auth, newTestMCPAuth(t))
+	router := mustNewRouter(t, handler, auth, newTestMCPAuth(t), nil)
 	cookie := loginSessionCookie(t, router)
 
 	missingCurrentReq := httptest.NewRequest(http.MethodPost, "/api/v1/console/password", strings.NewReader(`{"new_password":"password-next"}`))
@@ -491,7 +491,7 @@ func TestConsoleAuthChangePasswordValidationAndCurrentPassword(t *testing.T) {
 func TestConsoleAuthListAccountsAdminOnlyAndPagination(t *testing.T) {
 	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, nil, nil, "")
 	auth := newTestConsoleAuthWithRegistration(t, true)
-	router := mustNewRouter(t, handler, auth, newTestMCPAuth(t))
+	router := mustNewRouter(t, handler, auth, newTestMCPAuth(t), nil)
 	adminCookie := loginSessionCookie(t, router)
 
 	for _, username := range []string{"member-a", "member-b"} {
@@ -555,7 +555,7 @@ func TestConsoleAuthDeleteAccountGuardsAndCascade(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new mcp auth: %v", err)
 	}
-	router := mustNewRouter(t, handler, auth, mcpAuth)
+	router := mustNewRouter(t, handler, auth, mcpAuth, nil)
 	adminCookie := loginSessionCookie(t, router)
 
 	registerReq := httptest.NewRequest(http.MethodPost, "/api/v1/console/register", strings.NewReader(`{"username":"member-to-delete","password":"member-pass"}`))

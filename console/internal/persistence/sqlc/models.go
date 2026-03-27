@@ -15,6 +15,17 @@ type Account struct {
 	UpdatedAtUnixMs int64  `json:"updated_at_unix_ms"`
 }
 
+type ApiKey struct {
+	ApiKeyID        string `json:"api_key_id"`
+	AccountID       string `json:"account_id"`
+	Name            string `json:"name"`
+	NameKey         string `json:"name_key"`
+	KeyHash         string `json:"key_hash"`
+	KeyMasked       string `json:"key_masked"`
+	CreatedAtUnixMs int64  `json:"created_at_unix_ms"`
+	UpdatedAtUnixMs int64  `json:"updated_at_unix_ms"`
+}
+
 type Task struct {
 	TaskID            string `json:"task_id"`
 	OwnerID           string `json:"owner_id"`

@@ -43,7 +43,7 @@ func TestWorkerStatsAggregatesAllWorkers(t *testing.T) {
 	handler.nowFn = func() time.Time {
 		return now
 	}
-	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t))
+	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
 	cookie := loginSessionCookie(t, router)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/workers/stats", nil)
@@ -87,7 +87,7 @@ func TestWorkerStatsSupportsCustomStaleThreshold(t *testing.T) {
 	handler.nowFn = func() time.Time {
 		return now
 	}
-	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t))
+	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
 	cookie := loginSessionCookie(t, router)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/workers/stats?stale_after_sec=10", nil)
@@ -114,7 +114,7 @@ func TestWorkerStatsSupportsCustomStaleThreshold(t *testing.T) {
 func TestWorkerStatsRejectsInvalidStaleThreshold(t *testing.T) {
 	store := registrytest.NewStore(t)
 	handler := NewWorkerHandler(store, 15*time.Second, nil, nil, nil, "")
-	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t))
+	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
 	cookie := loginSessionCookie(t, router)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/workers/stats?stale_after_sec=0", nil)
@@ -175,7 +175,7 @@ func TestWorkerStatsAndInflightAreOwnerScopedForNonAdmin(t *testing.T) {
 		"",
 	)
 	handler.nowFn = func() time.Time { return now }
-	router := mustNewRouter(t, handler, consoleAuth, newTestMCPAuth(t))
+	router := mustNewRouter(t, handler, consoleAuth, newTestMCPAuth(t), nil)
 	cookie := loginSessionCookieFor(t, router, "member-test", "member-password")
 
 	statsReq := httptest.NewRequest(http.MethodGet, "/api/v1/workers/stats", nil)

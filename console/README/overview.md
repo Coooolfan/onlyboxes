@@ -100,6 +100,17 @@ The console service hosts:
     - `GET /api/v1/console/tokens/:token_id/value` always returns `410 Gone`.
     - token plaintext is delivered in `POST /api/v1/console/tokens` response only.
     - `DELETE /api/v1/console/tokens/:token_id` delete token (current account only, cross-account returns `404`).
+  - console API key management (dashboard auth):
+    - `GET /api/v1/console/api-keys` lists current account API key metadata (`id`, `name`, masked key).
+    - `POST /api/v1/console/api-keys` creates an auto-generated API key bound to current account; plaintext is returned only in the create response.
+    - `DELETE /api/v1/console/api-keys/:api_key_id` deletes current account API key; cross-account delete returns `404`.
+  - dashboard auth accepts either cookie session or console API key via `Authorization: Bearer <api-key>`.
+  - bearer precedence is strict for dashboard auth: if `Authorization: Bearer <api-key>` is present, cookie session is not used as fallback.
+  - non-Bearer `Authorization` headers do not participate in dashboard API key auth and do not block cookie-session auth.
+  - sensitive account actions require cookie session only:
+    - `POST /api/v1/console/password`
+    - `POST /api/v1/console/api-keys`
+    - `DELETE /api/v1/console/api-keys/:api_key_id`
 
 Security warning (high risk):
 - console gRPC currently has no built-in TLS/mTLS.
@@ -138,6 +149,10 @@ Dashboard account behavior:
 - changing account password rotates (invalidates + recreates) current account sessions.
 - admin can create non-admin accounts via `POST /api/v1/console/register` when `CONSOLE_ENABLE_REGISTRATION=true`.
 - admin can list all accounts and delete non-admin accounts; deleting self/admin accounts is blocked.
+- dashboard API keys are persisted in SQLite table `api_keys`.
+- API key value is stored as HMAC-SHA256 hash only; plaintext is returned once at creation time.
+- API keys are bound to `account_id`.
+- API key metadata includes `name` (case-insensitive unique within the same account) and masked key (`key_masked`).
 
 Trusted token behavior:
 - tokens are persisted in SQLite and managed by dashboard APIs.

@@ -46,7 +46,7 @@ func TestRegisterAndListLifecycle(t *testing.T) {
 	defer grpcSrv.Stop()
 
 	handler := NewWorkerHandler(store, 15*time.Second, registrySvc, registrySvc, registrySvc, ":50051")
-	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t))
+	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
 	httpSrv := httptest.NewServer(router)
 	defer httpSrv.Close()
 	dashboardClient := newAuthenticatedClient(t, httpSrv)
@@ -131,7 +131,7 @@ func TestRegisterAndListLifecycle(t *testing.T) {
 
 func TestLegacyTokenHeaderIsRejected(t *testing.T) {
 	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, nil, nil, ":50051")
-	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t))
+	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/commands/echo", strings.NewReader(`{"message":"hello"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -168,7 +168,7 @@ func TestEchoCommandLifecycle(t *testing.T) {
 	defer grpcSrv.Stop()
 
 	handler := NewWorkerHandler(store, 15*time.Second, registrySvc, registrySvc, registrySvc, ":50051")
-	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t))
+	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
 	httpSrv := httptest.NewServer(router)
 	defer httpSrv.Close()
 
@@ -272,7 +272,7 @@ func TestTaskLifecycleSync(t *testing.T) {
 	defer grpcSrv.Stop()
 
 	handler := NewWorkerHandler(store, 15*time.Second, registrySvc, registrySvc, registrySvc, ":50051")
-	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t))
+	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
 	httpSrv := httptest.NewServer(router)
 	defer httpSrv.Close()
 
@@ -382,7 +382,7 @@ func TestMCPLifecycle(t *testing.T) {
 	defer grpcSrv.Stop()
 
 	handler := NewWorkerHandler(store, 15*time.Second, registrySvc, registrySvc, registrySvc, ":50051")
-	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t))
+	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
 	httpSrv := httptest.NewServer(router)
 	defer httpSrv.Close()
 
@@ -573,7 +573,7 @@ func TestTerminalLifecycle(t *testing.T) {
 	defer grpcSrv.Stop()
 
 	handler := NewWorkerHandler(store, 15*time.Second, registrySvc, registrySvc, registrySvc, ":50051")
-	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t))
+	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
 	httpSrv := httptest.NewServer(router)
 	defer httpSrv.Close()
 
@@ -1073,7 +1073,7 @@ func TestTokenIsolationLifecycle(t *testing.T) {
 	if _, _, err := mcpAuth.createToken(context.Background(), secondAccountID, "token-c", &tokenC); err != nil {
 		t.Fatalf("seed token-c failed: %v", err)
 	}
-	router := mustNewRouter(t, handler, newTestConsoleAuth(t), mcpAuth)
+	router := mustNewRouter(t, handler, newTestConsoleAuth(t), mcpAuth, nil)
 	httpSrv := httptest.NewServer(router)
 	defer httpSrv.Close()
 
@@ -1625,7 +1625,7 @@ func TestReadImageComputerUseRoutesByOwner(t *testing.T) {
 	if _, _, err := mcpAuth.createToken(context.Background(), thirdAccountID, "token-d", &tokenD); err != nil {
 		t.Fatalf("seed token-d failed: %v", err)
 	}
-	router := mustNewRouter(t, handler, newTestConsoleAuth(t), mcpAuth)
+	router := mustNewRouter(t, handler, newTestConsoleAuth(t), mcpAuth, nil)
 	httpSrv := httptest.NewServer(router)
 	defer httpSrv.Close()
 

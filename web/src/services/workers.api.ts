@@ -1,5 +1,8 @@
 import { parseAPIError, request } from '@/services/http'
 import type {
+  APIKeyCreateInput,
+  APIKeyCreateResponse,
+  APIKeyListResponse,
   TrustedTokenCreateInput,
   TrustedTokenCreateResponse,
   TrustedTokenListResponse,
@@ -166,6 +169,60 @@ export async function createTrustedTokenAPI(
 
 export async function deleteTrustedTokenAPI(tokenID: string): Promise<void> {
   const response = await request(`/api/v1/console/tokens/${encodeURIComponent(tokenID)}`, {
+    method: 'DELETE',
+  })
+
+  if (response.status === 204) {
+    return
+  }
+
+  if (!response.ok) {
+    throw new Error(await parseAPIError(response))
+  }
+}
+
+export async function fetchAPIKeysAPI(signal: AbortSignal): Promise<APIKeyListResponse> {
+  const response = await request('/api/v1/console/api-keys', { signal })
+  if (!response.ok) {
+    throw new Error(await parseAPIError(response))
+  }
+
+  const payload = (await response.json()) as APIKeyListResponse
+  return {
+    items: payload.items ?? [],
+    total: payload.total ?? 0,
+  }
+}
+
+export async function createAPIKeyAPI(input: APIKeyCreateInput): Promise<APIKeyCreateResponse> {
+  const response = await request('/api/v1/console/api-keys', {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      name: input.name,
+    }),
+  })
+
+  if (!response.ok) {
+    throw new Error(await parseAPIError(response))
+  }
+
+  const payload = (await response.json()) as APIKeyCreateResponse
+  return {
+    id: payload.id ?? '',
+    name: payload.name ?? '',
+    key: payload.key ?? '',
+    key_masked: payload.key_masked ?? '',
+    created_at: payload.created_at ?? '',
+    updated_at: payload.updated_at ?? '',
+  }
+}
+
+export async function deleteAPIKeyAPI(keyID: string): Promise<void> {
+  const response = await request(`/api/v1/console/api-keys/${encodeURIComponent(keyID)}`, {
     method: 'DELETE',
   })
 

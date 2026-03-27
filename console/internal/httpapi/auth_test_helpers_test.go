@@ -25,6 +25,13 @@ const (
 
 const testDashboardAccountID = "acc-test-dashboard"
 
+type testAuthBundle struct {
+	DB          *persistence.DB
+	ConsoleAuth *ConsoleAuth
+	MCPAuth     *MCPAuth
+	APIKeyAuth  *APIKeyAuth
+}
+
 func newTestConsoleAuth(t *testing.T) *ConsoleAuth {
 	return newTestConsoleAuthWithRegistration(t, false)
 }
@@ -91,10 +98,49 @@ func newBareTestMCPAuth(t testing.TB) *MCPAuth {
 	return auth
 }
 
-func mustNewRouter(t *testing.T, workerHandler *WorkerHandler, consoleAuth *ConsoleAuth, mcpAuth *MCPAuth) *gin.Engine {
+func newTestAuthBundle(t testing.TB, registrationEnabled bool) *testAuthBundle {
 	t.Helper()
 
-	router, err := NewRouter(workerHandler, consoleAuth, mcpAuth)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	path := fmt.Sprintf("file:onlyboxes-authbundle-test-%d?mode=memory&cache=shared", time.Now().UnixNano())
+	db, err := persistence.Open(ctx, persistence.Options{
+		Path:             path,
+		BusyTimeoutMS:    5000,
+		HashKey:          "test-hash-key",
+		TaskRetentionDay: 30,
+	})
+	if err != nil {
+		t.Fatalf("open test auth bundle db: %v", err)
+	}
+	seedTestAccount(t, db.Queries, testDashboardAccountID, testDashboardUsername, testDashboardPassword, true)
+
+	consoleAuth, err := NewConsoleAuth(db.Queries, registrationEnabled)
+	if err != nil {
+		t.Fatalf("new console auth bundle: %v", err)
+	}
+	mcpAuth, err := NewMCPAuthWithPersistence(db)
+	if err != nil {
+		t.Fatalf("new mcp auth bundle: %v", err)
+	}
+	apiKeyAuth, err := NewAPIKeyAuth(db)
+	if err != nil {
+		t.Fatalf("new api key auth bundle: %v", err)
+	}
+
+	return &testAuthBundle{
+		DB:          db,
+		ConsoleAuth: consoleAuth,
+		MCPAuth:     mcpAuth,
+		APIKeyAuth:  apiKeyAuth,
+	}
+}
+
+func mustNewRouter(t *testing.T, workerHandler *WorkerHandler, consoleAuth *ConsoleAuth, mcpAuth *MCPAuth, apiKeyAuth *APIKeyAuth) *gin.Engine {
+	t.Helper()
+
+	router, err := NewRouter(workerHandler, consoleAuth, mcpAuth, apiKeyAuth)
 	if err != nil {
 		t.Fatalf("new router: %v", err)
 	}

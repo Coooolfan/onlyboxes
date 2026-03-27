@@ -81,7 +81,7 @@ func NewWorkerHandler(
 	}
 }
 
-func NewRouter(workerHandler *WorkerHandler, consoleAuth *ConsoleAuth, mcpAuth *MCPAuth) (*gin.Engine, error) {
+func NewRouter(workerHandler *WorkerHandler, consoleAuth *ConsoleAuth, mcpAuth *MCPAuth, apiKeyAuth *APIKeyAuth) (*gin.Engine, error) {
 	if mcpAuth == nil {
 		return nil, ErrMCPAuthRequired
 	}
@@ -114,11 +114,14 @@ func NewRouter(workerHandler *WorkerHandler, consoleAuth *ConsoleAuth, mcpAuth *
 
 	api.POST("/console/login", consoleAuth.Login)
 	api.POST("/console/logout", consoleAuth.Logout)
-	api.GET("/console/session", consoleAuth.RequireAuth(), consoleAuth.Session)
+	api.GET("/console/session", consoleAuth.RequireAuth(apiKeyAuth), consoleAuth.Session)
 
 	dashboard := api.Group("/")
-	dashboard.Use(consoleAuth.RequireAuth())
-	dashboard.POST("/console/password", consoleAuth.ChangePassword)
+	dashboard.Use(consoleAuth.RequireAuth(apiKeyAuth))
+	dashboard.POST("/console/password", consoleAuth.RequireCookieSession(), consoleAuth.ChangePassword)
+	dashboard.GET("/console/api-keys", apiKeyAuth.ListAPIKeys)
+	dashboard.POST("/console/api-keys", consoleAuth.RequireCookieSession(), apiKeyAuth.CreateAPIKey)
+	dashboard.DELETE("/console/api-keys/:api_key_id", consoleAuth.RequireCookieSession(), apiKeyAuth.DeleteAPIKey)
 	dashboard.GET("/console/tokens", mcpAuth.ListTokens)
 	dashboard.POST("/console/tokens", mcpAuth.CreateToken)
 	dashboard.DELETE("/console/tokens/:token_id", mcpAuth.DeleteToken)
@@ -132,7 +135,7 @@ func NewRouter(workerHandler *WorkerHandler, consoleAuth *ConsoleAuth, mcpAuth *
 	dashboard.GET("/workers/:node_id/startup-command", workerHandler.GetWorkerStartupCommand)
 
 	adminDashboard := api.Group("/")
-	adminDashboard.Use(consoleAuth.RequireAuth(), consoleAuth.RequireAdmin())
+	adminDashboard.Use(consoleAuth.RequireAuth(apiKeyAuth), consoleAuth.RequireAdmin())
 	adminDashboard.GET("/console/accounts", consoleAuth.ListAccounts)
 	adminDashboard.DELETE("/console/accounts/:account_id", consoleAuth.DeleteAccount)
 
@@ -325,4 +328,3 @@ func resolveWorkerAccessScope(c *gin.Context) (string, bool, bool) {
 	// Fallback for deployments/tests without dashboard auth.
 	return "system", true, true
 }
-

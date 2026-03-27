@@ -14,7 +14,7 @@ func newWebStaticTestRouter(t *testing.T) http.Handler {
 	t.Helper()
 
 	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, nil, nil, "")
-	return mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t))
+	return mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
 }
 
 func TestEmbeddedWebRootServesIndex(t *testing.T) {
@@ -99,7 +99,7 @@ func TestEmbeddedWebFallbackDoesNotInterceptUppercaseMCP(t *testing.T) {
 
 func TestRouterKeepsRedirectFixedPathDisabled(t *testing.T) {
 	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, nil, nil, "")
-	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t))
+	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
 
 	if router.RedirectFixedPath {
 		t.Fatalf("expected RedirectFixedPath to remain false")

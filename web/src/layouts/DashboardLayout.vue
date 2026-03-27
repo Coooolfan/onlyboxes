@@ -2,15 +2,18 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import APIKeysModal from '@/components/dashboard/APIKeysModal.vue'
 import ChangePasswordModal from '@/components/dashboard/ChangePasswordModal.vue'
 import AppIcon from '@/components/icons/AppIcon.vue'
 import { useAccountsStore } from '@/stores/accounts'
+import { useAPIKeysStore } from '@/stores/apiKeys'
 import { useAuthStore } from '@/stores/auth'
 import { useTokensStore } from '@/stores/tokens'
 import { useWorkersStore } from '@/stores/workers'
 
 const authStore = useAuthStore()
 const accountsStore = useAccountsStore()
+const apiKeysStore = useAPIKeysStore()
 const workersStore = useWorkersStore()
 const tokensStore = useTokensStore()
 
@@ -18,6 +21,7 @@ const route = useRoute()
 const router = useRouter()
 
 const showUserMenu = ref(false)
+const showAPIKeysModal = ref(false)
 const showChangePasswordModal = ref(false)
 const sidebarCollapsed = ref(false)
 const sidebarStateStorageKey = 'onlyboxes.sidebar.collapsed'
@@ -66,6 +70,15 @@ function openChangePasswordModal() {
   showChangePasswordModal.value = true
 }
 
+function openAPIKeysModal() {
+  closeUserMenu()
+  showAPIKeysModal.value = true
+}
+
+function closeAPIKeysModal() {
+  showAPIKeysModal.value = false
+}
+
 function closeChangePasswordModal() {
   showChangePasswordModal.value = false
 }
@@ -87,6 +100,8 @@ async function handleLogout() {
 
   accountsStore.teardown()
   accountsStore.reset()
+  apiKeysStore.teardown()
+  apiKeysStore.reset()
   workersStore.teardown()
   workersStore.reset()
   tokensStore.teardown()
@@ -248,6 +263,13 @@ watch(sidebarCollapsed, (collapsed) => {
               Change Password
             </button>
             <button
+              class="w-full text-left px-4 py-2 text-sm text-primary hover:bg-surface-soft transition-colors flex items-center gap-2"
+              @click="openAPIKeysModal"
+            >
+              <AppIcon name="key" :size="14" />
+              API Keys
+            </button>
+            <button
               class="w-full text-left px-4 py-2 text-sm text-offline hover:bg-offline/10 transition-colors flex items-center gap-2"
               @click="handleLogout"
             >
@@ -267,6 +289,7 @@ watch(sidebarCollapsed, (collapsed) => {
       </main>
     </div>
 
+    <APIKeysModal v-if="showAPIKeysModal" @close="closeAPIKeysModal" />
     <ChangePasswordModal v-if="showChangePasswordModal" @close="closeChangePasswordModal" />
   </div>
 </template>

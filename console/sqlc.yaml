@@ -6,10 +6,12 @@ sql:
       - "db/migrations/00002_dashboard_credentials.sql"
       - "db/migrations/00003_accounts_and_token_binding.sql"
       - "db/migrations/00004_worker_sys_owner_claims.sql"
+      - "db/migrations/00005_api_keys.sql"
     queries:
       - "db/queries/accounts.sql"
       - "db/queries/workers.sql"
       - "db/queries/tokens.sql"
+      - "db/queries/api_keys.sql"
       - "db/queries/tasks.sql"
       - "db/queries/maintenance.sql"
     gen:

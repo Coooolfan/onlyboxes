@@ -23,6 +23,9 @@ const (
 	requestAccountIDGinKey       = "request_account_id"
 	requestAccountUsernameGinKey = "request_account_username"
 	requestAccountIsAdminGinKey  = "request_account_is_admin"
+	requestAuthMethodGinKey      = "request_auth_method"
+	requestAuthMethodCookie      = "cookie"
+	requestAuthMethodAPIKey      = "api_key"
 )
 
 var (

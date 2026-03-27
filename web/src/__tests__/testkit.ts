@@ -81,6 +81,21 @@ export function defaultTokensPayload() {
   }
 }
 
+export function defaultAPIKeysPayload() {
+  return {
+    items: [
+      {
+        id: 'apik-1',
+        name: 'ci-prod',
+        key_masked: 'obxk****9fa1',
+        created_at: '2026-02-16T10:00:00Z',
+        updated_at: '2026-02-16T10:00:00Z',
+      },
+    ],
+    total: 1,
+  }
+}
+
 export function defaultAccountsPayload() {
   return {
     items: [

@@ -48,7 +48,7 @@ func TestEchoCommandSuccess(t *testing.T) {
 		},
 	}
 	handler := NewWorkerHandler(store, 15*time.Second, dispatcher, nil, nil, "")
-	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t))
+	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/commands/echo", strings.NewReader(`{"message":"hello"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -72,7 +72,7 @@ func TestEchoCommandRejectsInvalidInput(t *testing.T) {
 			return message, nil
 		},
 	}, nil, nil, "")
-	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t))
+	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/commands/echo", strings.NewReader(`{"message":"   ","timeout_ms":0}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -94,7 +94,7 @@ func TestEchoCommandRequiresMCPToken(t *testing.T) {
 		},
 	}
 	handler := NewWorkerHandler(store, 15*time.Second, dispatcher, nil, nil, "")
-	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t))
+	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/commands/echo", strings.NewReader(`{"message":"hello"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -113,7 +113,7 @@ func TestEchoCommandMapsNoWorkerError(t *testing.T) {
 			return "", grpcserver.ErrNoEchoWorker
 		},
 	}, nil, nil, "")
-	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t))
+	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/commands/echo", strings.NewReader(`{"message":"hello","timeout_ms":1000}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -134,7 +134,7 @@ func TestEchoCommandMapsCapacityError(t *testing.T) {
 			return "", grpcserver.ErrNoWorkerCapacity
 		},
 	}, nil, nil, "")
-	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t))
+	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/commands/echo", strings.NewReader(`{"message":"hello","timeout_ms":1000}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -155,7 +155,7 @@ func TestEchoCommandMapsTimeoutError(t *testing.T) {
 			return "", grpcserver.ErrEchoTimeout
 		},
 	}, nil, nil, "")
-	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t))
+	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/commands/echo", strings.NewReader(`{"message":"hello","timeout_ms":1000}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -179,7 +179,7 @@ func TestEchoCommandMapsExecutionError(t *testing.T) {
 			}
 		},
 	}, nil, nil, "")
-	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t))
+	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/commands/echo", strings.NewReader(`{"message":"hello","timeout_ms":1000}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -234,7 +234,7 @@ func TestTerminalCommandSuccess(t *testing.T) {
 			}, nil
 		},
 	}, nil, nil, "")
-	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t))
+	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/commands/terminal", strings.NewReader(`{"command":"pwd","create_if_missing":true}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -285,7 +285,7 @@ func TestTerminalCommandStatusMappings(t *testing.T) {
 					}, nil
 				},
 			}, nil, nil, "")
-			router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t))
+			router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
 
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/commands/terminal", strings.NewReader(`{"command":"pwd"}`))
 			req.Header.Set("Content-Type", "application/json")
@@ -308,7 +308,7 @@ func TestTerminalCommandRejectsInvalidInput(t *testing.T) {
 			return message, nil
 		},
 	}, nil, nil, "")
-	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t))
+	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/commands/terminal", strings.NewReader(`{"command":"   ","timeout_ms":0}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -360,7 +360,7 @@ func TestComputerUseCommandSuccess(t *testing.T) {
 			}, nil
 		},
 	}, nil, nil, "")
-	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t))
+	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/commands/computer-use", strings.NewReader(`{"command":"pwd"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -405,7 +405,7 @@ func TestComputerUseCommandIgnoresLeaseTTLField(t *testing.T) {
 			}, nil
 		},
 	}, nil, nil, "")
-	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t))
+	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/commands/computer-use", strings.NewReader(`{"command":"pwd","lease_ttl_sec":60}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -452,7 +452,7 @@ func TestComputerUseCommandStatusMappings(t *testing.T) {
 					}, nil
 				},
 			}, nil, nil, "")
-			router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t))
+			router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
 
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/commands/computer-use", strings.NewReader(`{"command":"pwd"}`))
 			req.Header.Set("Content-Type", "application/json")
@@ -475,7 +475,7 @@ func TestComputerUseCommandRejectsInvalidInput(t *testing.T) {
 			return message, nil
 		},
 	}, nil, nil, "")
-	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t))
+	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/commands/computer-use", strings.NewReader(`{"command":"   ","timeout_ms":0}`))
 	req.Header.Set("Content-Type", "application/json")
