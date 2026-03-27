@@ -1,0 +1,101 @@
+export const meta = {
+  title: 'Docker',
+  description: '使用 worker-docker 在 Docker 容器中运行沙箱代码。',
+  section: '运行时',
+  order: 42,
+  slug: 'worker-docker',
+}
+
+# Docker 运行时
+
+`worker-docker` 是默认的 worker 类型，通过创建和管理 Docker 容器来隔离执行代码。
+
+## 适用场景
+
+- 通用的沙箱代码执行
+- 宿主机已安装 Docker
+- 需要执行之间的强隔离
+
+## 工作原理
+
+1. Worker 通过 gRPC 连接控制节点。
+2. 收到执行请求后，worker 拉取或复用镜像并启动容器。
+3. 代码在资源受限的容器内运行。
+4. 输出通过控制面流式返回。
+
+## 前置条件
+
+- Docker Engine
+- 能够访问控制节点 gRPC 端口
+
+## 启动 worker
+
+从 [GitHub Releases 页面](https://github.com/Coooolfan/onlyboxes/releases/latest) 下载最新的 `worker-docker` 二进制文件，然后运行：
+
+```bash
+WORKER_CONSOLE_INSECURE=true \
+WORKER_CONSOLE_GRPC_TARGET=127.0.0.1:50051 \
+WORKER_ID=<worker_id> \
+WORKER_SECRET=<worker_secret> \
+./onlyboxes-worker-docker
+```
+
+通过 TLS 连接时请设置 `WORKER_CONSOLE_INSECURE=false`。
+
+## 环境变量
+
+### 连接
+
+| 变量 | 必填 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `WORKER_CONSOLE_GRPC_TARGET` | 是 | `127.0.0.1:50051` | 控制节点 gRPC 地址 |
+| `WORKER_CONSOLE_INSECURE` | 否 | `false` | 设为 `true` 跳过 TLS |
+| `WORKER_ID` | 是 | | Dashboard 中的 Worker ID |
+| `WORKER_SECRET` | 是 | | 创建 worker 时的一次性密钥 |
+
+### 身份
+
+| 变量 | 必填 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `WORKER_NODE_NAME` | 否 | | 可读的节点名称 |
+| `WORKER_VERSION` | 否 | 构建版本 | 上报给控制节点的版本号 |
+| `WORKER_LABELS` | 否 | | CSV 格式标签，如 `region=us,owner=team-a` |
+
+### Docker 镜像
+
+| 变量 | 必填 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `WORKER_PYTHON_EXEC_DOCKER_IMAGE` | 否 | `ghcr.io/astral-sh/uv:python3.12-bookworm-slim` | Python 执行镜像 |
+| `WORKER_TERMINAL_EXEC_DOCKER_IMAGE` | 否 | `coolfan1024/onlyboxes-default-worker:0.0.3` | 终端执行镜像 |
+
+### 终端租约
+
+| 变量 | 必填 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `WORKER_TERMINAL_LEASE_MIN_SEC` | 否 | `60` | 最短租约时长（秒） |
+| `WORKER_TERMINAL_LEASE_MAX_SEC` | 否 | `1800` | 最长租约时长（秒） |
+| `WORKER_TERMINAL_LEASE_DEFAULT_SEC` | 否 | `60` | 默认租约时长（秒） |
+| `WORKER_TERMINAL_OUTPUT_LIMIT_BYTES` | 否 | `1048576` | 每个流的输出上限（字节） |
+
+### 心跳
+
+| 变量 | 必填 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `WORKER_HEARTBEAT_INTERVAL_SEC` | 否 | `5` | 心跳间隔（秒） |
+| `WORKER_HEARTBEAT_JITTER_PCT` | 否 | `20` | 抖动百分比（0–100） |
+| `WORKER_CALL_TIMEOUT_SEC` | 否 | `ceil(2.5 * interval)` | gRPC 调用超时（秒） |
+
+### 日志
+
+| 变量 | 必填 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `WORKER_LOG_LEVEL` | 否 | `info` | `debug` / `info` / `warn` / `error` |
+| `WORKER_LOG_FORMAT` | 否 | `json` | `json` / `text` |
+| `WORKER_LOG_ADD_SOURCE` | 否 | `false` | 是否在日志中包含源文件和行号 |
+
+## 相关文档
+
+- [架构](/zh-CN/docs/architecture)
+- [快速开始](/zh-CN/docs/quick-start)
+- [Boxlite 运行时](/zh-CN/docs/worker-boxlite)
+- [系统进程运行时](/zh-CN/docs/worker-sys)

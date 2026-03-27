@@ -1,0 +1,92 @@
+export const meta = {
+  title: 'System Process',
+  description: 'Run executions as host OS processes with worker-sys.',
+  section: 'Runtimes',
+  order: 46,
+  slug: 'worker-sys',
+}
+
+# System Process Runtime
+
+`worker-sys` executes code directly as host OS processes without any container isolation. This is suitable for real-device control or scenarios where direct host access is required.
+
+## When to use
+
+- You need direct access to host hardware or peripherals
+- Container overhead is unacceptable
+- You are running on a dedicated, trusted machine
+
+> **Note:** `worker-sys` provides no sandbox isolation. Only run it on machines where you trust all incoming execution requests.
+
+## How it works
+
+1. The worker connects to the control node over gRPC.
+2. Execution requests are spawned as native OS processes on the host.
+3. Process stdout/stderr is streamed back through the control plane.
+
+## Prerequisites
+
+- Network access to the control node gRPC endpoint
+- Appropriate OS-level permissions for the workloads you intend to run
+
+## Starting the worker
+
+Download the latest `worker-sys` binary from the [GitHub releases page](https://github.com/Coooolfan/onlyboxes/releases/latest), then run:
+
+```bash
+WORKER_CONSOLE_INSECURE=true \
+WORKER_CONSOLE_GRPC_TARGET=127.0.0.1:50051 \
+WORKER_ID=<worker_id> \
+WORKER_SECRET=<worker_secret> \
+./onlyboxes-worker-sys
+```
+
+## Environment variables
+
+### Connection
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `WORKER_CONSOLE_GRPC_TARGET` | Yes | `127.0.0.1:50051` | Control node gRPC address |
+| `WORKER_CONSOLE_INSECURE` | No | `false` | Set `true` to skip TLS |
+| `WORKER_ID` | Yes | | Worker ID from the dashboard |
+| `WORKER_SECRET` | Yes | | One-time secret from worker creation |
+
+### Identity
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `WORKER_NODE_NAME` | No | | Human-readable node name |
+| `WORKER_VERSION` | No | build version | Version reported to console |
+| `WORKER_LABELS` | No | | CSV labels, e.g. `region=us,owner=team-a` |
+
+### Computer use
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `WORKER_COMPUTER_USE_OUTPUT_LIMIT_BYTES` | No | `1048576` | Output limit per stream (bytes) |
+| `WORKER_COMPUTER_USE_COMMAND_WHITELIST_MODE` | No | `exact` | `exact` / `prefix` / `allow_all` |
+| `WORKER_COMPUTER_USE_COMMAND_WHITELIST` | No | `[]` | JSON array of allowed commands, e.g. `'["echo","time"]'` |
+| `WORKER_READ_IMAGE_ALLOWED_PATHS` | No | `[]` | JSON array of allowed paths for reading images |
+
+### Heartbeat
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `WORKER_HEARTBEAT_INTERVAL_SEC` | No | `5` | Heartbeat interval (seconds) |
+| `WORKER_HEARTBEAT_JITTER_PCT` | No | `20` | Jitter percentage (0–100) |
+| `WORKER_CALL_TIMEOUT_SEC` | No | `ceil(2.5 * interval)` | gRPC call timeout (seconds) |
+
+### Logging
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `WORKER_LOG_LEVEL` | No | `info` | `debug` / `info` / `warn` / `error` |
+| `WORKER_LOG_FORMAT` | No | `json` | `json` / `text` |
+| `WORKER_LOG_ADD_SOURCE` | No | `false` | Include source file and line |
+
+## Related docs
+
+- [Architecture](/en/docs/architecture)
+- [Docker Runtime](/en/docs/worker-docker)
+- [Boxlite Runtime](/en/docs/worker-boxlite)

@@ -1,0 +1,104 @@
+export const meta = {
+  title: 'Boxlite',
+  description: 'Run executions through the boxlite specialized runtime backend.',
+  section: 'Runtimes',
+  order: 44,
+  slug: 'worker-boxlite',
+}
+
+# Boxlite Runtime
+
+`worker-boxlite` uses the boxlite runtime as its execution backend. Each execution runs inside an independent Linux kernel, providing stronger isolation than Docker containers at the cost of slower cold starts.
+
+## When to use
+
+- You need stronger isolation than shared-kernel containers
+- Your workload requires a dedicated kernel per execution
+- Security boundary is more important than cold-start latency
+
+## How it works
+
+1. The worker connects to the control node over gRPC.
+2. Execution requests are forwarded to the local boxlite runtime.
+3. boxlite manages the sandbox lifecycle and streams output back.
+
+## Prerequisites
+
+- boxlite runtime installed on the host
+- Network access to the control node gRPC endpoint
+
+## Starting the worker
+
+Download the latest `worker-boxlite` binary from the [GitHub releases page](https://github.com/Coooolfan/onlyboxes/releases/latest), then run:
+
+```bash
+WORKER_CONSOLE_INSECURE=true \
+WORKER_CONSOLE_GRPC_TARGET=127.0.0.1:50051 \
+WORKER_ID=<worker_id> \
+WORKER_SECRET=<worker_secret> \
+./onlyboxes-worker-boxlite
+```
+
+## Environment variables
+
+### Connection
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `WORKER_CONSOLE_GRPC_TARGET` | Yes | `127.0.0.1:50051` | Control node gRPC address |
+| `WORKER_CONSOLE_INSECURE` | No | `false` | Set `true` to skip TLS |
+| `WORKER_ID` | Yes | | Worker ID from the dashboard |
+| `WORKER_SECRET` | Yes | | One-time secret from worker creation |
+
+### Identity
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `WORKER_NODE_NAME` | No | | Human-readable node name |
+| `WORKER_VERSION` | No | build version | Version reported to console |
+| `WORKER_LABELS` | No | | CSV labels, e.g. `region=us,owner=team-a` |
+
+### Boxlite
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `WORKER_BOXLITE_HOME` | No | | Boxlite home directory |
+| `WORKER_PYTHON_EXEC_BOXLITE_IMAGE` | No | `ghcr.io/astral-sh/uv:python3.12-bookworm-slim` | Image for Python execution |
+| `WORKER_PYTHON_EXEC_MEMORY_MIB` | No | `256` | Python VM memory (MiB) |
+| `WORKER_PYTHON_EXEC_CPUS` | No | `1` | Python VM CPU count |
+| `WORKER_PYTHON_EXEC_MAX_PROCESSES` | No | `128` | Python max processes |
+| `WORKER_TERMINAL_EXEC_BOXLITE_IMAGE` | No | `coolfan1024/onlyboxes-default-worker:0.0.3` | Image for terminal execution |
+| `WORKER_TERMINAL_EXEC_MEMORY_MIB` | No | `256` | Terminal VM memory (MiB) |
+| `WORKER_TERMINAL_EXEC_CPUS` | No | `1` | Terminal VM CPU count |
+| `WORKER_TERMINAL_EXEC_MAX_PROCESSES` | No | `128` | Terminal max processes |
+
+### Terminal lease
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `WORKER_TERMINAL_LEASE_MIN_SEC` | No | `60` | Minimum lease duration (seconds) |
+| `WORKER_TERMINAL_LEASE_MAX_SEC` | No | `1800` | Maximum lease duration (seconds) |
+| `WORKER_TERMINAL_LEASE_DEFAULT_SEC` | No | `60` | Default lease duration (seconds) |
+| `WORKER_TERMINAL_OUTPUT_LIMIT_BYTES` | No | `1048576` | Output limit per stream (bytes) |
+
+### Heartbeat
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `WORKER_HEARTBEAT_INTERVAL_SEC` | No | `5` | Heartbeat interval (seconds) |
+| `WORKER_HEARTBEAT_JITTER_PCT` | No | `20` | Jitter percentage (0–100) |
+| `WORKER_CALL_TIMEOUT_SEC` | No | `ceil(2.5 * interval)` | gRPC call timeout (seconds) |
+
+### Logging
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `WORKER_LOG_LEVEL` | No | `info` | `debug` / `info` / `warn` / `error` |
+| `WORKER_LOG_FORMAT` | No | `json` | `json` / `text` |
+| `WORKER_LOG_ADD_SOURCE` | No | `false` | Include source file and line |
+
+## Related docs
+
+- [Architecture](/en/docs/architecture)
+- [Docker Runtime](/en/docs/worker-docker)
+- [System Process Runtime](/en/docs/worker-sys)

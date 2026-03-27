@@ -1,0 +1,67 @@
+export const meta = {
+  title: '控制台配置',
+  description: '控制节点的所有环境变量。',
+  section: '快速开始',
+  order: 35,
+  slug: 'console-config',
+}
+
+# 控制台配置
+
+控制台（控制节点）完全通过环境变量配置，在 `docker-compose.yml` 或容器编排工具中设置即可。
+
+## 环境变量
+
+### 核心
+
+| 变量 | 必填 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `CONSOLE_HASH_KEY` | 是 | | 用于哈希 worker 密钥和访问令牌的 HMAC 密钥 |
+| `CONSOLE_HTTP_ADDR` | 否 | `:8089` | Dashboard 和 REST API 监听地址 |
+| `CONSOLE_GRPC_ADDR` | 否 | `:50051` | Worker gRPC 监听地址 |
+
+### 数据库
+
+| 变量 | 必填 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `CONSOLE_DB_PATH` | 否 | `./db/onlyboxes-console.db` | SQLite 数据库文件路径 |
+| `CONSOLE_DB_BUSY_TIMEOUT_MS` | 否 | `5000` | SQLite 繁忙超时（毫秒） |
+| `CONSOLE_TASK_RETENTION_DAYS` | 否 | `30` | 已完成任务记录的保留天数 |
+
+### 初始管理员账户
+
+以下变量仅在首次启动且不存在管理员账户时生效，后续启动会被忽略。
+
+| 变量 | 必填 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `CONSOLE_DASHBOARD_USERNAME` | 否 | | 初始管理员用户名 |
+| `CONSOLE_DASHBOARD_PASSWORD` | 否 | | 初始管理员密码 |
+| `CONSOLE_INITIAL_ADMIN_API_KEY` | 否 | | 显式指定的初始管理员 API 密钥 |
+
+### 账户
+
+| 变量 | 必填 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `CONSOLE_ENABLE_REGISTRATION` | 否 | `false` | 允许管理员注册非管理员账户 |
+
+### Worker 管理
+
+| 变量 | 必填 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `CONSOLE_HEARTBEAT_INTERVAL_SEC` | 否 | `5` | 期望的 worker 心跳间隔（秒） |
+| `CONSOLE_OFFLINE_TTL_SEC` | 否 | `15` | worker 静默多少秒后标记为离线 |
+| `CONSOLE_REPLAY_WINDOW_SEC` | 否 | `60` | 请求去重的重放窗口（秒） |
+
+### 日志
+
+| 变量 | 必填 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `CONSOLE_LOG_LEVEL` | 否 | `info` | `debug` / `info` / `warn` / `error` |
+| `CONSOLE_LOG_FORMAT` | 否 | `json` | `json` / `text` |
+| `CONSOLE_LOG_ADD_SOURCE` | 否 | `false` | 是否在日志中包含源文件和行号 |
+
+## 相关文档
+
+- [安装](/zh-CN/docs/install)
+- [快速开始](/zh-CN/docs/quick-start)
+- [架构](/zh-CN/docs/architecture)

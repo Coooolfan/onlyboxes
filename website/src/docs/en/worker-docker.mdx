@@ -1,0 +1,101 @@
+export const meta = {
+  title: 'Docker',
+  description: 'Run sandboxed code inside Docker containers with worker-docker.',
+  section: 'Runtimes',
+  order: 42,
+  slug: 'worker-docker',
+}
+
+# Docker Runtime
+
+`worker-docker` is the default worker type. It creates and manages Docker containers to execute code in isolated sandboxes.
+
+## When to use
+
+- General-purpose sandboxed code execution
+- You already have Docker installed on the host
+- You want strong isolation between executions
+
+## How it works
+
+1. The worker connects to the control node over gRPC.
+2. When an execution request arrives, the worker pulls or reuses an image and starts a container.
+3. Code runs inside the container with resource limits applied.
+4. Output is streamed back through the control plane.
+
+## Prerequisites
+
+- Docker Engine
+- Network access to the control node gRPC endpoint
+
+## Starting the worker
+
+Download the latest `worker-docker` binary from the [GitHub releases page](https://github.com/Coooolfan/onlyboxes/releases/latest), then run:
+
+```bash
+WORKER_CONSOLE_INSECURE=true \
+WORKER_CONSOLE_GRPC_TARGET=127.0.0.1:50051 \
+WORKER_ID=<worker_id> \
+WORKER_SECRET=<worker_secret> \
+./onlyboxes-worker-docker
+```
+
+Set `WORKER_CONSOLE_INSECURE=false` when connecting through TLS.
+
+## Environment variables
+
+### Connection
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `WORKER_CONSOLE_GRPC_TARGET` | Yes | `127.0.0.1:50051` | Control node gRPC address |
+| `WORKER_CONSOLE_INSECURE` | No | `false` | Set `true` to skip TLS |
+| `WORKER_ID` | Yes | | Worker ID from the dashboard |
+| `WORKER_SECRET` | Yes | | One-time secret from worker creation |
+
+### Identity
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `WORKER_NODE_NAME` | No | | Human-readable node name |
+| `WORKER_VERSION` | No | build version | Version reported to console |
+| `WORKER_LABELS` | No | | CSV labels, e.g. `region=us,owner=team-a` |
+
+### Docker images
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `WORKER_PYTHON_EXEC_DOCKER_IMAGE` | No | `ghcr.io/astral-sh/uv:python3.12-bookworm-slim` | Image for Python execution |
+| `WORKER_TERMINAL_EXEC_DOCKER_IMAGE` | No | `coolfan1024/onlyboxes-default-worker:0.0.3` | Image for terminal execution |
+
+### Terminal lease
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `WORKER_TERMINAL_LEASE_MIN_SEC` | No | `60` | Minimum lease duration (seconds) |
+| `WORKER_TERMINAL_LEASE_MAX_SEC` | No | `1800` | Maximum lease duration (seconds) |
+| `WORKER_TERMINAL_LEASE_DEFAULT_SEC` | No | `60` | Default lease duration (seconds) |
+| `WORKER_TERMINAL_OUTPUT_LIMIT_BYTES` | No | `1048576` | Output limit per stream (bytes) |
+
+### Heartbeat
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `WORKER_HEARTBEAT_INTERVAL_SEC` | No | `5` | Heartbeat interval (seconds) |
+| `WORKER_HEARTBEAT_JITTER_PCT` | No | `20` | Jitter percentage (0–100) |
+| `WORKER_CALL_TIMEOUT_SEC` | No | `ceil(2.5 * interval)` | gRPC call timeout (seconds) |
+
+### Logging
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `WORKER_LOG_LEVEL` | No | `info` | `debug` / `info` / `warn` / `error` |
+| `WORKER_LOG_FORMAT` | No | `json` | `json` / `text` |
+| `WORKER_LOG_ADD_SOURCE` | No | `false` | Include source file and line |
+
+## Related docs
+
+- [Architecture](/en/docs/architecture)
+- [Quick Start](/en/docs/quick-start)
+- [Boxlite Runtime](/en/docs/worker-boxlite)
+- [System Process Runtime](/en/docs/worker-sys)

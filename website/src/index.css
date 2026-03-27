@@ -69,6 +69,11 @@ pre ::selection {
   --ob-table-text: #525252;
 }
 
+/* Docs dark-mode: invert light-only SVG diagrams */
+[data-docs-theme="dark"] #docs-content img[src$=".svg"] {
+  filter: invert(1);
+}
+
 /* Docs theme tokens — dark */
 [data-docs-theme="dark"] {
   --ob-bg: #0a0a0a;

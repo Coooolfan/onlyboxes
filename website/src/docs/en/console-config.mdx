@@ -1,0 +1,67 @@
+export const meta = {
+  title: 'Console Configuration',
+  description: 'All environment variables for the control node.',
+  section: 'Getting Started',
+  order: 35,
+  slug: 'console-config',
+}
+
+# Console Configuration
+
+The console (control node) is configured entirely through environment variables. Set them in `docker-compose.yml` or your container orchestration tool.
+
+## Environment variables
+
+### Core
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `CONSOLE_HASH_KEY` | Yes | | HMAC key for hashing worker secrets and access tokens |
+| `CONSOLE_HTTP_ADDR` | No | `:8089` | Dashboard and REST API listen address |
+| `CONSOLE_GRPC_ADDR` | No | `:50051` | Worker gRPC listen address |
+
+### Database
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `CONSOLE_DB_PATH` | No | `./db/onlyboxes-console.db` | SQLite database file path |
+| `CONSOLE_DB_BUSY_TIMEOUT_MS` | No | `5000` | SQLite busy timeout (ms) |
+| `CONSOLE_TASK_RETENTION_DAYS` | No | `30` | Retention days for completed task records |
+
+### Initial admin account
+
+These variables are only used during first startup when no admin account exists. They are ignored on subsequent runs.
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `CONSOLE_DASHBOARD_USERNAME` | No | | Initial admin username |
+| `CONSOLE_DASHBOARD_PASSWORD` | No | | Initial admin password |
+| `CONSOLE_INITIAL_ADMIN_API_KEY` | No | | Explicit initial admin API key |
+
+### Account
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `CONSOLE_ENABLE_REGISTRATION` | No | `false` | Allow admin to register non-admin accounts |
+
+### Worker management
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `CONSOLE_HEARTBEAT_INTERVAL_SEC` | No | `5` | Expected worker heartbeat interval (seconds) |
+| `CONSOLE_OFFLINE_TTL_SEC` | No | `15` | Seconds before a silent worker is marked offline |
+| `CONSOLE_REPLAY_WINDOW_SEC` | No | `60` | Replay window for request deduplication (seconds) |
+
+### Logging
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `CONSOLE_LOG_LEVEL` | No | `info` | `debug` / `info` / `warn` / `error` |
+| `CONSOLE_LOG_FORMAT` | No | `json` | `json` / `text` |
+| `CONSOLE_LOG_ADD_SOURCE` | No | `false` | Include source file and line |
+
+## Related docs
+
+- [Install](/en/docs/install)
+- [Quick Start](/en/docs/quick-start)
+- [Architecture](/en/docs/architecture)
