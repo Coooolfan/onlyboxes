@@ -16,19 +16,6 @@ fi
 
 # Piped execution (e.g. curl | bash): download install.py from GitHub.
 ORIG_ARGS=("$@")
-TAG=""
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --tag)  TAG="$2"; break ;;
-    --tag=*) TAG="${1#--tag=}"; break ;;
-    *) shift ;;
-  esac
-done
-
-if [[ -z "$TAG" ]]; then
-  echo "Error: --tag is required." >&2
-  exit 1
-fi
 
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR"' EXIT

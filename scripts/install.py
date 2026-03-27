@@ -3,7 +3,6 @@
 
 import argparse
 import atexit
-import http.cookiejar
 import json
 import os
 import platform
@@ -26,13 +25,14 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 GITHUB_REPO = "Coooolfan/onlyboxes"
+DEFAULT_TAG = "0.2.0-beta-4"
 COMPOSE_TEMPLATE_URL = (
     "https://raw.githubusercontent.com/{repo}/{tag}/scripts/docker-compose.install.yml"
 )
 RELEASE_ASSET_URL = (
     "https://github.com/{repo}/releases/download/{tag}/{filename}"
 )
-PLACEHOLDERS = ["{{IMAGE_TAG}}", "{{HASH_KEY}}", "{{ADMIN_PASSWORD}}", "{{HTTP_PORT}}", "{{GRPC_PORT}}"]
+PLACEHOLDERS = ["{{IMAGE_TAG}}", "{{HASH_KEY}}", "{{ADMIN_PASSWORD}}", "{{INITIAL_API_KEY}}", "{{HTTP_PORT}}", "{{GRPC_PORT}}"]
 ARCH_MAP = {
     "x86_64": "amd64",
     "amd64": "amd64",
@@ -182,22 +182,20 @@ def run_cmd(args: list[str], cwd: str | None = None, check: bool = True) -> subp
     return result
 
 
-def build_opener(cookie_jar: http.cookiejar.CookieJar) -> urllib.request.OpenerDirector:
-    return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookie_jar))
-
-
 def api_request(
-    opener: urllib.request.OpenerDirector,
     url: str,
     method: str = "GET",
     data: dict | None = None,
+    api_key: str | None = None,
 ) -> dict:
     body = json.dumps(data).encode() if data is not None else None
     req = urllib.request.Request(url, data=body, method=method)
     if body is not None:
         req.add_header("Content-Type", "application/json")
+    if api_key:
+        req.add_header("Authorization", f"Bearer {api_key}")
     try:
-        with opener.open(req) as resp:
+        with urllib.request.urlopen(req) as resp:
             return json.loads(resp.read().decode())
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode(errors="replace") if exc.fp else ""
@@ -327,7 +325,7 @@ def prepare_workdir(workdir: Path, plan: DeploymentPlan) -> None:
             "  Found: " + ", ".join(existing),
         )
 
-    subdirs = ["db", "bin", "run", "install-artifacts"]
+    subdirs = ["db", "bin", "install-artifacts"]
     if plan.worker_runtime == "boxlite":
         subdirs.append("data/boxlite")
     for sub in subdirs:
@@ -390,7 +388,7 @@ def download_and_extract_release(workdir: Path, tag: str, asset_template: str, b
 
 def download_and_render_compose(
     workdir: Path, tag: str, hash_key: str, admin_password: str,
-    http_port: int, grpc_port: int,
+    initial_api_key: str, http_port: int, grpc_port: int,
 ) -> None:
     url = COMPOSE_TEMPLATE_URL.format(repo=GITHUB_REPO, tag=tag)
     info(f"Downloading {url}")
@@ -409,6 +407,7 @@ def download_and_render_compose(
     rendered = rendered.replace("{{IMAGE_TAG}}", tag)
     rendered = rendered.replace("{{HASH_KEY}}", hash_key)
     rendered = rendered.replace("{{ADMIN_PASSWORD}}", admin_password)
+    rendered = rendered.replace("{{INITIAL_API_KEY}}", initial_api_key)
     rendered = rendered.replace("{{HTTP_PORT}}", str(http_port))
     rendered = rendered.replace("{{GRPC_PORT}}", str(grpc_port))
 
@@ -448,41 +447,10 @@ def _print_console_ready(http_port: int, admin_password: str) -> None:
     info(f"Password: {admin_password}")
 
 
-def login_and_save_cookie(
-    workdir: Path, http_port: int, admin_password: str,
-) -> urllib.request.OpenerDirector:
-    cookie_jar = http.cookiejar.MozillaCookieJar(str(workdir / "run" / "console.cookiejar"))
-    opener = build_opener(cookie_jar)
 
-    url = f"http://127.0.0.1:{http_port}/api/v1/console/login"
-    body = json.dumps({"username": "admin", "password": admin_password}).encode()
-    req = urllib.request.Request(url, data=body, method="POST")
-    req.add_header("Content-Type", "application/json")
-
-    try:
-        with opener.open(req) as resp:
-            result = json.loads(resp.read().decode())
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode(errors="replace") if exc.fp else ""
-        fatal("login", f"Login failed (HTTP {exc.code}): {detail}")
-    except urllib.error.URLError as exc:
-        fatal("login", f"Login request failed: {exc.reason}")
-
-    if not result.get("authenticated"):
-        fatal("login", "Login returned authenticated=false.")
-
-    cookie_path = workdir / "run" / "console.cookiejar"
-    cookie_jar.save(ignore_discard=True, ignore_expires=True)
-    os.chmod(cookie_path, stat.S_IRUSR | stat.S_IWUSR)
-    info("Login successful. Cookie saved.")
-    return opener
-
-
-def create_worker(
-    opener: urllib.request.OpenerDirector, http_port: int,
-) -> tuple[str, str]:
+def create_worker(http_port: int, api_key: str) -> tuple[str, str]:
     url = f"http://127.0.0.1:{http_port}/api/v1/workers"
-    result = api_request(opener, url, method="POST", data={"type": "normal"})
+    result = api_request(url, method="POST", data={"type": "normal"}, api_key=api_key)
 
     node_id = result.get("node_id")
     worker_secret = result.get("worker_secret")
@@ -522,7 +490,7 @@ def install_systemd_service(service_name: str, unit_content: str) -> None:
 
 
 def generate_console_binary_unit(workdir: Path, hash_key: str, admin_password: str,
-                                  http_port: int, grpc_port: int) -> str:
+                                  initial_api_key: str, http_port: int, grpc_port: int) -> str:
     bin_path = workdir / "bin" / "onlyboxes-console"
     return f"""\
 [Unit]
@@ -539,6 +507,7 @@ RestartSec=3
 Environment=CONSOLE_HASH_KEY={hash_key}
 Environment=CONSOLE_DASHBOARD_USERNAME=admin
 Environment=CONSOLE_DASHBOARD_PASSWORD={admin_password}
+Environment=CONSOLE_INITIAL_ADMIN_API_KEY={initial_api_key}
 Environment=CONSOLE_ENABLE_REGISTRATION=true
 Environment=CONSOLE_HTTP_ADDR=:{http_port}
 Environment=CONSOLE_GRPC_ADDR=:{grpc_port}
@@ -592,11 +561,12 @@ WantedBy=multi-user.target
 
 
 def build_console_env(workdir: Path, hash_key: str, admin_password: str,
-                      http_port: int, grpc_port: int) -> dict[str, str]:
+                      initial_api_key: str, http_port: int, grpc_port: int) -> dict[str, str]:
     env = os.environ.copy()
     env["CONSOLE_HASH_KEY"] = hash_key
     env["CONSOLE_DASHBOARD_USERNAME"] = "admin"
     env["CONSOLE_DASHBOARD_PASSWORD"] = admin_password
+    env["CONSOLE_INITIAL_ADMIN_API_KEY"] = initial_api_key
     env["CONSOLE_ENABLE_REGISTRATION"] = "true"
     env["CONSOLE_HTTP_ADDR"] = f":{http_port}"
     env["CONSOLE_GRPC_ADDR"] = f":{grpc_port}"
@@ -644,14 +614,13 @@ def enter_foreground_loop() -> None:
 
 
 def wait_worker_online(
-    opener: urllib.request.OpenerDirector,
-    http_port: int, worker_id: str, plan: DeploymentPlan,
+    http_port: int, worker_id: str, api_key: str, plan: DeploymentPlan,
 ) -> None:
     url = f"http://127.0.0.1:{http_port}/api/v1/workers?status=online&page=1&page_size=100"
     deadline = time.monotonic() + WORKER_ONLINE_TIMEOUT
     while time.monotonic() < deadline:
         try:
-            result = api_request(opener, url)
+            result = api_request(url, api_key=api_key)
             workers = result.get("items") or []
             for w in workers:
                 if w.get("node_id") == worker_id:
@@ -761,7 +730,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Onlyboxes installer – deploy console + worker on a single Linux or macOS host."
     )
-    parser.add_argument("--tag", required=True, help="Release version tag, e.g. v0.1.0")
+    parser.add_argument(
+        "--tag",
+        default=DEFAULT_TAG,
+        help=f"Override release version tag for advanced use cases (default: {DEFAULT_TAG})",
+    )
     parser.add_argument("--workdir", default=None, help="Working directory (default: $PWD/onlyboxes)")
     parser.add_argument("--yes", "-y", action="store_true", help="Non-interactive mode, skip confirmations")
     parser.add_argument("--console-http-port", type=int, default=8089, help="Console HTTP port (default: 8089)")
@@ -795,6 +768,7 @@ def main() -> None:
 
     admin_password = generate_password()
     hash_key = generate_hash_key()
+    api_key = "obxk_" + secrets.token_hex(32)
 
     sc = StepCounter()
 
@@ -837,7 +811,7 @@ def main() -> None:
     # --- Step: Download releases ---
     if plan.console_start == "docker":
         sc.next("Download releases")
-        download_and_render_compose(workdir, tag, hash_key, admin_password, http_port, grpc_port)
+        download_and_render_compose(workdir, tag, hash_key, admin_password, api_key, http_port, grpc_port)
         download_and_extract_release(workdir, tag, plan.worker_asset_template, plan.worker_binary_name)
     else:
         sc.next("Download releases")
@@ -853,11 +827,11 @@ def main() -> None:
             _fg_compose_workdir = str(workdir)
     elif plan.console_start == "systemd":
         sc.next("Setup console systemd service")
-        unit = generate_console_binary_unit(workdir, hash_key, admin_password, http_port, grpc_port)
+        unit = generate_console_binary_unit(workdir, hash_key, admin_password, api_key, http_port, grpc_port)
         install_systemd_service(CONSOLE_SERVICE_NAME, unit)
     else:  # foreground
         sc.next("Start console (foreground)")
-        console_env = build_console_env(workdir, hash_key, admin_password, http_port, grpc_port)
+        console_env = build_console_env(workdir, hash_key, admin_password, api_key, http_port, grpc_port)
         console_bin = workdir / "bin" / "onlyboxes-console"
         proc = subprocess.Popen(
             [str(console_bin)],
@@ -871,13 +845,9 @@ def main() -> None:
     sc.next("Wait for console to become ready")
     wait_console_ready(http_port, admin_password)
 
-    # --- Step: Login ---
-    sc.next("Login and save session cookie")
-    opener = login_and_save_cookie(workdir, http_port, admin_password)
-
     # --- Step: Create worker ---
     sc.next("Create worker")
-    worker_id, worker_secret = create_worker(opener, http_port)
+    worker_id, worker_secret = create_worker(http_port, api_key)
 
     # --- Step: Start worker ---
     if plan.worker_start == "systemd":
@@ -898,7 +868,7 @@ def main() -> None:
 
     # --- Step: Wait worker online ---
     sc.next("Waiting for worker to come online")
-    wait_worker_online(opener, http_port, worker_id, plan)
+    wait_worker_online(http_port, worker_id, api_key, plan)
 
     # Cleanup
     shutil.rmtree(workdir / "install-artifacts", ignore_errors=True)

@@ -29,6 +29,7 @@ type Config struct {
 	HeartbeatIntervalSec int32
 	DashboardUsername    string
 	DashboardPassword    string
+	InitialAdminAPIKey   string
 	DBPath               string
 	DBBusyTimeoutMS      int
 	HashKey              string
@@ -54,6 +55,7 @@ func Load() Config {
 		HeartbeatIntervalSec: int32(heartbeatIntervalSec),
 		DashboardUsername:    os.Getenv("CONSOLE_DASHBOARD_USERNAME"),
 		DashboardPassword:    os.Getenv("CONSOLE_DASHBOARD_PASSWORD"),
+		InitialAdminAPIKey:   os.Getenv("CONSOLE_INITIAL_ADMIN_API_KEY"),
 		DBPath:               getEnv("CONSOLE_DB_PATH", defaultDBPath),
 		DBBusyTimeoutMS:      dbBusyTimeoutMS,
 		HashKey:              os.Getenv("CONSOLE_HASH_KEY"),

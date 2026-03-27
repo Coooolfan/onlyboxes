@@ -19,6 +19,7 @@ const (
 	accountIDPrefix                 = "acc_"
 	accountIDRandomByteSize         = 16
 	maxAccountUsernameRunes         = 64
+	initialAdminAPIKeyName          = "initial-admin"
 
 	requestAccountIDGinKey       = "request_account_id"
 	requestAccountUsernameGinKey = "request_account_username"
@@ -57,6 +58,9 @@ type AdminAccountInitResult struct {
 	PasswordPlaintext string
 	InitializedNow    bool
 	EnvIgnored        bool
+	APIKeyInitialized bool
+	APIKeyName        string
+	APIKeyPlaintext   string
 }
 
 type SessionAccount struct {

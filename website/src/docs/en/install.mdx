@@ -11,6 +11,12 @@ export const meta = {
 The fastest way to get started on a single Linux machine is the one-click installer.
 
 ```bash
+curl -fsSL https://onlybox.es/install.sh | bash
+```
+
+This installs the latest version by default. Only pass `--tag` if you explicitly need to override the release version:
+
+```bash
 curl -fsSL https://onlybox.es/install.sh | bash -s -- --tag 0.1.5
 ```
 
@@ -19,8 +25,8 @@ curl -fsSL https://onlybox.es/install.sh | bash -s -- --tag 0.1.5
 1. Checks Linux, Docker, Docker Compose v2, systemd, and Python 3.
 2. Downloads a compose template and renders credentials.
 3. Starts the control node with `docker compose up -d`.
-4. Signs in and creates a `normal` worker.
-5. Downloads the matching `worker-docker` release binary.
+4. Creates a `normal` worker.
+5. Downloads the matching `worker-docker` release binary for the default latest version, or your `--tag` override.
 6. Generates and enables a systemd service for the worker.
 7. Waits for the worker to become online.
 
@@ -28,7 +34,7 @@ curl -fsSL https://onlybox.es/install.sh | bash -s -- --tag 0.1.5
 
 | Flag | Default | Description |
 | --- | --- | --- |
-| `--tag` | required | Release tag, for example `v0.1.0` |
+| `--tag` | `0.2.0-beta-4` | Optional release override for advanced use cases |
 | `--workdir` | `$PWD/onlyboxes` | Working directory |
 | `--yes` / `-y` | `false` | Non-interactive mode |
 | `--console-http-port` | `8089` | Console HTTP port on the host |

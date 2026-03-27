@@ -24,7 +24,7 @@ func TestRequireAuthAPIKeyPath(t *testing.T) {
 	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, nil, nil, ":50051")
 	router := mustNewRouter(t, handler, bundle.ConsoleAuth, bundle.MCPAuth, bundle.APIKeyAuth)
 
-	validRecord, err := bundle.APIKeyAuth.createAPIKey(context.Background(), testDashboardAccountID, "ci-access")
+	validRecord, err := bundle.APIKeyAuth.createAPIKey(context.Background(), testDashboardAccountID, "ci-access", "")
 	if err != nil {
 		t.Fatalf("create api key: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestRequireCookieSessionRejectsAPIKeyForSensitiveEndpoints(t *testing.T) {
 	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, nil, nil, ":50051")
 	router := mustNewRouter(t, handler, bundle.ConsoleAuth, bundle.MCPAuth, bundle.APIKeyAuth)
 
-	validRecord, err := bundle.APIKeyAuth.createAPIKey(context.Background(), testDashboardAccountID, "ci-sensitive")
+	validRecord, err := bundle.APIKeyAuth.createAPIKey(context.Background(), testDashboardAccountID, "ci-sensitive", "")
 	if err != nil {
 		t.Fatalf("create api key: %v", err)
 	}
@@ -222,11 +222,11 @@ func TestAPIKeyAccountIsolation(t *testing.T) {
 	bundle := newTestAuthBundle(t, false)
 	seedTestAccount(t, bundle.DB.Queries, testSecondAccountID, testSecondUsername, testSecondPassword, false)
 
-	firstRecord, err := bundle.APIKeyAuth.createAPIKey(context.Background(), testDashboardAccountID, "shared-name")
+	firstRecord, err := bundle.APIKeyAuth.createAPIKey(context.Background(), testDashboardAccountID, "shared-name", "")
 	if err != nil {
 		t.Fatalf("create first account api key: %v", err)
 	}
-	secondRecord, err := bundle.APIKeyAuth.createAPIKey(context.Background(), testSecondAccountID, "shared-name")
+	secondRecord, err := bundle.APIKeyAuth.createAPIKey(context.Background(), testSecondAccountID, "shared-name", "")
 	if err != nil {
 		t.Fatalf("create second account api key: %v", err)
 	}
@@ -268,7 +268,7 @@ func TestDashboardEndpointsAllowAPIKey(t *testing.T) {
 	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, nil, nil, ":50051")
 	router := mustNewRouter(t, handler, bundle.ConsoleAuth, bundle.MCPAuth, bundle.APIKeyAuth)
 
-	validRecord, err := bundle.APIKeyAuth.createAPIKey(context.Background(), testDashboardAccountID, "ci-dashboard")
+	validRecord, err := bundle.APIKeyAuth.createAPIKey(context.Background(), testDashboardAccountID, "ci-dashboard", "")
 	if err != nil {
 		t.Fatalf("create api key: %v", err)
 	}

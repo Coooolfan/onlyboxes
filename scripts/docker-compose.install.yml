@@ -8,6 +8,7 @@ services:
       CONSOLE_ENABLE_REGISTRATION: "true"
       CONSOLE_DASHBOARD_USERNAME: "admin"     # only for first run
       CONSOLE_DASHBOARD_PASSWORD: "{{ADMIN_PASSWORD}}" # only for first run
+      CONSOLE_INITIAL_ADMIN_API_KEY: "{{INITIAL_API_KEY}}" # explicit initial admin API key, only for first run
     ports:
       - "{{HTTP_PORT}}:8089"
       - "{{GRPC_PORT}}:50051"

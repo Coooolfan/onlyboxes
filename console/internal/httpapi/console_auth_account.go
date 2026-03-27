@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/onlyboxes/onlyboxes/console/internal/persistence"
 	"github.com/onlyboxes/onlyboxes/console/internal/persistence/sqlc"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -41,23 +42,24 @@ func ResolveDashboardCredentials(username string, password string) (DashboardCre
 
 func InitializeAdminAccount(
 	ctx context.Context,
-	queries *sqlc.Queries,
+	db *persistence.DB,
 	envUsername string,
 	envPassword string,
+	initialAPIKey string,
 ) (AdminAccountInitResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if queries == nil {
+	if db == nil || db.Queries == nil {
 		return AdminAccountInitResult{}, errors.New("account queries is required")
 	}
 
-	adminCount, err := queries.CountAdminAccounts(ctx)
+	adminCount, err := db.Queries.CountAdminAccounts(ctx)
 	if err != nil {
 		return AdminAccountInitResult{}, fmt.Errorf("count admin accounts: %w", err)
 	}
 	if adminCount > 0 {
-		adminAccount, err := queries.GetFirstAdminAccount(ctx)
+		adminAccount, err := db.Queries.GetFirstAdminAccount(ctx)
 		if err != nil {
 			return AdminAccountInitResult{}, fmt.Errorf("load admin account: %w", err)
 		}
@@ -65,8 +67,11 @@ func InitializeAdminAccount(
 			AccountID:      strings.TrimSpace(adminAccount.AccountID),
 			Username:       strings.TrimSpace(adminAccount.Username),
 			InitializedNow: false,
-			EnvIgnored:     envUsername != "" || envPassword != "",
+			EnvIgnored:     envUsername != "" || envPassword != "" || initialAPIKey != "",
 		}, nil
+	}
+	if initialAPIKey != "" && db.Hasher == nil {
+		return AdminAccountInitResult{}, errors.New("api key hasher is required")
 	}
 
 	credentials, err := ResolveDashboardCredentials(envUsername, envPassword)
@@ -74,23 +79,47 @@ func InitializeAdminAccount(
 		return AdminAccountInitResult{}, err
 	}
 
-	created, err := createAccountWithRetry(ctx, queries, createAccountInput{
-		Username: credentials.Username,
-		Password: credentials.Password,
-		IsAdmin:  true,
-		Now:      time.Now(),
-	})
-	if err != nil {
-		return AdminAccountInitResult{}, fmt.Errorf("insert admin account: %w", err)
-	}
-
-	return AdminAccountInitResult{
-		AccountID:         created.AccountID,
-		Username:          created.Username,
+	result := AdminAccountInitResult{
 		PasswordPlaintext: credentials.Password,
 		InitializedNow:    true,
 		EnvIgnored:        false,
-	}, nil
+	}
+	err = db.WithTx(ctx, func(q *sqlc.Queries) error {
+		created, createErr := createAccountWithRetry(ctx, q, createAccountInput{
+			Username: credentials.Username,
+			Password: credentials.Password,
+			IsAdmin:  true,
+			Now:      time.Now(),
+		})
+		if createErr != nil {
+			return createErr
+		}
+
+		result.AccountID = created.AccountID
+		result.Username = created.Username
+
+		if initialAPIKey == "" {
+			return nil
+		}
+
+		record, createErr := (&APIKeyAuth{
+			queries: q,
+			hasher:  db.Hasher,
+			nowFn:   time.Now,
+		}).createAPIKey(ctx, created.AccountID, initialAdminAPIKeyName, initialAPIKey)
+		if createErr != nil {
+			return fmt.Errorf("create initial admin api key: %w", createErr)
+		}
+		result.APIKeyInitialized = true
+		result.APIKeyName = record.Name
+		result.APIKeyPlaintext = record.Key
+		return nil
+	})
+	if err != nil {
+		return AdminAccountInitResult{}, fmt.Errorf("initialize admin account: %w", err)
+	}
+
+	return result, nil
 }
 
 func (a *ConsoleAuth) lookupAccount(ctx context.Context, username string) (sqlc.Account, bool) {

@@ -38,7 +38,7 @@ It uses a control-plane (`console`) and execution-plane (`worker`) architecture,
 For a single-machine deployment of `console` + `worker-docker`, run:
 
 ```bash
-curl -fsSL https://onlybox.es/install.sh | bash -s -- --tag 0.1.5
+curl -fsSL https://onlybox.es/install.sh | bash
 ```
 
 The installer will:
@@ -46,8 +46,8 @@ The installer will:
 1. Check the environment (Linux, Docker, Docker Compose v2, systemd)
 2. Download and render the compose template with auto-generated credentials
 3. Start the console via `docker compose up -d`
-4. Log in and create a `normal` worker
-5. Download the architecture-matched `worker-docker` release binary
+4. Create a `normal` worker
+5. Download the architecture-matched `worker-docker` release binary for the default latest version, or your `--tag` override
 6. Generate and enable a systemd service for the worker
 7. Poll until the worker comes online and print a result summary
 
@@ -55,7 +55,7 @@ Available options:
 
 | Flag | Default | Description |
 | --- | --- | --- |
-| `--tag` | _(required)_ | Release version tag, e.g. `v0.1.0` |
+| `--tag` | `0.2.0-beta-4` | Optional release version override |
 | `--workdir` | `$PWD/onlyboxes` | Working directory |
 | `--yes` / `-y` | `false` | Non-interactive mode, skip confirmations |
 | `--console-http-port` | `8089` | Console HTTP port (host side) |

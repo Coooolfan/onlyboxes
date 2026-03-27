@@ -100,7 +100,7 @@ func TestInitializeAdminAccountPersistsOnFirstRun(t *testing.T) {
 		_ = db.Close()
 	}()
 
-	result, err := InitializeAdminAccount(ctx, db.Queries, "", "")
+	result, err := InitializeAdminAccount(ctx, db, "", "", "")
 	if err != nil {
 		t.Fatalf("initialize admin account: %v", err)
 	}
@@ -119,6 +119,12 @@ func TestInitializeAdminAccountPersistsOnFirstRun(t *testing.T) {
 	if strings.TrimSpace(result.AccountID) == "" {
 		t.Fatalf("expected account_id in init result")
 	}
+	if result.APIKeyInitialized {
+		t.Fatalf("expected initial admin api key to remain disabled")
+	}
+	if result.APIKeyName != "" || result.APIKeyPlaintext != "" {
+		t.Fatalf("expected no initial admin api key result, got %#v", result)
+	}
 
 	stored, err := db.Queries.GetAccountByID(ctx, result.AccountID)
 	if err != nil {
@@ -136,6 +142,76 @@ func TestInitializeAdminAccountPersistsOnFirstRun(t *testing.T) {
 	if !compareDashboardPassword(stored.PasswordHash, result.PasswordPlaintext) {
 		t.Fatalf("expected stored hash to match initialized password")
 	}
+	keys, err := db.Queries.ListAPIKeysByAccount(ctx, result.AccountID)
+	if err != nil {
+		t.Fatalf("list api keys: %v", err)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("expected no api keys on first init without bootstrap flag, got %d", len(keys))
+	}
+}
+
+func TestInitializeAdminAccountCreatesInitialAPIKeyOnFirstRun(t *testing.T) {
+	ctx := context.Background()
+	db := openTestAuthDB(t)
+	defer func() {
+		_ = db.Close()
+	}()
+
+	testInitialKey := "obxk_test0000000000000000000000000000000000000000000000000000000000001234"
+	result, err := InitializeAdminAccount(ctx, db, "", "", testInitialKey)
+	if err != nil {
+		t.Fatalf("initialize admin account with initial api key: %v", err)
+	}
+	if !result.InitializedNow {
+		t.Fatalf("expected initialized now")
+	}
+	if !result.APIKeyInitialized {
+		t.Fatalf("expected initial admin api key to be created")
+	}
+	if result.APIKeyName != initialAdminAPIKeyName {
+		t.Fatalf("expected api key name %q, got %q", initialAdminAPIKeyName, result.APIKeyName)
+	}
+	if result.APIKeyPlaintext != testInitialKey {
+		t.Fatalf("expected api key to be the provided value %q, got %q", testInitialKey, result.APIKeyPlaintext)
+	}
+
+	keys, err := db.Queries.ListAPIKeysByAccount(ctx, result.AccountID)
+	if err != nil {
+		t.Fatalf("list api keys: %v", err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("expected 1 api key, got %d", len(keys))
+	}
+	if keys[0].Name != initialAdminAPIKeyName {
+		t.Fatalf("expected stored api key name %q, got %q", initialAdminAPIKeyName, keys[0].Name)
+	}
+	if keys[0].KeyMasked == "" || keys[0].KeyMasked == result.APIKeyPlaintext {
+		t.Fatalf("expected masked key distinct from plaintext, got %#v", keys[0])
+	}
+
+	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, nil, nil, ":50051")
+	consoleAuth, err := NewConsoleAuth(db.Queries, false)
+	if err != nil {
+		t.Fatalf("new console auth: %v", err)
+	}
+	mcpAuth, err := NewMCPAuthWithPersistence(db)
+	if err != nil {
+		t.Fatalf("new mcp auth: %v", err)
+	}
+	apiKeyAuth, err := NewAPIKeyAuth(db)
+	if err != nil {
+		t.Fatalf("new api key auth: %v", err)
+	}
+	router := mustNewRouter(t, handler, consoleAuth, mcpAuth, apiKeyAuth)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/console/session", nil)
+	req.Header.Set(trustedTokenHeader, "Bearer "+result.APIKeyPlaintext)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected bearer api key session auth success, got %d body=%s", rec.Code, rec.Body.String())
+	}
 }
 
 func TestInitializeAdminAccountLoadsPersistedAndIgnoresEnv(t *testing.T) {
@@ -145,7 +221,7 @@ func TestInitializeAdminAccountLoadsPersistedAndIgnoresEnv(t *testing.T) {
 		_ = db.Close()
 	}()
 
-	first, err := InitializeAdminAccount(ctx, db.Queries, "admin-first", "password-first")
+	first, err := InitializeAdminAccount(ctx, db, "admin-first", "password-first", "")
 	if err != nil {
 		t.Fatalf("first initialize admin account: %v", err)
 	}
@@ -153,7 +229,7 @@ func TestInitializeAdminAccountLoadsPersistedAndIgnoresEnv(t *testing.T) {
 		t.Fatalf("expected first initialization")
 	}
 
-	second, err := InitializeAdminAccount(ctx, db.Queries, "admin-second", "password-second")
+	second, err := InitializeAdminAccount(ctx, db, "admin-second", "password-second", "obxk_shouldbeignored")
 	if err != nil {
 		t.Fatalf("second initialize admin account: %v", err)
 	}
@@ -171,6 +247,16 @@ func TestInitializeAdminAccountLoadsPersistedAndIgnoresEnv(t *testing.T) {
 	}
 	if second.PasswordPlaintext != "" {
 		t.Fatalf("expected empty plaintext password for loaded account")
+	}
+	if second.APIKeyInitialized || second.APIKeyName != "" || second.APIKeyPlaintext != "" {
+		t.Fatalf("expected no api key bootstrap data for loaded account, got %#v", second)
+	}
+	keys, err := db.Queries.ListAPIKeysByAccount(ctx, first.AccountID)
+	if err != nil {
+		t.Fatalf("list api keys: %v", err)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("expected no backfilled api key for persisted account, got %d", len(keys))
 	}
 }
 
@@ -198,7 +284,7 @@ func TestInitializeAdminAccountRetriesOnAccountIDConflict(t *testing.T) {
 		accountIDGenerator = previousGenerator
 	})
 
-	result, err := InitializeAdminAccount(ctx, db.Queries, "admin-retry", "password-retry")
+	result, err := InitializeAdminAccount(ctx, db, "admin-retry", "password-retry", "")
 	if err != nil {
 		t.Fatalf("initialize admin account with account_id conflict retry: %v", err)
 	}
@@ -219,7 +305,7 @@ func TestInitializeAdminAccountReturnsConflictOnUsernameKeyCollision(t *testing.
 
 	seedTestAccount(t, db.Queries, "acc-existing", "admin-dup", "seed-pass", false)
 
-	_, err := InitializeAdminAccount(ctx, db.Queries, "ADMIN-dup", "password-new")
+	_, err := InitializeAdminAccount(ctx, db, "ADMIN-dup", "password-new", "")
 	if !errors.Is(err, errAccountRegistrationConflict) {
 		t.Fatalf("expected errAccountRegistrationConflict, got %v", err)
 	}

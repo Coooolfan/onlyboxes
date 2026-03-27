@@ -38,7 +38,7 @@ Onlyboxes 是一个面向个人与小型团队的自托管代码执行沙箱平�
 在单台机器上部署 `console` + `worker-docker`：
 
 ```bash
-curl -fsSL https://onlybox.es/install.sh | bash -s -- --tag 0.1.5
+curl -fsSL https://onlybox.es/install.sh | bash
 ```
 
 安装器将自动完成：
@@ -46,8 +46,8 @@ curl -fsSL https://onlybox.es/install.sh | bash -s -- --tag 0.1.5
 1. 环境检查（Linux、Docker、Docker Compose v2、systemd）
 2. 下载 compose 模板并使用自动生成的凭据渲染
 3. 通过 `docker compose up -d` 启动 console
-4. 登录并创建 `normal` worker
-5. 下载与当前架构匹配的 `worker-docker` release 二进制
+4. 创建 `normal` worker
+5. 下载与当前架构匹配的 `worker-docker` release 二进制，默认使用最新版本，也可被 `--tag` 覆盖
 6. 生成并启用 systemd 服务
 7. 轮询直到 worker 上线，输出安装结果摘要
 
@@ -55,7 +55,7 @@ curl -fsSL https://onlybox.es/install.sh | bash -s -- --tag 0.1.5
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
-| `--tag` | _(必填)_ | Release 版本标签，如 `v0.1.0` |
+| `--tag` | `0.2.0-beta-4` | 可选的 Release 版本覆盖参数 |
 | `--workdir` | `$PWD/onlyboxes` | 工作目录 |
 | `--yes` / `-y` | `false` | 非交互模式，跳过确认 |
 | `--console-http-port` | `8089` | Console HTTP 端口（宿主机侧） |

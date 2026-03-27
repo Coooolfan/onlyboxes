@@ -136,7 +136,7 @@ func (a *APIKeyAuth) CreateAPIKey(c *gin.Context) {
 		return
 	}
 
-	record, err := a.createAPIKey(c.Request.Context(), account.AccountID, req.Name)
+	record, err := a.createAPIKey(c.Request.Context(), account.AccountID, req.Name, "")
 	if err != nil {
 		switch {
 		case errors.Is(err, errAPIKeyNameRequired), errors.Is(err, errAPIKeyNameTooLong):
@@ -205,7 +205,7 @@ func (a *APIKeyAuth) lookupAPIKey(ctx context.Context, token string) (sqlc.ApiKe
 	return record, true
 }
 
-func (a *APIKeyAuth) createAPIKey(ctx context.Context, accountID string, name string) (apiKeyRecord, error) {
+func (a *APIKeyAuth) createAPIKey(ctx context.Context, accountID string, name string, keyOverride string) (apiKeyRecord, error) {
 	normalizedAccountID := strings.TrimSpace(accountID)
 	if normalizedAccountID == "" {
 		return apiKeyRecord{}, errors.New("account_id is required")
@@ -219,9 +219,15 @@ func (a *APIKeyAuth) createAPIKey(ctx context.Context, accountID string, name st
 	}
 
 	for i := 0; i < 8; i++ {
-		keyValue, genErr := generateAPIKey()
-		if genErr != nil {
-			return apiKeyRecord{}, errAPIKeyGenerateFailed
+		var keyValue string
+		if keyOverride != "" {
+			keyValue = keyOverride
+		} else {
+			var genErr error
+			keyValue, genErr = generateAPIKey()
+			if genErr != nil {
+				return apiKeyRecord{}, errAPIKeyGenerateFailed
+			}
 		}
 
 		keyID, idErr := generateAPIKeyID()

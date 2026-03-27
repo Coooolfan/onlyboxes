@@ -14,6 +14,7 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("CONSOLE_DB_PATH", "")
 	t.Setenv("CONSOLE_DASHBOARD_USERNAME", "")
 	t.Setenv("CONSOLE_DASHBOARD_PASSWORD", "")
+	t.Setenv("CONSOLE_INITIAL_ADMIN_API_KEY", "")
 	t.Setenv("CONSOLE_ENABLE_REGISTRATION", "")
 	t.Setenv("CONSOLE_LOG_LEVEL", "")
 	t.Setenv("CONSOLE_LOG_FORMAT", "")
@@ -41,6 +42,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.DashboardUsername != "" || cfg.DashboardPassword != "" {
 		t.Fatalf("expected empty dashboard credentials, got username=%q password=%q", cfg.DashboardUsername, cfg.DashboardPassword)
 	}
+	if cfg.InitialAdminAPIKey != "" {
+		t.Fatalf("expected empty initial admin api key by default, got %q", cfg.InitialAdminAPIKey)
+	}
 	if cfg.EnableRegistration {
 		t.Fatalf("expected registration disabled by default")
 	}
@@ -58,6 +62,7 @@ func TestLoadDefaults(t *testing.T) {
 func TestLoadReadsDashboardCredentialsAndDurations(t *testing.T) {
 	t.Setenv("CONSOLE_DASHBOARD_USERNAME", "admin")
 	t.Setenv("CONSOLE_DASHBOARD_PASSWORD", "secret")
+	t.Setenv("CONSOLE_INITIAL_ADMIN_API_KEY", "obxk_testkey123")
 	t.Setenv("CONSOLE_OFFLINE_TTL_SEC", "30")
 	t.Setenv("CONSOLE_REPLAY_WINDOW_SEC", "120")
 	t.Setenv("CONSOLE_HEARTBEAT_INTERVAL_SEC", "10")
@@ -73,6 +78,9 @@ func TestLoadReadsDashboardCredentialsAndDurations(t *testing.T) {
 	}
 	if cfg.DashboardPassword != "secret" {
 		t.Fatalf("expected password secret, got %q", cfg.DashboardPassword)
+	}
+	if cfg.InitialAdminAPIKey != "obxk_testkey123" {
+		t.Fatalf("expected initial admin api key %q, got %q", "obxk_testkey123", cfg.InitialAdminAPIKey)
 	}
 	if cfg.OfflineTTL != 30*time.Second {
 		t.Fatalf("expected OfflineTTL=30s, got %s", cfg.OfflineTTL)

@@ -142,9 +142,14 @@ Dashboard account behavior:
 - account password is hashed with `bcrypt` before persistence (no plaintext storage).
 - initial admin username env: `CONSOLE_DASHBOARD_USERNAME`
 - initial admin password env: `CONSOLE_DASHBOARD_PASSWORD`
+- initial admin API key bootstrap env: `CONSOLE_INITIAL_ADMIN_API_KEY`
 - if no account exists at startup, console initializes one admin account from env (missing values are randomly generated).
+- if `CONSOLE_INITIAL_ADMIN_API_KEY` is non-empty on first initialization, console creates one dashboard API key for the first admin account.
+- the initial admin API key name is fixed to `initial-admin`; its plaintext value is exactly the env value provided via `CONSOLE_INITIAL_ADMIN_API_KEY`.
 - if account already exists, the above env credentials are ignored.
+- if account already exists, `CONSOLE_INITIAL_ADMIN_API_KEY` is also ignored; startup never backfills an initial API key for persisted accounts.
 - initial admin plaintext password is logged only when initialized for the first time.
+- if initialized during startup, the initial admin API key plaintext is logged only when `console admin account initialized` is emitted for the first time.
 - dashboard session is in-memory only; restarting `console` invalidates all dashboard login sessions.
 - changing account password rotates (invalidates + recreates) current account sessions.
 - admin can create non-admin accounts via `POST /api/v1/console/register` when `CONSOLE_ENABLE_REGISTRATION=true`.

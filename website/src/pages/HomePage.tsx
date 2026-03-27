@@ -16,7 +16,7 @@ import {
   User,
 } from 'lucide-react'
 
-const INSTALL_CMD = 'curl -fsSL https://onlybox.es/install.sh | bash -s -- --tag 0.1.5'
+const INSTALL_CMD = 'curl -fsSL https://onlybox.es/install.sh | bash'
 
 const RotatingText = () => {
   const texts = [

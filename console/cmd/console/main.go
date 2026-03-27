@@ -42,24 +42,30 @@ func main() {
 
 	adminAccount, err := httpapi.InitializeAdminAccount(
 		context.Background(),
-		db.Queries,
+		db,
 		cfg.DashboardUsername,
 		cfg.DashboardPassword,
+		cfg.InitialAdminAPIKey,
 	)
 	if err != nil {
 		fatal("failed to initialize admin account", "error", err)
 	}
 	if adminAccount.EnvIgnored {
-		slog.Info("env credentials ignored because persisted dashboard credential exists")
+		slog.Info("initial admin bootstrap env ignored because persisted admin account exists")
 	}
 	if adminAccount.InitializedNow {
-		slog.Info(
-			"console admin account initialized",
-			"username",
-			adminAccount.Username,
-			"password",
-			adminAccount.PasswordPlaintext,
-		)
+		attrs := []any{
+			"username", adminAccount.Username,
+			"password", adminAccount.PasswordPlaintext,
+		}
+		if adminAccount.APIKeyInitialized {
+			attrs = append(
+				attrs,
+				"api_key_name", adminAccount.APIKeyName,
+				"api_key", adminAccount.APIKeyPlaintext,
+			)
+		}
+		slog.Info("console admin account initialized", attrs...)
 	} else {
 		slog.Info(
 			"console admin account loaded",
