@@ -1,0 +1,49 @@
+export const meta = {
+  title: 'Overview',
+  description: 'Product overview, main capabilities, and deployment shape.',
+  section: 'Introduction',
+  order: 10,
+  slug: '',
+}
+
+# OnlyBoxes Overview
+
+OnlyBoxes is a self-hosted code execution sandbox platform for individuals and small teams.
+
+It separates the control plane from the execution plane so you can keep the management surface centralized while scaling workers independently.
+
+## What it provides
+
+- A control node for dashboard access, REST APIs, and MCP access.
+- Multiple worker implementations for different execution environments.
+- Account-level isolation for stateful sessions and execution resources.
+- HTTP and MCP access to the same execution capabilities.
+
+## Core capabilities
+
+| Area | What you get |
+| --- | --- |
+| Deployment | Self-hosted control node plus self-hosted worker nodes |
+| Scalability | Multiple workers can be added horizontally |
+| Runtime model | Docker, boxlite, and OS-process based execution backends |
+| Interfaces | Dashboard UI, REST APIs, and MCP endpoint |
+
+## Main components
+
+- `console`: the control node, responsible for auth, worker registration, dashboard APIs, and MCP exposure.
+- `worker-docker`: a worker implementation backed by Docker containers.
+- `worker-boxlite`: a worker implementation backed by boxlite.
+- `worker-sys`: a worker implementation backed by host OS processes for direct device control scenarios.
+
+## Typical usage
+
+1. Start the control node.
+2. Sign in to the dashboard and create a worker record.
+3. Start a worker using the generated worker id and secret.
+4. Use the dashboard, REST API, or MCP endpoint to execute tasks.
+
+## Next steps
+
+- Read the [Architecture](/en/docs/architecture) page for the system model.
+- Use [Install](/en/docs/install) if you want the one-click Linux path.
+- Use [Quick Start](/en/docs/quick-start) if you prefer the manual setup flow.

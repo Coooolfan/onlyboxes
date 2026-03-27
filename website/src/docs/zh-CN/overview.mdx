@@ -1,0 +1,49 @@
+export const meta = {
+  title: '概览',
+  description: '产品定位、核心能力与部署形态。',
+  section: '介绍',
+  order: 10,
+  slug: '',
+}
+
+# OnlyBoxes 概览
+
+OnlyBoxes 是一个面向个人与小型团队的自托管代码执行沙箱平台。
+
+它将控制面与执行面拆分开来，让你可以集中管理控制节点，同时按需独立扩展执行节点。
+
+## 它提供什么
+
+- 一个控制节点，负责仪表盘、REST API 与 MCP 接口。
+- 多种执行节点实现，适配不同的执行环境。
+- 面向账号的有状态会话与执行资源隔离。
+- 同一套能力同时通过 HTTP 与 MCP 暴露。
+
+## 核心能力
+
+| 维度 | 能力 |
+| --- | --- |
+| 部署形态 | 控制节点与执行节点都可自托管 |
+| 扩展方式 | 支持横向增加多个 worker |
+| 运行时模型 | Docker、boxlite、操作系统进程等后端 |
+| 接口形式 | Dashboard、REST API、MCP endpoint |
+
+## 主要组件
+
+- `console`：控制节点，负责认证、worker 注册、Dashboard API 与 MCP 暴露。
+- `worker-docker`：基于 Docker 容器的 worker 实现。
+- `worker-boxlite`：基于 boxlite 的 worker 实现。
+- `worker-sys`：基于宿主机进程的 worker 实现，适合真实设备或主机控制场景。
+
+## 典型使用流程
+
+1. 启动控制节点。
+2. 登录 Dashboard 并创建 worker 记录。
+3. 用生成的 worker id 与 secret 启动 worker。
+4. 通过 Dashboard、REST API 或 MCP endpoint 执行任务。
+
+## 下一步
+
+- 阅读 [架构](/zh-CN/docs/architecture) 了解系统模型。
+- 如果想走 Linux 一键安装，先看 [安装](/zh-CN/docs/install)。
+- 如果更偏手动部署流程，直接看 [快速开始](/zh-CN/docs/quick-start)。

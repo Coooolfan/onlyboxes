@@ -1,0 +1,47 @@
+export const meta = {
+  title: '安全与 FAQ',
+  description: '运维注意事项、安全提醒与常见问题。',
+  section: '运维',
+  order: 60,
+  slug: 'security-faq',
+}
+
+# 安全与 FAQ
+
+## 安全说明
+
+> 当前版本中，控制节点不提供内建 TLS 或 mTLS。
+
+- 请将 console HTTP（`:8089`）和 gRPC（`:50051`）放在反向代理或网关之后。
+- 对公网与外部链路强制启用 TLS。
+- `worker-docker` 默认拒绝不安全的 console 端点。
+- 只有在明确接受明文 gRPC 时才设置 `WORKER_CONSOLE_INSECURE=true`。
+
+## 运维提醒
+
+- 正式环境务必替换所有默认凭据。
+- 持久化并备份 `CONSOLE_DB_PATH` 对应的 SQLite 数据。
+- 将 worker secret 与 access token 视为只展示一次的明文敏感信息。
+- Dashboard 登录会话保存在内存中，`console` 重启后会失效。
+
+## 常见问题
+
+### worker 启动后一直离线，先查什么？
+
+先确认 `WORKER_CONSOLE_GRPC_TARGET` 是否正确，再检查 worker 所在机器到控制节点的网络连通性。
+
+### worker 可以和控制节点部署在同一台机器上吗？
+
+可以。
+
+### worker 可以运行在 Docker 里吗？
+
+理论上可以，但通常不推荐，因为你需要额外处理容器内访问宿主 Docker 的问题。
+
+### 更底层的实现文档在哪里？
+
+仓库里仍然保留了内部与低层文档：
+
+- [Console 细节](https://github.com/Coooolfan/onlyboxes/blob/main/console/README/overview.md)
+- [Worker 细节](https://github.com/Coooolfan/onlyboxes/blob/main/worker/worker-docker/README/overview.md)
+- [Web 说明](https://github.com/Coooolfan/onlyboxes/blob/main/web/README.md)

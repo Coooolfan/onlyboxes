@@ -1,0 +1,80 @@
+export const meta = {
+  title: 'Quick Start',
+  description: 'Manual setup flow for the control node and the first worker.',
+  section: 'Getting Started',
+  order: 40,
+  slug: 'quick-start',
+}
+
+# Quick Start
+
+This flow sets up the control node first and then connects a worker manually.
+
+## 1. Start the control node
+
+Create a directory, download the compose file, and edit the bootstrap secrets.
+
+```bash
+mkdir -p onlyboxes-console && cd onlyboxes-console
+wget https://raw.githubusercontent.com/Coooolfan/onlyboxes/refs/heads/main/docker/docker-compose.yml
+```
+
+Replace at least:
+
+- `CONSOLE_HASH_KEY`
+- `CONSOLE_DASHBOARD_PASSWORD`
+
+Then start the service:
+
+```bash
+docker compose up -d
+```
+
+## 2. Sign in and create a token
+
+Open `http://127.0.0.1:8089` in a browser and sign in with the initialized admin account.
+
+![Console login page](/docs-assets/quickstart-login.png)
+
+Create an access token from the token management page and store the plaintext token immediately.
+
+![Token created dialog](/docs-assets/quickstart-token-modal.png)
+
+## 3. Create a worker
+
+Go to the Workers page and create a worker.
+
+![Workers page](/docs-assets/quickstart-workers-page.png)
+
+The creation dialog returns the worker id, one-time secret, and a startup command.
+
+![Worker created dialog](/docs-assets/quickstart-worker-created-modal.jpg)
+
+The startup tool can also reopen the command builder with prefilled worker information.
+
+![Startup command builder](/docs-assets/quickstart-worker-startup-tool.jpg)
+
+## 4. Start the worker
+
+Download the latest `worker-docker` binary from the [GitHub releases page](https://github.com/Coooolfan/onlyboxes/releases/latest).
+
+Use the generated values with the binary you downloaded:
+
+```bash
+WORKER_CONSOLE_INSECURE=true \
+WORKER_CONSOLE_GRPC_TARGET=127.0.0.1:50051 \
+WORKER_ID=<worker_id> \
+WORKER_SECRET=<worker_secret> \
+/path/to/onlyboxes-worker-docker
+```
+
+## 5. Verify readiness
+
+- Confirm that the worker is `online` on the dashboard.
+- Add the MCP endpoint `http://127.0.0.1:8089/mcp` to your client.
+- Use the access token created earlier to verify request authorization.
+
+## Related docs
+
+- [API & MCP Overview](/en/docs/api-mcp-overview)
+- [Security & FAQ](/en/docs/security-faq)

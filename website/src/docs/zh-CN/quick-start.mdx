@@ -1,0 +1,80 @@
+export const meta = {
+  title: '快速开始',
+  description: '手动启动控制节点并接入第一个 worker。',
+  section: '快速开始',
+  order: 40,
+  slug: 'quick-start',
+}
+
+# 快速开始
+
+这个流程会先手动启动控制节点，再手动接入一个 worker。
+
+## 1. 启动控制节点
+
+创建目录、下载 compose 文件，并编辑初始化密钥。
+
+```bash
+mkdir -p onlyboxes-console && cd onlyboxes-console
+wget https://raw.githubusercontent.com/Coooolfan/onlyboxes/refs/heads/main/docker/docker-compose.yml
+```
+
+至少替换：
+
+- `CONSOLE_HASH_KEY`
+- `CONSOLE_DASHBOARD_PASSWORD`
+
+然后启动服务：
+
+```bash
+docker compose up -d
+```
+
+## 2. 登录并创建 token
+
+打开 `http://127.0.0.1:8089`，使用初始化管理员账号登录。
+
+![控制台登录页](/docs-assets/quickstart-login.png)
+
+在 token 管理页面创建访问 token，并立即保存返回的一次性明文 token。
+
+![Token 创建完成弹窗](/docs-assets/quickstart-token-modal.png)
+
+## 3. 创建 worker
+
+进入 Workers 页面并创建一个 worker。
+
+![Workers 页面](/docs-assets/quickstart-workers-page.png)
+
+创建弹窗会返回 worker id、一次性 secret 以及启动命令。
+
+![Worker 创建完成弹窗](/docs-assets/quickstart-worker-created-modal.jpg)
+
+如果需要重新编辑命令，可以打开启动命令编辑工具并带入预填参数。
+
+![启动命令编辑工具](/docs-assets/quickstart-worker-startup-tool.jpg)
+
+## 4. 启动 worker
+
+从 [GitHub Releases 页面](https://github.com/Coooolfan/onlyboxes/releases/latest) 下载最新的 `worker-docker` 二进制。
+
+用创建时返回的参数启动你下载的二进制：
+
+```bash
+WORKER_CONSOLE_INSECURE=true \
+WORKER_CONSOLE_GRPC_TARGET=127.0.0.1:50051 \
+WORKER_ID=<worker_id> \
+WORKER_SECRET=<worker_secret> \
+/path/to/onlyboxes-worker-docker
+```
+
+## 5. 验证状态
+
+- 在 Dashboard 上确认 worker 状态变为 `online`。
+- 在你的客户端中接入 `http://127.0.0.1:8089/mcp`。
+- 使用前面创建的 access token 验证鉴权是否正常。
+
+## 延伸阅读
+
+- [API 与 MCP 概览](/zh-CN/docs/api-mcp-overview)
+- [安全与 FAQ](/zh-CN/docs/security-faq)

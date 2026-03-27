@@ -1,0 +1,48 @@
+export const meta = {
+  title: 'API 与 MCP 概览',
+  description: '控制节点暴露的外部接口总览。',
+  section: '接口',
+  order: 50,
+  slug: 'api-mcp-overview',
+}
+
+# API 与 MCP 概览
+
+OnlyBoxes 会从控制节点暴露 Dashboard API、worker 管理 API、执行 API，以及 MCP endpoint。
+
+## 主要接口面
+
+- Dashboard 认证：`/api/v1/console/*`
+- Worker 管理：`/api/v1/workers*`
+- 命令执行：`/api/v1/commands/echo`、`/api/v1/commands/terminal`
+- 任务执行：`/api/v1/tasks*`
+- MCP endpoint：`POST /mcp`
+
+## MCP 提供什么
+
+当前由 worker 支持的工具包括：
+
+- `pythonExec`
+- `terminalExec`
+- `readImage`
+
+同样的能力也可以通过 HTTP API 调用。
+
+## 鉴权方式
+
+- Dashboard 使用基于会话的认证。
+- API 与 MCP 使用 access token。
+- 如果还没有配置 token，`/mcp` 与执行 API 按设计会返回 `401`。
+
+## 更深入的参考
+
+当前网站 v1 先把详细接口文档保留在仓库里：
+
+- [API.md](https://github.com/Coooolfan/onlyboxes/blob/main/API.md)
+- [API.zh-CN.md](https://github.com/Coooolfan/onlyboxes/blob/main/API.zh-CN.md)
+- [api/README/proto.md](https://github.com/Coooolfan/onlyboxes/blob/main/api/README/proto.md)
+
+## 建议下一步阅读
+
+- [快速开始](/zh-CN/docs/quick-start)
+- [安全与 FAQ](/zh-CN/docs/security-faq)

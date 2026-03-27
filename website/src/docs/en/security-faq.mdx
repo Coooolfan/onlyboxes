@@ -1,0 +1,47 @@
+export const meta = {
+  title: 'Security & FAQ',
+  description: 'Operational notes, security reminders, and common questions.',
+  section: 'Operations',
+  order: 60,
+  slug: 'security-faq',
+}
+
+# Security & FAQ
+
+## Security notes
+
+> In the current release, the control node does not provide built-in TLS or mTLS.
+
+- Put console HTTP (`:8089`) and gRPC (`:50051`) behind a reverse proxy or gateway.
+- Enforce TLS on public and external traffic.
+- `worker-docker` rejects insecure console endpoints by default.
+- Set `WORKER_CONSOLE_INSECURE=true` only when you intentionally allow plaintext gRPC.
+
+## Operational reminders
+
+- Replace all default credentials before production use.
+- Persist and back up the SQLite database path configured by `CONSOLE_DB_PATH`.
+- Treat worker secrets and access tokens as one-time visible plaintext material.
+- Dashboard login sessions are in-memory and are invalidated when `console` restarts.
+
+## FAQ
+
+### A worker stays offline after startup. What should I check?
+
+Verify `WORKER_CONSOLE_GRPC_TARGET` first, then confirm network connectivity from the worker host to the control node.
+
+### Can the worker run on the same machine as the control node?
+
+Yes.
+
+### Can a worker run inside Docker?
+
+In theory, yes. In practice it is usually not recommended because you need to handle Docker access from inside that container yourself.
+
+### Where are the deeper implementation docs?
+
+The repository still hosts internal and low-level docs:
+
+- [Console internals](https://github.com/Coooolfan/onlyboxes/blob/main/console/README/overview.md)
+- [Worker internals](https://github.com/Coooolfan/onlyboxes/blob/main/worker/worker-docker/README/overview.md)
+- [Web app guide](https://github.com/Coooolfan/onlyboxes/blob/main/web/README.md)

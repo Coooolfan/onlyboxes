@@ -1,0 +1,52 @@
+export const meta = {
+  title: '安装',
+  description: 'Linux 下一键安装路径。',
+  section: '快速开始',
+  order: 30,
+  slug: 'install',
+}
+
+# 安装
+
+如果你在单台 Linux 机器上快速起步，推荐直接使用一键安装脚本。
+
+```bash
+curl -fsSL https://onlybox.es/install.sh | bash -s -- --tag 0.1.5
+```
+
+## 安装器会做什么
+
+1. 检查 Linux、Docker、Docker Compose v2、systemd 与 Python 3。
+2. 下载 compose 模板并渲染初始凭据。
+3. 通过 `docker compose up -d` 启动控制节点。
+4. 自动登录并创建一个 `normal` worker。
+5. 下载与当前架构匹配的 `worker-docker` release 二进制。
+6. 生成并启用 systemd 服务。
+7. 轮询直到 worker 上线。
+
+## 支持的参数
+
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `--tag` | 必填 | Release 标签，例如 `v0.1.0` |
+| `--workdir` | `$PWD/onlyboxes` | 工作目录 |
+| `--yes` / `-y` | `false` | 非交互模式 |
+| `--console-http-port` | `8089` | 宿主机上的 Console HTTP 端口 |
+| `--console-grpc-port` | `50051` | 宿主机上的 Console gRPC 端口 |
+| `--service-name` | `onlyboxes-worker-docker` | systemd 服务名 |
+
+## 运行要求
+
+- Linux
+- systemd
+- Docker Engine
+- Docker Compose v2
+- Python 3
+
+## 什么情况下改走手动部署
+
+如果你符合下面任一情况，直接看 [快速开始](/zh-CN/docs/quick-start)：
+
+- 想逐步检查每一步
+- 需要自定义反向代理或网络布局
+- 控制节点与 worker 会部署在不同机器上

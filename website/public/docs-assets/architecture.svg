@@ -1,0 +1,264 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" width="100%" height="100%" style="background-color: #FFFFFF; font-family: 'Geist', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+    <defs>
+        <!-- Light Theme Dot Grid -->
+        <pattern id="dot-grid" x="0" y="0" width="24" height="24" patternUnits="userSpaceOnUse">
+            <circle cx="2" cy="2" r="1" fill="#EAEAEA" />
+        </pattern>
+
+        <!-- Refined Soft Shadows for Cards -->
+        <filter id="shadow-sm" x="-10%" y="-10%" width="120%" height="120%">
+            <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#000000" flood-opacity="0.04" />
+        </filter>
+        
+        <filter id="shadow-lg" x="-20%" y="-20%" width="140%" height="140%">
+            <feDropShadow dx="0" dy="8" stdDeviation="16" flood-color="#000000" flood-opacity="0.06" />
+        </filter>
+
+        <!-- Smooth Bezier Routes -->
+        <path id="p1" d="M 280 250 C 330 250, 330 400, 380 400" />
+        <path id="p2" d="M 280 400 L 380 400" />
+        <path id="p3" d="M 280 550 C 330 550, 330 400, 380 400" />
+        <path id="p4" d="M 500 400 C 550 400, 550 250, 600 250" />
+        <path id="p5" d="M 500 400 L 600 400" />
+        <path id="p6" d="M 500 400 C 550 400, 550 550, 600 550" />
+        <path id="p7" d="M 820 250 L 900 250" />
+        <path id="p8" d="M 820 400 L 900 400" />
+        <path id="p9" d="M 820 550 L 900 550" />
+        
+        <!-- Fade Mask for Dot Grid -->
+        <radialGradient id="fade-gradient" cx="50%" cy="50%" r="60%">
+            <stop offset="30%" stop-color="white" stop-opacity="1" />
+            <stop offset="100%" stop-color="white" stop-opacity="0" />
+        </radialGradient>
+        <mask id="dot-mask">
+            <rect width="1200" height="800" fill="url(#fade-gradient)" />
+        </mask>
+    </defs>
+
+    <!-- Background Grid -->
+    <rect width="1200" height="800" fill="url(#dot-grid)" mask="url(#dot-mask)" />
+
+    <!-- ============================================== -->
+    <!-- DATA FLOW LINES (Vercel Style Animated Dashes) -->
+    <!-- ============================================== -->
+    <g id="data-flow">
+        <!-- 1. Base Tracks (Solid faint lines) -->
+        <g stroke="#EAEAEA" stroke-width="1.5" fill="none">
+            <use href="#p1" />
+            <use href="#p2" />
+            <use href="#p3" />
+            <use href="#p4" />
+            <use href="#p5" />
+            <use href="#p6" />
+            <use href="#p7" />
+            <use href="#p8" />
+            <use href="#p9" />
+        </g>
+
+        <!-- 2. Active Flow (Black dashed animated lines) -->
+        <!-- Using dashoffset to simulate forward flow towards targets -->
+        <g stroke="#000000" stroke-width="1.5" stroke-dasharray="6 12" fill="none">
+            <!-- Clients to Console -->
+            <use href="#p1">
+                <animate attributeName="stroke-dashoffset" from="18" to="0" dur="1s" repeatCount="indefinite" calcMode="linear"/>
+            </use>
+            <use href="#p2">
+                <animate attributeName="stroke-dashoffset" from="18" to="0" dur="1s" repeatCount="indefinite" calcMode="linear"/>
+            </use>
+            <use href="#p3">
+                <animate attributeName="stroke-dashoffset" from="18" to="0" dur="1s" repeatCount="indefinite" calcMode="linear"/>
+            </use>
+            
+            <!-- Console to Workers -->
+            <use href="#p4">
+                <animate attributeName="stroke-dashoffset" from="18" to="0" dur="1s" repeatCount="indefinite" calcMode="linear"/>
+            </use>
+            <use href="#p5">
+                <animate attributeName="stroke-dashoffset" from="18" to="0" dur="1s" repeatCount="indefinite" calcMode="linear"/>
+            </use>
+            <use href="#p6">
+                <animate attributeName="stroke-dashoffset" from="18" to="0" dur="1s" repeatCount="indefinite" calcMode="linear"/>
+            </use>
+
+            <!-- Workers to Environments -->
+            <use href="#p7">
+                <animate attributeName="stroke-dashoffset" from="18" to="0" dur="1s" repeatCount="indefinite" calcMode="linear"/>
+            </use>
+            <use href="#p8">
+                <animate attributeName="stroke-dashoffset" from="18" to="0" dur="1s" repeatCount="indefinite" calcMode="linear"/>
+            </use>
+            <use href="#p9">
+                <animate attributeName="stroke-dashoffset" from="18" to="0" dur="1s" repeatCount="indefinite" calcMode="linear"/>
+            </use>
+        </g>
+    </g>
+
+    <!-- ============================================== -->
+    <!-- CONNECTION ANCHORS (Minimalist Dots)           -->
+    <!-- ============================================== -->
+    <g id="anchors" fill="#FFFFFF" stroke="#000000" stroke-width="1.5">
+        <!-- Client Output Anchors -->
+        <circle cx="280" cy="250" r="3.5" />
+        <circle cx="280" cy="400" r="3.5" />
+        <circle cx="280" cy="550" r="3.5" />
+        
+        <!-- Console Anchors -->
+        <circle cx="380" cy="400" r="3.5" />
+        <circle cx="500" cy="400" r="3.5" />
+        
+        <!-- Worker Anchors (In & Out) -->
+        <circle cx="600" cy="250" r="3.5" />
+        <circle cx="600" cy="400" r="3.5" />
+        <circle cx="600" cy="550" r="3.5" />
+        <circle cx="820" cy="250" r="3.5" />
+        <circle cx="820" cy="400" r="3.5" />
+        <circle cx="820" cy="550" r="3.5" />
+        
+        <!-- Target Input Anchors -->
+        <circle cx="900" cy="250" r="3.5" />
+        <circle cx="900" cy="400" r="3.5" />
+        <circle cx="900" cy="550" r="3.5" />
+    </g>
+
+    <!-- ============================================== -->
+    <!-- COMPONENT CARDS (Clean Light Theme)            -->
+    <!-- ============================================== -->
+    
+    <!-- LEFT COLUMN: Client Actors -->
+    <g id="clients" transform="translate(60, 0)">
+        <!-- Developer -->
+        <g transform="translate(0, 218)">
+            <rect width="220" height="64" rx="8" fill="#FFFFFF" stroke="#EAEAEA" stroke-width="1" filter="url(#shadow-sm)"/>
+            <rect x="12" y="12" width="40" height="40" rx="6" fill="#FAFAFA" stroke="#EAEAEA" stroke-width="1"/>
+            <svg x="20" y="20" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#000000" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="16 18 22 12 16 6"></polyline>
+                <polyline points="8 6 2 12 8 18"></polyline>
+            </svg>
+            <text x="64" y="30" font-size="10" font-weight="600" fill="#888888" letter-spacing="1.5">CLIENT</text>
+            <text x="64" y="48" font-size="14" font-weight="500" fill="#000000">Developer</text>
+        </g>
+
+        <!-- API Client -->
+        <g transform="translate(0, 368)">
+            <rect width="220" height="64" rx="8" fill="#FFFFFF" stroke="#EAEAEA" stroke-width="1" filter="url(#shadow-sm)"/>
+            <rect x="12" y="12" width="40" height="40" rx="6" fill="#FAFAFA" stroke="#EAEAEA" stroke-width="1"/>
+            <svg x="20" y="20" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#000000" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2v20"></path>
+                <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+            </svg>
+            <text x="64" y="30" font-size="10" font-weight="600" fill="#888888" letter-spacing="1.5">CLIENT</text>
+            <text x="64" y="48" font-size="14" font-weight="500" fill="#000000">API Client</text>
+        </g>
+
+        <!-- MCP Client -->
+        <g transform="translate(0, 518)">
+            <rect width="220" height="64" rx="8" fill="#FFFFFF" stroke="#EAEAEA" stroke-width="1" filter="url(#shadow-sm)"/>
+            <rect x="12" y="12" width="40" height="40" rx="6" fill="#FAFAFA" stroke="#EAEAEA" stroke-width="1"/>
+            <svg x="20" y="20" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#000000" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="11" width="18" height="10" rx="2"></rect>
+                <circle cx="12" cy="5" r="2"></circle>
+                <path d="M12 7v4"></path>
+                <line x1="8" y1="16" x2="8.01" y2="16"></line>
+                <line x1="16" y1="16" x2="16.01" y2="16"></line>
+            </svg>
+            <text x="64" y="30" font-size="10" font-weight="600" fill="#888888" letter-spacing="1.5">CLIENT</text>
+            <text x="64" y="48" font-size="14" font-weight="500" fill="#000000">MCP Client</text>
+        </g>
+    </g>
+
+    <!-- CENTER HUB: Console -->
+    <g id="console-hub" transform="translate(440, 400)">
+        <!-- Clean white elevated prominent hub card -->
+        <rect x="-60" y="-60" width="120" height="120" rx="24" fill="#FFFFFF" stroke="#EAEAEA" stroke-width="1" filter="url(#shadow-lg)"/>
+        
+        <!-- Icon Background -->
+        <rect x="-24" y="-36" width="48" height="48" rx="12" fill="#FAFAFA" stroke="#EAEAEA" stroke-width="1"/>
+        
+        <!-- Terminal Prompt Icon -->
+        <g transform="translate(0, -12)">
+            <path d="M -8 -5 L -2 0 L -8 5" fill="none" stroke="#000000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <line x1="2" y1="6" x2="10" y2="6" fill="none" stroke="#000000" stroke-width="2" stroke-linecap="round"/>
+        </g>
+        
+        <!-- Minimalist Console Text -->
+        <text x="0" y="36" text-anchor="middle" font-size="14" font-weight="600" fill="#000000" letter-spacing="0.5">Console</text>
+    </g>
+
+    <!-- RIGHT COLUMN 1: Workers -->
+    <g id="workers" transform="translate(600, 0)">
+        <!-- Worker 1 -->
+        <g transform="translate(0, 218)">
+            <rect width="220" height="64" rx="8" fill="#FFFFFF" stroke="#EAEAEA" stroke-width="1" filter="url(#shadow-sm)"/>
+            <rect x="12" y="12" width="40" height="40" rx="6" fill="#FAFAFA" stroke="#EAEAEA" stroke-width="1"/>
+            <svg x="20" y="20" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#000000" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="4" y="14" width="16" height="6" rx="1" />
+                <rect x="8" y="8" width="8" height="6" rx="1" />
+            </svg>
+            <!-- Centered Label without specific technology names -->
+            <text x="64" y="36" font-size="12" font-weight="600" fill="#000000" letter-spacing="1">WORKER NODE</text>
+        </g>
+
+        <!-- Worker 2 -->
+        <g transform="translate(0, 368)">
+            <rect width="220" height="64" rx="8" fill="#FFFFFF" stroke="#EAEAEA" stroke-width="1" filter="url(#shadow-sm)"/>
+            <rect x="12" y="12" width="40" height="40" rx="6" fill="#FAFAFA" stroke="#EAEAEA" stroke-width="1"/>
+            <svg x="20" y="20" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#000000" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z" />
+                <path d="M12 12l8-4.5M12 12v9M12 12L4 7.5" />
+            </svg>
+            <text x="64" y="36" font-size="12" font-weight="600" fill="#000000" letter-spacing="1">WORKER NODE</text>
+        </g>
+
+        <!-- Worker 3 -->
+        <g transform="translate(0, 518)">
+            <rect width="220" height="64" rx="8" fill="#FFFFFF" stroke="#EAEAEA" stroke-width="1" filter="url(#shadow-sm)"/>
+            <rect x="12" y="12" width="40" height="40" rx="6" fill="#FAFAFA" stroke="#EAEAEA" stroke-width="1"/>
+            <svg x="20" y="20" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#000000" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="4" y="4" width="16" height="6" rx="1" />
+                <rect x="4" y="14" width="16" height="6" rx="1" />
+                <circle cx="8" cy="7" r="1.5" fill="#000" stroke="none"/>
+                <circle cx="8" cy="17" r="1.5" fill="#000" stroke="none"/>
+            </svg>
+            <text x="64" y="36" font-size="12" font-weight="600" fill="#000000" letter-spacing="1">WORKER NODE</text>
+        </g>
+    </g>
+
+    <!-- RIGHT COLUMN 2: Environments (Targets) -->
+    <g id="environments" transform="translate(900, 0)">
+        <!-- Target 1 -->
+        <g transform="translate(0, 218)">
+            <rect width="240" height="64" rx="8" fill="#FFFFFF" stroke="#CCCCCC" stroke-width="1" stroke-dasharray="4 4" filter="url(#shadow-sm)"/>
+            <rect x="12" y="12" width="40" height="40" rx="6" fill="#FAFAFA" stroke="#EAEAEA" stroke-width="1"/>
+            <svg x="20" y="20" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#000000" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="4" y="14" width="16" height="6" rx="1" />
+                <rect x="8" y="8" width="8" height="6" rx="1" />
+            </svg>
+            <text x="64" y="30" font-size="10" font-weight="600" fill="#888888" letter-spacing="1.5">TARGET</text>
+            <text x="64" y="48" font-size="14" font-weight="500" fill="#000000">Docker Containers</text>
+        </g>
+
+        <!-- Target 2 -->
+        <g transform="translate(0, 368)">
+            <rect width="240" height="64" rx="8" fill="#FFFFFF" stroke="#CCCCCC" stroke-width="1" stroke-dasharray="4 4" filter="url(#shadow-sm)"/>
+            <rect x="12" y="12" width="40" height="40" rx="6" fill="#FAFAFA" stroke="#EAEAEA" stroke-width="1"/>
+            <svg x="20" y="20" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#000000" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z" />
+                <path d="M12 12l8-4.5M12 12v9M12 12L4 7.5" />
+            </svg>
+            <text x="64" y="30" font-size="10" font-weight="600" fill="#888888" letter-spacing="1.5">TARGET</text>
+            <text x="64" y="48" font-size="14" font-weight="500" fill="#000000">Boxlite Envs</text>
+        </g>
+
+        <!-- Target 3 -->
+        <g transform="translate(0, 518)">
+            <rect width="240" height="64" rx="8" fill="#FFFFFF" stroke="#CCCCCC" stroke-width="1" stroke-dasharray="4 4" filter="url(#shadow-sm)"/>
+            <rect x="12" y="12" width="40" height="40" rx="6" fill="#FAFAFA" stroke="#EAEAEA" stroke-width="1"/>
+            <svg x="20" y="20" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#000000" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="4" y="4" width="16" height="6" rx="1" />
+                <rect x="4" y="14" width="16" height="6" rx="1" />
+            </svg>
+            <text x="64" y="30" font-size="10" font-weight="600" fill="#888888" letter-spacing="1.5">TARGET</text>
+            <text x="64" y="48" font-size="14" font-weight="500" fill="#000000">OS Processes  (WIP)</text>
+        </g>
+    </g>
+</svg>

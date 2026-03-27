@@ -1,0 +1,57 @@
+export const meta = {
+  title: 'Architecture',
+  description: 'How the control node and workers are connected.',
+  section: 'Introduction',
+  order: 20,
+  slug: 'architecture',
+}
+
+# Architecture
+
+OnlyBoxes uses a control-plane and execution-plane split.
+
+![OnlyBoxes architecture](/docs-assets/architecture.svg)
+
+## Control node
+
+The control node lives in `console` and exposes:
+
+- the dashboard UI
+- dashboard session APIs
+- worker management APIs
+- execution APIs
+- the MCP endpoint
+
+It also stores worker registrations and account-related state.
+
+## Worker nodes
+
+Workers are responsible for the actual execution environment. A worker connects to the control node over gRPC, reports health, and receives execution requests through the control plane.
+
+## Why the split matters
+
+- You can keep authentication and administration centralized.
+- You can scale execution independently from the dashboard.
+- Different worker implementations can coexist in the same deployment model.
+
+## Supported worker styles
+
+| Worker | Backing environment | Recommended use |
+| --- | --- | --- |
+| `worker-docker` | Docker containers | General sandboxed code execution |
+| `worker-boxlite` | boxlite | Specialized runtime backend |
+| `worker-sys` | Host OS processes | Real-device or direct host control |
+
+## Deployment pattern
+
+The common pattern is:
+
+1. Put the control node behind a reverse proxy or gateway.
+2. Expose dashboard HTTP and worker gRPC through TLS-terminated infrastructure.
+3. Run workers on isolated machines that can reach the control node.
+
+## Related docs
+
+- [Install](/en/docs/install)
+- [Quick Start](/en/docs/quick-start)
+- [Security & FAQ](/en/docs/security-faq)

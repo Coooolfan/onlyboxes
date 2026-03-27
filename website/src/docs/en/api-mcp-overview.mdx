@@ -1,0 +1,48 @@
+export const meta = {
+  title: 'API & MCP Overview',
+  description: 'External interfaces exposed by the control node.',
+  section: 'Interfaces',
+  order: 50,
+  slug: 'api-mcp-overview',
+}
+
+# API & MCP Overview
+
+OnlyBoxes exposes dashboard APIs, worker management APIs, execution APIs, and an MCP endpoint from the control node.
+
+## Main surfaces
+
+- Dashboard auth: `/api/v1/console/*`
+- Worker management: `/api/v1/workers*`
+- Command execution: `/api/v1/commands/echo`, `/api/v1/commands/terminal`
+- Task execution: `/api/v1/tasks*`
+- MCP endpoint: `POST /mcp`
+
+## What MCP exposes
+
+Current worker-backed tools include:
+
+- `pythonExec`
+- `terminalExec`
+- `readImage`
+
+The same capabilities are also exposed through HTTP APIs.
+
+## Auth model
+
+- Dashboard access uses session-based auth.
+- API and MCP access use access tokens.
+- If no tokens are configured, `/mcp` and execution APIs return `401` by design.
+
+## Deeper references
+
+v1 of this website keeps the detailed interface references in the repository:
+
+- [API.md](https://github.com/Coooolfan/onlyboxes/blob/main/API.md)
+- [API.zh-CN.md](https://github.com/Coooolfan/onlyboxes/blob/main/API.zh-CN.md)
+- [api/README/proto.md](https://github.com/Coooolfan/onlyboxes/blob/main/api/README/proto.md)
+
+## Suggested next read
+
+- [Quick Start](/en/docs/quick-start)
+- [Security & FAQ](/en/docs/security-faq)

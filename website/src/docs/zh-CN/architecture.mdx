@@ -1,0 +1,57 @@
+export const meta = {
+  title: '架构',
+  description: '控制节点与执行节点的连接方式。',
+  section: '介绍',
+  order: 20,
+  slug: 'architecture',
+}
+
+# 架构
+
+OnlyBoxes 采用控制面与执行面分离的架构。
+
+![OnlyBoxes 架构图](/docs-assets/architecture.zh-CN.svg)
+
+## 控制节点
+
+控制节点位于 `console`，主要暴露：
+
+- Dashboard UI
+- Dashboard 会话 API
+- worker 管理 API
+- 执行 API
+- MCP endpoint
+
+它同时负责 worker 注册与账号相关状态管理。
+
+## 执行节点
+
+worker 负责真正的执行环境。worker 会通过 gRPC 连接控制节点，定期上报健康状态，并通过控制面接收执行请求。
+
+## 这种拆分的意义
+
+- 认证与管理能力集中在控制节点。
+- 执行能力可以独立于 Dashboard 横向扩展。
+- 不同 worker 实现可以在同一套部署模型中并存。
+
+## 支持的 worker 形态
+
+| Worker | 执行环境 | 适合场景 |
+| --- | --- | --- |
+| `worker-docker` | Docker 容器 | 通用代码沙箱执行 |
+| `worker-boxlite` | boxlite | 特定运行时后端 |
+| `worker-sys` | 宿主机进程 | 真实设备或直接主机控制 |
+
+## 推荐部署方式
+
+常见做法是：
+
+1. 将控制节点放在反向代理或网关之后。
+2. 通过 TLS 暴露 Dashboard HTTP 和 worker gRPC。
+3. 将 worker 部署在能访问控制节点的隔离机器上。
+
+## 相关文档
+
+- [安装](/zh-CN/docs/install)
+- [快速开始](/zh-CN/docs/quick-start)
+- [安全与 FAQ](/zh-CN/docs/security-faq)

@@ -1,0 +1,52 @@
+export const meta = {
+  title: 'Install',
+  description: 'One-click installation path for Linux.',
+  section: 'Getting Started',
+  order: 30,
+  slug: 'install',
+}
+
+# Install
+
+The fastest way to get started on a single Linux machine is the one-click installer.
+
+```bash
+curl -fsSL https://onlybox.es/install.sh | bash -s -- --tag 0.1.5
+```
+
+## What the installer does
+
+1. Checks Linux, Docker, Docker Compose v2, systemd, and Python 3.
+2. Downloads a compose template and renders credentials.
+3. Starts the control node with `docker compose up -d`.
+4. Signs in and creates a `normal` worker.
+5. Downloads the matching `worker-docker` release binary.
+6. Generates and enables a systemd service for the worker.
+7. Waits for the worker to become online.
+
+## Supported flags
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--tag` | required | Release tag, for example `v0.1.0` |
+| `--workdir` | `$PWD/onlyboxes` | Working directory |
+| `--yes` / `-y` | `false` | Non-interactive mode |
+| `--console-http-port` | `8089` | Console HTTP port on the host |
+| `--console-grpc-port` | `50051` | Console gRPC port on the host |
+| `--service-name` | `onlyboxes-worker-docker` | systemd service name |
+
+## Requirements
+
+- Linux
+- systemd
+- Docker Engine
+- Docker Compose v2
+- Python 3
+
+## When to use manual setup instead
+
+Use [Quick Start](/en/docs/quick-start) if:
+
+- you want to inspect every step
+- you need a custom reverse proxy or network layout
+- you are bringing up workers on different machines
