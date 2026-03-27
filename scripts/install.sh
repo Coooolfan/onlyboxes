@@ -15,8 +15,6 @@ if [[ -f "$INSTALL_PY" ]]; then
 fi
 
 # Piped execution (e.g. curl | bash): download install.py from GitHub.
-ORIG_ARGS=("$@")
-
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR"' EXIT
 
@@ -32,4 +30,8 @@ else
   exit 1
 fi
 
-exec python3 "$TMPDIR/install.py" "${ORIG_ARGS[@]}" < /dev/tty
+if [[ -t 0 ]] || [[ -e /dev/tty ]]; then
+  exec python3 "$TMPDIR/install.py" ${@+"$@"} < /dev/tty
+else
+  exec python3 "$TMPDIR/install.py" ${@+"$@"}
+fi
