@@ -19,7 +19,7 @@ export const meta = {
 - 运行在专用的可信机器上
 - OpenClaw like 场景
 
-> **警告：** `worker-sys` 不提供任何沙箱隔离。终端命令直接在宿主机上执行。
+> **警告：** `worker-sys` 不提供任何沙箱隔离。终端命令直接在宿主机上执行。仅在专用的机器上运行。
 
 ## 工作原理
 
@@ -51,8 +51,8 @@ WORKER_SECRET=<worker_secret> \
 
 | 变量 | 必填 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `WORKER_CONSOLE_GRPC_TARGET` | 是 | `127.0.0.1:50051` | 控制节点 gRPC 地址 |
-| `WORKER_CONSOLE_INSECURE` | 否 | `false` | 设为 `true` 允许不安全的连接（非TLS） |
+| `WORKER_CONSOLE_GRPC_TARGET` | 否 | `127.0.0.1:50051` | 控制节点 gRPC 地址 |
+| `WORKER_CONSOLE_INSECURE` | 否 | `false` | 设为 `true` 允许不安全的连接（非 TLS） |
 | `WORKER_ID` | 是 | | Dashboard 中的 Worker ID |
 | `WORKER_SECRET` | 是 | | 创建 worker 时的一次性密钥 |
 

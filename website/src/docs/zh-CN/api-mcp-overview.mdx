@@ -14,7 +14,7 @@ OnlyBoxes 会从控制节点暴露 Dashboard API、worker 管理 API、执行 AP
 
 - Dashboard 认证：`/api/v1/console/*`
 - Worker 管理：`/api/v1/workers*`
-- 命令执行：`/api/v1/commands/echo`、`/api/v1/commands/terminal`
+- 命令执行：`/api/v1/commands/echo`、`/api/v1/commands/terminal`、`/api/v1/commands/computer-use`
 - 任务执行：`/api/v1/tasks*`
 - MCP endpoint：`POST /mcp`
 
@@ -22,8 +22,10 @@ OnlyBoxes 会从控制节点暴露 Dashboard API、worker 管理 API、执行 AP
 
 当前由 worker 支持的工具包括：
 
+- `echo`
 - `pythonExec`
 - `terminalExec`
+- `computerUse`
 - `readImage`
 
 同样的能力也可以通过 HTTP API 调用。
