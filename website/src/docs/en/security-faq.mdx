@@ -14,14 +14,12 @@ export const meta = {
 
 - Put console HTTP (`:8089`) and gRPC (`:50051`) behind a reverse proxy or gateway.
 - Enforce TLS on public and external traffic.
-- `worker-docker` rejects insecure console endpoints by default.
+- All worker implementations reject insecure console endpoints by default.
 - Set `WORKER_CONSOLE_INSECURE=true` only when you intentionally allow plaintext gRPC.
 
 ## Operational reminders
 
-- Replace all default credentials before production use.
-- Persist and back up the SQLite database path configured by `CONSOLE_DB_PATH`.
-- Treat worker secrets and access tokens as one-time visible plaintext material.
+- The one-click installer creates an additional admin API key — delete it at your discretion.
 - Dashboard login sessions are in-memory and are invalidated when `console` restarts.
 
 ## FAQ
@@ -36,7 +34,7 @@ Yes.
 
 ### Can a worker run inside Docker?
 
-In theory, yes. In practice it is usually not recommended because you need to handle Docker access from inside that container yourself.
+In theory, yes. In practice it is usually not recommended because you need to deal with KVM in Docker or Docker in Docker issues.
 
 ### Where are the deeper implementation docs?
 

@@ -14,15 +14,13 @@ OnlyBoxes uses a control-plane and execution-plane split.
 
 ## Control node
 
-The control node lives in `console` and exposes:
+The control node is the console, which exposes:
 
-- the dashboard UI
-- dashboard session APIs
-- worker management APIs
-- execution APIs
-- the MCP endpoint
+- Dashboard UI
+- Dashboard implementation (OpenAPI + business logic)
+- MCP endpoint
 
-It also stores worker registrations and account-related state.
+It is primarily responsible for worker registration and account-related state management.
 
 ## Worker nodes
 
@@ -31,16 +29,16 @@ Workers are responsible for the actual execution environment. A worker connects 
 ## Why the split matters
 
 - You can keep authentication and administration centralized.
-- You can scale execution independently from the dashboard.
+- You can scale execution independently from the console.
 - Different worker implementations can coexist in the same deployment model.
 
 ## Supported worker styles
 
-| Worker | Backing environment | Recommended use |
-| --- | --- | --- |
-| `worker-docker` | Docker containers | General sandboxed code execution |
-| `worker-boxlite` | boxlite | Specialized runtime backend |
-| `worker-sys` | Host OS processes | Real-device or direct host control |
+| Worker | Backing implementation | Execution environment | Recommended use |
+| --- | --- | --- | --- |
+| `worker-docker` | runc | Docker containers | General sandboxed code execution |
+| `worker-boxlite` | KVM | [boxlite](https://boxlite.ai/) | Specialized runtime backend |
+| `worker-sys` | - | Host OS processes | Real-device or direct host control |
 
 ## Deployment pattern
 
@@ -48,7 +46,7 @@ The common pattern is:
 
 1. Put the control node behind a reverse proxy or gateway.
 2. Expose dashboard HTTP and worker gRPC through TLS-terminated infrastructure.
-3. Run workers on isolated machines that can reach the control node.
+3. Run workers on separate machines that can reach the control node, and ensure the machines have sufficient resources.
 
 ## Related docs
 

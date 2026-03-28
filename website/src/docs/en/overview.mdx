@@ -10,30 +10,43 @@ export const meta = {
 
 OnlyBoxes is a self-hosted code execution sandbox platform for individuals and small teams.
 
-It separates the control plane from the execution plane so you can keep the management surface centralized while scaling workers independently.
+A typical control-plane and execution-plane split architecture, ready for horizontal scaling.
 
 ## What it provides
 
-- A control node for dashboard access, REST APIs, and MCP access.
-- Multiple worker implementations for different execution environments.
-- Account-level isolation for stateful sessions and execution resources.
-- HTTP and MCP access to the same execution capabilities.
+For regular users, OnlyBoxes provides:
+
+- A simple yet fully capable MCP endpoint
+  - echo: connectivity test
+  - pythonExec: stateless Python code execution
+  - terminalExec: stateful terminal code execution
+  - readImage: read multimodal image data
+  - computerUse: terminal code execution directly connected to the user's local device
+- Session isolation between users
+- Web UI dashboard
+
+For admin users, OnlyBoxes additionally provides:
+
+- User management
+- Worker management
 
 ## Core capabilities
 
 | Area | What you get |
 | --- | --- |
-| Deployment | Self-hosted control node plus self-hosted worker nodes |
-| Scalability | Multiple workers can be added horizontally |
+| Deployment | No external dependencies, control plane and execution plane can be deployed independently |
+| Scalability | Multiple heterogeneous workers can be added horizontally |
 | Runtime model | Docker, boxlite, and OS-process based execution backends |
-| Interfaces | Dashboard UI, REST APIs, and MCP endpoint |
+| Interfaces | REST API, MCP endpoint |
+| Management | Dashboard, Open API |
 
 ## Main components
 
 - `console`: the control node, responsible for auth, worker registration, dashboard APIs, and MCP exposure.
-- `worker-docker`: a worker implementation backed by Docker containers.
-- `worker-boxlite`: a worker implementation backed by boxlite.
-- `worker-sys`: a worker implementation backed by host OS processes for direct device control scenarios.
+- `worker-*`: execution nodes, responsible for task execution.
+  - `worker-docker`: a worker implementation backed by Docker containers.
+  - `worker-boxlite`: a worker implementation backed by boxlite.
+  - `worker-sys`: a worker implementation backed by host OS processes for direct device control scenarios.
 
 ## Typical usage
 
@@ -45,5 +58,5 @@ It separates the control plane from the execution plane so you can keep the mana
 ## Next steps
 
 - Read the [Architecture](/en/docs/architecture) page for the system model.
-- Use [Install](/en/docs/install) if you want the one-click Linux path.
-- Use [Quick Start](/en/docs/quick-start) if you prefer the manual setup flow.
+- Linux/Mac one-click install experience — see [Install](/en/docs/install).
+- If you prefer the manual setup flow, go to [Quick Start](/en/docs/quick-start).

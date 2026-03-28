@@ -14,7 +14,7 @@ export const meta = {
 
 - General-purpose sandboxed code execution
 - You already have Docker installed on the host
-- You want strong isolation between executions
+- You want to use mature container technology
 
 ## How it works
 
@@ -30,17 +30,16 @@ export const meta = {
 
 ## Starting the worker
 
-Download the latest `worker-docker` binary from the [GitHub releases page](https://github.com/Coooolfan/onlyboxes/releases/latest), then run:
+Download the matching version of the `worker-docker` binary from the [GitHub releases page](https://github.com/Coooolfan/onlyboxes/releases/latest), then run:
 
 ```bash
-WORKER_CONSOLE_INSECURE=true \
-WORKER_CONSOLE_GRPC_TARGET=127.0.0.1:50051 \
+WORKER_CONSOLE_GRPC_TARGET=<console_grpc_target> \
 WORKER_ID=<worker_id> \
 WORKER_SECRET=<worker_secret> \
 ./onlyboxes-worker-docker
 ```
 
-Set `WORKER_CONSOLE_INSECURE=false` when connecting through TLS.
+Set `WORKER_CONSOLE_INSECURE=true` when connecting without TLS.
 
 ## Environment variables
 
@@ -48,8 +47,8 @@ Set `WORKER_CONSOLE_INSECURE=false` when connecting through TLS.
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `WORKER_CONSOLE_GRPC_TARGET` | Yes | `127.0.0.1:50051` | Control node gRPC address |
-| `WORKER_CONSOLE_INSECURE` | No | `false` | Set `true` to skip TLS |
+| `WORKER_CONSOLE_GRPC_TARGET` | No | `127.0.0.1:50051` | Control node gRPC address |
+| `WORKER_CONSOLE_INSECURE` | No | `false` | Set `true` to allow insecure connections (non-TLS) |
 | `WORKER_ID` | Yes | | Worker ID from the dashboard |
 | `WORKER_SECRET` | Yes | | One-time secret from worker creation |
 

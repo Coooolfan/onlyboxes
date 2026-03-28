@@ -1,6 +1,6 @@
 export const meta = {
   title: 'Install',
-  description: 'One-click installation path for Linux.',
+  description: 'One-click installation path for Linux/Mac.',
   section: 'Getting Started',
   order: 30,
   slug: 'install',
@@ -8,51 +8,48 @@ export const meta = {
 
 # Install
 
-The fastest way to get started on a single Linux machine is the one-click installer.
+## One-click install
+
+> The one-click installer is expected to handle all scenarios automatically when the network is available. If you encounter any issues, please contact [Github Issues](https://github.com/coooolfan/onlyboxes/issues) for help.
+
+The installer supports quick installation or trial on Linux/Mac machines. Please **ensure Docker or KVM is available on the system** beforehand.
 
 ```bash
 curl -fsSL https://onlybox.es/install.sh | bash
 ```
 
-This installs the latest version by default. Only pass `--tag` if you explicitly need to override the release version:
+### What the installer does
 
-```bash
-curl -fsSL https://onlybox.es/install.sh | bash -s -- --tag 0.1.5
-```
-
-## What the installer does
-
-1. Checks Linux, Docker, Docker Compose v2, systemd, and Python 3.
-2. Downloads a compose template and renders credentials.
+1. Checks Linux/Mac, Docker, Docker Compose v2, and systemd.
+2. Downloads a compose template and renders initial credentials.
 3. Starts the control node with `docker compose up -d`.
 4. Creates a `normal` worker.
-5. Downloads the matching `worker-docker` release binary for the default latest version, or your `--tag` override.
+5. Downloads the matching worker release binary based on the available runtime (Docker or boxlite) and architecture.
 6. Generates and enables a systemd service for the worker.
-7. Waits for the worker to become online.
+7. Polls until the worker comes online.
 
-## Supported flags
+### Supported flags
 
 | Flag | Default | Description |
 | --- | --- | --- |
-| `--tag` | `0.2.0-beta-4` | Optional release override for advanced use cases |
+| `--tag` | `0.2.0-beta-5` | Optional release override, only recommended for advanced use cases |
 | `--workdir` | `$PWD/onlyboxes` | Working directory |
 | `--yes` / `-y` | `false` | Non-interactive mode |
 | `--console-http-port` | `8089` | Console HTTP port on the host |
 | `--console-grpc-port` | `50051` | Console gRPC port on the host |
-| `--service-name` | `onlyboxes-worker-docker` | systemd service name |
+| `--console-start` | `auto` | Console startup mode |
+| `--worker-runtime` | `auto` | Worker runtime selection (`docker` / `boxlite` / `auto`) |
+| `--worker-start` | `auto` | Worker startup mode |
 
-## Requirements
+### Requirements
 
-- Linux
-- systemd
-- Docker Engine
-- Docker Compose v2
-- Python 3
+- Linux/Mac
+- Python 3 (the installer itself is written in Python)
 
-## When to use manual setup instead
+## Manual install
 
-Use [Quick Start](/en/docs/quick-start) if:
+OnlyBoxes allows you to manually deploy and control all components and nodes, but for non-experts this can be somewhat involved — especially given the additional requirements of different worker implementations.
 
-- you want to inspect every step
-- you need a custom reverse proxy or network layout
-- you are bringing up workers on different machines
+We do not want to provide you with a low-quality LLM-generated document that has not been reviewed by a human, so we still need some time to write the relevant content.
+
+Until this section is completed, we recommend reading the [installer implementation](https://github.com/coooolfan/onlyboxes/blob/main/scripts/install.py) directly, and having an LLM Agent with access to the [code repository](https://github.com/coooolfan/onlyboxes) assist you with manual installation.

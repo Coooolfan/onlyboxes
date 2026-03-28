@@ -14,7 +14,7 @@ OnlyBoxes exposes dashboard APIs, worker management APIs, execution APIs, and an
 
 - Dashboard auth: `/api/v1/console/*`
 - Worker management: `/api/v1/workers*`
-- Command execution: `/api/v1/commands/echo`, `/api/v1/commands/terminal`
+- Command execution: `/api/v1/commands/echo`, `/api/v1/commands/terminal`, `/api/v1/commands/computer-use`
 - Task execution: `/api/v1/tasks*`
 - MCP endpoint: `POST /mcp`
 
@@ -22,8 +22,10 @@ OnlyBoxes exposes dashboard APIs, worker management APIs, execution APIs, and an
 
 Current worker-backed tools include:
 
+- `echo`
 - `pythonExec`
 - `terminalExec`
+- `computerUse`
 - `readImage`
 
 The same capabilities are also exposed through HTTP APIs.
@@ -36,7 +38,7 @@ The same capabilities are also exposed through HTTP APIs.
 
 ## Deeper references
 
-v1 of this website keeps the detailed interface references in the repository:
+References:
 
 - [API.md](https://github.com/Coooolfan/onlyboxes/blob/main/API.md)
 - [API.zh-CN.md](https://github.com/Coooolfan/onlyboxes/blob/main/API.zh-CN.md)
