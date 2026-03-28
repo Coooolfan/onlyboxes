@@ -14,14 +14,12 @@ export const meta = {
 
 - 请将 console HTTP（`:8089`）和 gRPC（`:50051`）放在反向代理或网关之后。
 - 对公网与外部链路强制启用 TLS。
-- `worker-docker` 默认拒绝不安全的 console 端点。
+- 所有 worker 实现默认拒绝不安全的 console 端点。
 - 只有在明确接受明文 gRPC 时才设置 `WORKER_CONSOLE_INSECURE=true`。
 
 ## 运维提醒
 
-- 正式环境务必替换所有默认凭据。
-- 持久化并备份 `CONSOLE_DB_PATH` 对应的 SQLite 数据。
-- 将 worker secret 与 access token 视为只展示一次的明文敏感信息。
+- 一键部署脚本会额外创建一个 OpenAPI key，酌情删除
 - Dashboard 登录会话保存在内存中，`console` 重启后会失效。
 
 ## 常见问题
@@ -36,7 +34,7 @@ export const meta = {
 
 ### worker 可以运行在 Docker 里吗？
 
-理论上可以，但通常不推荐，因为你需要额外处理容器内访问宿主 Docker 的问题。
+理论上可以，但通常不推荐。因为你需要额外解决 KVM in Docker 或者 Docker in Docker 的问题。
 
 ### 更底层的实现文档在哪里？
 

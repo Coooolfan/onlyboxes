@@ -14,7 +14,7 @@ export const meta = {
 
 - 通用的沙箱代码执行
 - 宿主机已安装 Docker
-- 需要执行之间的强隔离
+- 希望使用成熟的容器技术
 
 ## 工作原理
 
@@ -30,17 +30,16 @@ export const meta = {
 
 ## 启动 worker
 
-从 [GitHub Releases 页面](https://github.com/Coooolfan/onlyboxes/releases/latest) 下载最新的 `worker-docker` 二进制文件，然后运行：
+从 [GitHub Releases 页面](https://github.com/Coooolfan/onlyboxes/releases/latest) 下载对应版本的 `worker-docker` 二进制文件，然后运行：
 
 ```bash
-WORKER_CONSOLE_INSECURE=true \
-WORKER_CONSOLE_GRPC_TARGET=127.0.0.1:50051 \
+WORKER_CONSOLE_GRPC_TARGET=<console_grpc_target> \
 WORKER_ID=<worker_id> \
 WORKER_SECRET=<worker_secret> \
 ./onlyboxes-worker-docker
 ```
 
-通过 TLS 连接时请设置 `WORKER_CONSOLE_INSECURE=false`。
+通过非 TLS 连接时请设置 `WORKER_CONSOLE_INSECURE=true`。
 
 ## 环境变量
 
@@ -49,7 +48,7 @@ WORKER_SECRET=<worker_secret> \
 | 变量 | 必填 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `WORKER_CONSOLE_GRPC_TARGET` | 是 | `127.0.0.1:50051` | 控制节点 gRPC 地址 |
-| `WORKER_CONSOLE_INSECURE` | 否 | `false` | 设为 `true` 跳过 TLS |
+| `WORKER_CONSOLE_INSECURE` | 否 | `false` | 设为 `true` 允许不安全的连接（非TLS） |
 | `WORKER_ID` | 是 | | Dashboard 中的 Worker ID |
 | `WORKER_SECRET` | 是 | | 创建 worker 时的一次性密钥 |
 

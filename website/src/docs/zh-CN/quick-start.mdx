@@ -1,6 +1,6 @@
 export const meta = {
   title: '快速开始',
-  description: '手动启动控制节点并接入第一个 worker。',
+  description: '快速上手 OnlyBoxes，从控制节点到 Claude Code 的完整流程。',
   section: '快速开始',
   order: 40,
   slug: 'quick-start',
@@ -8,37 +8,20 @@ export const meta = {
 
 # 快速开始
 
-这个流程会先手动启动控制节点，再手动接入一个 worker。
+此流程会引导你手动添加一个执行节点，创建 MCP token，最终在 Claude Code 中直接使用。
 
 ## 1. 启动控制节点
 
-创建目录、下载 compose 文件，并编辑初始化密钥。
+参考 [安装](/zh-CN/docs/install) 文档至少完成控制节点的启动。
 
-```bash
-mkdir -p onlyboxes-console && cd onlyboxes-console
-wget https://raw.githubusercontent.com/Coooolfan/onlyboxes/refs/heads/main/docker/docker-compose.yml
-```
+- 一键安装脚本会在成功后在控制台打印访问地址和随机生成的**管理员账号密码**。
+- 控制台会在首次启动时打印随机生成的**管理员账号密码**。
 
-至少替换：
+## 2. 登录
 
-- `CONSOLE_HASH_KEY`
-- `CONSOLE_DASHBOARD_PASSWORD`
-
-然后启动服务：
-
-```bash
-docker compose up -d
-```
-
-## 2. 登录并创建 token
-
-打开 `http://127.0.0.1:8089`，使用初始化管理员账号登录。
+打开 `http://127.0.0.1:8089` 或者你自己的域名，使用初始化管理员账号登录。
 
 ![控制台登录页](/docs-assets/quickstart-login.png)
-
-在 token 管理页面创建访问 token，并立即保存返回的一次性明文 token。
-
-![Token 创建完成弹窗](/docs-assets/quickstart-token-modal.png)
 
 ## 3. 创建 worker
 
@@ -56,7 +39,7 @@ docker compose up -d
 
 ## 4. 启动 worker
 
-从 [GitHub Releases 页面](https://github.com/Coooolfan/onlyboxes/releases/latest) 下载最新的 `worker-docker` 二进制。
+从 [GitHub Releases 页面](https://github.com/Coooolfan/onlyboxes/releases/latest) 下载对应版本的 `worker-docker` 二进制文件。
 
 用创建时返回的参数启动你下载的二进制：
 
@@ -71,8 +54,16 @@ WORKER_SECRET=<worker_secret> \
 ## 5. 验证状态
 
 - 在 Dashboard 上确认 worker 状态变为 `online`。
-- 在你的客户端中接入 `http://127.0.0.1:8089/mcp`。
-- 使用前面创建的 access token 验证鉴权是否正常。
+
+## 6. 在 Claude Code 中使用
+
+在 token 管理页面创建访问 token，并立即保存返回的一次性明文 token。
+
+![Token 创建完成弹窗](/docs-assets/quickstart-token-modal.png)
+
+在 Claude Code 中配置 MCP 服务器并发起一次请求：
+
+![Claude Code MCP 配置](/docs-assets/claude-code-demo.jpg)
 
 ## 延伸阅读
 

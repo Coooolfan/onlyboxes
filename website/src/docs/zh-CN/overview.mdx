@@ -10,30 +10,42 @@ export const meta = {
 
 OnlyBoxes 是一个面向个人与小型团队的自托管代码执行沙箱平台。
 
-它将控制面与执行面拆分开来，让你可以集中管理控制节点，同时按需独立扩展执行节点。
+典型的控制面与执行面分离的架构，为横向扩展准备就绪。
 
 ## 它提供什么
 
-- 一个控制节点，负责仪表盘、REST API 与 MCP 接口。
-- 多种执行节点实现，适配不同的执行环境。
-- 面向账号的有状态会话与执行资源隔离。
-- 同一套能力同时通过 HTTP 与 MCP 暴露。
+对于普通用户，OnlyBoxes 提供：
+
+- 简单但是能力完备的 MCP 端点
+  - pythonExec: 无持久化的 Python 代码执行
+  - terminalExec: 支持状态持久化的终端代码执行
+  - readImage: 读取多模态图片数据
+  - computerUse: 直连用户本地设备的终端代码执行（WIP）
+- 用户间的会话隔离
+- Web UI 面板
+
+对于管理员用户，OnlyBoxes 额外提供：
+
+- 用户管理
+- Worker 管理
 
 ## 核心能力
 
 | 维度 | 能力 |
 | --- | --- |
-| 部署形态 | 控制节点与执行节点都可自托管 |
-| 扩展方式 | 支持横向增加多个 worker |
-| 运行时模型 | Docker、boxlite、操作系统进程等后端 |
-| 接口形式 | Dashboard、REST API、MCP endpoint |
+| 部署形态 | 无外部依赖，控制面与执行面可独立部署 |
+| 扩展方式 | 支持横向增加多个异构 worker |
+| 运行时模型 | Docker、boxlite、操作系统进程 |
+| 接口形式 | REST API、MCP endpoint |
+| 管理能力 | Dashboard、Open API |
 
 ## 主要组件
 
 - `console`：控制节点，负责认证、worker 注册、Dashboard API 与 MCP 暴露。
-- `worker-docker`：基于 Docker 容器的 worker 实现。
-- `worker-boxlite`：基于 boxlite 的 worker 实现。
-- `worker-sys`：基于宿主机进程的 worker 实现，适合真实设备或主机控制场景。
+- `worker-*`：执行节点，负责具体任务执行。
+  - `worker-docker`：基于 Docker 容器的 worker 实现。
+  - `worker-boxlite`：基于 boxlite 的 worker 实现。
+  - `worker-sys`：基于宿主机进程的 worker 实现，适合真实设备或主机控制场景。
 
 ## 典型使用流程
 
@@ -45,5 +57,5 @@ OnlyBoxes 是一个面向个人与小型团队的自托管代码执行沙箱平�
 ## 下一步
 
 - 阅读 [架构](/zh-CN/docs/architecture) 了解系统模型。
-- 如果想走 Linux 一键安装，先看 [安装](/zh-CN/docs/install)。
+- Linux/Mac 一键安装体检，先看 [安装](/zh-CN/docs/install)。
 - 如果更偏手动部署流程，直接看 [快速开始](/zh-CN/docs/quick-start)。

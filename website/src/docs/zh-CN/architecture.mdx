@@ -14,15 +14,13 @@ OnlyBoxes 采用控制面与执行面分离的架构。
 
 ## 控制节点
 
-控制节点位于 `console`，主要暴露：
+控制节点即 console，主要暴露：
 
 - Dashboard UI
-- Dashboard 会话 API
-- worker 管理 API
-- 执行 API
+- Dashboard 实现（OpenAPI + 业务逻辑）
 - MCP endpoint
 
-它同时负责 worker 注册与账号相关状态管理。
+它主要负责 worker 注册与账号相关状态管理。
 
 ## 执行节点
 
@@ -31,16 +29,16 @@ worker 负责真正的执行环境。worker 会通过 gRPC 连接控制节点，
 ## 这种拆分的意义
 
 - 认证与管理能力集中在控制节点。
-- 执行能力可以独立于 Dashboard 横向扩展。
+- 执行能力可以独立于 console 横向扩展。
 - 不同 worker 实现可以在同一套部署模型中并存。
 
 ## 支持的 worker 形态
 
-| Worker | 执行环境 | 适合场景 |
-| --- | --- | --- |
-| `worker-docker` | Docker 容器 | 通用代码沙箱执行 |
-| `worker-boxlite` | boxlite | 特定运行时后端 |
-| `worker-sys` | 宿主机进程 | 真实设备或直接主机控制 |
+| Worker | 底层实现 | 执行环境 | 适合场景 |
+| --- | --- | --- | --- |
+| `worker-docker` | runc | Docker 容器 | 通用代码沙箱执行 |
+| `worker-boxlite` | KVM | [boxlite](https://boxlite.ai/) | 特定运行时后端 |
+| `worker-sys` | - | 宿主机进程 | 真实设备或直接主机控制 |
 
 ## 推荐部署方式
 
@@ -48,7 +46,7 @@ worker 负责真正的执行环境。worker 会通过 gRPC 连接控制节点，
 
 1. 将控制节点放在反向代理或网关之后。
 2. 通过 TLS 暴露 Dashboard HTTP 和 worker gRPC。
-3. 将 worker 部署在能访问控制节点的隔离机器上。
+3. 将 worker 部署在能访问控制节点的独立机器上，并确保机器资源充足。
 
 ## 相关文档
 

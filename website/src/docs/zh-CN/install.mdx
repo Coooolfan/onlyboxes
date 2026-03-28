@@ -1,6 +1,6 @@
 export const meta = {
   title: '安装',
-  description: 'Linux 下一键安装路径。',
+  description: 'Linux/Mac 下一键安装路径。',
   section: '快速开始',
   order: 30,
   slug: 'install',
@@ -8,51 +8,46 @@ export const meta = {
 
 # 安装
 
-如果你在单台 Linux 机器上快速起步，推荐直接使用一键安装脚本。
+## 一键安装
+
+> 一键安装脚本预期能在网络正常的情况下自动处理所有场景，如果遇到问题请联系 [Github Issues](https://github.com/coooolfan/onlyboxes/issues) 寻求帮助。
+
+安装脚本支持在 Linux/Mac 机器上快速安装或者体验，请提前**确保系统的 Docker 或者 KVM 环境可用**。
 
 ```bash
 curl -fsSL https://onlybox.es/install.sh | bash
 ```
 
-默认会安装最新版本。只有在你明确需要覆盖 Release 版本时，才需要传入 `--tag`：
+### 安装器实现
 
-```bash
-curl -fsSL https://onlybox.es/install.sh | bash -s -- --tag 0.1.5
-```
-
-## 安装器会做什么
-
-1. 检查 Linux、Docker、Docker Compose v2、systemd 与 Python 3。
+1. 检查 Linux/Mac、Docker、Docker Compose v2、systemd 与 Python 3。
 2. 下载 compose 模板并渲染初始凭据。
 3. 通过 `docker compose up -d` 启动控制节点。
 4. 创建一个 `normal` worker。
-5. 下载与当前架构匹配的 `worker-docker` release 二进制，默认使用最新版本，也可被 `--tag` 覆盖。
+5. 下载与当前架构匹配的 `worker-docker` release 二进制，默认使用最新版本。
 6. 生成并启用 systemd 服务。
 7. 轮询直到 worker 上线。
 
-## 支持的参数
+### 支持的参数
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
-| `--tag` | `0.2.0-beta-4` | 可选的 Release 版本覆盖参数，仅建议在高级场景下使用 |
+| `--tag` | `0.2.0-beta-5` | 可选的 Release 版本覆盖参数，仅建议在高级场景下使用 |
 | `--workdir` | `$PWD/onlyboxes` | 工作目录 |
 | `--yes` / `-y` | `false` | 非交互模式 |
 | `--console-http-port` | `8089` | 宿主机上的 Console HTTP 端口 |
 | `--console-grpc-port` | `50051` | 宿主机上的 Console gRPC 端口 |
 | `--service-name` | `onlyboxes-worker-docker` | systemd 服务名 |
 
-## 运行要求
+### 运行要求
 
-- Linux
-- systemd
-- Docker Engine
-- Docker Compose v2
+- Linux/Mac
 - Python 3
 
-## 什么情况下改走手动部署
+## 手动安装
 
-如果你符合下面任一情况，直接看 [快速开始](/zh-CN/docs/quick-start)：
+OnlyBoxes 当然允许您手动部署和控制所有组件和节点，但是对于非专业人士，这会略显复杂。尤其是不同 worker 实现需要的额外要求。
 
-- 想逐步检查每一步
-- 需要自定义反向代理或网络布局
-- 控制节点与 worker 会部署在不同机器上
+我们不希望向您提供一份未经人工审核的 LLM 生成的低质量文档，因此我们还需要一部分时间撰写相关内容。
+
+在本节完成之前，我们建议您直接阅读[安装脚本的实现](https://github.com/coooolfan/onlyboxes/blob/main/scripts/install.py)，并在 LLM Agent 能访问[代码仓库](https://github.com/coooolfan/onlyboxes)的情况下协助您完成手动安装。
