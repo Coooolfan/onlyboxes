@@ -12,6 +12,7 @@ import {
   listLocaleSections,
 } from './registry'
 import { mdxComponents } from './mdx-components'
+import { useSiteContext } from '../site/SiteContext'
 
 interface TocItem {
   id: string
@@ -173,14 +174,11 @@ export function DocsPage({ locale }: { locale: DocsLocale }) {
   const tocItems = useTableOfContents(`${locale}:${currentSlug}:${entry?.meta.title ?? '404'}`)
   const targetLocale = locale === 'en' ? 'zh-CN' : 'en'
 
-  const [isDark, setIsDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches)
+  const { isDark, setIsDark, setLocale: setSiteLocale } = useSiteContext()
 
   useEffect(() => {
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
-    const handler = (event: MediaQueryListEvent) => setIsDark(event.matches)
-    mediaQuery.addEventListener('change', handler)
-    return () => mediaQuery.removeEventListener('change', handler)
-  }, [])
+    setSiteLocale(locale)
+  }, [locale, setSiteLocale])
 
   useEffect(() => {
     const title = entry ? `${entry.meta.title} | OnlyBoxes Docs` : `404 | OnlyBoxes Docs`

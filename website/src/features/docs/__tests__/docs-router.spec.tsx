@@ -1,7 +1,8 @@
 import { render } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { WebsiteRoutes } from '../../../app/routes'
+import { SiteProvider } from '../../site/SiteContext'
 import {
   getAlternateDocHref,
   listLocaleDocs,
@@ -17,12 +18,18 @@ function mockNavigatorLanguage(language: string) {
 function renderRoutes(initialEntry: string) {
   return render(
     <MemoryRouter initialEntries={[initialEntry]}>
-      <WebsiteRoutes />
+      <SiteProvider>
+        <WebsiteRoutes />
+      </SiteProvider>
     </MemoryRouter>,
   )
 }
 
 describe('docs routing', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
   it('redirects /docs to zh-CN docs for Chinese browsers', async () => {
     mockNavigatorLanguage('zh-CN')
 
@@ -46,7 +53,11 @@ describe('docs routing', () => {
       '',
       'architecture',
       'install',
+      'console-config',
       'quick-start',
+      'worker-docker',
+      'worker-boxlite',
+      'worker-sys',
       'api-mcp-overview',
       'security-faq',
     ])

@@ -7,6 +7,7 @@ import {
   Copy,
   Cpu,
   Github,
+  Languages,
   Moon,
   Package,
   Blocks,
@@ -15,15 +16,57 @@ import {
   Terminal,
   User,
 } from 'lucide-react'
+import { useSiteContext } from '../features/site/SiteContext'
+import { type DocsLocale, docsLocaleLabels, getDocsRootHref, getOtherDocsLocale } from '../features/docs/registry'
 
 const INSTALL_CMD = 'curl -fsSL https://onlybox.es/install.sh | bash'
 
-const RotatingText = () => {
-  const texts = [
-    'Run untrusted code safely?',
-    'Self-host your code sandbox?',
-    'Power your AI agents with skills?',
-  ]
+const homeCopy = {
+  en: {
+    rotatingTexts: [
+      'Run untrusted code safely?',
+      'Self-host your code sandbox?',
+      'Power your AI agents with skills?',
+    ],
+    subtitle: 'A self-hosted code execution sandbox platform for individuals and small teams.',
+    documentation: 'Documentation',
+    github: 'GitHub',
+    architecture: 'Architecture',
+    developer: 'Developer',
+    apiClient: 'API Client',
+    mcpClient: 'MCP Client',
+    client: 'Client',
+    execution: 'Execution',
+    workerNode: 'Worker Node',
+    environment: 'Environment',
+    osProcess: 'OS Process',
+    console: 'Console',
+  },
+  'zh-CN': {
+    rotatingTexts: [
+      '执行不受信任的代码？',
+      '自托管代码沙箱？',
+      '为 AI 智能体提供 Skills 运行环境？',
+    ],
+    subtitle: '面向个人与小型团队的自托管代码执行沙箱平台。',
+    documentation: '文档',
+    github: 'GitHub',
+    architecture: '架构',
+    developer: '开发者',
+    apiClient: 'API 客户端',
+    mcpClient: 'MCP 客户端',
+    client: '客户端',
+    execution: '执行层',
+    workerNode: '执行节点',
+    environment: '运行环境',
+    osProcess: '系统进程',
+    console: '控制节点',
+  },
+} as const
+
+type HomeCopy = (typeof homeCopy)[DocsLocale]
+
+const RotatingText = ({ texts }: { texts: readonly string[] }) => {
   const [index, setIndex] = useState(0)
   const [fade, setFade] = useState(true)
 
@@ -160,7 +203,7 @@ const SvgNode = ({
   </g>
 )
 
-const ArchitectureDiagram = ({ isDark }: { isDark: boolean }) => {
+const ArchitectureDiagram = ({ isDark, copy }: { isDark: boolean; copy: HomeCopy }) => {
   const [isCompact, setIsCompact] = useState(() => window.matchMedia('(max-width: 767px)').matches)
 
   useEffect(() => {
@@ -187,7 +230,7 @@ const ArchitectureDiagram = ({ isDark }: { isDark: boolean }) => {
           isDark ? 'text-neutral-500' : 'text-neutral-400'
         } transition-colors duration-300`}
       >
-        Architecture
+        {copy.architecture}
       </div>
       <div
         className={`absolute inset-0 transition-opacity duration-300 ${
@@ -244,9 +287,9 @@ const ArchitectureDiagram = ({ isDark }: { isDark: boolean }) => {
           </>
         ) : null}
 
-        <SvgNode isDark={isDark} x={20} y={80} width={clientWidth} title="Developer" subtitle="Client" icon={User} />
-        <SvgNode isDark={isDark} x={20} y={160} width={clientWidth} title="API Client" subtitle="Client" icon={Terminal} />
-        <SvgNode isDark={isDark} x={20} y={240} width={clientWidth} title="MCP Client" subtitle="Client" icon={Blocks} active />
+        <SvgNode isDark={isDark} x={20} y={80} width={clientWidth} title={copy.developer} subtitle={copy.client} icon={User} />
+        <SvgNode isDark={isDark} x={20} y={160} width={clientWidth} title={copy.apiClient} subtitle={copy.client} icon={Terminal} />
+        <SvgNode isDark={isDark} x={20} y={240} width={clientWidth} title={copy.mcpClient} subtitle={copy.client} icon={Blocks} active />
 
         <g
           transform={`translate(${consoleX}, 130)`}
@@ -290,26 +333,26 @@ const ArchitectureDiagram = ({ isDark }: { isDark: boolean }) => {
             letterSpacing={0.5}
             className="transition-colors duration-300"
           >
-            Console
+            {copy.console}
           </text>
         </g>
 
         {!isCompact ? (
           <>
-            <SvgNode isDark={isDark} x={520} y={80} title="Worker Node" subtitle="Execution" icon={Cpu} />
-            <SvgNode isDark={isDark} x={520} y={160} title="Worker Node" subtitle="Execution" icon={Cpu} />
-            <SvgNode isDark={isDark} x={520} y={240} title="Worker Node" subtitle="Execution" icon={Cpu} />
+            <SvgNode isDark={isDark} x={520} y={80} title={copy.workerNode} subtitle={copy.execution} icon={Cpu} />
+            <SvgNode isDark={isDark} x={520} y={160} title={copy.workerNode} subtitle={copy.execution} icon={Cpu} />
+            <SvgNode isDark={isDark} x={520} y={240} title={copy.workerNode} subtitle={copy.execution} icon={Cpu} />
           </>
         ) : null}
 
-        <SvgNode isDark={isDark} x={environmentX} y={80} width={environmentWidth} title="Docker" subtitle="Environment" icon={Box} />
+        <SvgNode isDark={isDark} x={environmentX} y={80} width={environmentWidth} title="Docker" subtitle={copy.environment} icon={Box} />
         <SvgNode
           isDark={isDark}
           x={environmentX}
           y={160}
           width={environmentWidth}
           title="Boxlite"
-          subtitle="Environment"
+          subtitle={copy.environment}
           icon={Package}
           dashed
         />
@@ -318,8 +361,8 @@ const ArchitectureDiagram = ({ isDark }: { isDark: boolean }) => {
           x={environmentX}
           y={240}
           width={environmentWidth}
-          title="OS Process"
-          subtitle="Environment"
+          title={copy.osProcess}
+          subtitle={copy.environment}
           icon={Terminal}
           dashed
         />
@@ -385,14 +428,9 @@ const InstallCommand = ({ isDark }: { isDark: boolean }) => {
 }
 
 function HomePage() {
-  const [isDark, setIsDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches)
-
-  useEffect(() => {
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
-    const handler = (event: MediaQueryListEvent) => setIsDark(event.matches)
-    mediaQuery.addEventListener('change', handler)
-    return () => mediaQuery.removeEventListener('change', handler)
-  }, [])
+  const { isDark, setIsDark, locale, setLocale } = useSiteContext()
+  const copy = homeCopy[locale]
+  const targetLocale = getOtherDocsLocale(locale)
 
   return (
     <div
@@ -419,13 +457,23 @@ function HomePage() {
           >
             {isDark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
           </button>
+          <button
+            onClick={() => setLocale(targetLocale)}
+            className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium ${
+              isDark ? 'text-neutral-400 hover:bg-neutral-900 hover:text-white' : 'text-neutral-500 hover:bg-neutral-100 hover:text-black'
+            } transition-colors duration-300`}
+            aria-label={docsLocaleLabels[targetLocale]}
+          >
+            <Languages className="h-4 w-4" />
+            <span className="hidden sm:inline">{docsLocaleLabels[targetLocale]}</span>
+          </button>
         </div>
       </header>
 
       <main className="flex min-h-[calc(100vh-65px)] flex-1 flex-col justify-center px-6 py-12 lg:px-12 xl:px-20">
         <div className="flex flex-col items-center gap-12 xl:flex-row xl:gap-20">
           <div className="z-10 flex w-full shrink-0 flex-col justify-center xl:w-[450px]">
-            <RotatingText />
+            <RotatingText texts={copy.rotatingTexts} />
 
             <h1
               className={`mb-6 text-6xl leading-none font-bold tracking-tighter md:text-7xl lg:text-8xl ${
@@ -440,18 +488,18 @@ function HomePage() {
                 isDark ? 'text-neutral-400' : 'text-neutral-500'
               } transition-colors duration-300`}
             >
-              A self-hosted code execution sandbox platform for individuals and small teams.
+              {copy.subtitle}
             </p>
 
             <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center">
               <Link
-                to="/docs"
+                to={getDocsRootHref(locale)}
                 className={`flex w-full items-center justify-center gap-2 rounded-md px-6 py-3 font-medium shadow-md transition-colors sm:w-auto ${
                   isDark ? 'bg-white text-black hover:bg-neutral-200' : 'bg-black text-white hover:bg-neutral-800'
                 }`}
               >
                 <BookOpen className="h-4 w-4" />
-                Documentation
+                {copy.documentation}
               </Link>
               <a
                 href="https://github.com/Coooolfan/onlyboxes"
@@ -462,7 +510,7 @@ function HomePage() {
                 }`}
               >
                 <Github className="h-4 w-4" />
-                GitHub
+                {copy.github}
               </a>
             </div>
           </div>
@@ -474,7 +522,7 @@ function HomePage() {
               }`}
             />
             <div className="relative w-full max-w-[1000px]">
-              <ArchitectureDiagram isDark={isDark} />
+              <ArchitectureDiagram isDark={isDark} copy={copy} />
             </div>
           </div>
         </div>

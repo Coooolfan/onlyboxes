@@ -1,10 +1,13 @@
 import { BrowserRouter } from 'react-router-dom'
 import { WebsiteRoutes } from './app/routes'
+import { SiteProvider } from './features/site/SiteContext'
 
 function App() {
   return (
     <BrowserRouter>
-      <WebsiteRoutes />
+      <SiteProvider>
+        <WebsiteRoutes />
+      </SiteProvider>
     </BrowserRouter>
   )
 }

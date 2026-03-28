@@ -2,19 +2,18 @@ import { Navigate, Route, Routes, useLocation, useParams } from 'react-router-do
 import HomePage from '../pages/HomePage'
 import SiteNotFoundPage from '../pages/SiteNotFoundPage'
 import { DocsPage } from '../features/docs/DocsPage'
-import { getDocsRootHref, getPreferredDocsLocale, isDocsLocale } from '../features/docs/registry'
+import { getDocsRootHref, isDocsLocale } from '../features/docs/registry'
+import { useSiteContext } from '../features/site/SiteContext'
 
 function DocsLanguageRedirect() {
   const location = useLocation()
-  const preferredLocale = getPreferredDocsLocale(
-    typeof navigator === 'undefined' ? 'en-US' : navigator.language,
-  )
+  const { locale } = useSiteContext()
 
   return (
     <Navigate
       replace
       to={{
-        pathname: getDocsRootHref(preferredLocale),
+        pathname: getDocsRootHref(locale),
         search: location.search,
         hash: location.hash,
       }}
