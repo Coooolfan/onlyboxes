@@ -134,7 +134,7 @@ Accept: application/json, text/event-stream
 | `command` | string | 是 | 要执行的 shell 命令 |
 | `session_id` | string | 否 | 已有会话 ID；省略时自动创建新会话 |
 | `create_if_missing` | boolean | 否 | `session_id` 不存在时是否自动创建，默认 `false` |
-| `lease_ttl_sec` | integer | 否 | 会话租约时长（秒） |
+| `lease_ttl_sec` | integer | 否 | 会话租约时长（秒），会被 worker 配置的 `[min, max]` 范围截断（默认 min/default: `60`，默认 max: `1800`） |
 | `timeout_ms` | integer | 否 | `1..600000`，默认 `60000` |
 
 **入参示例：**

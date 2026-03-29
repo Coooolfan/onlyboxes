@@ -30,19 +30,21 @@ Unified error response format:
 
 ## Auth Model
 
-The Console exposes three credential types for different use cases:
+The Console exposes four credential types for different use cases:
 
-| Item | Cookie session | API Key (Bearer) | Execution Token (Bearer) |
-|------|---------------|-----------------|---------------------------|
-| Credential type | Cookie `onlyboxes_console_session` | `Authorization: Bearer obxk_*` | `Authorization: Bearer obx_*` |
-| Origin | `POST /api/v1/console/login` | `POST /api/v1/console/api-keys` (cookie only) | `POST /api/v1/console/tokens` |
-| Lifetime | 12 hours (in-memory; invalidated on console restart) | Persistent until manually deleted | Persistent until manually deleted |
-| Applicable endpoints | All management endpoints | Most management endpoints (read + selective write) | `/api/v1/commands/*`, `/api/v1/tasks*`, `/mcp` |
-| Primary use | Web UI management | Programmatic management | Command execution and MCP |
+| Item | Cookie session | API Key (Bearer) | Execution Token (Bearer) | JIT Token (Bearer) |
+|------|---------------|-----------------|---------------------------|--------------------|
+| Credential type | Cookie `onlyboxes_console_session` | `Authorization: Bearer obxk_*` | `Authorization: Bearer obx_*` | `Authorization: Bearer obx_jit_v1.*` |
+| Origin | `POST /api/v1/console/login` | `POST /api/v1/console/api-keys` (cookie only) | `POST /api/v1/console/tokens` | Externally signed (HMAC-SHA256, `CONSOLE_JIT_SIGNING_KEY`) |
+| Lifetime | 12 hours (in-memory; invalidated on console restart) | Persistent until manually deleted | Persistent until manually deleted | Stateless; revoke by rotating the signing key |
+| Applicable endpoints | All management endpoints | Most management endpoints (read + selective write) | `/api/v1/commands/*`, `/api/v1/tasks*`, `/mcp` | `/api/v1/commands/*`, `/api/v1/tasks*`, `/mcp` |
+| Primary use | Web UI management | Programmatic management | Command execution and MCP | Third-party integrations without pre-created accounts |
 
 > The following endpoints accept **cookie session only** and reject API Key Bearer: `POST /console/password`, `POST /console/api-keys`, `DELETE /console/api-keys/:api_key_id`
 >
 > If no execution tokens exist in the system, all command execution endpoints and `/mcp` return `401` by design.
+>
+> JIT Tokens are explicitly **rejected** on all dashboard/management routes.
 
 ---
 
@@ -722,7 +724,7 @@ Executes a shell command inside a persistent terminal session, supporting state 
 | `command` | string | Yes | Trimmed non-empty |
 | `session_id` | string | No | Existing session ID; omit to auto-create a new session |
 | `create_if_missing` | bool | No | Auto-create if `session_id` not found, default `false` |
-| `lease_ttl_sec` | int | No | Session lease duration in seconds |
+| `lease_ttl_sec` | int | No | Session lease duration in seconds; clamped to worker's configured `[min, max]` range (default min/default: `60`, default max: `1800`) |
 | `timeout_ms` | int | No | `1..600000`, default `60000` |
 | `request_id` | string | No | Idempotency key, scoped per account |
 
@@ -836,7 +838,7 @@ Tasks are suited for asynchronous execution or polling workflows. Ownership is s
 
 | Field | Type | Required | Constraints |
 |-------|------|----------|-------------|
-| `capability` | string | Yes | Non-empty; matches a capability name declared by a worker (case-insensitive) |
+| `capability` | string | Yes | Non-empty; matches a capability name declared by a worker (case-insensitive; normalized to lowercase in storage and responses) |
 | `input` | object | No | Valid JSON object; defaults to `{}` if omitted |
 | `mode` | string | No | `sync` / `async` / `auto`, default `auto` |
 | `wait_ms` | int | No | `1..60000`, default `1500`; max milliseconds to wait in `auto` mode |
@@ -958,6 +960,127 @@ Tasks are suited for asynchronous execution or polling workflows. Ownership is s
 | `404` | Task not found (including cross-account access) |
 | `409` | Task already in terminal state; returns current task snapshot |
 | `500` | Cancellation failure |
+
+---
+
+## JIT Token Authentication
+
+JIT (Just-in-Time) Tokens allow external systems to authenticate on behalf of arbitrary users without pre-creating accounts. The console verifies the token signature and automatically provisions a non-admin account on first use.
+
+**Prerequisites:** Set `CONSOLE_JIT_SIGNING_KEY` on the console. If unset, all JIT tokens are rejected.
+
+**Applicable endpoints:** Same as Execution Token — `/api/v1/commands/*`, `/api/v1/tasks*`, `/mcp`.
+
+### Token Format
+
+```
+obx_jit_v1.<base64url-payload>.<base64url-signature>
+```
+
+| Part | Content |
+|------|---------|
+| Prefix | `obx_jit_v1.` — literal string, included in the signed message |
+| Payload | Base64url (no padding) of JSON `{"iss":"<issuer>","sub":"<subject>"}` |
+| Signature | Base64url (no padding) of HMAC-SHA256 over `obx_jit_v1.<payload>` |
+
+### Expected Flow
+
+1. **Configure** — Set `CONSOLE_JIT_SIGNING_KEY` on the Console; distribute the same key to all systems that will issue JIT tokens.
+2. **Sign** — The caller encodes `{"iss":"...","sub":"..."}` as a Base64url payload and signs `obx_jit_v1.<payload>` with HMAC-SHA256.
+3. **Request** — Send `Authorization: Bearer obx_jit_v1.<payload>.<sig>` to any command execution endpoint.
+4. **Verify** — The Console checks the HMAC signature; returns `401` if the key is unset or the signature is invalid.
+5. **Provision (first use only)** — The Console derives a deterministic `acc_jit_*` account from `(iss, sub)` and creates it if it does not yet exist. Subsequent calls with the same pair skip this step.
+6. **Execute** — The request proceeds under that account's ownership, subject to normal per-account resource rules.
+
+> **Account isolation:** each `(issuer, subject)` pair maps to a separate account. Tokens with the same `iss` but different `sub` values are independent.
+>
+> **Revocation:** rotate `CONSOLE_JIT_SIGNING_KEY` to immediately invalidate all previously issued JIT tokens.
+
+### Reference Implementations
+
+#### Python
+
+```python
+import hmac, hashlib, base64, json
+
+def make_jit_token(signing_key: str, issuer: str, subject: str) -> str:
+    payload_bytes = json.dumps({"iss": issuer, "sub": subject}, separators=(",", ":")).encode()
+    payload_b64 = base64.urlsafe_b64encode(payload_bytes).rstrip(b"=").decode()
+    message = f"obx_jit_v1.{payload_b64}"
+    sig = hmac.new(signing_key.encode(), message.encode(), hashlib.sha256).digest()
+    sig_b64 = base64.urlsafe_b64encode(sig).rstrip(b"=").decode()
+    return f"{message}.{sig_b64}"
+
+token = make_jit_token("your-signing-key", "my-platform", "user-42")
+# Use as:  Authorization: Bearer <token>
+```
+
+#### TypeScript / Node.js
+
+```typescript
+import { createHmac } from "crypto";
+
+function makeJitToken(signingKey: string, issuer: string, subject: string): string {
+  const payload = Buffer.from(JSON.stringify({ iss: issuer, sub: subject }))
+    .toString("base64url");
+  const message = `obx_jit_v1.${payload}`;
+  const sig = createHmac("sha256", signingKey).update(message).digest("base64url");
+  return `${message}.${sig}`;
+}
+
+const token = makeJitToken("your-signing-key", "my-platform", "user-42");
+// Use as:  Authorization: Bearer <token>
+```
+
+#### Go
+
+```go
+import (
+    "crypto/hmac"
+    "crypto/sha256"
+    "encoding/base64"
+    "encoding/json"
+)
+
+func makeJITToken(signingKey, issuer, subject string) (string, error) {
+    payload, err := json.Marshal(map[string]string{"iss": issuer, "sub": subject})
+    if err != nil {
+        return "", err
+    }
+    payloadB64 := base64.RawURLEncoding.EncodeToString(payload)
+    message := "obx_jit_v1." + payloadB64
+    mac := hmac.New(sha256.New, []byte(signingKey))
+    mac.Write([]byte(message))
+    sigB64 := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+    return message + "." + sigB64, nil
+}
+
+// token, _ := makeJITToken("your-signing-key", "my-platform", "user-42")
+// Use as:  Authorization: Bearer <token>
+```
+
+#### Java
+
+```java
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.util.Base64;
+
+public static String makeJitToken(String signingKey, String issuer, String subject) throws Exception {
+    String payloadJson = String.format("{\"iss\":\"%s\",\"sub\":\"%s\"}", issuer, subject);
+    String payloadB64 = Base64.getUrlEncoder().withoutPadding()
+        .encodeToString(payloadJson.getBytes());
+    String message = "obx_jit_v1." + payloadB64;
+    Mac mac = Mac.getInstance("HmacSHA256");
+    mac.init(new SecretKeySpec(signingKey.getBytes(), "HmacSHA256"));
+    String sigB64 = Base64.getUrlEncoder().withoutPadding()
+        .encodeToString(mac.doFinal(message.getBytes()));
+    return message + "." + sigB64;
+}
+
+// String token = makeJitToken("your-signing-key", "my-platform", "user-42");
+// Use as:  Authorization: Bearer <token>
+```
 
 ---
 

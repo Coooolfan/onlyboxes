@@ -30,19 +30,21 @@ Console 节点的 HTTP 服务监听在 `:8089`，所有 REST 端点以 `/api/v1`
 
 ## 鉴权模型
 
-Console 提供三种鉴权凭据，覆盖不同使用场景：
+Console 提供四种鉴权凭据，覆盖不同使用场景：
 
-| 项目 | Cookie 会话 | API Key（Bearer） | 执行 Token（Bearer） |
-|------|------------|------------------|---------------------|
-| 凭据类型 | Cookie `onlyboxes_console_session` | `Authorization: Bearer obxk_*` | `Authorization: Bearer obx_*` |
-| 来源 | `POST /api/v1/console/login` | `POST /api/v1/console/api-keys`（仅 Cookie） | `POST /api/v1/console/tokens` |
-| 有效期 | 12 小时（内存态，console 重启后全部失效） | 持久，直到手动删除 | 持久，直到手动删除 |
-| 适用端点 | 所有管理端点 | 大多数管理端点（只读及部分写） | `/api/v1/commands/*`、`/api/v1/tasks*`、`/mcp` |
-| 主要用途 | Web UI 管理操作 | 程序化管理操作 | 命令执行与 MCP |
+| 项目 | Cookie 会话 | API Key（Bearer） | 执行 Token（Bearer） | JIT Token（Bearer） |
+|------|------------|------------------|---------------------|---------------------|
+| 凭据类型 | Cookie `onlyboxes_console_session` | `Authorization: Bearer obxk_*` | `Authorization: Bearer obx_*` | `Authorization: Bearer obx_jit_v1.*` |
+| 来源 | `POST /api/v1/console/login` | `POST /api/v1/console/api-keys`（仅 Cookie） | `POST /api/v1/console/tokens` | 外部签名（HMAC-SHA256，`CONSOLE_JIT_SIGNING_KEY`） |
+| 有效期 | 12 小时（内存态，console 重启后全部失效） | 持久，直到手动删除 | 持久，直到手动删除 | 无状态；轮换签名密钥即可吊销 |
+| 适用端点 | 所有管理端点 | 大多数管理端点（只读及部分写） | `/api/v1/commands/*`、`/api/v1/tasks*`、`/mcp` | `/api/v1/commands/*`、`/api/v1/tasks*`、`/mcp` |
+| 主要用途 | Web UI 管理操作 | 程序化管理操作 | 命令执行与 MCP | 无需预创建账户的第三方集成 |
 
 > 以下端点**仅接受 Cookie 会话**，拒绝 API Key Bearer：`POST /console/password`、`POST /console/api-keys`、`DELETE /console/api-keys/:api_key_id`
 >
 > 如果系统中没有任何执行 Token，所有命令执行端点及 `/mcp` 将返回 `401`。
+>
+> JIT Token 在所有 Dashboard/管理路由上会被明确**拒绝**。
 
 ---
 
@@ -722,7 +724,7 @@ Worker 类型：`normal`（对应 `worker-docker`/`worker-boxlite`）、`worker-
 | `command` | string | 是 | trim 后非空 |
 | `session_id` | string | 否 | 已有会话 ID；省略时自动创建新会话 |
 | `create_if_missing` | bool | 否 | `session_id` 不存在时是否自动创建，默认 `false` |
-| `lease_ttl_sec` | int | 否 | 会话租约时长（秒） |
+| `lease_ttl_sec` | int | 否 | 会话租约时长（秒），会被 worker 配置的 `[min, max]` 范围截断（默认 min/default: `60`，默认 max: `1800`） |
 | `timeout_ms` | int | 否 | `1..600000`，默认 `60000` |
 | `request_id` | string | 否 | 幂等键，按账号隔离去重 |
 
@@ -836,7 +838,7 @@ Task 适合需要异步执行或结果轮询的场景。所有权按 token 对�
 
 | 字段 | 类型 | 必填 | 约束 |
 |------|------|------|------|
-| `capability` | string | 是 | 非空，对应 worker 声明的能力名（大小写不敏感） |
+| `capability` | string | 是 | 非空，对应 worker 声明的能力名（大小写不敏感；存储和响应中统一规范化为小写） |
 | `input` | object | 否 | 合法 JSON 对象，省略时默认 `{}` |
 | `mode` | string | 否 | `sync` / `async` / `auto`，默认 `auto` |
 | `wait_ms` | int | 否 | `1..60000`，默认 `1500`；`auto` 模式下等待完成的最长毫秒数 |
@@ -958,6 +960,127 @@ Task 适合需要异步执行或结果轮询的场景。所有权按 token 对�
 | `404` | 任务不存在（含跨账号访问） |
 | `409` | 任务已终态，返回当前任务快照 |
 | `500` | 取消失败 |
+
+---
+
+## JIT Token 认证
+
+JIT（Just-in-Time）Token 允许外部系统以任意用户身份进行认证，无需提前创建账户。Console 验证签名后，首次使用时自动派生并创建非管理员账户。
+
+**前提条件：** 需在 Console 上配置 `CONSOLE_JIT_SIGNING_KEY`。未设置时所有 JIT Token 均被拒绝。
+
+**适用端点：** 与执行 Token 相同——`/api/v1/commands/*`、`/api/v1/tasks*`、`/mcp`。
+
+### Token 格式
+
+```
+obx_jit_v1.<base64url-payload>.<base64url-signature>
+```
+
+| 部分 | 内容 |
+|------|------|
+| 前缀 | `obx_jit_v1.` — 字面字符串，包含在被签名消息中 |
+| Payload | JSON `{"iss":"<issuer>","sub":"<subject>"}` 的 Base64url 编码（无填充） |
+| Signature | 对 `obx_jit_v1.<payload>` 做 HMAC-SHA256 后 Base64url 编码（无填充） |
+
+### 预期流程
+
+1. **配置** — 在 Console 上设置 `CONSOLE_JIT_SIGNING_KEY`；将同一密钥分发给所有需要签发 JIT Token 的系统。
+2. **签名** — 调用方将 `{"iss":"...","sub":"..."}` Base64url 编码为 payload，再对 `obx_jit_v1.<payload>` 做 HMAC-SHA256 签名。
+3. **请求** — 以 `Authorization: Bearer obx_jit_v1.<payload>.<sig>` 调用任意命令执行端点。
+4. **验证** — Console 校验 HMAC 签名；密钥未配置或签名错误时返回 `401`。
+5. **账户创建（仅首次）** — Console 由 `(iss, sub)` 确定性推导出 `acc_jit_*` 账户 ID，若不存在则自动创建。后续相同组合的调用跳过此步。
+6. **执行** — 请求在该账户的所有权下执行，受正常的账户级资源规则约束。
+
+> **账户隔离：** 每个 `(issuer, subject)` 组合对应独立账户，相同 `iss` 不同 `sub` 的 Token 互不影响。
+>
+> **吊销：** 轮换 `CONSOLE_JIT_SIGNING_KEY` 可立即使所有已签发的 JIT Token 失效。
+
+### 参考实现
+
+#### Python
+
+```python
+import hmac, hashlib, base64, json
+
+def make_jit_token(signing_key: str, issuer: str, subject: str) -> str:
+    payload_bytes = json.dumps({"iss": issuer, "sub": subject}, separators=(",", ":")).encode()
+    payload_b64 = base64.urlsafe_b64encode(payload_bytes).rstrip(b"=").decode()
+    message = f"obx_jit_v1.{payload_b64}"
+    sig = hmac.new(signing_key.encode(), message.encode(), hashlib.sha256).digest()
+    sig_b64 = base64.urlsafe_b64encode(sig).rstrip(b"=").decode()
+    return f"{message}.{sig_b64}"
+
+token = make_jit_token("your-signing-key", "my-platform", "user-42")
+# 用法：Authorization: Bearer <token>
+```
+
+#### TypeScript / Node.js
+
+```typescript
+import { createHmac } from "crypto";
+
+function makeJitToken(signingKey: string, issuer: string, subject: string): string {
+  const payload = Buffer.from(JSON.stringify({ iss: issuer, sub: subject }))
+    .toString("base64url");
+  const message = `obx_jit_v1.${payload}`;
+  const sig = createHmac("sha256", signingKey).update(message).digest("base64url");
+  return `${message}.${sig}`;
+}
+
+const token = makeJitToken("your-signing-key", "my-platform", "user-42");
+// 用法：Authorization: Bearer <token>
+```
+
+#### Go
+
+```go
+import (
+    "crypto/hmac"
+    "crypto/sha256"
+    "encoding/base64"
+    "encoding/json"
+)
+
+func makeJITToken(signingKey, issuer, subject string) (string, error) {
+    payload, err := json.Marshal(map[string]string{"iss": issuer, "sub": subject})
+    if err != nil {
+        return "", err
+    }
+    payloadB64 := base64.RawURLEncoding.EncodeToString(payload)
+    message := "obx_jit_v1." + payloadB64
+    mac := hmac.New(sha256.New, []byte(signingKey))
+    mac.Write([]byte(message))
+    sigB64 := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+    return message + "." + sigB64, nil
+}
+
+// token, _ := makeJITToken("your-signing-key", "my-platform", "user-42")
+// 用法：Authorization: Bearer <token>
+```
+
+#### Java
+
+```java
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.util.Base64;
+
+public static String makeJitToken(String signingKey, String issuer, String subject) throws Exception {
+    String payloadJson = String.format("{\"iss\":\"%s\",\"sub\":\"%s\"}", issuer, subject);
+    String payloadB64 = Base64.getUrlEncoder().withoutPadding()
+        .encodeToString(payloadJson.getBytes());
+    String message = "obx_jit_v1." + payloadB64;
+    Mac mac = Mac.getInstance("HmacSHA256");
+    mac.init(new SecretKeySpec(signingKey.getBytes(), "HmacSHA256"));
+    String sigB64 = Base64.getUrlEncoder().withoutPadding()
+        .encodeToString(mac.doFinal(message.getBytes()));
+    return message + "." + sigB64;
+}
+
+// String token = makeJitToken("your-signing-key", "my-platform", "user-42");
+// 用法：Authorization: Bearer <token>
+```
 
 ---
 

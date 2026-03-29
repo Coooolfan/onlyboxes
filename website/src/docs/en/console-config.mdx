@@ -44,6 +44,12 @@ These variables are only used during first startup when no admin account exists.
 | --- | --- | --- | --- |
 | `CONSOLE_ENABLE_REGISTRATION` | No | `false` | Allow admin to register non-admin accounts |
 
+### JIT Token Authentication
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `CONSOLE_JIT_SIGNING_KEY` | No | | HMAC-SHA256 signing key for JIT tokens (`obx_jit_v1.*`). Unset disables JIT auth entirely. |
+
 ### Worker management
 
 | Variable | Required | Default | Description |

@@ -134,7 +134,7 @@ Executes a shell command inside a persistent terminal session, with state preser
 | `command` | string | Yes | Shell command to execute |
 | `session_id` | string | No | Existing session ID; omit to auto-create a new session |
 | `create_if_missing` | boolean | No | Auto-create if `session_id` not found, default `false` |
-| `lease_ttl_sec` | integer | No | Session lease duration in seconds |
+| `lease_ttl_sec` | integer | No | Session lease duration in seconds; clamped to worker's configured `[min, max]` range (default min/default: `60`, default max: `1800`) |
 | `timeout_ms` | integer | No | `1..600000`, default `60000` |
 
 **Input example:**
