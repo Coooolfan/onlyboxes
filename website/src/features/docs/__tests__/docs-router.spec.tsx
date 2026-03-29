@@ -58,7 +58,8 @@ describe('docs routing', () => {
       'worker-docker',
       'worker-boxlite',
       'worker-sys',
-      'api-mcp-overview',
+      'console-api',
+      'mcp-tools',
       'security-faq',
     ])
   })

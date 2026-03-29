@@ -1,0 +1,287 @@
+export const meta = {
+  title: 'MCP 工具参考',
+  description: 'OnlyBoxes MCP 端点暴露的五个工具的完整参考，含连接方式、协议细节与各工具的入参出参。',
+  section: '接口',
+  order: 60,
+  slug: 'mcp-tools',
+}
+
+# MCP 工具参考
+
+## 端点信息
+
+| 项目 | 值 |
+|------|---|
+| URL | `POST http://<console-host>:8089/mcp` |
+| 传输协议 | MCP Streamable HTTP |
+| 服务模式 | 无状态 JSON 响应 |
+| 鉴权 | `Authorization: Bearer <access-token>` |
+
+`GET /mcp` 返回 `405 Method Not Allowed`（`Allow: POST`）。
+
+**推荐请求头：**
+
+```
+Authorization: Bearer <access-token>
+Content-Type: application/json
+Accept: application/json, text/event-stream
+```
+
+> Token 缺失或无效时，HTTP 层直接返回 `401`，不进入 MCP 协议。
+
+---
+
+## 支持的 MCP 方法
+
+| 方法 | 说明 |
+|------|------|
+| `initialize` | 初始化 MCP 会话，协商协议版本与能力 |
+| `tools/list` | 列出所有可用工具及其参数 schema |
+| `tools/call` | 调用指定工具 |
+
+---
+
+## 工具一览
+
+| 工具名 | 用途 | 路由目标 |
+|--------|------|---------|
+| `echo` | 连通性测试 | 任意在线 echo worker |
+| `pythonExec` | Python 代码执行 | 任意支持 pythonExec 的 worker |
+| `terminalExec` | 持久化 terminal 会话执行 | 任意支持 terminalResource 的 worker |
+| `computerUse` | 真实设备命令执行 | 账号自有 `worker-sys` |
+| `readImage` | 从 worker 读取图片文件 | 取决于 `session_id`（见下文） |
+
+所有工具的参数 schema 均设置 `additionalProperties: false`。传入未定义字段会返回 JSON-RPC 错误 `-32602 invalid params`。
+
+---
+
+## 工具详情
+
+### `echo`
+
+连通性测试工具，验证 worker 可达性。
+
+**入参：**
+
+| 字段 | 类型 | 必填 | 约束 |
+|------|------|------|------|
+| `message` | string | 是 | 任意字符串 |
+| `timeout_ms` | integer | 否 | `1..60000`，默认 `5000` |
+
+**入参示例：**
+
+```json
+{ "message": "hello", "timeout_ms": 5000 }
+```
+
+**出参：**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `message` | string | 原样回显传入的消息 |
+
+**出参示例：**
+
+```json
+{ "message": "hello" }
+```
+
+---
+
+### `pythonExec`
+
+在 worker 上执行 Python 代码并返回执行结果。每次调用均在隔离环境中执行，不保留会话状态。
+
+**入参：**
+
+| 字段 | 类型 | 必填 | 约束 |
+|------|------|------|------|
+| `code` | string | 是 | 要执行的 Python 代码 |
+| `timeout_ms` | integer | 否 | `1..600000`，默认 `60000` |
+
+**入参示例：**
+
+```json
+{ "code": "print(1 + 1)", "timeout_ms": 60000 }
+```
+
+**出参：**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `output` | string | 标准输出（stdout） |
+| `stderr` | string | 标准错误（stderr） |
+| `exit_code` | integer | 进程退出码 |
+
+**出参示例：**
+
+```json
+{ "output": "2\n", "stderr": "", "exit_code": 0 }
+```
+
+> `exit_code` 非 0 时依然作为正常工具输出返回，不触发 MCP 协议层错误。
+
+---
+
+### `terminalExec`
+
+在持久化 terminal 会话中执行 shell 命令，支持跨调用的会话状态保持（工作目录、环境变量、进程等）。
+
+**入参：**
+
+| 字段 | 类型 | 必填 | 约束 |
+|------|------|------|------|
+| `command` | string | 是 | 要执行的 shell 命令 |
+| `session_id` | string | 否 | 已有会话 ID；省略时自动创建新会话 |
+| `create_if_missing` | boolean | 否 | `session_id` 不存在时是否自动创建，默认 `false` |
+| `lease_ttl_sec` | integer | 否 | 会话租约时长（秒） |
+| `timeout_ms` | integer | 否 | `1..600000`，默认 `60000` |
+
+**入参示例：**
+
+```json
+{
+  "command": "ls -la",
+  "session_id": "sess_xxx",
+  "create_if_missing": true,
+  "lease_ttl_sec": 300,
+  "timeout_ms": 30000
+}
+```
+
+**出参：**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `session_id` | string | 本次使用的会话 ID（新建或已有） |
+| `created` | boolean | 是否为本次新建的会话 |
+| `stdout` | string | 标准输出 |
+| `stderr` | string | 标准错误 |
+| `exit_code` | integer | 命令退出码 |
+| `stdout_truncated` | boolean | stdout 是否被截断 |
+| `stderr_truncated` | boolean | stderr 是否被截断 |
+| `lease_expires_unix_ms` | integer | 会话租约到期时间（Unix 毫秒时间戳） |
+
+**出参示例：**
+
+```json
+{
+  "session_id": "sess_xxx",
+  "created": true,
+  "stdout": "total 0\ndrwxr-xr-x ...\n",
+  "stderr": "",
+  "exit_code": 0,
+  "stdout_truncated": false,
+  "stderr_truncated": false,
+  "lease_expires_unix_ms": 1770000000000
+}
+```
+
+---
+
+### `computerUse`
+
+在调用账号自有的 `worker-sys`（真实宿主机）上直接执行 shell 命令。不维护会话状态，单账号并发固定为 1。
+
+**入参：**
+
+| 字段 | 类型 | 必填 | 约束 |
+|------|------|------|------|
+| `command` | string | 是 | 要执行的 shell 命令 |
+| `timeout_ms` | integer | 否 | `1..600000`，默认 `60000` |
+| `request_id` | string | 否 | 幂等键，账号维度去重 |
+
+**入参示例：**
+
+```json
+{
+  "command": "screencapture -x /tmp/screenshot.png",
+  "timeout_ms": 30000,
+  "request_id": "req-001"
+}
+```
+
+**出参：**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `stdout` | string | 标准输出 |
+| `stderr` | string | 标准错误 |
+| `exit_code` | integer | 命令退出码 |
+| `stdout_truncated` | boolean | stdout 是否被截断 |
+| `stderr_truncated` | boolean | stderr 是否被截断 |
+
+**出参示例：**
+
+```json
+{
+  "stdout": "",
+  "stderr": "",
+  "exit_code": 0,
+  "stdout_truncated": false,
+  "stderr_truncated": false
+}
+```
+
+> 与 `terminalExec` 的关键区别：无会话相关字段（`session_id`、`create_if_missing`、`created`、`lease_expires_unix_ms`）；命令通过 `/bin/sh -lc` 在宿主机直接执行，无容器隔离。仅路由到调用账号自有 `worker-sys`。
+
+---
+
+### `readImage`
+
+从 terminal 会话工作环境或 `worker-sys` 宿主机读取图片文件，以 MCP 图片内容项返回，适合多模态 AI 工作流。
+
+**入参：**
+
+| 字段 | 类型 | 必填 | 约束 |
+|------|------|------|------|
+| `session_id` | string | 是 | 目标会话 ID；传入字符串 `"computerUse"` 时路由到账号自有 `worker-sys` |
+| `file_path` | string | 是 | 目标文件的绝对路径 |
+| `timeout_ms` | integer | 否 | `1..600000`，默认 `60000` |
+
+**路由规则：**
+
+| `session_id` 值 | 路由目标 |
+|-----------------|---------|
+| `"computerUse"` | 账号自有 `worker-sys` 的 `readImage` capability |
+| 其他任意值 | `terminalResource` capability（对应 `terminalExec` 所在 worker） |
+
+**入参示例（从 terminal 会话读取）：**
+
+```json
+{ "session_id": "sess_xxx", "file_path": "/workspace/chart.png", "timeout_ms": 60000 }
+```
+
+**入参示例（从 worker-sys 宿主机读取）：**
+
+```json
+{ "session_id": "computerUse", "file_path": "/tmp/screenshot.png", "timeout_ms": 10000 }
+```
+
+**出参：**
+
+- 若文件 MIME 类型为 `image/*`：返回一个 MCP **图片内容项**（`type: "image"`），包含 base64 编码的图片数据。
+- 若文件 MIME 类型非图片：返回一个 MCP **文本内容项**（`type: "text"`），内容为：
+
+```
+unsupported mime type: <mime>; expected image/*
+```
+
+---
+
+## 错误行为
+
+| 场景 | 行为 |
+|------|------|
+| Token 缺失或无效 | HTTP `401`，不进入 MCP 协议 |
+| 未知方法 | JSON-RPC 错误 `-32601 method not found` |
+| 参数包含未定义字段 | JSON-RPC 错误 `-32602 invalid params` |
+| 参数校验失败 | JSON-RPC 错误 `-32602 invalid params` |
+| 工具执行异常（超时、no_worker 等） | 作为 MCP 工具错误内容返回（`isError: true`），不是协议层错误 |
+
+---
+
+## 另请参阅
+
+- [Console API 参考](/zh-CN/docs/console-api)
+- [安全与 FAQ](/zh-CN/docs/security-faq)

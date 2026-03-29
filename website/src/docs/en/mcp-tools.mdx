@@ -1,0 +1,287 @@
+export const meta = {
+  title: 'MCP Tools Reference',
+  description: 'Complete reference for the five tools exposed by the OnlyBoxes MCP endpoint, including connection details, protocol notes, and per-tool input/output parameters.',
+  section: 'Interfaces',
+  order: 60,
+  slug: 'mcp-tools',
+}
+
+# MCP Tools Reference
+
+## Endpoint
+
+| Item | Value |
+|------|-------|
+| URL | `POST http://<console-host>:8089/mcp` |
+| Transport | MCP Streamable HTTP |
+| Mode | Stateless JSON responses |
+| Auth | `Authorization: Bearer <access-token>` |
+
+`GET /mcp` returns `405 Method Not Allowed` (`Allow: POST`).
+
+**Recommended request headers:**
+
+```
+Authorization: Bearer <access-token>
+Content-Type: application/json
+Accept: application/json, text/event-stream
+```
+
+> Missing or invalid token: the HTTP layer returns `401` before entering the MCP protocol.
+
+---
+
+## Supported MCP Methods
+
+| Method | Description |
+|--------|-------------|
+| `initialize` | Initialize the MCP session and negotiate protocol version and capabilities |
+| `tools/list` | List all available tools and their parameter schemas |
+| `tools/call` | Invoke a named tool |
+
+---
+
+## Tools at a Glance
+
+| Tool | Purpose | Routes to |
+|------|---------|-----------|
+| `echo` | Connectivity test | Any online echo worker |
+| `pythonExec` | Python code execution | Any worker supporting pythonExec |
+| `terminalExec` | Persistent terminal session execution | Any worker supporting terminalResource |
+| `computerUse` | Real device command execution | Account's own `worker-sys` |
+| `readImage` | Read an image file from a worker | Depends on `session_id` (see below) |
+
+All tool parameter schemas set `additionalProperties: false`. Passing an undefined field returns JSON-RPC error `-32602 invalid params`.
+
+---
+
+## Tool Reference
+
+### `echo`
+
+Connectivity test. Verifies a worker is reachable.
+
+**Input:**
+
+| Field | Type | Required | Constraints |
+|-------|------|----------|-------------|
+| `message` | string | Yes | Any string |
+| `timeout_ms` | integer | No | `1..60000`, default `5000` |
+
+**Input example:**
+
+```json
+{ "message": "hello", "timeout_ms": 5000 }
+```
+
+**Output:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `message` | string | The input message echoed back unchanged |
+
+**Output example:**
+
+```json
+{ "message": "hello" }
+```
+
+---
+
+### `pythonExec`
+
+Executes Python code on a worker and returns the result. Each call runs in an isolated environment with no persistent state.
+
+**Input:**
+
+| Field | Type | Required | Constraints |
+|-------|------|----------|-------------|
+| `code` | string | Yes | Python code to execute |
+| `timeout_ms` | integer | No | `1..600000`, default `60000` |
+
+**Input example:**
+
+```json
+{ "code": "print(1 + 1)", "timeout_ms": 60000 }
+```
+
+**Output:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `output` | string | Standard output (stdout) |
+| `stderr` | string | Standard error (stderr) |
+| `exit_code` | integer | Process exit code |
+
+**Output example:**
+
+```json
+{ "output": "2\n", "stderr": "", "exit_code": 0 }
+```
+
+> A non-zero `exit_code` is returned as normal tool output, not a protocol-level error.
+
+---
+
+### `terminalExec`
+
+Executes a shell command inside a persistent terminal session, with state preserved across calls (working directory, environment variables, processes).
+
+**Input:**
+
+| Field | Type | Required | Constraints |
+|-------|------|----------|-------------|
+| `command` | string | Yes | Shell command to execute |
+| `session_id` | string | No | Existing session ID; omit to auto-create a new session |
+| `create_if_missing` | boolean | No | Auto-create if `session_id` not found, default `false` |
+| `lease_ttl_sec` | integer | No | Session lease duration in seconds |
+| `timeout_ms` | integer | No | `1..600000`, default `60000` |
+
+**Input example:**
+
+```json
+{
+  "command": "ls -la",
+  "session_id": "sess_xxx",
+  "create_if_missing": true,
+  "lease_ttl_sec": 300,
+  "timeout_ms": 30000
+}
+```
+
+**Output:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `session_id` | string | Session ID used (new or existing) |
+| `created` | boolean | Whether the session was newly created |
+| `stdout` | string | Standard output |
+| `stderr` | string | Standard error |
+| `exit_code` | integer | Command exit code |
+| `stdout_truncated` | boolean | Whether stdout was truncated |
+| `stderr_truncated` | boolean | Whether stderr was truncated |
+| `lease_expires_unix_ms` | integer | Session lease expiry (Unix millisecond timestamp) |
+
+**Output example:**
+
+```json
+{
+  "session_id": "sess_xxx",
+  "created": true,
+  "stdout": "total 0\ndrwxr-xr-x ...\n",
+  "stderr": "",
+  "exit_code": 0,
+  "stdout_truncated": false,
+  "stderr_truncated": false,
+  "lease_expires_unix_ms": 1770000000000
+}
+```
+
+---
+
+### `computerUse`
+
+Executes a shell command directly on the calling account's own `worker-sys` (real host machine). No session state is maintained; concurrency is fixed at 1 per account.
+
+**Input:**
+
+| Field | Type | Required | Constraints |
+|-------|------|----------|-------------|
+| `command` | string | Yes | Shell command to execute |
+| `timeout_ms` | integer | No | `1..600000`, default `60000` |
+| `request_id` | string | No | Idempotency key, scoped per account |
+
+**Input example:**
+
+```json
+{
+  "command": "screencapture -x /tmp/screenshot.png",
+  "timeout_ms": 30000,
+  "request_id": "req-001"
+}
+```
+
+**Output:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `stdout` | string | Standard output |
+| `stderr` | string | Standard error |
+| `exit_code` | integer | Command exit code |
+| `stdout_truncated` | boolean | Whether stdout was truncated |
+| `stderr_truncated` | boolean | Whether stderr was truncated |
+
+**Output example:**
+
+```json
+{
+  "stdout": "",
+  "stderr": "",
+  "exit_code": 0,
+  "stdout_truncated": false,
+  "stderr_truncated": false
+}
+```
+
+> Key difference from `terminalExec`: no session-related fields (`session_id`, `create_if_missing`, `created`, `lease_expires_unix_ms`). Commands run via `/bin/sh -lc` directly on the host with no container isolation. Routes exclusively to the calling account's own `worker-sys`.
+
+---
+
+### `readImage`
+
+Reads an image file from a terminal session environment or a `worker-sys` host, returning it as an MCP image content item. Suitable for multimodal AI workflows.
+
+**Input:**
+
+| Field | Type | Required | Constraints |
+|-------|------|----------|-------------|
+| `session_id` | string | Yes | Target session ID; pass the string `"computerUse"` to route to the account's own `worker-sys` |
+| `file_path` | string | Yes | Absolute path to the target file |
+| `timeout_ms` | integer | No | `1..600000`, default `60000` |
+
+**Routing rules:**
+
+| `session_id` value | Routes to |
+|--------------------|-----------|
+| `"computerUse"` | Account's own `worker-sys` `readImage` capability |
+| Any other value | `terminalResource` capability (same worker as `terminalExec`) |
+
+**Input example (from a terminal session):**
+
+```json
+{ "session_id": "sess_xxx", "file_path": "/workspace/chart.png", "timeout_ms": 60000 }
+```
+
+**Input example (from worker-sys host):**
+
+```json
+{ "session_id": "computerUse", "file_path": "/tmp/screenshot.png", "timeout_ms": 10000 }
+```
+
+**Output:**
+
+- If the file's MIME type is `image/*`: returns a MCP **image content item** (`type: "image"`) containing base64-encoded image data.
+- If the file's MIME type is not an image: returns a MCP **text content item** (`type: "text"`) with the message:
+
+```
+unsupported mime type: <mime>; expected image/*
+```
+
+---
+
+## Error Behavior
+
+| Scenario | Behavior |
+|----------|----------|
+| Token missing or invalid | HTTP `401`; never enters the MCP protocol |
+| Unknown method | JSON-RPC error `-32601 method not found` |
+| Input contains undefined fields | JSON-RPC error `-32602 invalid params` |
+| Input validation failure | JSON-RPC error `-32602 invalid params` |
+| Tool execution error (timeout, no_worker, etc.) | Returned as MCP tool error content (`isError: true`); not a protocol-level error |
+
+---
+
+## See Also
+
+- [Console API Reference](/en/docs/console-api)
+- [Security & FAQ](/en/docs/security-faq)

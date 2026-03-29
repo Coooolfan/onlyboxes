@@ -1,50 +1,869 @@
 export const meta = {
-  title: 'API 与 MCP 概览',
-  description: '控制节点暴露的外部接口总览。',
+  title: 'Console API 参考',
+  description: 'Console 节点所有 REST API 端点的完整参考，含鉴权模型、入参、出参与错误码。',
   section: '接口',
   order: 50,
-  slug: 'api-mcp-overview',
+  slug: 'console-api',
 }
 
-# API 与 MCP 概览
+# Console API 参考
 
-OnlyBoxes 会从控制节点暴露 Dashboard API、worker 管理 API、执行 API，以及 MCP endpoint。
+Console 节点的 HTTP 服务监听在 `:8089`，所有 REST 端点以 `/api/v1` 为前缀。
 
-## 主要接口面
+**Base URL：** `http://<console-host>:8089`
 
-- Dashboard 认证：`/api/v1/console/*`
-- Worker 管理：`/api/v1/workers*`
-- 命令执行：`/api/v1/commands/echo`、`/api/v1/commands/terminal`、`/api/v1/commands/computer-use`
-- 任务执行：`/api/v1/tasks*`
-- MCP endpoint：`POST /mcp`
+**REST 前缀：** `/api/v1`
 
-## MCP 提供什么
+**内容类型：** `application/json`
 
-当前由 worker 支持的工具包括：
+**时间格式：** RFC3339
 
-- `echo`
-- `pythonExec`
-- `terminalExec`
-- `computerUse`
-- `readImage`
+**ID 格式：** 不透明字符串（`acc_*`、`tok_*`、worker UUID、task ID）
 
-同样的能力也可以通过 HTTP API 调用。
+错误响应统一格式：
 
-## 鉴权方式
+```json
+{ "error": "message" }
+```
 
-- Dashboard 使用基于会话的认证。
-- API 与 MCP 使用 access token。
-- 如果还没有配置 token，`/mcp` 与执行 API 按设计会返回 `401`。
+---
 
-## 更深入的参考
+## 鉴权模型
 
-参考: 
+Console 提供两套鉴权路径，覆盖不同使用场景：
 
-- [API.md](https://github.com/Coooolfan/onlyboxes/blob/main/API.md)
-- [API.zh-CN.md](https://github.com/Coooolfan/onlyboxes/blob/main/API.zh-CN.md)
-- [api/README/proto.md](https://github.com/Coooolfan/onlyboxes/blob/main/api/README/proto.md)
+| 项目 | 仪表盘 API（Cookie 会话） | 开放 API（Bearer Token） |
+|------|--------------------------|--------------------------|
+| 凭据类型 | Cookie `onlyboxes_console_session` | `Authorization: Bearer <token>` |
+| 来源 | `POST /api/v1/console/login` 创建 | 通过仪表盘在 API Token 管理页创建 |
+| 有效期 | 12 小时（内存态，console 重启后全部失效） | 持久，直到手动删除 |
+| 适用端点 | `/api/v1/**` | `/api/v1/**` 但除 `/api/v1/console/password` 意外  |
+| 主要用途 | 账号、token、worker 管理。适用于 Web UI | 程序化调用 |
 
-## 建议下一步阅读
+> 如果系统中没有任何 token，所有 Bearer 鉴权接口将返回 `401`。
 
-- [快速开始](/zh-CN/docs/quick-start)
+---
+
+## 仪表盘 API / 开放 API
+
+以下端点需要有效的控制台 Cookie 会话（`onlyboxes_console_session`）。
+
+### 控制台认证
+
+#### 登录
+
+`POST /api/v1/console/login`
+
+**请求体：**
+
+```json
+{
+  "username": "admin",
+  "password": "secret"
+}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `username` | string | 是 | 账号名 |
+| `password` | string | 是 | 密码 |
+
+**响应 `200`：**
+
+```json
+{
+  "authenticated": true,
+  "account": {
+    "account_id": "acc_xxx",
+    "username": "admin",
+    "is_admin": true
+  },
+  "registration_enabled": false,
+  "console_version": "v0.0.0",
+  "console_repo_url": "https://..."
+}
+```
+
+同时在响应中设置 Cookie `onlyboxes_console_session`。
+
+**错误码：**
+
+| 状态码 | 说明 |
+|--------|------|
+| `400` | JSON 结构非法 |
+| `401` | 用户名或密码错误 |
+| `500` | 会话创建失败 |
+
+---
+
+#### 查询会话
+
+`GET /api/v1/console/session`
+
+需要有效 Cookie 会话。返回结构与登录响应一致。
+
+**错误码：**
+
+| 状态码 | 说明 |
+|--------|------|
+| `401` | 未登录或会话已过期 |
+
+---
+
+#### 登出
+
+`POST /api/v1/console/logout`
+
+清理响应 Cookie 并销毁内存会话（若存在）。
+
+**响应：** `204 No Content`
+
+---
+
+#### 注册账号（仅管理员）
+
+`POST /api/v1/console/register`
+
+注册一个新的普通账号。需要管理员会话，且系统注册开关（`CONSOLE_ENABLE_REGISTRATION`）须为 `true`。
+
+**请求体：**
+
+```json
+{
+  "username": "dev-user",
+  "password": "strong-password"
+}
+```
+
+| 字段 | 类型 | 必填 | 约束 |
+|------|------|------|------|
+| `username` | string | 是 | trim 后非空，长度 ≤ 64，系统内大小写不敏感唯一 |
+| `password` | string | 是 | 非空 |
+
+**响应 `201`：**
+
+```json
+{
+  "account": {
+    "account_id": "acc_xxx",
+    "username": "dev-user",
+    "is_admin": false
+  },
+  "created_at": "2026-02-21T00:00:00Z",
+  "updated_at": "2026-02-21T00:00:00Z"
+}
+```
+
+**错误码：**
+
+| 状态码 | 说明 |
+|--------|------|
+| `400` | 用户名为空 / 长度超 64 / 密码为空 |
+| `403` | 注册开关关闭（`CONSOLE_ENABLE_REGISTRATION=false`）或当前账号非管理员 |
+| `409` | 用户名冲突 |
+| `500` | 数据库或内部错误 |
+
+---
+
+#### 修改当前账号密码
+
+`POST /api/v1/console/password`
+
+修改当前登录账号的密码。密码更新后会轮换该账号的所有活动会话。
+
+**请求体：**
+
+```json
+{
+  "current_password": "old-password",
+  "new_password": "new-password"
+}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `current_password` | string | 是 | 当前密码（用于身份验证） |
+| `new_password` | string | 是 | 新密码 |
+
+**响应：**
+
+| 状态码 | 说明 |
+|--------|------|
+| `204` | 修改成功 |
+| `400` | JSON 非法 / 字段缺失 |
+| `401` | 当前密码错误 |
+| `500` | 内部错误 |
+
+---
+
+#### 查询账号列表（仅管理员）
+
+`GET /api/v1/console/accounts`
+
+**查询参数：**
+
+| 参数 | 类型 | 默认值 | 约束 |
+|------|------|--------|------|
+| `page` | int | `1` | 正整数 |
+| `page_size` | int | `20` | 正整数，最大 `100` |
+
+**响应 `200`：**
+
+```json
+{
+  "items": [
+    {
+      "account_id": "acc_xxx",
+      "username": "admin",
+      "is_admin": true,
+      "created_at": "2026-02-21T00:00:00Z",
+      "updated_at": "2026-02-21T00:00:00Z"
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "page_size": 20
+}
+```
+
+**错误码：**
+
+| 状态码 | 说明 |
+|--------|------|
+| `400` | 查询参数非法 |
+| `403` | 当前账号非管理员 |
+| `500` | 数据库或内部错误 |
+
+---
+
+#### 删除账号（仅管理员）
+
+`DELETE /api/v1/console/accounts/:account_id`
+
+**路径参数：**
+
+| 参数 | 说明 |
+|------|------|
+| `account_id` | 账号 ID（`acc_*`） |
+
+**响应：**
+
+| 状态码 | 说明 |
+|--------|------|
+| `204` | 删除成功 |
+| `403` | 禁止删除当前登录账号 / 禁止删除管理员账号 |
+| `404` | 账号不存在 |
+| `500` | 内部错误 |
+
+---
+
+### Token 管理
+
+Token 按账号隔离，每个账号只能管理自己的 token。
+
+#### 查询 Token 列表
+
+`GET /api/v1/console/tokens`
+
+**响应 `200`：**
+
+```json
+{
+  "items": [
+    {
+      "id": "tok_xxx",
+      "name": "default-token",
+      "token_masked": "obx_******abcd",
+      "created_at": "2026-02-21T00:00:00Z",
+      "updated_at": "2026-02-21T00:00:00Z"
+    }
+  ],
+  "total": 1
+}
+```
+
+> `token_masked` 仅显示后四位，token 明文只在创建时返回一次。
+
+---
+
+#### 创建 Token
+
+`POST /api/v1/console/tokens`
+
+**请求体：**
+
+```json
+{
+  "name": "ci-prod",
+  "token": "optional-manual-token"
+}
+```
+
+| 字段 | 类型 | 必填 | 约束 |
+|------|------|------|------|
+| `name` | string | 是 | trim 后非空，长度 ≤ 64，同账号内大小写不敏感唯一 |
+| `token` | string | 否 | 省略时自动生成（`obx_<hex>`）；手动提供时不含空白字符，长度 ≤ 256 |
+
+**响应 `201`：**
+
+```json
+{
+  "id": "tok_xxx",
+  "name": "ci-prod",
+  "token": "obx_plaintext_or_manual",
+  "token_masked": "obx_******abcd",
+  "generated": true,
+  "created_at": "2026-02-21T00:00:00Z",
+  "updated_at": "2026-02-21T00:00:00Z"
+}
+```
+
+> `token` 字段（明文）**仅在本次响应中返回，之后无法再次获取**，请妥善保存。
+
+**错误码：**
+
+| 状态码 | 说明 |
+|--------|------|
+| `400` | 参数校验失败 |
+| `409` | token 名称冲突或 token 值冲突 |
+| `500` | 内部错误 |
+
+---
+
+#### 删除 Token
+
+`DELETE /api/v1/console/tokens/:token_id`
+
+**路径参数：**
+
+| 参数 | 说明 |
+|------|------|
+| `token_id` | Token ID（`tok_*`） |
+
+**响应：**
+
+| 状态码 | 说明 |
+|--------|------|
+| `204` | 删除成功 |
+| `404` | token 不存在（含跨账号访问） |
+
+---
+
+#### 获取 Token 明文
+
+`GET /api/v1/console/tokens/:token_id/value`
+
+此端点永远返回 `410 Gone`，token 明文仅在创建时返回一次。
+
+```json
+{
+  "error": "token value is only returned at creation time; delete and recreate the token to obtain a new value"
+}
+```
+
+---
+
+### Worker 管理
+
+#### 权限矩阵
+
+| 操作 | 管理员 | 普通用户 |
+|------|--------|----------|
+| 查询列表 | 所有 worker | 仅本人 `worker-sys` |
+| 查询统计 | 所有 worker | 仅本人 `worker-sys` |
+| 查询并发占用 | 所有 worker | 仅本人 `worker-sys` |
+| 创建 `normal` | 是 | 否 |
+| 创建 `worker-sys` | 是（每账号最多 1 个） | 是（每账号最多 1 个） |
+| 删除任意 worker | 是 | 否 |
+| 删除本人 `worker-sys` | 是 | 是 |
+
+Worker 类型：`normal`（对应 `worker-docker`/`worker-boxlite`）、`worker-sys`（对应 `worker-sys`）。
+
+---
+
+#### 查询 Worker 列表
+
+`GET /api/v1/workers`
+
+**查询参数：**
+
+| 参数 | 类型 | 默认值 | 可选值 |
+|------|------|--------|--------|
+| `page` | int | `1` | 正整数 |
+| `page_size` | int | `20` | 正整数，最大 `100` |
+| `status` | string | `all` | `all` / `online` / `offline` |
+
+**响应 `200`：**
+
+```json
+{
+  "items": [
+    {
+      "node_id": "worker-1",
+      "node_name": "node-a",
+      "executor_kind": "docker",
+      "capabilities": [
+        { "name": "echo", "max_inflight": 4 }
+      ],
+      "labels": {
+        "region": "us",
+        "obx.owner_id": "acc_xxx",
+        "obx.worker_type": "normal"
+      },
+      "version": "v0.1.0",
+      "status": "online",
+      "registered_at": "2026-02-21T00:00:00Z",
+      "last_seen_at": "2026-02-21T00:00:00Z"
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "page_size": 20
+}
+```
+
+**错误码：**
+
+| 状态码 | 说明 |
+|--------|------|
+| `400` | 查询参数非法 |
+
+---
+
+#### Worker 统计
+
+`GET /api/v1/workers/stats`
+
+**查询参数：**
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `stale_after_sec` | int | `30` | 判定为过时的秒数阈值（上次心跳超过此时长即为 stale） |
+
+**响应 `200`：**
+
+```json
+{
+  "total": 5,
+  "online": 4,
+  "offline": 1,
+  "stale": 1,
+  "stale_after_sec": 30,
+  "generated_at": "2026-02-21T00:00:00Z"
+}
+```
+
+> 普通用户的统计数据仅包含本人 `worker-sys`。
+
+---
+
+#### Worker 并发占用
+
+`GET /api/v1/workers/inflight`
+
+**响应 `200`：**
+
+```json
+{
+  "workers": [
+    {
+      "node_id": "worker-1",
+      "capabilities": [
+        { "name": "pythonExec", "inflight": 1, "max_inflight": 4 }
+      ]
+    }
+  ],
+  "generated_at": "2026-02-21T00:00:00Z"
+}
+```
+
+> 普通用户的结果仅包含本人 `worker-sys`。
+
+---
+
+#### 创建 Worker 凭据
+
+`POST /api/v1/workers`
+
+**请求体：**
+
+```json
+{
+  "type": "normal"
+}
+```
+
+| 字段 | 类型 | 必填 | 可选值 |
+|------|------|------|--------|
+| `type` | string | 是 | `normal` / `worker-sys` |
+
+**响应 `201`：**
+
+```json
+{
+  "node_id": "2f51f8f9-77f2-4c1a-a4f5-2036fc9fcb9e",
+  "type": "normal",
+  "worker_secret": "a3f8c2..."
+}
+```
+
+> `worker_secret` **仅在本次响应中返回一次**，后续无法再获取。
+
+**错误码：**
+
+| 状态码 | 说明 |
+|--------|------|
+| `400` | 请求体非法 / `type` 值不合法 |
+| `403` | 普通用户尝试创建 `normal` 类型 |
+| `409` | 当前账号已存在 `worker-sys` |
+| `503` | provisioning 服务不可用 |
+| `500` | 创建失败 |
+
+---
+
+#### 删除 Worker
+
+`DELETE /api/v1/workers/:node_id`
+
+**路径参数：**
+
+| 参数 | 说明 |
+|------|------|
+| `node_id` | Worker 节点 ID（UUID） |
+
+**响应：**
+
+| 状态码 | 说明 |
+|--------|------|
+| `204` | 删除成功 |
+| `400` | 缺少 `node_id` |
+| `404` | worker 不存在（普通用户越权访问也返回 `404`） |
+| `503` | provisioning 服务不可用 |
+
+---
+
+#### 获取 Worker 启动命令
+
+`GET /api/v1/workers/:node_id/startup-command`
+
+此端点永远返回 `410 Gone`，启动命令（含 secret）只在创建 worker 时返回一次。
+
+```json
+{
+  "error": "worker secret is returned only when creating the worker; delete and recreate to get a new startup command"
+}
+```
+
+---
+
+## 命令执行 API
+
+以下端点使用 Bearer Token 鉴权（`Authorization: Bearer <token>`），供外部程序、AI Agent 或 MCP 客户端调用。
+
+### 命令执行
+
+#### Echo
+
+`POST /api/v1/commands/echo`
+
+用于测试连通性，验证 echo worker 可用。
+
+**请求体：**
+
+```json
+{
+  "message": "hello",
+  "timeout_ms": 5000
+}
+```
+
+| 字段 | 类型 | 必填 | 约束 |
+|------|------|------|------|
+| `message` | string | 是 | trim 后非空 |
+| `timeout_ms` | int | 否 | `1..60000`，默认 `5000` |
+
+**响应 `200`：**
+
+```json
+{ "message": "hello" }
+```
+
+**错误码：**
+
+| 状态码 | 说明 |
+|--------|------|
+| `400` | 请求体错误 / message 缺失 / timeout 超范围 |
+| `429` | 无可用并发容量 |
+| `503` | 无在线 echo worker |
+| `504` | 执行超时 |
+| `502` | 执行或内部异常 |
+
+---
+
+#### Terminal 执行
+
+`POST /api/v1/commands/terminal`
+
+在持久化 terminal 会话中执行 shell 命令，支持跨请求的会话状态复用。
+
+**请求体：**
+
+```json
+{
+  "command": "pwd",
+  "session_id": "optional-session",
+  "create_if_missing": false,
+  "lease_ttl_sec": 60,
+  "timeout_ms": 60000,
+  "request_id": "optional-idempotency-key"
+}
+```
+
+| 字段 | 类型 | 必填 | 约束 |
+|------|------|------|------|
+| `command` | string | 是 | trim 后非空 |
+| `session_id` | string | 否 | 已有会话 ID；省略时自动创建新会话 |
+| `create_if_missing` | bool | 否 | `session_id` 不存在时是否自动创建，默认 `false` |
+| `lease_ttl_sec` | int | 否 | 会话租约时长（秒） |
+| `timeout_ms` | int | 否 | `1..600000`，默认 `60000` |
+| `request_id` | string | 否 | 幂等键，按账号隔离去重 |
+
+**响应 `200`：**
+
+```json
+{
+  "session_id": "sess_xxx",
+  "created": true,
+  "stdout": "...",
+  "stderr": "...",
+  "exit_code": 0,
+  "stdout_truncated": false,
+  "stderr_truncated": false,
+  "lease_expires_unix_ms": 1770000000000
+}
+```
+
+| 字段 | 说明 |
+|------|------|
+| `session_id` | 本次使用的会话 ID（新建或已有） |
+| `created` | 是否为本次新建的会话 |
+| `stdout` / `stderr` | 命令输出 |
+| `exit_code` | 命令退出码 |
+| `stdout_truncated` / `stderr_truncated` | 输出是否被截断 |
+| `lease_expires_unix_ms` | 会话租约到期时间（Unix 毫秒时间戳） |
+
+**错误码：**
+
+| 状态码 | 错误码 | 说明 |
+|--------|--------|------|
+| `400` | `invalid_payload` | 请求参数非法 |
+| `404` | `session_not_found` | session_id 不存在且 `create_if_missing=false` |
+| `409` | `session_busy` | 会话被另一请求占用，或任务已取消 |
+| `429` | — | 无可用并发容量 |
+| `503` | — | 无可用 worker |
+| `504` | — | 执行超时 |
+| `502` | — | 其他执行失败 |
+
+---
+
+#### Computer Use 执行
+
+`POST /api/v1/commands/computer-use`
+
+在调用账号自有的 `worker-sys` 上执行 shell 命令，用于直接操控真实设备。单账号并发固定为 1，无会话状态。
+
+**请求体：**
+
+```json
+{
+  "command": "pwd",
+  "timeout_ms": 60000,
+  "request_id": "optional-idempotency-key"
+}
+```
+
+| 字段 | 类型 | 必填 | 约束 |
+|------|------|------|------|
+| `command` | string | 是 | trim 后非空 |
+| `timeout_ms` | int | 否 | `1..600000`，默认 `60000` |
+| `request_id` | string | 否 | 幂等键，账号维度去重 |
+
+**响应 `200`：**
+
+```json
+{
+  "stdout": "...",
+  "stderr": "...",
+  "exit_code": 0,
+  "stdout_truncated": false,
+  "stderr_truncated": false
+}
+```
+
+> 与 Terminal 执行不同，Computer Use 不维护会话（无 `session_id`），每次命令均在账号绑定的 `worker-sys` 宿主机上通过 `/bin/sh -lc` 执行，无容器隔离。
+
+**错误码：**
+
+| 状态码 | 错误码 | 说明 |
+|--------|--------|------|
+| `400` | `invalid_payload` | 请求参数非法 |
+| `409` | `session_busy` | worker 正忙，或任务已取消 |
+| `429` | `no_capacity` | 无可用并发容量 |
+| `503` | `no_worker` | 当前账号无在线 `worker-sys` |
+| `504` | — | 执行超时 |
+| `502` | — | 其他执行失败 |
+
+---
+
+### 任务 API
+
+Task 适合需要异步执行或结果轮询的场景。所有权按 token 对应账号严格隔离。
+
+#### 提交任务
+
+`POST /api/v1/tasks`
+
+**请求体：**
+
+```json
+{
+  "capability": "pythonExec",
+  "input": { "code": "print(1)" },
+  "mode": "auto",
+  "wait_ms": 1500,
+  "timeout_ms": 60000,
+  "request_id": "optional-idempotency-key"
+}
+```
+
+| 字段 | 类型 | 必填 | 约束 |
+|------|------|------|------|
+| `capability` | string | 是 | 非空，对应 worker 声明的能力名（大小写不敏感） |
+| `input` | object | 否 | 合法 JSON 对象，省略时默认 `{}` |
+| `mode` | string | 否 | `sync` / `async` / `auto`，默认 `auto` |
+| `wait_ms` | int | 否 | `1..60000`，默认 `1500`；`auto` 模式下等待完成的最长毫秒数 |
+| `timeout_ms` | int | 否 | `1..600000`，默认 `60000`；任务总超时 |
+| `request_id` | string | 否 | 幂等键，账号维度去重 |
+
+**`mode` 字段说明：**
+
+| mode | 行为 |
+|------|------|
+| `sync` | 同步等待，任务完成后才返回 |
+| `async` | 立即返回 `202`，不等待 |
+| `auto` | 等待最多 `wait_ms` 毫秒，未完成则返回 `202` |
+
+**响应 — 任务未完成 `202`：**
+
+```json
+{
+  "task_id": "task_xxx",
+  "request_id": "req-1",
+  "command_id": "cmd_xxx",
+  "capability": "pythonexec",
+  "status": "running",
+  "created_at": "2026-02-21T00:00:00Z",
+  "updated_at": "2026-02-21T00:00:01Z",
+  "deadline_at": "2026-02-21T00:01:00Z",
+  "status_url": "/api/v1/tasks/task_xxx"
+}
+```
+
+**响应 — 任务成功完成 `200`：**
+
+```json
+{
+  "task_id": "task_xxx",
+  "capability": "pythonexec",
+  "status": "succeeded",
+  "result": {
+    "output": "1\n",
+    "stderr": "",
+    "exit_code": 0
+  },
+  "created_at": "2026-02-21T00:00:00Z",
+  "updated_at": "2026-02-21T00:00:01Z",
+  "deadline_at": "2026-02-21T00:01:00Z",
+  "completed_at": "2026-02-21T00:00:01Z"
+}
+```
+
+**任务错误字段（终态失败时携带）：**
+
+```json
+{
+  "error": {
+    "code": "execution_failed",
+    "message": "..."
+  }
+}
+```
+
+**终态响应码：**
+
+| 状态码 | 说明 |
+|--------|------|
+| `200` | 任务成功完成 |
+| `409` | 任务已被取消 |
+| `504` | 任务执行超时 |
+| `429` | 失败，`error.code=no_capacity` |
+| `503` | 失败，`error.code=no_worker` |
+| `502` | 失败（其他 error code） |
+
+**提交阶段错误码：**
+
+| 状态码 | 说明 |
+|--------|------|
+| `400` | 参数非法 / 模式非法 / 请求体非法 |
+| `409` | `request_id` 已在处理中 |
+| `429` | 无可用并发容量 |
+| `503` | 无匹配能力的 worker |
+| `504` | 请求超时 |
+| `502` | 提交失败 |
+
+---
+
+#### 查询任务
+
+`GET /api/v1/tasks/:task_id`
+
+**路径参数：**
+
+| 参数 | 说明 |
+|------|------|
+| `task_id` | 任务 ID |
+
+**响应：**
+
+| 状态码 | 说明 |
+|--------|------|
+| `200` | 返回任务快照（结构见「提交任务」响应） |
+| `404` | 任务不存在（含跨账号访问） |
+
+---
+
+#### 取消任务
+
+`POST /api/v1/tasks/:task_id/cancel`
+
+**路径参数：**
+
+| 参数 | 说明 |
+|------|------|
+| `task_id` | 任务 ID |
+
+**响应：**
+
+| 状态码 | 说明 |
+|--------|------|
+| `200` | 取消成功（或已受理 best-effort 取消） |
+| `404` | 任务不存在（含跨账号访问） |
+| `409` | 任务已终态，返回当前任务快照 |
+| `500` | 取消失败 |
+
+---
+
+## 另请参阅
+
+- [MCP 工具参考](/zh-CN/docs/mcp-tools)
 - [安全与 FAQ](/zh-CN/docs/security-faq)

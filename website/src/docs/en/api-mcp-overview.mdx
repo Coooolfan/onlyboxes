@@ -1,50 +1,869 @@
 export const meta = {
-  title: 'API & MCP Overview',
-  description: 'External interfaces exposed by the control node.',
+  title: 'Console API Reference',
+  description: 'Complete reference for all REST API endpoints on the Console node, including auth model, request parameters, response fields, and error codes.',
   section: 'Interfaces',
   order: 50,
-  slug: 'api-mcp-overview',
+  slug: 'console-api',
 }
 
-# API & MCP Overview
+# Console API Reference
 
-OnlyBoxes exposes dashboard APIs, worker management APIs, execution APIs, and an MCP endpoint from the control node.
+The Console node's HTTP service listens on `:8089`. All REST endpoints use the `/api/v1` prefix.
 
-## Main surfaces
+**Base URL:** `http://<console-host>:8089`
 
-- Dashboard auth: `/api/v1/console/*`
-- Worker management: `/api/v1/workers*`
-- Command execution: `/api/v1/commands/echo`, `/api/v1/commands/terminal`, `/api/v1/commands/computer-use`
-- Task execution: `/api/v1/tasks*`
-- MCP endpoint: `POST /mcp`
+**REST prefix:** `/api/v1`
 
-## What MCP exposes
+**Content type:** `application/json`
 
-Current worker-backed tools include:
+**Timestamps:** RFC3339
 
-- `echo`
-- `pythonExec`
-- `terminalExec`
-- `computerUse`
-- `readImage`
+**ID format:** Opaque strings (`acc_*`, `tok_*`, worker UUID, task ID)
 
-The same capabilities are also exposed through HTTP APIs.
+Unified error response format:
 
-## Auth model
+```json
+{ "error": "message" }
+```
 
-- Dashboard access uses session-based auth.
-- API and MCP access use access tokens.
-- If no tokens are configured, `/mcp` and execution APIs return `401` by design.
+---
 
-## Deeper references
+## Auth Model
 
-References:
+The Console exposes two auth paths for different use cases:
 
-- [API.md](https://github.com/Coooolfan/onlyboxes/blob/main/API.md)
-- [API.zh-CN.md](https://github.com/Coooolfan/onlyboxes/blob/main/API.zh-CN.md)
-- [api/README/proto.md](https://github.com/Coooolfan/onlyboxes/blob/main/api/README/proto.md)
+| Item | Dashboard API (Cookie session) | Open API (Bearer token) |
+|------|-------------------------------|-------------------------|
+| Credential type | Cookie `onlyboxes_console_session` | `Authorization: Bearer <token>` |
+| Origin | Created by `POST /api/v1/console/login` | Created via the Dashboard API Token management page |
+| Lifetime | 12 hours (in-memory; invalidated on console restart) | Persistent until manually deleted |
+| Applicable endpoints | `/api/v1/**` | `/api/v1/**` except `/api/v1/console/password` |
+| Primary use | Account, token, worker management. For Web UI | Programmatic access |
 
-## Suggested next read
+> If no tokens exist in the system, all Bearer-authenticated endpoints return `401` by design.
 
-- [Quick Start](/en/docs/quick-start)
+---
+
+## Dashboard API / Open API
+
+The following endpoints require a valid console Cookie session (`onlyboxes_console_session`).
+
+### Console Auth
+
+#### Login
+
+`POST /api/v1/console/login`
+
+**Request body:**
+
+```json
+{
+  "username": "admin",
+  "password": "secret"
+}
+```
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `username` | string | Yes | Account username |
+| `password` | string | Yes | Account password |
+
+**Response `200`:**
+
+```json
+{
+  "authenticated": true,
+  "account": {
+    "account_id": "acc_xxx",
+    "username": "admin",
+    "is_admin": true
+  },
+  "registration_enabled": false,
+  "console_version": "v0.0.0",
+  "console_repo_url": "https://..."
+}
+```
+
+Also sets the `onlyboxes_console_session` cookie in the response.
+
+**Error codes:**
+
+| Status | Description |
+|--------|-------------|
+| `400` | Malformed JSON |
+| `401` | Incorrect username or password |
+| `500` | Session creation failure |
+
+---
+
+#### Get Session
+
+`GET /api/v1/console/session`
+
+Requires a valid Cookie session. Response structure is identical to the login response.
+
+**Error codes:**
+
+| Status | Description |
+|--------|-------------|
+| `401` | Not logged in or session expired |
+
+---
+
+#### Logout
+
+`POST /api/v1/console/logout`
+
+Clears the response cookie and destroys the in-memory session (if present).
+
+**Response:** `204 No Content`
+
+---
+
+#### Register Account (Admin only)
+
+`POST /api/v1/console/register`
+
+Creates a new non-admin account. Requires an admin session and the registration toggle (`CONSOLE_ENABLE_REGISTRATION`) must be `true`.
+
+**Request body:**
+
+```json
+{
+  "username": "dev-user",
+  "password": "strong-password"
+}
+```
+
+| Field | Type | Required | Constraints |
+|-------|------|----------|-------------|
+| `username` | string | Yes | Trimmed non-empty, length ≤ 64, case-insensitively unique system-wide |
+| `password` | string | Yes | Non-empty |
+
+**Response `201`:**
+
+```json
+{
+  "account": {
+    "account_id": "acc_xxx",
+    "username": "dev-user",
+    "is_admin": false
+  },
+  "created_at": "2026-02-21T00:00:00Z",
+  "updated_at": "2026-02-21T00:00:00Z"
+}
+```
+
+**Error codes:**
+
+| Status | Description |
+|--------|-------------|
+| `400` | Empty username / length > 64 / empty password |
+| `403` | Registration disabled (`CONSOLE_ENABLE_REGISTRATION=false`) or caller is not admin |
+| `409` | Username conflict |
+| `500` | Database or internal error |
+
+---
+
+#### Change Password
+
+`POST /api/v1/console/password`
+
+Changes the current account's password. All active sessions for the account are rotated after a successful change.
+
+**Request body:**
+
+```json
+{
+  "current_password": "old-password",
+  "new_password": "new-password"
+}
+```
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `current_password` | string | Yes | Current password for verification |
+| `new_password` | string | Yes | New password |
+
+**Response:**
+
+| Status | Description |
+|--------|-------------|
+| `204` | Password changed successfully |
+| `400` | Malformed JSON / missing field |
+| `401` | Current password incorrect |
+| `500` | Internal error |
+
+---
+
+#### List Accounts (Admin only)
+
+`GET /api/v1/console/accounts`
+
+**Query parameters:**
+
+| Param | Type | Default | Constraints |
+|-------|------|---------|-------------|
+| `page` | int | `1` | Positive integer |
+| `page_size` | int | `20` | Positive integer, max `100` |
+
+**Response `200`:**
+
+```json
+{
+  "items": [
+    {
+      "account_id": "acc_xxx",
+      "username": "admin",
+      "is_admin": true,
+      "created_at": "2026-02-21T00:00:00Z",
+      "updated_at": "2026-02-21T00:00:00Z"
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "page_size": 20
+}
+```
+
+**Error codes:**
+
+| Status | Description |
+|--------|-------------|
+| `400` | Invalid query parameters |
+| `403` | Caller is not admin |
+| `500` | Database or internal error |
+
+---
+
+#### Delete Account (Admin only)
+
+`DELETE /api/v1/console/accounts/:account_id`
+
+**Path parameters:**
+
+| Param | Description |
+|-------|-------------|
+| `account_id` | Account ID (`acc_*`) |
+
+**Response:**
+
+| Status | Description |
+|--------|-------------|
+| `204` | Deleted successfully |
+| `403` | Cannot delete the currently logged-in account / cannot delete an admin account |
+| `404` | Account not found |
+| `500` | Internal error |
+
+---
+
+### Token Management
+
+Tokens are scoped per account; each account can only manage its own tokens.
+
+#### List Tokens
+
+`GET /api/v1/console/tokens`
+
+**Response `200`:**
+
+```json
+{
+  "items": [
+    {
+      "id": "tok_xxx",
+      "name": "default-token",
+      "token_masked": "obx_******abcd",
+      "created_at": "2026-02-21T00:00:00Z",
+      "updated_at": "2026-02-21T00:00:00Z"
+    }
+  ],
+  "total": 1
+}
+```
+
+> `token_masked` shows only the last four characters. The plaintext token is only returned at creation time.
+
+---
+
+#### Create Token
+
+`POST /api/v1/console/tokens`
+
+**Request body:**
+
+```json
+{
+  "name": "ci-prod",
+  "token": "optional-manual-token"
+}
+```
+
+| Field | Type | Required | Constraints |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Trimmed non-empty, length ≤ 64, case-insensitively unique within the account |
+| `token` | string | No | Omit to auto-generate (`obx_<hex>`); if provided, must contain no whitespace, length ≤ 256 |
+
+**Response `201`:**
+
+```json
+{
+  "id": "tok_xxx",
+  "name": "ci-prod",
+  "token": "obx_plaintext_or_manual",
+  "token_masked": "obx_******abcd",
+  "generated": true,
+  "created_at": "2026-02-21T00:00:00Z",
+  "updated_at": "2026-02-21T00:00:00Z"
+}
+```
+
+> The `token` field (plaintext) is **only returned in this response and cannot be retrieved again**. Save it immediately.
+
+**Error codes:**
+
+| Status | Description |
+|--------|-------------|
+| `400` | Validation failure |
+| `409` | Token name conflict or token value conflict |
+| `500` | Internal error |
+
+---
+
+#### Delete Token
+
+`DELETE /api/v1/console/tokens/:token_id`
+
+**Path parameters:**
+
+| Param | Description |
+|-------|-------------|
+| `token_id` | Token ID (`tok_*`) |
+
+**Response:**
+
+| Status | Description |
+|--------|-------------|
+| `204` | Deleted successfully |
+| `404` | Token not found (including cross-account access) |
+
+---
+
+#### Get Token Plaintext
+
+`GET /api/v1/console/tokens/:token_id/value`
+
+This endpoint always returns `410 Gone`. Token plaintext is only returned at creation time.
+
+```json
+{
+  "error": "token value is only returned at creation time; delete and recreate the token to obtain a new value"
+}
+```
+
+---
+
+### Worker Management
+
+#### Permission Matrix
+
+| Operation | Admin | Regular user |
+|-----------|-------|--------------|
+| List workers | All workers | Own `worker-sys` only |
+| Stats | All workers | Own `worker-sys` only |
+| Inflight | All workers | Own `worker-sys` only |
+| Create `normal` | Yes | No |
+| Create `worker-sys` | Yes (max 1 per account) | Yes (max 1 per account) |
+| Delete any worker | Yes | No |
+| Delete own `worker-sys` | Yes | Yes |
+
+Worker types: `normal` (backed by `worker-docker`/`worker-boxlite`), `worker-sys` (backed by `worker-sys`).
+
+---
+
+#### List Workers
+
+`GET /api/v1/workers`
+
+**Query parameters:**
+
+| Param | Type | Default | Options |
+|-------|------|---------|---------|
+| `page` | int | `1` | Positive integer |
+| `page_size` | int | `20` | Positive integer, max `100` |
+| `status` | string | `all` | `all` / `online` / `offline` |
+
+**Response `200`:**
+
+```json
+{
+  "items": [
+    {
+      "node_id": "worker-1",
+      "node_name": "node-a",
+      "executor_kind": "docker",
+      "capabilities": [
+        { "name": "echo", "max_inflight": 4 }
+      ],
+      "labels": {
+        "region": "us",
+        "obx.owner_id": "acc_xxx",
+        "obx.worker_type": "normal"
+      },
+      "version": "v0.1.0",
+      "status": "online",
+      "registered_at": "2026-02-21T00:00:00Z",
+      "last_seen_at": "2026-02-21T00:00:00Z"
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "page_size": 20
+}
+```
+
+**Error codes:**
+
+| Status | Description |
+|--------|-------------|
+| `400` | Invalid query parameters |
+
+---
+
+#### Worker Stats
+
+`GET /api/v1/workers/stats`
+
+**Query parameters:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `stale_after_sec` | int | `30` | Seconds threshold after which a worker is considered stale (no heartbeat) |
+
+**Response `200`:**
+
+```json
+{
+  "total": 5,
+  "online": 4,
+  "offline": 1,
+  "stale": 1,
+  "stale_after_sec": 30,
+  "generated_at": "2026-02-21T00:00:00Z"
+}
+```
+
+> For regular users, stats only reflect their own `worker-sys`.
+
+---
+
+#### Worker Inflight
+
+`GET /api/v1/workers/inflight`
+
+**Response `200`:**
+
+```json
+{
+  "workers": [
+    {
+      "node_id": "worker-1",
+      "capabilities": [
+        { "name": "pythonExec", "inflight": 1, "max_inflight": 4 }
+      ]
+    }
+  ],
+  "generated_at": "2026-02-21T00:00:00Z"
+}
+```
+
+> For regular users, results only include their own `worker-sys`.
+
+---
+
+#### Create Worker Credentials
+
+`POST /api/v1/workers`
+
+**Request body:**
+
+```json
+{
+  "type": "normal"
+}
+```
+
+| Field | Type | Required | Options |
+|-------|------|----------|---------|
+| `type` | string | Yes | `normal` / `worker-sys` |
+
+**Response `201`:**
+
+```json
+{
+  "node_id": "2f51f8f9-77f2-4c1a-a4f5-2036fc9fcb9e",
+  "type": "normal",
+  "worker_secret": "a3f8c2..."
+}
+```
+
+> `worker_secret` is **returned only once in this response** and cannot be retrieved again.
+
+**Error codes:**
+
+| Status | Description |
+|--------|-------------|
+| `400` | Malformed body / invalid `type` value |
+| `403` | Regular user attempting to create a `normal` worker |
+| `409` | Account already has a `worker-sys` |
+| `503` | Provisioning service unavailable |
+| `500` | Creation failure |
+
+---
+
+#### Delete Worker
+
+`DELETE /api/v1/workers/:node_id`
+
+**Path parameters:**
+
+| Param | Description |
+|-------|-------------|
+| `node_id` | Worker node ID (UUID) |
+
+**Response:**
+
+| Status | Description |
+|--------|-------------|
+| `204` | Deleted successfully |
+| `400` | Missing `node_id` |
+| `404` | Worker not found (cross-account access by regular users also returns `404`) |
+| `503` | Provisioning service unavailable |
+
+---
+
+#### Get Worker Startup Command
+
+`GET /api/v1/workers/:node_id/startup-command`
+
+This endpoint always returns `410 Gone`. The startup command (including the secret) is only returned when the worker is created.
+
+```json
+{
+  "error": "worker secret is returned only when creating the worker; delete and recreate to get a new startup command"
+}
+```
+
+---
+
+## Command Execution API
+
+The following endpoints use Bearer token auth (`Authorization: Bearer <token>`) and are intended for external programs, AI agents, and MCP clients.
+
+### Command Execution
+
+#### Echo
+
+`POST /api/v1/commands/echo`
+
+Tests connectivity and verifies an echo worker is reachable.
+
+**Request body:**
+
+```json
+{
+  "message": "hello",
+  "timeout_ms": 5000
+}
+```
+
+| Field | Type | Required | Constraints |
+|-------|------|----------|-------------|
+| `message` | string | Yes | Trimmed non-empty |
+| `timeout_ms` | int | No | `1..60000`, default `5000` |
+
+**Response `200`:**
+
+```json
+{ "message": "hello" }
+```
+
+**Error codes:**
+
+| Status | Description |
+|--------|-------------|
+| `400` | Malformed body / missing message / timeout out of range |
+| `429` | No available concurrency capacity |
+| `503` | No online echo worker |
+| `504` | Execution timed out |
+| `502` | Execution or internal error |
+
+---
+
+#### Terminal Execution
+
+`POST /api/v1/commands/terminal`
+
+Executes a shell command inside a persistent terminal session, supporting state reuse across requests.
+
+**Request body:**
+
+```json
+{
+  "command": "pwd",
+  "session_id": "optional-session",
+  "create_if_missing": false,
+  "lease_ttl_sec": 60,
+  "timeout_ms": 60000,
+  "request_id": "optional-idempotency-key"
+}
+```
+
+| Field | Type | Required | Constraints |
+|-------|------|----------|-------------|
+| `command` | string | Yes | Trimmed non-empty |
+| `session_id` | string | No | Existing session ID; omit to auto-create a new session |
+| `create_if_missing` | bool | No | Auto-create if `session_id` not found, default `false` |
+| `lease_ttl_sec` | int | No | Session lease duration in seconds |
+| `timeout_ms` | int | No | `1..600000`, default `60000` |
+| `request_id` | string | No | Idempotency key, scoped per account |
+
+**Response `200`:**
+
+```json
+{
+  "session_id": "sess_xxx",
+  "created": true,
+  "stdout": "...",
+  "stderr": "...",
+  "exit_code": 0,
+  "stdout_truncated": false,
+  "stderr_truncated": false,
+  "lease_expires_unix_ms": 1770000000000
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `session_id` | Session ID used (new or existing) |
+| `created` | Whether the session was newly created |
+| `stdout` / `stderr` | Command output |
+| `exit_code` | Command exit code |
+| `stdout_truncated` / `stderr_truncated` | Whether output was truncated |
+| `lease_expires_unix_ms` | Session lease expiry (Unix millisecond timestamp) |
+
+**Error codes:**
+
+| Status | Error code | Description |
+|--------|------------|-------------|
+| `400` | `invalid_payload` | Invalid request parameters |
+| `404` | `session_not_found` | `session_id` not found and `create_if_missing=false` |
+| `409` | `session_busy` | Session occupied by another request, or task cancelled |
+| `429` | — | No available concurrency capacity |
+| `503` | — | No available worker |
+| `504` | — | Execution timed out |
+| `502` | — | Other execution failure |
+
+---
+
+#### Computer Use Execution
+
+`POST /api/v1/commands/computer-use`
+
+Executes a shell command on the calling account's own `worker-sys` (real host machine). No session state is maintained; concurrency is fixed at 1 per account.
+
+**Request body:**
+
+```json
+{
+  "command": "pwd",
+  "timeout_ms": 60000,
+  "request_id": "optional-idempotency-key"
+}
+```
+
+| Field | Type | Required | Constraints |
+|-------|------|----------|-------------|
+| `command` | string | Yes | Trimmed non-empty |
+| `timeout_ms` | int | No | `1..600000`, default `60000` |
+| `request_id` | string | No | Idempotency key, scoped per account |
+
+**Response `200`:**
+
+```json
+{
+  "stdout": "...",
+  "stderr": "...",
+  "exit_code": 0,
+  "stdout_truncated": false,
+  "stderr_truncated": false
+}
+```
+
+> Unlike Terminal Execution, Computer Use has no session (`session_id` absent). Each command runs via `/bin/sh -lc` directly on the host; there is no container isolation.
+
+**Error codes:**
+
+| Status | Error code | Description |
+|--------|------------|-------------|
+| `400` | `invalid_payload` | Invalid request parameters |
+| `409` | `session_busy` | Worker busy or task cancelled |
+| `429` | `no_capacity` | No available concurrency capacity |
+| `503` | `no_worker` | Account has no online `worker-sys` |
+| `504` | — | Execution timed out |
+| `502` | — | Other execution failure |
+
+---
+
+### Task API
+
+Tasks are suited for asynchronous execution or polling workflows. Ownership is strictly scoped to the token's owning account.
+
+#### Submit Task
+
+`POST /api/v1/tasks`
+
+**Request body:**
+
+```json
+{
+  "capability": "pythonExec",
+  "input": { "code": "print(1)" },
+  "mode": "auto",
+  "wait_ms": 1500,
+  "timeout_ms": 60000,
+  "request_id": "optional-idempotency-key"
+}
+```
+
+| Field | Type | Required | Constraints |
+|-------|------|----------|-------------|
+| `capability` | string | Yes | Non-empty; matches a capability name declared by a worker (case-insensitive) |
+| `input` | object | No | Valid JSON object; defaults to `{}` if omitted |
+| `mode` | string | No | `sync` / `async` / `auto`, default `auto` |
+| `wait_ms` | int | No | `1..60000`, default `1500`; max milliseconds to wait in `auto` mode |
+| `timeout_ms` | int | No | `1..600000`, default `60000`; total task timeout |
+| `request_id` | string | No | Idempotency key, scoped per account |
+
+**`mode` field:**
+
+| mode | Behavior |
+|------|----------|
+| `sync` | Wait synchronously until the task completes |
+| `async` | Return `202` immediately without waiting |
+| `auto` | Wait up to `wait_ms`; return `202` if not yet complete |
+
+**Response — task still running `202`:**
+
+```json
+{
+  "task_id": "task_xxx",
+  "request_id": "req-1",
+  "command_id": "cmd_xxx",
+  "capability": "pythonexec",
+  "status": "running",
+  "created_at": "2026-02-21T00:00:00Z",
+  "updated_at": "2026-02-21T00:00:01Z",
+  "deadline_at": "2026-02-21T00:01:00Z",
+  "status_url": "/api/v1/tasks/task_xxx"
+}
+```
+
+**Response — task completed successfully `200`:**
+
+```json
+{
+  "task_id": "task_xxx",
+  "capability": "pythonexec",
+  "status": "succeeded",
+  "result": {
+    "output": "1\n",
+    "stderr": "",
+    "exit_code": 0
+  },
+  "created_at": "2026-02-21T00:00:00Z",
+  "updated_at": "2026-02-21T00:00:01Z",
+  "deadline_at": "2026-02-21T00:01:00Z",
+  "completed_at": "2026-02-21T00:00:01Z"
+}
+```
+
+**Task error field (present on terminal failure):**
+
+```json
+{
+  "error": {
+    "code": "execution_failed",
+    "message": "..."
+  }
+}
+```
+
+**Terminal response codes:**
+
+| Status | Description |
+|--------|-------------|
+| `200` | Task succeeded |
+| `409` | Task was cancelled |
+| `504` | Task timed out |
+| `429` | Failed, `error.code=no_capacity` |
+| `503` | Failed, `error.code=no_worker` |
+| `502` | Failed (other error code) |
+
+**Submission-phase error codes:**
+
+| Status | Description |
+|--------|-------------|
+| `400` | Invalid parameters / invalid mode / malformed body |
+| `409` | `request_id` already in progress |
+| `429` | No available concurrency capacity |
+| `503` | No worker with matching capability |
+| `504` | Request timed out |
+| `502` | Submission failure |
+
+---
+
+#### Get Task
+
+`GET /api/v1/tasks/:task_id`
+
+**Path parameters:**
+
+| Param | Description |
+|-------|-------------|
+| `task_id` | Task ID |
+
+**Response:**
+
+| Status | Description |
+|--------|-------------|
+| `200` | Returns task snapshot (see Submit Task response structure) |
+| `404` | Task not found (including cross-account access) |
+
+---
+
+#### Cancel Task
+
+`POST /api/v1/tasks/:task_id/cancel`
+
+**Path parameters:**
+
+| Param | Description |
+|-------|-------------|
+| `task_id` | Task ID |
+
+**Response:**
+
+| Status | Description |
+|--------|-------------|
+| `200` | Cancellation accepted (or best-effort cancel acknowledged) |
+| `404` | Task not found (including cross-account access) |
+| `409` | Task already in terminal state; returns current task snapshot |
+| `500` | Cancellation failure |
+
+---
+
+## See Also
+
+- [MCP Tools Reference](/en/docs/mcp-tools)
 - [Security & FAQ](/en/docs/security-faq)
