@@ -36,6 +36,8 @@ export function WebsiteRoutes() {
     <Routes>
       <Route path="/" element={<HomePage />} />
       <Route path="/docs" element={<DocsLanguageRedirect />} />
+      <Route path="/en/docs/api-mcp-overview" element={<Navigate replace to="/en/docs/console-api" />} />
+      <Route path="/zh-CN/docs/api-mcp-overview" element={<Navigate replace to="/zh-CN/docs/console-api" />} />
       <Route path="/:locale/docs" element={<LocaleDocsPage />} />
       <Route path="/:locale/docs/*" element={<LocaleDocsPage />} />
       <Route path="*" element={<SiteNotFoundPage />} />

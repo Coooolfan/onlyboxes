@@ -95,10 +95,11 @@ type trustedTokenRecord struct {
 }
 
 type MCPAuth struct {
-	db      *persistence.DB
-	queries *sqlc.Queries
-	hasher  *persistence.Hasher
-	nowFn   func() time.Time
+	db          *persistence.DB
+	queries     *sqlc.Queries
+	hasher      *persistence.Hasher
+	jitVerifier *jitTokenVerifier
+	nowFn       func() time.Time
 }
 
 func NewMCPAuthWithPersistence(db *persistence.DB) (*MCPAuth, error) {
@@ -122,6 +123,19 @@ func (a *MCPAuth) RequireToken() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
+
+		if isJITToken(token) {
+			identity, ok := a.verifyAndEnsureJITAccount(c.Request.Context(), token)
+			if !ok {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or missing token"})
+				c.Abort()
+				return
+			}
+			setRequestOwnerID(c, identity.AccountID)
+			c.Next()
+			return
+		}
+
 		record, ok := a.lookupTrustedToken(c.Request.Context(), token)
 		if !ok {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or missing token"})

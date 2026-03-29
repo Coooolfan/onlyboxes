@@ -3,6 +3,9 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -21,6 +24,7 @@ const (
 	testDashboardPassword = "password-test"
 	testMCPToken          = "mcp-token-test"
 	testMCPTokenB         = "mcp-token-test-b"
+	testJITSigningKey     = "test-jit-signing-key"
 )
 
 const testDashboardAccountID = "acc-test-dashboard"
@@ -95,6 +99,7 @@ func newBareTestMCPAuth(t testing.TB) *MCPAuth {
 	if err != nil {
 		t.Fatalf("new mcp auth: %v", err)
 	}
+	auth.SetJITSigningKey(testJITSigningKey)
 	return auth
 }
 
@@ -124,6 +129,7 @@ func newTestAuthBundle(t testing.TB, registrationEnabled bool) *testAuthBundle {
 	if err != nil {
 		t.Fatalf("new mcp auth bundle: %v", err)
 	}
+	mcpAuth.SetJITSigningKey(testJITSigningKey)
 	apiKeyAuth, err := NewAPIKeyAuth(db)
 	if err != nil {
 		t.Fatalf("new api key auth bundle: %v", err)
@@ -177,6 +183,29 @@ func seedTestAccount(t testing.TB, queries *sqlc.Queries, accountID string, user
 	}); err != nil {
 		t.Fatalf("insert test account: %v", err)
 	}
+}
+
+func makeTestJITToken(t testing.TB, issuer string, subject string) string {
+	t.Helper()
+
+	return makeTestJITTokenWithClaims(t, jitTokenClaims{
+		Issuer:  issuer,
+		Subject: subject,
+	})
+}
+
+func makeTestJITTokenWithClaims(t testing.TB, claims jitTokenClaims) string {
+	t.Helper()
+
+	payloadJSON, err := json.Marshal(claims)
+	if err != nil {
+		t.Fatalf("marshal jit token payload: %v", err)
+	}
+	payloadEncoded := base64.RawURLEncoding.EncodeToString(payloadJSON)
+	mac := hmac.New(sha256.New, []byte(testJITSigningKey))
+	_, _ = mac.Write([]byte(jitTokenPrefix + payloadEncoded))
+	signatureEncoded := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return jitTokenPrefix + payloadEncoded + "." + signatureEncoded
 }
 
 func loginSessionCookie(t *testing.T, router http.Handler) *http.Cookie {

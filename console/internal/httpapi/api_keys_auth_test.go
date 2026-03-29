@@ -73,6 +73,24 @@ func TestAPIKeyPathDoesNotFallbackToCookie(t *testing.T) {
 	}
 }
 
+func TestJITTokenDoesNotAuthenticateDashboardRoutes(t *testing.T) {
+	bundle := newTestAuthBundle(t, false)
+	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, nil, nil, ":50051")
+	router := mustNewRouter(t, handler, bundle.ConsoleAuth, bundle.MCPAuth, bundle.APIKeyAuth)
+	cookie := loginSessionCookie(t, router)
+	jitToken := makeTestJITToken(t, "issuer-dashboard", "subject-dashboard")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/console/session", nil)
+	req.Header.Set(trustedTokenHeader, "Bearer "+jitToken)
+	req.AddCookie(cookie)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d body=%s", res.Code, res.Body.String())
+	}
+}
+
 func TestNonBearerAuthorizationFallsBackToCookie(t *testing.T) {
 	bundle := newTestAuthBundle(t, false)
 	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, nil, nil, ":50051")

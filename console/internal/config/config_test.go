@@ -15,6 +15,7 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("CONSOLE_DASHBOARD_USERNAME", "")
 	t.Setenv("CONSOLE_DASHBOARD_PASSWORD", "")
 	t.Setenv("CONSOLE_INITIAL_ADMIN_API_KEY", "")
+	t.Setenv("CONSOLE_JIT_SIGNING_KEY", "")
 	t.Setenv("CONSOLE_ENABLE_REGISTRATION", "")
 	t.Setenv("CONSOLE_LOG_LEVEL", "")
 	t.Setenv("CONSOLE_LOG_FORMAT", "")
@@ -45,6 +46,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.InitialAdminAPIKey != "" {
 		t.Fatalf("expected empty initial admin api key by default, got %q", cfg.InitialAdminAPIKey)
 	}
+	if cfg.JITSigningKey != "" {
+		t.Fatalf("expected empty jit signing key by default, got %q", cfg.JITSigningKey)
+	}
 	if cfg.EnableRegistration {
 		t.Fatalf("expected registration disabled by default")
 	}
@@ -63,6 +67,7 @@ func TestLoadReadsDashboardCredentialsAndDurations(t *testing.T) {
 	t.Setenv("CONSOLE_DASHBOARD_USERNAME", "admin")
 	t.Setenv("CONSOLE_DASHBOARD_PASSWORD", "secret")
 	t.Setenv("CONSOLE_INITIAL_ADMIN_API_KEY", "obxk_testkey123")
+	t.Setenv("CONSOLE_JIT_SIGNING_KEY", "jit-signing-secret")
 	t.Setenv("CONSOLE_OFFLINE_TTL_SEC", "30")
 	t.Setenv("CONSOLE_REPLAY_WINDOW_SEC", "120")
 	t.Setenv("CONSOLE_HEARTBEAT_INTERVAL_SEC", "10")
@@ -81,6 +86,9 @@ func TestLoadReadsDashboardCredentialsAndDurations(t *testing.T) {
 	}
 	if cfg.InitialAdminAPIKey != "obxk_testkey123" {
 		t.Fatalf("expected initial admin api key %q, got %q", "obxk_testkey123", cfg.InitialAdminAPIKey)
+	}
+	if cfg.JITSigningKey != "jit-signing-secret" {
+		t.Fatalf("expected JIT signing key %q, got %q", "jit-signing-secret", cfg.JITSigningKey)
 	}
 	if cfg.OfflineTTL != 30*time.Second {
 		t.Fatalf("expected OfflineTTL=30s, got %s", cfg.OfflineTTL)

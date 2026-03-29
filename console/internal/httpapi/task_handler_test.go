@@ -78,6 +78,63 @@ func TestSubmitTaskAccepted(t *testing.T) {
 	}
 }
 
+func TestSubmitTaskAcceptedWithJITToken(t *testing.T) {
+	auth := newBareTestMCPAuth(t)
+	jitToken := makeTestJITToken(t, "issuer-task", "subject-task")
+	expectedIdentity, ok := deriveJITAccountIdentity(jitTokenClaims{
+		Issuer:  "issuer-task",
+		Subject: "subject-task",
+	})
+	if !ok {
+		t.Fatalf("expected deterministic JIT identity")
+	}
+
+	now := time.Unix(1_700_000_000, 0)
+	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, &fakeTaskDispatcher{
+		submit: func(ctx context.Context, req grpcserver.SubmitTaskRequest) (grpcserver.SubmitTaskResult, error) {
+			if req.OwnerID != expectedIdentity.AccountID {
+				t.Fatalf("expected owner_id from jit token, got %q", req.OwnerID)
+			}
+			return grpcserver.SubmitTaskResult{
+				Task: grpcserver.TaskSnapshot{
+					TaskID:     "task-jit-1",
+					Capability: "echo",
+					Status:     grpcserver.TaskStatusRunning,
+					CreatedAt:  now,
+					UpdatedAt:  now,
+					DeadlineAt: now.Add(60 * time.Second),
+				},
+				Completed: false,
+			}, nil
+		},
+		get: func(taskID string, ownerID string) (grpcserver.TaskSnapshot, bool) {
+			return grpcserver.TaskSnapshot{}, false
+		},
+		cancel: func(taskID string, ownerID string) (grpcserver.TaskSnapshot, error) {
+			return grpcserver.TaskSnapshot{}, nil
+		},
+	}, nil, nil, "")
+	router := mustNewRouter(t, handler, newTestConsoleAuth(t), auth, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(`{"capability":"echo","input":{"message":"hello"},"mode":"async"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(trustedTokenHeader, "Bearer "+jitToken)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	account, err := auth.queries.GetAccountByID(context.Background(), expectedIdentity.AccountID)
+	if err != nil {
+		t.Fatalf("expected JIT account to exist after task submit: %v", err)
+	}
+	if account.Username != expectedIdentity.Username {
+		t.Fatalf("expected jit username %q, got %q", expectedIdentity.Username, account.Username)
+	}
+}
+
 func TestSubmitTaskCompletedSuccess(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, &fakeTaskDispatcher{

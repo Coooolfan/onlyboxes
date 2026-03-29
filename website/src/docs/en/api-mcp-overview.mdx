@@ -30,17 +30,19 @@ Unified error response format:
 
 ## Auth Model
 
-The Console exposes two auth paths for different use cases:
+The Console exposes three credential types for different use cases:
 
-| Item | Dashboard API (Cookie session) | Open API (Bearer token) |
-|------|-------------------------------|-------------------------|
-| Credential type | Cookie `onlyboxes_console_session` | `Authorization: Bearer <token>` |
-| Origin | Created by `POST /api/v1/console/login` | Created via the Dashboard API Token management page |
-| Lifetime | 12 hours (in-memory; invalidated on console restart) | Persistent until manually deleted |
-| Applicable endpoints | `/api/v1/**` | `/api/v1/**` except `/api/v1/console/password` |
-| Primary use | Account, token, worker management. For Web UI | Programmatic access |
+| Item | Cookie session | API Key (Bearer) | Execution Token (Bearer) |
+|------|---------------|-----------------|---------------------------|
+| Credential type | Cookie `onlyboxes_console_session` | `Authorization: Bearer obxk_*` | `Authorization: Bearer obx_*` |
+| Origin | `POST /api/v1/console/login` | `POST /api/v1/console/api-keys` (cookie only) | `POST /api/v1/console/tokens` |
+| Lifetime | 12 hours (in-memory; invalidated on console restart) | Persistent until manually deleted | Persistent until manually deleted |
+| Applicable endpoints | All management endpoints | Most management endpoints (read + selective write) | `/api/v1/commands/*`, `/api/v1/tasks*`, `/mcp` |
+| Primary use | Web UI management | Programmatic management | Command execution and MCP |
 
-> If no tokens exist in the system, all Bearer-authenticated endpoints return `401` by design.
+> The following endpoints accept **cookie session only** and reject API Key Bearer: `POST /console/password`, `POST /console/api-keys`, `DELETE /console/api-keys/:api_key_id`
+>
+> If no execution tokens exist in the system, all command execution endpoints and `/mcp` return `401` by design.
 
 ---
 
@@ -360,6 +362,102 @@ This endpoint always returns `410 Gone`. Token plaintext is only returned at cre
   "error": "token value is only returned at creation time; delete and recreate the token to obtain a new value"
 }
 ```
+
+---
+
+### API Key Management
+
+API Keys are for programmatic access to most management endpoints. Unlike execution tokens, they **cannot** be used for command execution endpoints or `/mcp`. Each account can only manage its own API keys.
+
+#### List API Keys
+
+`GET /api/v1/console/api-keys`
+
+**Auth:** Cookie session or API Key Bearer
+
+**Response `200`:**
+
+```json
+{
+  "items": [
+    {
+      "id": "apik_xxx",
+      "name": "my-key",
+      "key_masked": "obxk_******abcd",
+      "created_at": "2026-02-21T00:00:00Z",
+      "updated_at": "2026-02-21T00:00:00Z"
+    }
+  ],
+  "total": 1
+}
+```
+
+---
+
+#### Create API Key
+
+`POST /api/v1/console/api-keys`
+
+**Auth: Cookie session only**
+
+**Request body:**
+
+```json
+{ "name": "ci-management" }
+```
+
+| Field | Type | Required | Constraints |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Trimmed non-empty, length ≤ 64, case-insensitively unique within the account |
+
+**Response `201`:**
+
+```json
+{
+  "id": "apik_xxx",
+  "name": "ci-management",
+  "key": "obxk_plaintext",
+  "key_masked": "obxk_******abcd",
+  "created_at": "2026-02-21T00:00:00Z",
+  "updated_at": "2026-02-21T00:00:00Z"
+}
+```
+
+> The `key` field (plaintext) is **only returned in this response and cannot be retrieved again**. Save it immediately.
+
+**Error codes:**
+
+| Status | Description |
+|--------|-------------|
+| `400` | Malformed body / empty name / name exceeds 64 characters |
+| `401` | Missing or invalid cookie session (API Key Bearer not accepted) |
+| `409` | Name conflict |
+| `503` | Storage unavailable |
+| `500` | Internal error |
+
+---
+
+#### Delete API Key
+
+`DELETE /api/v1/console/api-keys/:api_key_id`
+
+**Auth: Cookie session only**
+
+**Path parameters:**
+
+| Param | Description |
+|-------|-------------|
+| `api_key_id` | API Key ID (`apik_*`) |
+
+**Response:**
+
+| Status | Description |
+|--------|-------------|
+| `204` | Deleted successfully |
+| `400` | Missing `api_key_id` |
+| `401` | Missing or invalid cookie session (API Key Bearer not accepted) |
+| `404` | API Key not found (including cross-account access) |
+| `500` | Internal error |
 
 ---
 

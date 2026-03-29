@@ -153,6 +153,113 @@ func TestMCPAuthRequireTokenAllowsTrustedToken(t *testing.T) {
 	}
 }
 
+func TestMCPAuthRequireTokenAllowsJITTokenAndCreatesAccount(t *testing.T) {
+	auth := newBareTestMCPAuth(t)
+	jitToken := makeTestJITToken(t, "Acme Platform", "User 42")
+	expectedIdentity, ok := deriveJITAccountIdentity(jitTokenClaims{
+		Issuer:  "Acme Platform",
+		Subject: "User 42",
+	})
+	if !ok {
+		t.Fatalf("expected deterministic JIT identity")
+	}
+
+	router := gin.New()
+	router.GET("/mcp", auth.RequireToken(), func(c *gin.Context) {
+		if got := requestOwnerIDFromGin(c); got != expectedIdentity.AccountID {
+			t.Fatalf("expected owner id in gin context=%q, got %q", expectedIdentity.AccountID, got)
+		}
+		if got := requestOwnerIDFromContext(c.Request.Context()); got != expectedIdentity.AccountID {
+			t.Fatalf("expected owner id in request context=%q, got %q", expectedIdentity.AccountID, got)
+		}
+		c.Status(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
+	req.Header.Set(trustedTokenHeader, "Bearer "+jitToken)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	account, err := auth.queries.GetAccountByID(context.Background(), expectedIdentity.AccountID)
+	if err != nil {
+		t.Fatalf("expected JIT account to be created: %v", err)
+	}
+	if account.Username != expectedIdentity.Username {
+		t.Fatalf("expected jit username %q, got %q", expectedIdentity.Username, account.Username)
+	}
+	if account.IsAdmin != 0 {
+		t.Fatalf("expected non-admin JIT account, got is_admin=%d", account.IsAdmin)
+	}
+}
+
+func TestMCPAuthRequireTokenRejectsInvalidJITToken(t *testing.T) {
+	auth := newBareTestMCPAuth(t)
+	router := gin.New()
+	router.GET("/mcp", auth.RequireToken(), func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	testCases := []struct {
+		name  string
+		token string
+	}{
+		{name: "invalid signature", token: makeTestJITToken(t, "issuer-a", "subject-a") + "broken"},
+		{name: "invalid payload", token: jitTokenPrefix + "!not-base64!.sig"},
+		{name: "missing subject", token: makeTestJITTokenWithClaims(t, jitTokenClaims{Issuer: "issuer-a"})},
+		{name: "normalized issuer empty", token: makeTestJITToken(t, "!!!!", "subject-a")},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
+			req.Header.Set(trustedTokenHeader, "Bearer "+tc.token)
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("expected 401, got %d body=%s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestMCPAuthJITAccountDerivationIsStableAndScopedByIssuer(t *testing.T) {
+	firstIdentity, ok := deriveJITAccountIdentity(jitTokenClaims{
+		Issuer:  "issuer-a",
+		Subject: "same-user",
+	})
+	if !ok {
+		t.Fatalf("expected first JIT identity")
+	}
+	repeatedIdentity, ok := deriveJITAccountIdentity(jitTokenClaims{
+		Issuer:  "issuer-a",
+		Subject: "same-user",
+	})
+	if !ok {
+		t.Fatalf("expected repeated JIT identity")
+	}
+	secondIdentity, ok := deriveJITAccountIdentity(jitTokenClaims{
+		Issuer:  "issuer-b",
+		Subject: "same-user",
+	})
+	if !ok {
+		t.Fatalf("expected second JIT identity")
+	}
+
+	if firstIdentity.AccountID != repeatedIdentity.AccountID {
+		t.Fatalf("expected identical account ids, got %q and %q", firstIdentity.AccountID, repeatedIdentity.AccountID)
+	}
+	if firstIdentity.Username != repeatedIdentity.Username {
+		t.Fatalf("expected identical usernames, got %q and %q", firstIdentity.Username, repeatedIdentity.Username)
+	}
+	if firstIdentity.AccountID == secondIdentity.AccountID {
+		t.Fatalf("expected issuer-scoped account ids to differ, got %q", firstIdentity.AccountID)
+	}
+}
+
 func TestMCPAuthRequireTokenRejectsWhenStoreIsEmpty(t *testing.T) {
 	auth := newBareTestMCPAuth(t)
 	router := gin.New()

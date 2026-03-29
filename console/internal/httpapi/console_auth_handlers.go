@@ -307,6 +307,11 @@ func (a *ConsoleAuth) RequireAuth(apiKeyAuth *APIKeyAuth) gin.HandlerFunc {
 		authHeader := c.GetHeader(trustedTokenHeader)
 		token, hasBearer := parseBearerToken(authHeader)
 		if hasBearer {
+			if isJITToken(token) {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or missing api key"})
+				c.Abort()
+				return
+			}
 			if apiKeyAuth == nil {
 				c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or missing api key"})
 				c.Abort()
