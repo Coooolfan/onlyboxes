@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { Box, Github, Languages, List, Moon, Sun, X } from 'lucide-react'
+import { Github, Languages, List, Moon, Sun, X } from 'lucide-react'
 import {
   type DocsLocale,
   docsLocaleLabels,
@@ -225,7 +225,7 @@ export function DocsPage({ locale }: { locale: DocsLocale }) {
                 isDark ? 'text-white' : 'text-black'
               }`}
             >
-              <Box className={`h-5 w-5 transition-colors duration-300 ${isDark ? 'text-white' : 'text-black'}`} />
+              <img src="/favicon.png" alt="OnlyBoxes" className="h-5 w-5 rounded" />
               <span>OnlyBoxes</span>
             </Link>
             <div

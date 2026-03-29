@@ -444,7 +444,7 @@ function HomePage() {
         } transition-colors duration-300`}
       >
         <div className="flex items-center gap-2">
-          <Box className={`h-5 w-5 ${isDark ? 'text-white' : 'text-black'} transition-colors duration-300`} />
+          <img src="/favicon.png" alt="OnlyBoxes" className="h-5 w-5 rounded" />
           <span className="text-sm font-semibold tracking-tight">OnlyBoxes</span>
         </div>
         <div className="flex items-center gap-4">
