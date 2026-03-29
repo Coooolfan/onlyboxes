@@ -243,6 +243,11 @@ Web dev URL defaults to `http://127.0.0.1:5178` and proxies `/api/*` to `http://
 - `WORKER_SECRET` and access token plaintext values are returned only at creation time.
 - Dashboard login sessions are in-memory and are invalidated when `console` restarts.
 
+## Links
+
+- [linux.do](https://linux.do/)
+- [boxlite.ai](https://boxlite.ai/)
+
 ## License
 
 [GNU AGPL v3.0](LICENSE)

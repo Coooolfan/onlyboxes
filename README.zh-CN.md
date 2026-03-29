@@ -243,6 +243,11 @@ yarn --cwd web dev
 - `WORKER_SECRET` 与 token 明文都只在创建时返回一次。
 - 控制台登录会话为内存态，`console` 重启后会失效。
 
+## 友情链接
+
+- [linux.do](https://linux.do/)
+- [boxlite.ai](https://boxlite.ai/)
+
 ## 许可证
 
 [GNU AGPL v3.0](LICENSE)
