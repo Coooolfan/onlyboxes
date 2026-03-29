@@ -124,6 +124,9 @@ func (a *MCPAuth) RequireToken() gin.HandlerFunc {
 			return
 		}
 
+		// JIT tokens are a parallel bearer-auth path for execution/MCP APIs.
+		// They authenticate by signature and derive account ownership directly,
+		// without requiring a trusted_tokens lookup.
 		if isJITToken(token) {
 			identity, ok := a.verifyAndEnsureJITAccount(c.Request.Context(), token)
 			if !ok {

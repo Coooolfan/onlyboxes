@@ -164,6 +164,8 @@ func (a *MCPAuth) verifyAndEnsureJITAccount(ctx context.Context, token string) (
 	if !ok {
 		return jitAccountIdentity{}, false
 	}
+	// A valid JIT signature is sufficient to authenticate. We persist a
+	// deterministic non-admin account so request ownership stays account-scoped.
 	account, ok := a.ensureJITAccount(ctx, identity)
 	if !ok {
 		return jitAccountIdentity{}, false

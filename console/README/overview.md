@@ -24,21 +24,27 @@ The console service hosts:
     - max one per account
     - only `computerUse` and `readImage` capabilities are accepted
     - `computerUse.max_inflight` and `readImage.max_inflight` are both forced to `1`
-- command APIs (execution, token whitelist required):
+- command APIs (execution, bearer token required):
   - `POST /api/v1/commands/echo` for blocking echo command execution.
   - `POST /api/v1/commands/terminal` for blocking terminal command execution over `terminalExec` capability.
   - `POST /api/v1/commands/computer-use` for blocking host-shell execution over `computerUse` capability.
   - `POST /api/v1/tasks` for sync/async/auto task submission.
   - `GET /api/v1/tasks/:task_id` for task status and result lookup.
   - `POST /api/v1/tasks/:task_id/cancel` for best-effort task cancellation.
-  - request header: `Authorization: Bearer <access-token>` (must be in whitelist).
+  - request header: `Authorization: Bearer <access-token>`.
+  - accepted bearer token types:
+    - trusted token managed by dashboard `GET/POST/DELETE /api/v1/console/tokens`
+    - JIT token (`obx_jit_v1.<payload>.<signature>`) signed with `CONSOLE_JIT_SIGNING_KEY`
   - owner isolation is account-scoped: token resolves to `account_id`, and task/session ownership uses `account_id`.
   - task visibility: task lookup/cancel is owner-scoped by account; same-account tokens can access shared tasks, cross-account access returns `404`.
   - task idempotency: `request_id` de-duplication is scoped per account.
-- MCP Streamable HTTP API (token whitelist required):
+- MCP Streamable HTTP API (bearer token required):
   - `POST /mcp` for JSON-RPC requests over Streamable HTTP transport.
-  - request header: `Authorization: Bearer <access-token>` (must be in whitelist).
-  - if whitelist is empty (no tokens configured in dashboard), all `/mcp` requests are rejected with `401`.
+  - request header: `Authorization: Bearer <access-token>`.
+  - accepted bearer token types:
+    - trusted token managed by dashboard `GET/POST/DELETE /api/v1/console/tokens`
+    - JIT token (`obx_jit_v1.<payload>.<signature>`) signed with `CONSOLE_JIT_SIGNING_KEY`
+  - if the trusted token list is empty, trusted-token auth for `/mcp` is unavailable; valid JIT tokens can still authenticate when `CONSOLE_JIT_SIGNING_KEY` is configured.
   - `GET /mcp` is intentionally unsupported and returns `405` with `Allow: POST`.
   - stream behavior is JSON response only (`application/json`), no SSE streaming channel.
   - tool argument validation is strict (`additionalProperties=false`): unknown input fields are rejected with JSON-RPC `invalid params (-32602)`.
@@ -164,10 +170,19 @@ Trusted token behavior:
 - token value is stored as HMAC-SHA256 hash only; plaintext is returned once at creation time.
 - tokens are bound to `account_id`.
 - token metadata includes `name` (case-insensitive unique within the same account) and masked token (`token_masked`).
-- if token list is empty, MCP and execution APIs are effectively disabled (`401`).
+- if token list is empty, trusted-token auth for MCP and execution APIs is effectively disabled (`401`).
 - task and terminal-session ownership is account-scoped.
 - same-account tokens share task/session resources; cross-account access returns `task not found` / `session_not_found`.
 - `request_id` idempotency keys are account-scoped.
+
+JIT token behavior:
+- JIT tokens are an alternative bearer credential for MCP and execution APIs; they do not need an entry in `trusted_tokens`.
+- token format is `obx_jit_v1.<payload>.<signature>`, where `<signature>` is HMAC-SHA256 over `obx_jit_v1.<payload>` using `CONSOLE_JIT_SIGNING_KEY`.
+- payload JSON currently requires `iss` and `sub`.
+- a valid JIT token deterministically derives an account-scoped owner identity from `iss` + `sub`.
+- on first use, the derived account is auto-created as a non-admin dashboard account and reused on later requests.
+- dashboard routes under `/api/v1/console/*` do not accept JIT tokens as session or API key credentials.
+- `CONSOLE_JIT_SIGNING_KEY` should be treated as a high-privilege signing secret: its holder can mint bearer tokens for any `iss`/`sub` identity.
 
 Task persistence behavior:
 - task input/result/status lifecycle is persisted in SQLite.
@@ -179,6 +194,7 @@ Persistence config:
 - `CONSOLE_DB_BUSY_TIMEOUT_MS`: SQLite busy timeout in milliseconds (default `5000`)
 - `CONSOLE_TASK_RETENTION_DAYS`: terminal task retention days (default `30`)
 - `CONSOLE_HASH_KEY`: required HMAC key for hashing worker secret and trusted token; missing value fails startup
+- `CONSOLE_JIT_SIGNING_KEY`: optional HMAC key for JIT bearer tokens; when configured, valid JIT tokens can authenticate MCP and execution APIs without a `trusted_tokens` entry
 
 Logging config:
 - `CONSOLE_LOG_LEVEL`: `debug|info|warn|error` (default `info`)
