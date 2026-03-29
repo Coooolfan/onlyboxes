@@ -189,6 +189,17 @@ export function DocsPage({ locale }: { locale: DocsLocale }) {
     setIsMenuOpen(false)
   }, [locale, currentSlug])
 
+  useEffect(() => {
+    if (!entry) return
+    const { hash } = window.location
+    if (!hash) return
+    const frame = requestAnimationFrame(() => {
+      const el = document.getElementById(decodeURIComponent(hash.slice(1)))
+      el?.scrollIntoView()
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [entry])
+
   const alternateHref = useMemo(() => {
     if (!entry) {
       return getDocsRootHref(getOtherDocsLocale(locale))
