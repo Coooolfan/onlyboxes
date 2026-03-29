@@ -143,10 +143,14 @@ func newTestAuthBundle(t testing.TB, registrationEnabled bool) *testAuthBundle {
 	}
 }
 
-func mustNewRouter(t *testing.T, workerHandler *WorkerHandler, consoleAuth *ConsoleAuth, mcpAuth *MCPAuth, apiKeyAuth *APIKeyAuth) *gin.Engine {
+func mustNewRouter(t *testing.T, workerHandler *WorkerHandler, consoleAuth *ConsoleAuth, mcpAuth *MCPAuth, apiKeyAuth *APIKeyAuth, hiddenTools ...map[string]bool) *gin.Engine {
 	t.Helper()
 
-	router, err := NewRouter(workerHandler, consoleAuth, mcpAuth, apiKeyAuth)
+	var ht map[string]bool
+	if len(hiddenTools) > 0 {
+		ht = hiddenTools[0]
+	}
+	router, err := NewRouter(workerHandler, consoleAuth, mcpAuth, apiKeyAuth, ht)
 	if err != nil {
 		t.Fatalf("new router: %v", err)
 	}

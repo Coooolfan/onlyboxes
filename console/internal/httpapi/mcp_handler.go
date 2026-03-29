@@ -7,7 +7,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func NewMCPHandler(dispatcher CommandDispatcher) http.Handler {
+func NewMCPHandler(dispatcher CommandDispatcher, hiddenTools map[string]bool) http.Handler {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    mcpServerName,
 		Version: mcpServerVersion,
@@ -92,6 +92,30 @@ func NewMCPHandler(dispatcher CommandDispatcher) http.Handler {
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpReadImageToolInput) (*mcp.CallToolResult, any, error) {
 		return handleMCPReadImageTool(ctx, dispatcher, input)
 	})
+
+	if len(hiddenTools) > 0 {
+		server.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
+			return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+				result, err := next(ctx, method, req)
+				if err != nil || method != "tools/list" {
+					return result, err
+				}
+				listResult, ok := result.(*mcp.ListToolsResult)
+				if !ok || listResult == nil {
+					return result, nil
+				}
+				filtered := make([]*mcp.Tool, 0, len(listResult.Tools))
+				for _, tool := range listResult.Tools {
+					if tool == nil || isCapabilityHidden(hiddenTools, tool.Name) {
+						continue
+					}
+					filtered = append(filtered, tool)
+				}
+				listResult.Tools = filtered
+				return listResult, nil
+			}
+		})
+	}
 
 	return mcp.NewStreamableHTTPHandler(func(_ *http.Request) *mcp.Server {
 		return server

@@ -36,6 +36,7 @@ type Config struct {
 	HashKey              string
 	TaskRetentionDays    int
 	EnableRegistration   bool
+	HiddenTools          map[string]bool
 	LogLevel             string
 	LogFormat            string
 	LogAddSource         bool
@@ -63,6 +64,7 @@ func Load() Config {
 		HashKey:              os.Getenv("CONSOLE_HASH_KEY"),
 		TaskRetentionDays:    taskRetentionDays,
 		EnableRegistration:   parseBoolEnv("CONSOLE_ENABLE_REGISTRATION", false),
+		HiddenTools:          parseStringSetEnv("CONSOLE_HIDDEN_TOOLS"),
 		LogLevel:             parseLogLevelEnv("CONSOLE_LOG_LEVEL", defaultLogLevel),
 		LogFormat:            parseLogFormatEnv("CONSOLE_LOG_FORMAT", defaultLogFormat),
 		LogAddSource:         parseBoolEnv("CONSOLE_LOG_ADD_SOURCE", defaultLogAddSource),
@@ -99,6 +101,28 @@ func parseBoolEnv(key string, defaultValue bool) bool {
 	default:
 		return defaultValue
 	}
+}
+
+func parseStringSetEnv(key string) map[string]bool {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return nil
+	}
+	result := make(map[string]bool)
+	for _, item := range strings.Split(raw, ",") {
+		item = normalizeToolKey(item)
+		if item != "" {
+			result[item] = true
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func normalizeToolKey(value string) string {
+	return strings.TrimSpace(strings.ToLower(value))
 }
 
 func parseLogLevelEnv(key string, defaultValue string) string {

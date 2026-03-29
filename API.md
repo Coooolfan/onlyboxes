@@ -732,6 +732,8 @@ Supported MCP flow includes standard methods such as:
 Tool argument schemas use `additionalProperties=false`.
 Unknown arguments are rejected with JSON-RPC `-32602 invalid params`.
 
+> Tools listed in `CONSOLE_HIDDEN_TOOLS` are omitted from `tools/list`. They remain callable via `tools/call` if the client already knows the tool name.
+
 #### Tool: `echo`
 
 Input:

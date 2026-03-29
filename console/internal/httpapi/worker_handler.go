@@ -81,14 +81,14 @@ func NewWorkerHandler(
 	}
 }
 
-func NewRouter(workerHandler *WorkerHandler, consoleAuth *ConsoleAuth, mcpAuth *MCPAuth, apiKeyAuth *APIKeyAuth) (*gin.Engine, error) {
+func NewRouter(workerHandler *WorkerHandler, consoleAuth *ConsoleAuth, mcpAuth *MCPAuth, apiKeyAuth *APIKeyAuth, hiddenTools map[string]bool) (*gin.Engine, error) {
 	if mcpAuth == nil {
 		return nil, ErrMCPAuthRequired
 	}
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 	router.Use(gin.Recovery())
-	router.Any("/mcp", mcpAuth.RequireToken(), gin.WrapH(NewMCPHandler(workerHandler.dispatcher)))
+	router.Any("/mcp", mcpAuth.RequireToken(), gin.WrapH(NewMCPHandler(workerHandler.dispatcher, hiddenTools)))
 
 	api := router.Group("/api/v1")
 	execAPI := api.Group("/")

@@ -157,3 +157,23 @@ func TestLoadLogConfigFallback(t *testing.T) {
 		t.Fatalf("expected LogAddSource fallback=%t, got %t", defaultLogAddSource, cfg.LogAddSource)
 	}
 }
+
+func TestLoadNormalizesHiddenTools(t *testing.T) {
+	t.Setenv("CONSOLE_HIDDEN_TOOLS", " pythonexec, readimage , TERMINALEXEC ,, ")
+
+	cfg := Load()
+
+	expected := map[string]bool{
+		"pythonexec":   true,
+		"readimage":    true,
+		"terminalexec": true,
+	}
+	if len(cfg.HiddenTools) != len(expected) {
+		t.Fatalf("expected %d hidden tools, got %d: %#v", len(expected), len(cfg.HiddenTools), cfg.HiddenTools)
+	}
+	for key := range expected {
+		if !cfg.HiddenTools[key] {
+			t.Fatalf("expected hidden tool key %q to be present in %#v", key, cfg.HiddenTools)
+		}
+	}
+}

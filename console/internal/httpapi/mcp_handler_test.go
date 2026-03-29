@@ -300,6 +300,65 @@ func TestMCPToolsList(t *testing.T) {
 	}
 }
 
+func TestMCPToolsListWithHiddenTools(t *testing.T) {
+	hidden := map[string]bool{"echo": true, "computeruse": true, "readimage": true}
+	router := newMCPTestRouterWithHiddenTools(t, &fakeMCPDispatcher{}, hidden)
+	payload := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`)
+
+	result := mustMapField(t, payload, "result")
+	toolsRaw, ok := result["tools"].([]any)
+	if !ok {
+		t.Fatalf("expected tools array, got %#v", result["tools"])
+	}
+	if len(toolsRaw) != 2 {
+		t.Fatalf("expected exactly 2 tools (5 - 3 hidden), got %d", len(toolsRaw))
+	}
+
+	toolByName := map[string]bool{}
+	for _, toolRaw := range toolsRaw {
+		tool, ok := toolRaw.(map[string]any)
+		if !ok {
+			t.Fatalf("expected tool object, got %#v", toolRaw)
+		}
+		toolByName[asString(t, tool["name"])] = true
+	}
+	if toolByName["echo"] {
+		t.Fatalf("expected echo to be excluded from tools/list when hidden")
+	}
+	if toolByName["computerUse"] {
+		t.Fatalf("expected computerUse to be excluded from tools/list when hidden")
+	}
+	if toolByName["readImage"] {
+		t.Fatalf("expected readImage to be excluded from tools/list when hidden")
+	}
+	if !toolByName["pythonExec"] {
+		t.Fatalf("expected pythonExec in tools/list")
+	}
+	if !toolByName["terminalExec"] {
+		t.Fatalf("expected terminalExec in tools/list")
+	}
+}
+
+func TestMCPToolCallHiddenToolStillWorks(t *testing.T) {
+	hidden := map[string]bool{"echo": true, "pythonexec": true}
+	router := newMCPTestRouterWithHiddenTools(t, &fakeMCPDispatcher{
+		dispatchEcho: func(ctx context.Context, message string, timeout time.Duration) (string, error) {
+			return "hidden:" + message, nil
+		},
+	}, hidden)
+
+	echoPayload := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":{"message":"hello"}}}`)
+	result := mustMapField(t, echoPayload, "result")
+	contentRaw, ok := result["content"].([]any)
+	if !ok || len(contentRaw) == 0 {
+		t.Fatalf("expected content array for hidden echo tool, got %#v", result["content"])
+	}
+	first := mustObject(t, contentRaw[0], "echo.content[0]")
+	if got := asString(t, first["text"]); got != `{"message":"hidden:hello"}` {
+		t.Fatalf("unexpected hidden echo response: %q", got)
+	}
+}
+
 func TestMCPToolCallEchoSuccess(t *testing.T) {
 	router := newMCPTestRouter(t, &fakeMCPDispatcher{
 		dispatchEcho: func(ctx context.Context, message string, timeout time.Duration) (string, error) {
@@ -1089,6 +1148,13 @@ func newMCPTestRouter(t *testing.T, dispatcher CommandDispatcher) http.Handler {
 
 	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, dispatcher, nil, nil, "")
 	return mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
+}
+
+func newMCPTestRouterWithHiddenTools(t *testing.T, dispatcher CommandDispatcher, hiddenTools map[string]bool) http.Handler {
+	t.Helper()
+
+	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, dispatcher, nil, nil, "")
+	return mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil, hiddenTools)
 }
 
 func mcpPostJSON(t *testing.T, router http.Handler, body string) map[string]any {

@@ -734,6 +734,8 @@ Task 所有权按账号隔离（由 token 对应账号决定）。
 所有工具参数 schema 都是 `additionalProperties=false`。
 传入未定义参数会返回 JSON-RPC `-32602 invalid params`。
 
+> 在 `CONSOLE_HIDDEN_TOOLS` 中列出的工具不会出现在 `tools/list` 中；如果客户端已知工具名，仍可继续通过 `tools/call` 调用。
+
 #### 工具：`echo`
 
 输入：

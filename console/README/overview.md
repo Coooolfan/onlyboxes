@@ -118,6 +118,15 @@ The console service hosts:
     - `POST /api/v1/console/api-keys`
     - `DELETE /api/v1/console/api-keys/:api_key_id`
 
+Hidden tools (`CONSOLE_HIDDEN_TOOLS`):
+- comma-separated list of tool names to hide from MCP `tools/list`.
+- valid tool names: `echo`, `pythonExec`, `terminalExec`, `computerUse`, `readImage`.
+- hidden tools are omitted from MCP `tools/list`.
+- hidden tools remain callable via MCP `tools/call` if the caller already knows the tool name.
+- console currently has no separate HTTP tool-list endpoint, so there is no HTTP list filtering to apply here.
+- default: empty (all tools visible).
+- example: `CONSOLE_HIDDEN_TOOLS=echo,computerUse`
+
 Security warning (high risk):
 - console gRPC currently has no built-in TLS/mTLS.
 - `worker-docker` rejects insecure console endpoints by default; plaintext is allowed only with `WORKER_CONSOLE_INSECURE=true`.

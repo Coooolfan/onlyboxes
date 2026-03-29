@@ -53,6 +53,8 @@ Accept: application/json, text/event-stream
 
 All tool parameter schemas set `additionalProperties: false`. Passing an undefined field returns JSON-RPC error `-32602 invalid params`.
 
+> Tools listed in `CONSOLE_HIDDEN_TOOLS` are omitted from `tools/list`. They remain callable if the client already knows the tool name. See [Console Configuration](/docs/console-config) for details.
+
 ---
 
 ## Tool Reference

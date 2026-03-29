@@ -44,6 +44,12 @@ These variables are only used during first startup when no admin account exists.
 | --- | --- | --- | --- |
 | `CONSOLE_ENABLE_REGISTRATION` | No | `false` | Allow admin to register non-admin accounts |
 
+### Tool management
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `CONSOLE_HIDDEN_TOOLS` | No | | Comma-separated tool names to hide from MCP `tools/list` (`echo`, `pythonExec`, `terminalExec`, `computerUse`, `readImage`). Hidden tools remain callable if the client already knows the tool name. |
+
 ### JIT Token Authentication
 
 | Variable | Required | Default | Description |

@@ -563,7 +563,7 @@ func TestListTrustedTokensRequiresAuthentication(t *testing.T) {
 
 func TestNewRouterReturnsErrorWhenMCPAuthIsNil(t *testing.T) {
 	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, nil, nil, ":50051")
-	router, err := NewRouter(handler, newTestConsoleAuth(t), nil, nil)
+	router, err := NewRouter(handler, newTestConsoleAuth(t), nil, nil, nil)
 	if !errors.Is(err, ErrMCPAuthRequired) {
 		t.Fatalf("expected ErrMCPAuthRequired, got %v", err)
 	}
