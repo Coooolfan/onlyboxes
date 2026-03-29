@@ -192,7 +192,7 @@ curl -fsSL https://onlybox.es/install.sh | bash
 | `WORKER_CONSOLE_INSECURE` | `false` | `false` 表示要求 TLS 端点；仅在需要明文 console gRPC 时设置为 `true` |
 | `WORKER_HEARTBEAT_INTERVAL_SEC` | `5` | 心跳周期 |
 | `WORKER_HEARTBEAT_JITTER_PCT` | `20` | 心跳抖动百分比 |
-| `WORKER_PYTHON_EXEC_DOCKER_IMAGE` | `python:slim` | `pythonExec` 运行镜像 |
+| `WORKER_PYTHON_EXEC_DOCKER_IMAGE` | `ghcr.io/astral-sh/uv:python3.12-bookworm-slim` | `pythonExec` 运行镜像 |
 | `WORKER_TERMINAL_EXEC_DOCKER_IMAGE` | `coolfan1024/onlyboxes-default-worker:0.0.3` | `terminalExec` 运行镜像 |
 | `WORKER_TERMINAL_OUTPUT_LIMIT_BYTES` | `1048576` | 单路输出流字节上限 |
 

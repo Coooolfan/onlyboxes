@@ -94,17 +94,27 @@ Accept: application/json, text/event-stream
 
 在 worker 上执行 Python 代码并返回执行结果。每次调用均在隔离环境中执行，不保留会话状态。
 
+> **第三方依赖：** 不支持在运行时安装包（如 `pip install`）。引用第三方包的唯一方式是 [PEP 723 内联脚本元数据](https://peps.python.org/pep-0723/)——在代码顶部声明 `# /// script` 块，worker 会在执行前自动安装其中列出的依赖。
+
 **入参：**
 
 | 字段 | 类型 | 必填 | 约束 |
 |------|------|------|------|
-| `code` | string | 是 | 要执行的 Python 代码 |
+| `code` | string | 是 | 要执行的 Python 代码。如需引用第三方包，必须使用 PEP 723 `# /// script` 块声明依赖。 |
 | `timeout_ms` | integer | 否 | `1..600000`，默认 `60000` |
 
 **入参示例：**
 
 ```json
 { "code": "print(1 + 1)", "timeout_ms": 60000 }
+```
+
+**使用第三方依赖的入参示例（PEP 723）：**
+
+```json
+{
+  "code": "# /// script\n# dependencies = [\"httpx\"]\n# ///\nimport httpx\nprint(httpx.get('https://example.com').status_code)"
+}
 ```
 
 **出参：**

@@ -83,7 +83,7 @@ Defaults:
 - Heartbeat interval: `5s`
 - Heartbeat jitter: `20%`
 - Call timeout: `ceil(2.5 * WORKER_HEARTBEAT_INTERVAL_SEC)` (default heartbeat `5s` => `13s`)
-- pythonExec image: `python:slim`
+- pythonExec image: `ghcr.io/astral-sh/uv:python3.12-bookworm-slim`
 - terminalExec image: `coolfan1024/onlyboxes-default-worker:0.0.3`
 - pythonExec memory / cpus / max processes: `256 MiB` / `1` / `128`
 - terminalExec memory / cpus / max processes: `256 MiB` / `1` / `128`

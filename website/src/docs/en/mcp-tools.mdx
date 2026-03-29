@@ -94,17 +94,27 @@ Connectivity test. Verifies a worker is reachable.
 
 Executes Python code on a worker and returns the result. Each call runs in an isolated environment with no persistent state.
 
+> **Third-party dependencies:** Runtime package installation (e.g. `pip install`) is not supported. The only way to use third-party packages is [PEP 723 inline script metadata](https://peps.python.org/pep-0723/) — declare a `# /// script` block at the top of your code and the worker will install the listed packages automatically before execution.
+
 **Input:**
 
 | Field | Type | Required | Constraints |
 |-------|------|----------|-------------|
-| `code` | string | Yes | Python code to execute |
+| `code` | string | Yes | Python code to execute. Use a PEP 723 `# /// script` block to declare third-party dependencies. |
 | `timeout_ms` | integer | No | `1..600000`, default `60000` |
 
 **Input example:**
 
 ```json
 { "code": "print(1 + 1)", "timeout_ms": 60000 }
+```
+
+**Input example with third-party dependencies (PEP 723):**
+
+```json
+{
+  "code": "# /// script\n# dependencies = [\"httpx\"]\n# ///\nimport httpx\nprint(httpx.get('https://example.com').status_code)"
+}
 ```
 
 **Output:**

@@ -657,7 +657,7 @@ mod tests {
             version: "dev".to_owned(),
             labels: Default::default(),
             boxlite_home: String::new(),
-            python_exec_image: "python:slim".to_owned(),
+            python_exec_image: "ghcr.io/astral-sh/uv:python3.12-bookworm-slim".to_owned(),
             python_exec_memory_mib: 256,
             python_exec_cpus: 1,
             python_exec_max_processes: 128,

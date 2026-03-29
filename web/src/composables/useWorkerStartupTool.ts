@@ -18,7 +18,7 @@ const defaultComputerUseOutputLimitBytes = 1024 * 1024
 const defaultTerminalLeaseMinSec = 60
 const defaultTerminalLeaseMaxSec = 1800
 const defaultTerminalLeaseDefaultSec = 60
-const defaultPythonExecDockerImage = 'python:slim'
+const defaultPythonExecDockerImage = 'ghcr.io/astral-sh/uv:python3.12-bookworm-slim'
 const defaultTerminalExecDockerImage = 'coolfan1024/onlyboxes-default-worker:0.0.3'
 
 type BuildState = {
