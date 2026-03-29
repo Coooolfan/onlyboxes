@@ -1,5 +1,7 @@
 # Onlyboxes
 
+[![SafeSkill 89/100](https://img.shields.io/badge/SafeSkill-89%2F100_Passes%20with%20Notes-yellow)](https://safeskill.dev/scan/coooolfan-onlyboxes)
+
 [简体中文](README.zh-CN.md)
 
 Onlyboxes is a self-hosted code execution sandbox platform for individuals and small teams.
