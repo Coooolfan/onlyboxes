@@ -71,6 +71,15 @@ WORKER_SECRET=<worker_secret> \
 | `WORKER_TERMINAL_EXEC_CPUS` | No | `1` | Terminal VM CPU count |
 | `WORKER_TERMINAL_EXEC_MAX_PROCESSES` | No | `128` | Terminal max processes |
 
+### Concurrency
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `WORKER_ECHO_MAX_INFLIGHT` | No | `4` | Max concurrent echo commands |
+| `WORKER_PYTHON_EXEC_MAX_INFLIGHT` | No | `4` | Max concurrent pythonExec commands |
+| `WORKER_TERMINAL_EXEC_MAX_INFLIGHT` | No | `4` | Max concurrent terminalExec commands |
+| `WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT` | No | `4` | Max concurrent terminalResource commands |
+
 ### Terminal lease
 
 | Variable | Required | Default | Description |

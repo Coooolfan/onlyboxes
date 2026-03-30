@@ -28,19 +28,19 @@ func buildHello(cfg config.Config) (*registryv1.ConnectHello, error) {
 		Capabilities: []*registryv1.CapabilityDeclaration{
 			{
 				Name:        echoCapabilityName,
-				MaxInflight: defaultMaxInflight,
+				MaxInflight: int32(cfg.EchoMaxInflight),
 			},
 			{
 				Name:        pythonExecCapabilityDeclared,
-				MaxInflight: defaultMaxInflight,
+				MaxInflight: int32(cfg.PythonExecMaxInflight),
 			},
 			{
 				Name:        terminalExecCapabilityDeclared,
-				MaxInflight: defaultMaxInflight,
+				MaxInflight: int32(cfg.TerminalExecMaxInflight),
 			},
 			{
 				Name:        terminalResourceCapabilityDeclared,
-				MaxInflight: defaultMaxInflight,
+				MaxInflight: int32(cfg.TerminalResourceMaxInflight),
 			},
 		},
 	}

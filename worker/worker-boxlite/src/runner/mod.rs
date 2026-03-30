@@ -13,7 +13,6 @@ use crate::config::Config;
 pub(crate) const MIN_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(1);
 pub(crate) const INITIAL_RECONNECT_DELAY: Duration = Duration::from_secs(1);
 pub(crate) const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(15);
-pub(crate) const DEFAULT_MAX_INFLIGHT: i32 = 4;
 pub(crate) const ECHO_CAPABILITY_NAME: &str = "echo";
 pub(crate) const PYTHON_EXEC_CAPABILITY_NAME: &str = "pythonexec";
 pub(crate) const PYTHON_EXEC_CAPABILITY_DECLARED: &str = "pythonExec";

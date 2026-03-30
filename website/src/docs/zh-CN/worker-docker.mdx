@@ -67,6 +67,15 @@ WORKER_SECRET=<worker_secret> \
 | `WORKER_PYTHON_EXEC_DOCKER_IMAGE` | 否 | `ghcr.io/astral-sh/uv:python3.12-bookworm-slim` | Python 执行镜像 |
 | `WORKER_TERMINAL_EXEC_DOCKER_IMAGE` | 否 | `coolfan1024/onlyboxes-default-worker:0.0.3` | 终端执行镜像 |
 
+### 并发上限
+
+| 变量 | 必填 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `WORKER_ECHO_MAX_INFLIGHT` | 否 | `4` | echo 最大并发数 |
+| `WORKER_PYTHON_EXEC_MAX_INFLIGHT` | 否 | `4` | pythonExec 最大并发数 |
+| `WORKER_TERMINAL_EXEC_MAX_INFLIGHT` | 否 | `4` | terminalExec 最大并发数 |
+| `WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT` | 否 | `4` | terminalResource 最大并发数 |
+
 ### 终端租约
 
 | 变量 | 必填 | 默认值 | 说明 |

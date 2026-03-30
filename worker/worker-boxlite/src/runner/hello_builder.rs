@@ -4,8 +4,8 @@ use crate::config::Config;
 use crate::proto::registryv1::{CapabilityDeclaration, ConnectHello};
 
 use super::{
-    DEFAULT_MAX_INFLIGHT, ECHO_CAPABILITY_NAME, PYTHON_EXEC_CAPABILITY_DECLARED,
-    TERMINAL_EXEC_CAPABILITY_DECLARED, TERMINAL_RESOURCE_CAPABILITY_DECLARED,
+    ECHO_CAPABILITY_NAME, PYTHON_EXEC_CAPABILITY_DECLARED, TERMINAL_EXEC_CAPABILITY_DECLARED,
+    TERMINAL_RESOURCE_CAPABILITY_DECLARED,
 };
 
 pub(crate) fn build_hello(cfg: &Config) -> ConnectHello {
@@ -30,19 +30,19 @@ pub(crate) fn build_hello(cfg: &Config) -> ConnectHello {
         capabilities: vec![
             CapabilityDeclaration {
                 name: ECHO_CAPABILITY_NAME.to_owned(),
-                max_inflight: DEFAULT_MAX_INFLIGHT,
+                max_inflight: cfg.echo_max_inflight,
             },
             CapabilityDeclaration {
                 name: PYTHON_EXEC_CAPABILITY_DECLARED.to_owned(),
-                max_inflight: DEFAULT_MAX_INFLIGHT,
+                max_inflight: cfg.python_exec_max_inflight,
             },
             CapabilityDeclaration {
                 name: TERMINAL_EXEC_CAPABILITY_DECLARED.to_owned(),
-                max_inflight: DEFAULT_MAX_INFLIGHT,
+                max_inflight: cfg.terminal_exec_max_inflight,
             },
             CapabilityDeclaration {
                 name: TERMINAL_RESOURCE_CAPABILITY_DECLARED.to_owned(),
-                max_inflight: DEFAULT_MAX_INFLIGHT,
+                max_inflight: cfg.terminal_resource_max_inflight,
             },
         ],
         worker_secret: cfg.worker_secret.clone(),
@@ -81,6 +81,10 @@ mod tests {
             terminal_lease_max_sec: 1800,
             terminal_lease_default_sec: 60,
             terminal_output_limit_bytes: 1024 * 1024,
+            echo_max_inflight: 4,
+            python_exec_max_inflight: 4,
+            terminal_exec_max_inflight: 4,
+            terminal_resource_max_inflight: 4,
             log_level: "info".to_owned(),
             log_format: "json".to_owned(),
             log_add_source: false,

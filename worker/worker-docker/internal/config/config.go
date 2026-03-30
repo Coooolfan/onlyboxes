@@ -23,6 +23,7 @@ const (
 	defaultLogLevel          = "info"
 	defaultLogFormat         = "json"
 	defaultLogAddSource      = false
+	defaultMaxInflight       = 4
 )
 
 type Config struct {
@@ -42,10 +43,14 @@ type Config struct {
 	TerminalLeaseMinSec      int
 	TerminalLeaseMaxSec      int
 	TerminalLeaseDefaultSec  int
-	TerminalOutputLimitBytes int
-	LogLevel                 string
-	LogFormat                string
-	LogAddSource             bool
+	TerminalOutputLimitBytes   int
+	EchoMaxInflight             int
+	PythonExecMaxInflight       int
+	TerminalExecMaxInflight     int
+	TerminalResourceMaxInflight int
+	LogLevel                    string
+	LogFormat                   string
+	LogAddSource                bool
 }
 
 func Load() Config {
@@ -84,8 +89,12 @@ func Load() Config {
 		TerminalLeaseMinSec:      terminalLeaseMinSec,
 		TerminalLeaseMaxSec:      terminalLeaseMaxSec,
 		TerminalLeaseDefaultSec:  terminalLeaseDefaultSec,
-		TerminalOutputLimitBytes: terminalOutputLimitBytes,
-		LogLevel:                 parseLogLevelEnv("WORKER_LOG_LEVEL", defaultLogLevel),
+		TerminalOutputLimitBytes:   terminalOutputLimitBytes,
+		EchoMaxInflight:             parsePositiveIntEnv("WORKER_ECHO_MAX_INFLIGHT", defaultMaxInflight),
+		PythonExecMaxInflight:       parsePositiveIntEnv("WORKER_PYTHON_EXEC_MAX_INFLIGHT", defaultMaxInflight),
+		TerminalExecMaxInflight:     parsePositiveIntEnv("WORKER_TERMINAL_EXEC_MAX_INFLIGHT", defaultMaxInflight),
+		TerminalResourceMaxInflight: parsePositiveIntEnv("WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT", defaultMaxInflight),
+		LogLevel:                    parseLogLevelEnv("WORKER_LOG_LEVEL", defaultLogLevel),
 		LogFormat:                parseLogFormatEnv("WORKER_LOG_FORMAT", defaultLogFormat),
 		LogAddSource:             parseBoolEnv("WORKER_LOG_ADD_SOURCE", defaultLogAddSource),
 	}

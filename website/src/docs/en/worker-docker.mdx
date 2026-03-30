@@ -67,6 +67,15 @@ Set `WORKER_CONSOLE_INSECURE=true` when connecting without TLS.
 | `WORKER_PYTHON_EXEC_DOCKER_IMAGE` | No | `ghcr.io/astral-sh/uv:python3.12-bookworm-slim` | Image for Python execution |
 | `WORKER_TERMINAL_EXEC_DOCKER_IMAGE` | No | `coolfan1024/onlyboxes-default-worker:0.0.3` | Image for terminal execution |
 
+### Concurrency
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `WORKER_ECHO_MAX_INFLIGHT` | No | `4` | Max concurrent echo commands |
+| `WORKER_PYTHON_EXEC_MAX_INFLIGHT` | No | `4` | Max concurrent pythonExec commands |
+| `WORKER_TERMINAL_EXEC_MAX_INFLIGHT` | No | `4` | Max concurrent terminalExec commands |
+| `WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT` | No | `4` | Max concurrent terminalResource commands |
+
 ### Terminal lease
 
 | Variable | Required | Default | Description |

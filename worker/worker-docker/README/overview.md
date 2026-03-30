@@ -26,7 +26,7 @@ Version report:
 
 Capability behavior:
 - `worker-docker` hardcodes capability declarations to `echo`, `pythonExec`, `terminalExec`, and `terminalResource`.
-- each capability declaration includes `max_inflight=4`.
+- each capability declaration includes `max_inflight` (default `4`, configurable per capability via environment variables).
 - startup logs include execution config summaries for `pythonExec` and `terminalExec` (image/lease/output-limit).
 - command dispatch logs are summary-only and do not include raw command/code/path/message content.
 - when receiving an `echo` command, worker returns the exact input string unchanged.
@@ -84,6 +84,7 @@ Defaults:
 - terminalExec image: `coolfan1024/onlyboxes-default-worker:0.0.3`
 - terminal lease min/max/default: `60s` / `1800s` / `60s`
 - terminal output limit: `1048576` bytes per stream (`stdout`/`stderr`)
+- capability max_inflight: `4` per capability
 - log level: `info`
 - log format: `json`
 - log add source: `false`
@@ -92,6 +93,13 @@ Logging config:
 - `WORKER_LOG_LEVEL`: `debug|info|warn|error` (default `info`)
 - `WORKER_LOG_FORMAT`: `json|text` (default `json`)
 - `WORKER_LOG_ADD_SOURCE`: include source file/line in logs (default `false`)
+
+Capability concurrency:
+- `WORKER_ECHO_MAX_INFLIGHT`: maximum concurrent echo commands (default `4`)
+- `WORKER_PYTHON_EXEC_MAX_INFLIGHT`: maximum concurrent pythonExec commands (default `4`)
+- `WORKER_TERMINAL_EXEC_MAX_INFLIGHT`: maximum concurrent terminalExec commands (default `4`)
+- `WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT`: maximum concurrent terminalResource commands (default `4`)
+- invalid values (non-positive integers) fall back to the default.
 
 Recommended setting:
 - `WORKER_CALL_TIMEOUT_SEC >= 2 * WORKER_HEARTBEAT_INTERVAL_SEC`

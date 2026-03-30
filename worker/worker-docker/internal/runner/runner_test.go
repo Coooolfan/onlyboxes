@@ -766,15 +766,19 @@ func TestRunSessionRespondsToPythonExecCommandDispatch(t *testing.T) {
 
 func testConfig() config.Config {
 	return config.Config{
-		ConsoleGRPCTarget: "127.0.0.1:65535",
-		WorkerID:          "worker-1",
-		WorkerSecret:      "secret-1",
-		HeartbeatInterval: 100 * time.Millisecond,
-		HeartbeatJitter:   0,
-		CallTimeout:       50 * time.Millisecond,
-		NodeName:          "node-test",
-		ExecutorKind:      "docker",
-		Version:           "test",
+		ConsoleGRPCTarget:           "127.0.0.1:65535",
+		WorkerID:                    "worker-1",
+		WorkerSecret:                "secret-1",
+		HeartbeatInterval:           100 * time.Millisecond,
+		HeartbeatJitter:             0,
+		CallTimeout:                 50 * time.Millisecond,
+		NodeName:                    "node-test",
+		ExecutorKind:                "docker",
+		Version:                     "test",
+		EchoMaxInflight:             defaultMaxInflight,
+		PythonExecMaxInflight:       defaultMaxInflight,
+		TerminalExecMaxInflight:     defaultMaxInflight,
+		TerminalResourceMaxInflight: defaultMaxInflight,
 	}
 }
 

@@ -18,6 +18,7 @@ const DEFAULT_TERMINAL_LEASE_MIN_SEC: u32 = 60;
 const DEFAULT_TERMINAL_LEASE_MAX_SEC: u32 = 1800;
 const DEFAULT_TERMINAL_LEASE_DEFAULT_SEC: u32 = 60;
 const DEFAULT_TERMINAL_OUTPUT_LIMIT_BYTES: usize = 1024 * 1024;
+const DEFAULT_MAX_INFLIGHT: u32 = 4;
 const DEFAULT_LOG_LEVEL: &str = "info";
 const DEFAULT_LOG_FORMAT: &str = "json";
 const DEFAULT_LOG_ADD_SOURCE: bool = false;
@@ -48,6 +49,10 @@ pub struct Config {
     pub terminal_lease_max_sec: u32,
     pub terminal_lease_default_sec: u32,
     pub terminal_output_limit_bytes: usize,
+    pub echo_max_inflight: i32,
+    pub python_exec_max_inflight: i32,
+    pub terminal_exec_max_inflight: i32,
+    pub terminal_resource_max_inflight: i32,
     pub log_level: String,
     pub log_format: String,
     pub log_add_source: bool,
@@ -143,6 +148,22 @@ impl Config {
                 "WORKER_TERMINAL_OUTPUT_LIMIT_BYTES",
                 DEFAULT_TERMINAL_OUTPUT_LIMIT_BYTES,
             ),
+            echo_max_inflight: parse_positive_u32_env(
+                "WORKER_ECHO_MAX_INFLIGHT",
+                DEFAULT_MAX_INFLIGHT,
+            ) as i32,
+            python_exec_max_inflight: parse_positive_u32_env(
+                "WORKER_PYTHON_EXEC_MAX_INFLIGHT",
+                DEFAULT_MAX_INFLIGHT,
+            ) as i32,
+            terminal_exec_max_inflight: parse_positive_u32_env(
+                "WORKER_TERMINAL_EXEC_MAX_INFLIGHT",
+                DEFAULT_MAX_INFLIGHT,
+            ) as i32,
+            terminal_resource_max_inflight: parse_positive_u32_env(
+                "WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT",
+                DEFAULT_MAX_INFLIGHT,
+            ) as i32,
             log_level: parse_log_level_env("WORKER_LOG_LEVEL", DEFAULT_LOG_LEVEL),
             log_format: parse_log_format_env("WORKER_LOG_FORMAT", DEFAULT_LOG_FORMAT),
             log_add_source: parse_bool_env("WORKER_LOG_ADD_SOURCE", DEFAULT_LOG_ADD_SOURCE),
