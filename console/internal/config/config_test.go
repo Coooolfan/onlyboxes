@@ -22,6 +22,8 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("CONSOLE_EXPORT_FILE_EXPORT_PREFIX", "")
 	t.Setenv("CONSOLE_EXPORT_FILE_AK", "")
 	t.Setenv("CONSOLE_EXPORT_FILE_SK", "")
+	t.Setenv("CONSOLE_EXPORT_FILE_UPLOAD_PRESIGN_TTL_SEC", "")
+	t.Setenv("CONSOLE_EXPORT_FILE_DOWNLOAD_PRESIGN_TTL_SEC", "")
 	t.Setenv("CONSOLE_ENABLE_REGISTRATION", "")
 	t.Setenv("CONSOLE_LOG_LEVEL", "")
 	t.Setenv("CONSOLE_LOG_FORMAT", "")
@@ -58,6 +60,12 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.ExportFileEnabled() {
 		t.Fatalf("expected exportFile disabled by default")
 	}
+	if cfg.ExportFileUploadTTL != time.Duration(defaultExportUploadTTLSec)*time.Second {
+		t.Fatalf("expected default export upload ttl, got %s", cfg.ExportFileUploadTTL)
+	}
+	if cfg.ExportFileDownloadTTL != time.Duration(defaultExportDownloadTTLSec)*time.Second {
+		t.Fatalf("expected default export download ttl, got %s", cfg.ExportFileDownloadTTL)
+	}
 	if cfg.EnableRegistration {
 		t.Fatalf("expected registration disabled by default")
 	}
@@ -87,6 +95,8 @@ func TestLoadReadsDashboardCredentialsAndDurations(t *testing.T) {
 	t.Setenv("CONSOLE_EXPORT_FILE_EXPORT_PREFIX", "prefix")
 	t.Setenv("CONSOLE_EXPORT_FILE_AK", "ak-test")
 	t.Setenv("CONSOLE_EXPORT_FILE_SK", "sk-test")
+	t.Setenv("CONSOLE_EXPORT_FILE_UPLOAD_PRESIGN_TTL_SEC", "120")
+	t.Setenv("CONSOLE_EXPORT_FILE_DOWNLOAD_PRESIGN_TTL_SEC", "900")
 	t.Setenv("CONSOLE_ENABLE_REGISTRATION", "true")
 	t.Setenv("CONSOLE_LOG_LEVEL", "debug")
 	t.Setenv("CONSOLE_LOG_FORMAT", "text")
@@ -132,6 +142,12 @@ func TestLoadReadsDashboardCredentialsAndDurations(t *testing.T) {
 	if cfg.ExportFileAK != "ak-test" || cfg.ExportFileSK != "sk-test" {
 		t.Fatalf("expected export credentials override, got ak=%q sk=%q", cfg.ExportFileAK, cfg.ExportFileSK)
 	}
+	if cfg.ExportFileUploadTTL != 120*time.Second {
+		t.Fatalf("expected export upload ttl override, got %s", cfg.ExportFileUploadTTL)
+	}
+	if cfg.ExportFileDownloadTTL != 900*time.Second {
+		t.Fatalf("expected export download ttl override, got %s", cfg.ExportFileDownloadTTL)
+	}
 	if !cfg.ExportFileEnabled() {
 		t.Fatalf("expected exportFile enabled when all env vars are present")
 	}
@@ -153,6 +169,8 @@ func TestLoadFallsBackForInvalidNumericEnv(t *testing.T) {
 	t.Setenv("CONSOLE_OFFLINE_TTL_SEC", "-1")
 	t.Setenv("CONSOLE_REPLAY_WINDOW_SEC", "not-a-number")
 	t.Setenv("CONSOLE_HEARTBEAT_INTERVAL_SEC", "0")
+	t.Setenv("CONSOLE_EXPORT_FILE_UPLOAD_PRESIGN_TTL_SEC", "0")
+	t.Setenv("CONSOLE_EXPORT_FILE_DOWNLOAD_PRESIGN_TTL_SEC", "not-a-number")
 
 	cfg := Load()
 	if cfg.OfflineTTL != time.Duration(defaultOfflineTTLSec)*time.Second {
@@ -163,6 +181,12 @@ func TestLoadFallsBackForInvalidNumericEnv(t *testing.T) {
 	}
 	if cfg.HeartbeatIntervalSec != int32(defaultHeartbeatIntervalSec) {
 		t.Fatalf("expected default heartbeat interval, got %d", cfg.HeartbeatIntervalSec)
+	}
+	if cfg.ExportFileUploadTTL != time.Duration(defaultExportUploadTTLSec)*time.Second {
+		t.Fatalf("expected default export upload ttl, got %s", cfg.ExportFileUploadTTL)
+	}
+	if cfg.ExportFileDownloadTTL != time.Duration(defaultExportDownloadTTLSec)*time.Second {
+		t.Fatalf("expected default export download ttl, got %s", cfg.ExportFileDownloadTTL)
 	}
 }
 

@@ -31,6 +31,8 @@ func handleMCPExportFileTool(
 	dispatcher CommandDispatcher,
 	exportStore ExportStore,
 	exportPrefix string,
+	uploadPresignTTL time.Duration,
+	downloadPresignTTL time.Duration,
 	input mcpExportFileToolInput,
 ) (*mcp.CallToolResult, mcpExportFileToolOutput, error) {
 	sessionID := strings.TrimSpace(input.SessionID)
@@ -59,8 +61,10 @@ func handleMCPExportFileTool(
 		return nil, mcpExportFileToolOutput{}, errors.New("exportFile is unavailable")
 	}
 
+	uploadTTL := normalizeExportPresignTTL(uploadPresignTTL, exportFileUploadPresignTTL)
+	downloadTTL := normalizeExportPresignTTL(downloadPresignTTL, exportFileDownloadPresignTTL)
 	objectKey := buildExportObjectKey(exportPrefix, sessionID, filePath)
-	uploadURL, err := exportStore.PresignUpload(ctx, objectKey, exportFileUploadPresignTTL)
+	uploadURL, err := exportStore.PresignUpload(ctx, objectKey, uploadTTL)
 	if err != nil {
 		return nil, mcpExportFileToolOutput{}, errors.New("failed to generate upload URL")
 	}
@@ -79,12 +83,19 @@ func handleMCPExportFileTool(
 		return nil, mcpExportFileToolOutput{}, errors.New("invalid exportFile result payload")
 	}
 
-	downloadURL, err := exportStore.PresignDownload(ctx, objectKey, exportFileDownloadPresignTTL)
+	downloadURL, err := exportStore.PresignDownload(ctx, objectKey, downloadTTL)
 	if err != nil {
 		return nil, mcpExportFileToolOutput{}, errors.New("failed to generate download URL")
 	}
 
 	return nil, mcpExportFileToolOutput{SignedURL: downloadURL}, nil
+}
+
+func normalizeExportPresignTTL(value time.Duration, fallback time.Duration) time.Duration {
+	if value > 0 {
+		return value
+	}
+	return fallback
 }
 
 func buildExportObjectKey(exportPrefix string, sessionID string, filePath string) string {

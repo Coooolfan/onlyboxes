@@ -4,11 +4,19 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func NewMCPHandler(dispatcher CommandDispatcher, hiddenTools map[string]bool, exportStore ExportStore, exportPrefix string) http.Handler {
+func NewMCPHandler(
+	dispatcher CommandDispatcher,
+	hiddenTools map[string]bool,
+	exportStore ExportStore,
+	exportPrefix string,
+	exportUploadTTL time.Duration,
+	exportDownloadTTL time.Duration,
+) http.Handler {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    mcpServerName,
 		Version: mcpServerVersion,
@@ -107,7 +115,7 @@ func NewMCPHandler(dispatcher CommandDispatcher, hiddenTools map[string]bool, ex
 			InputSchema:  mcpExportFileInputSchema,
 			OutputSchema: mcpExportFileOutputSchema,
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpExportFileToolInput) (*mcp.CallToolResult, mcpExportFileToolOutput, error) {
-			return handleMCPExportFileTool(ctx, dispatcher, exportStore, exportPrefix, input)
+			return handleMCPExportFileTool(ctx, dispatcher, exportStore, exportPrefix, exportUploadTTL, exportDownloadTTL, input)
 		})
 	}
 

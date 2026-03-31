@@ -297,6 +297,7 @@ Exports a file from a Docker-backed terminal session to the console's configured
 **Behavior:**
 
 - Available only when the console export object-store environment variables are configured.
+- Upload/download presign TTLs are controlled by `CONSOLE_EXPORT_FILE_UPLOAD_PRESIGN_TTL_SEC` and `CONSOLE_EXPORT_FILE_DOWNLOAD_PRESIGN_TTL_SEC`.
 - Routes to `terminalResource` with `action="export"` on the same Docker worker that owns the terminal session.
 - The worker first probes the file via `docker exec <container> python3 -c ...`, then copies it out with `docker cp`, uploads it through a presigned HTTP `PUT`, and returns a presigned download URL.
 - Non-JSON probe failures inside the worker (for example OCI / `docker exec` startup failures) are surfaced as tool errors with docker exit code and output summary; they are not rewritten as JSON parse errors.

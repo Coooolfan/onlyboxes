@@ -142,7 +142,9 @@ Export file objectstore config:
 - `CONSOLE_EXPORT_FILE_EXPORT_PREFIX`: object key prefix prepended to every export.
 - `CONSOLE_EXPORT_FILE_AK`: access key used for presigning.
 - `CONSOLE_EXPORT_FILE_SK`: secret key used for presigning.
-- `exportFile` is registered only when all 6 variables above are non-empty.
+- `CONSOLE_EXPORT_FILE_UPLOAD_PRESIGN_TTL_SEC`: upload presign TTL in seconds (default `900`).
+- `CONSOLE_EXPORT_FILE_DOWNLOAD_PRESIGN_TTL_SEC`: download presign TTL in seconds (default `3600`).
+- `exportFile` is registered only when the 6 core objectstore variables above (`ENDPOINT/REGION/BUCKET_NAME/EXPORT_PREFIX/AK/SK`) are non-empty.
 
 Security warning (high risk):
 - console gRPC currently has no built-in TLS/mTLS.

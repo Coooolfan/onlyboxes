@@ -19,15 +19,17 @@ const (
 var ErrMCPAuthRequired = errors.New("mcp auth is required")
 
 type WorkerHandler struct {
-	store           *registry.Store
-	offlineTTL      time.Duration
-	dispatcher      CommandDispatcher
-	provisioning    WorkerProvisioning
-	inflightStats   InflightStatsProvider
-	consoleGRPCAddr string
-	exportStore     ExportStore
-	exportPrefix    string
-	nowFn           func() time.Time
+	store             *registry.Store
+	offlineTTL        time.Duration
+	dispatcher        CommandDispatcher
+	provisioning      WorkerProvisioning
+	inflightStats     InflightStatsProvider
+	consoleGRPCAddr   string
+	exportStore       ExportStore
+	exportPrefix      string
+	exportUploadTTL   time.Duration
+	exportDownloadTTL time.Duration
+	nowFn             func() time.Time
 }
 
 type WorkerProvisioning interface {
@@ -83,12 +85,14 @@ func NewWorkerHandler(
 	}
 }
 
-func (h *WorkerHandler) SetExportStore(store ExportStore, exportPrefix string) {
+func (h *WorkerHandler) SetExportStore(store ExportStore, exportPrefix string, uploadTTL time.Duration, downloadTTL time.Duration) {
 	if h == nil {
 		return
 	}
 	h.exportStore = store
 	h.exportPrefix = strings.TrimSpace(exportPrefix)
+	h.exportUploadTTL = uploadTTL
+	h.exportDownloadTTL = downloadTTL
 }
 
 func NewRouter(workerHandler *WorkerHandler, consoleAuth *ConsoleAuth, mcpAuth *MCPAuth, apiKeyAuth *APIKeyAuth, hiddenTools map[string]bool) (*gin.Engine, error) {
@@ -98,7 +102,14 @@ func NewRouter(workerHandler *WorkerHandler, consoleAuth *ConsoleAuth, mcpAuth *
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 	router.Use(gin.Recovery())
-	router.Any("/mcp", mcpAuth.RequireToken(), gin.WrapH(NewMCPHandler(workerHandler.dispatcher, hiddenTools, workerHandler.exportStore, workerHandler.exportPrefix)))
+	router.Any("/mcp", mcpAuth.RequireToken(), gin.WrapH(NewMCPHandler(
+		workerHandler.dispatcher,
+		hiddenTools,
+		workerHandler.exportStore,
+		workerHandler.exportPrefix,
+		workerHandler.exportUploadTTL,
+		workerHandler.exportDownloadTTL,
+	)))
 
 	api := router.Group("/api/v1")
 	execAPI := api.Group("/")

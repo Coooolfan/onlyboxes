@@ -297,6 +297,7 @@ unsupported mime type: <mime>; expected image/*
 **行为说明：**
 
 - 仅当 console 侧导出对象存储环境变量完整配置后才可用。
+- 上传/下载预签名 URL 的有效期分别由 `CONSOLE_EXPORT_FILE_UPLOAD_PRESIGN_TTL_SEC` 和 `CONSOLE_EXPORT_FILE_DOWNLOAD_PRESIGN_TTL_SEC` 控制。
 - 路由到持有该 terminal 会话的同一台 Docker worker，并以 `terminalResource` 的 `action="export"` 执行。
 - worker 会先通过 `docker exec <container> python3 -c ...` 探测文件，再通过 `docker cp` 拷出文件，使用预签名 HTTP `PUT` 上传，最后返回预签名下载 URL。
 - worker 内部若出现非 JSON 的探针失败（例如 OCI / `docker exec` 启动失败），会直接作为工具错误返回 docker 退出码和输出摘要，不会再被包装成 JSON 解析错误。

@@ -760,6 +760,61 @@ func TestMCPToolCallExportFileSuccess(t *testing.T) {
 	}
 }
 
+func TestMCPToolCallExportFileUsesConfiguredPresignTTLs(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	originalExportObjectID := newExportObjectID
+	newExportObjectID = func() string { return "fixed-id" }
+	t.Cleanup(func() {
+		newExportObjectID = originalExportObjectID
+	})
+
+	customUploadTTL := 2 * time.Minute
+	customDownloadTTL := 12 * time.Minute
+	store := &fakeExportStore{
+		presignUpload: func(ctx context.Context, objectKey string, expiresIn time.Duration) (string, error) {
+			if expiresIn != customUploadTTL {
+				t.Fatalf("unexpected upload ttl: %s", expiresIn)
+			}
+			return "https://uploads.example.com/put", nil
+		},
+		presignDownload: func(ctx context.Context, objectKey string, expiresIn time.Duration) (string, error) {
+			if expiresIn != customDownloadTTL {
+				t.Fatalf("unexpected download ttl: %s", expiresIn)
+			}
+			return "https://downloads.example.com/get", nil
+		},
+	}
+
+	router := newMCPTestRouterWithObjectStoreAndTTLs(t, &fakeMCPDispatcher{
+		submitTask: func(ctx context.Context, req grpcserver.SubmitTaskRequest) (grpcserver.SubmitTaskResult, error) {
+			resultJSON, _ := json.Marshal(mcpTerminalResourceResult{
+				SessionID: "session-1",
+				FilePath:  "/workspace/report.png",
+				MIMEType:  "image/png",
+				SizeBytes: 4,
+			})
+			return grpcserver.SubmitTaskResult{
+				Task: grpcserver.TaskSnapshot{
+					TaskID:     "task-export-file-custom-ttl",
+					Capability: terminalResourceCapabilityName,
+					Status:     grpcserver.TaskStatusSucceeded,
+					ResultJSON: resultJSON,
+					CreatedAt:  now,
+					UpdatedAt:  now,
+					DeadlineAt: now.Add(60 * time.Second),
+				},
+				Completed: true,
+			}, nil
+		},
+	}, store, "exports", customUploadTTL, customDownloadTTL)
+
+	payload := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"exportFile","arguments":{"session_id":"session-1","file_path":"/workspace/report.png"}}}`)
+	result := mustMapField(t, payload, "result")
+	if asBool(result["isError"]) {
+		t.Fatalf("expected tool call success, got error payload=%s", mustJSON(t, result))
+	}
+}
+
 func TestMCPToolCallExportFileRejectsComputerUse(t *testing.T) {
 	router := newMCPTestRouterWithObjectStore(t, &fakeMCPDispatcher{}, &fakeExportStore{}, "exports")
 
@@ -1300,10 +1355,28 @@ func newMCPTestRouter(t *testing.T, dispatcher CommandDispatcher) http.Handler {
 }
 
 func newMCPTestRouterWithObjectStore(t *testing.T, dispatcher CommandDispatcher, store ExportStore, exportPrefix string) http.Handler {
+	return newMCPTestRouterWithObjectStoreAndTTLs(
+		t,
+		dispatcher,
+		store,
+		exportPrefix,
+		exportFileUploadPresignTTL,
+		exportFileDownloadPresignTTL,
+	)
+}
+
+func newMCPTestRouterWithObjectStoreAndTTLs(
+	t *testing.T,
+	dispatcher CommandDispatcher,
+	store ExportStore,
+	exportPrefix string,
+	uploadTTL time.Duration,
+	downloadTTL time.Duration,
+) http.Handler {
 	t.Helper()
 
 	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, dispatcher, nil, nil, "")
-	handler.SetExportStore(store, exportPrefix)
+	handler.SetExportStore(store, exportPrefix, uploadTTL, downloadTTL)
 	return mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
 }
 

@@ -110,7 +110,12 @@ func main() {
 		if err != nil {
 			fatal("failed to initialize export objectstore", "error", err)
 		}
-		httpHandler.SetExportStore(exportStore, cfg.ExportFilePrefix)
+		httpHandler.SetExportStore(
+			exportStore,
+			cfg.ExportFilePrefix,
+			cfg.ExportFileUploadTTL,
+			cfg.ExportFileDownloadTTL,
+		)
 	}
 	consoleAuth, err := httpapi.NewConsoleAuth(db.Queries, cfg.EnableRegistration)
 	if err != nil {
