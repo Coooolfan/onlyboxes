@@ -815,21 +815,64 @@ func TestMCPToolCallExportFileUsesConfiguredPresignTTLs(t *testing.T) {
 	}
 }
 
-func TestMCPToolCallExportFileRejectsComputerUse(t *testing.T) {
-	router := newMCPTestRouterWithObjectStore(t, &fakeMCPDispatcher{}, &fakeExportStore{}, "exports")
+func TestMCPToolCallExportFileComputerUseSessionRoutesToReadImageCapability(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	store := &fakeExportStore{
+		presignUpload: func(ctx context.Context, objectKey string, expiresIn time.Duration) (string, error) {
+			return "https://uploads.example.com/put", nil
+		},
+		presignDownload: func(ctx context.Context, objectKey string, expiresIn time.Duration) (string, error) {
+			return "https://downloads.example.com/get", nil
+		},
+	}
+
+	router := newMCPTestRouterWithObjectStore(t, &fakeMCPDispatcher{
+		submitTask: func(ctx context.Context, req grpcserver.SubmitTaskRequest) (grpcserver.SubmitTaskResult, error) {
+			if req.Capability != readImageCapabilityName {
+				t.Fatalf("expected capability=%q, got %q", readImageCapabilityName, req.Capability)
+			}
+			payload := mcpTerminalResourcePayload{}
+			if err := json.Unmarshal(req.InputJSON, &payload); err != nil {
+				t.Fatalf("expected valid readImage payload, got %s", string(req.InputJSON))
+			}
+			if payload.SessionID != computerUseSessionID {
+				t.Fatalf("expected session_id=%q, got %q", computerUseSessionID, payload.SessionID)
+			}
+			if payload.Action != "export" {
+				t.Fatalf("expected export action, got %q", payload.Action)
+			}
+			if payload.SignedURL != "https://uploads.example.com/put" {
+				t.Fatalf("unexpected signed_url: %q", payload.SignedURL)
+			}
+			resultJSON, _ := json.Marshal(mcpTerminalResourceResult{
+				SessionID: payload.SessionID,
+				FilePath:  payload.FilePath,
+				MIMEType:  "image/png",
+				SizeBytes: 4,
+			})
+			return grpcserver.SubmitTaskResult{
+				Task: grpcserver.TaskSnapshot{
+					TaskID:     "task-export-file-computer-use",
+					Capability: readImageCapabilityName,
+					Status:     grpcserver.TaskStatusSucceeded,
+					ResultJSON: resultJSON,
+					CreatedAt:  now,
+					UpdatedAt:  now,
+					DeadlineAt: now.Add(60 * time.Second),
+				},
+				Completed: true,
+			}, nil
+		},
+	}, store, "exports")
 
 	payload := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"exportFile","arguments":{"session_id":"computerUse","file_path":"/workspace/report.png"}}}`)
 	result := mustMapField(t, payload, "result")
-	if !asBool(result["isError"]) {
-		t.Fatalf("expected tool error for computerUse session")
+	if asBool(result["isError"]) {
+		t.Fatalf("expected tool call success, got error payload=%s", mustJSON(t, result))
 	}
-	contentRaw, ok := result["content"].([]any)
-	if !ok || len(contentRaw) != 1 {
-		t.Fatalf("expected text content error, got %#v", result["content"])
-	}
-	first := mustObject(t, contentRaw[0], "exportFile.content[0]")
-	if got := asString(t, first["text"]); got != "exportFile is not supported for computerUse sessions" {
-		t.Fatalf("unexpected error text: %q", got)
+	structured := mustMapField(t, result, "structuredContent")
+	if got := asString(t, structured["signed_url"]); got != "https://downloads.example.com/get" {
+		t.Fatalf("expected signed_url in response, got %q", got)
 	}
 }
 

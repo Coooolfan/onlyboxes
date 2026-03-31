@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -6,6 +7,7 @@ use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
 use base64::Engine;
+use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -22,8 +24,10 @@ pub(crate) const TERMINAL_EXEC_CODE_SESSION_BUSY: &str = "session_busy";
 pub(crate) const TERMINAL_EXEC_CODE_INVALID_PAYLOAD: &str = "invalid_payload";
 pub(crate) const TERMINAL_RESOURCE_ACTION_VALIDATE: &str = "validate";
 pub(crate) const TERMINAL_RESOURCE_ACTION_READ: &str = "read";
+pub(crate) const TERMINAL_RESOURCE_ACTION_EXPORT: &str = "export";
 pub(crate) const TERMINAL_RESOURCE_CODE_FILE_NOT_FOUND: &str = "file_not_found";
 pub(crate) const TERMINAL_RESOURCE_CODE_PATH_IS_DIR: &str = "path_is_directory";
+pub(crate) const TERMINAL_RESOURCE_CODE_PATH_NOT_ALLOWED: &str = "path_not_allowed";
 pub(crate) const TERMINAL_RESOURCE_CODE_FILE_TOO_LARGE: &str = "file_too_large";
 
 pub(crate) const TERMINAL_RESOURCE_PROBE_SCRIPT: &str = r#"
@@ -113,6 +117,7 @@ pub(crate) struct TerminalResourceRequest {
     pub session_id: String,
     pub file_path: String,
     pub action: String,
+    pub signed_url: String,
     pub deadline_unix_ms: i64,
 }
 
@@ -192,6 +197,13 @@ pub(crate) trait TerminalBackend: Send + Sync {
         max_read_bytes: usize,
         deadline_unix_ms: i64,
     ) -> Result<CollectedExecOutput, BoxliteCommandError>;
+    async fn copy_out_file(
+        &self,
+        box_id: &str,
+        container_src: &str,
+        host_dst: &Path,
+        deadline_unix_ms: i64,
+    ) -> Result<(), BoxliteCommandError>;
     async fn remove_box(&self, box_id: &str);
 }
 
@@ -381,15 +393,37 @@ impl TerminalSessionManager {
         let action =
             normalize_terminal_resource_action(&req.action).ok_or_else(|| TerminalExecError {
                 code: TERMINAL_EXEC_CODE_INVALID_PAYLOAD.to_owned(),
-                message: "action must be validate or read".to_owned(),
+                message: "action must be validate, read, or export".to_owned(),
             })?;
+        let signed_url = req.signed_url.trim().to_owned();
+        if action == TERMINAL_RESOURCE_ACTION_EXPORT && signed_url.is_empty() {
+            return Err(TerminalExecError {
+                code: TERMINAL_EXEC_CODE_INVALID_PAYLOAD.to_owned(),
+                message: "signed_url is required for export".to_owned(),
+            }
+            .into());
+        }
+        if action == TERMINAL_RESOURCE_ACTION_EXPORT
+            && is_terminal_resource_export_path_disallowed(&file_path)
+        {
+            return Err(TerminalExecError {
+                code: TERMINAL_RESOURCE_CODE_PATH_NOT_ALLOWED.to_owned(),
+                message: "paths under /tmp are not allowed for export".to_owned(),
+            }
+            .into());
+        }
 
         let claimed = self.claim_existing_session(&session_id).await?;
+        let probe_action = if action == TERMINAL_RESOURCE_ACTION_EXPORT {
+            TERMINAL_RESOURCE_ACTION_VALIDATE
+        } else {
+            action
+        };
         let exec_result = self
             .backend
             .exec_resource_probe(
                 &claimed.box_id,
-                action,
+                probe_action,
                 &file_path,
                 self.output_limit_bytes,
                 req.deadline_unix_ms,
@@ -432,6 +466,58 @@ impl TerminalSessionManager {
                     probe.mime_type.trim().to_owned()
                 };
 
+                let result = TerminalResourceRunResult {
+                    session_id: session_id.clone(),
+                    file_path: file_path.clone(),
+                    mime_type,
+                    size_bytes: probe.size_bytes,
+                    blob: Vec::new(),
+                };
+
+                if action == TERMINAL_RESOURCE_ACTION_EXPORT {
+                    let temp_path = build_export_temp_path();
+                    let _temp_path_guard = TempPathGuard::new(temp_path.clone());
+                    match self
+                        .backend
+                        .copy_out_file(
+                            &claimed.box_id,
+                            &result.file_path,
+                            &temp_path,
+                            req.deadline_unix_ms,
+                        )
+                        .await
+                    {
+                        Ok(()) => {}
+                        Err(BoxliteCommandError::DeadlineExceeded) => {
+                            self.destroy_session(&result.session_id).await;
+                            return Err(TerminalOperationError::DeadlineExceeded);
+                        }
+                        Err(BoxliteCommandError::MissingBox) => {
+                            self.destroy_session(&result.session_id).await;
+                            return Err(TerminalExecError {
+                                code: TERMINAL_EXEC_CODE_SESSION_NOT_FOUND.to_owned(),
+                                message: TERMINAL_EXEC_NO_SESSION_MESSAGE.to_owned(),
+                            }
+                            .into());
+                        }
+                        Err(BoxliteCommandError::ExecutionFailed(message)) => {
+                            self.mark_session_idle(&result.session_id).await;
+                            return Err(TerminalOperationError::ExecutionFailed(message));
+                        }
+                    }
+                    if let Err(err) = put_file_to_signed_url(&signed_url, &temp_path).await {
+                        self.mark_session_idle(&result.session_id).await;
+                        return Err(TerminalOperationError::ExecutionFailed(err));
+                    }
+                    self.mark_session_idle(&result.session_id)
+                        .await
+                        .ok_or_else(|| TerminalExecError {
+                            code: TERMINAL_EXEC_CODE_SESSION_NOT_FOUND.to_owned(),
+                            message: TERMINAL_EXEC_NO_SESSION_MESSAGE.to_owned(),
+                        })?;
+                    return Ok(result);
+                }
+
                 let blob = if action == TERMINAL_RESOURCE_ACTION_READ {
                     let encoded = probe.blob.trim();
                     if encoded.is_empty() {
@@ -449,13 +535,14 @@ impl TerminalSessionManager {
                     Vec::new()
                 };
 
-                Ok(TerminalResourceRunResult {
-                    session_id,
-                    file_path,
-                    mime_type,
-                    size_bytes: probe.size_bytes,
-                    blob,
-                })
+                self.mark_session_idle(&session_id)
+                    .await
+                    .ok_or_else(|| TerminalExecError {
+                        code: TERMINAL_EXEC_CODE_SESSION_NOT_FOUND.to_owned(),
+                        message: TERMINAL_EXEC_NO_SESSION_MESSAGE.to_owned(),
+                    })?;
+
+                Ok(TerminalResourceRunResult { blob, ..result })
             }
             Err(BoxliteCommandError::DeadlineExceeded) => {
                 self.destroy_session(&session_id).await;
@@ -772,6 +859,23 @@ impl TerminalBackend for BoxliteTerminalBackend {
         .await
     }
 
+    async fn copy_out_file(
+        &self,
+        box_id: &str,
+        container_src: &str,
+        host_dst: &Path,
+        deadline_unix_ms: i64,
+    ) -> Result<(), BoxliteCommandError> {
+        boxlite_runtime::copy_out_terminal_file(
+            &self.cfg,
+            box_id,
+            container_src,
+            host_dst,
+            deadline_unix_ms,
+        )
+        .await
+    }
+
     async fn remove_box(&self, box_id: &str) {
         boxlite_runtime::remove_box(&self.cfg, box_id).await;
     }
@@ -794,6 +898,7 @@ fn normalize_terminal_resource_action(action: &str) -> Option<&'static str> {
         "" => Some(TERMINAL_RESOURCE_ACTION_VALIDATE),
         TERMINAL_RESOURCE_ACTION_VALIDATE => Some(TERMINAL_RESOURCE_ACTION_VALIDATE),
         TERMINAL_RESOURCE_ACTION_READ => Some(TERMINAL_RESOURCE_ACTION_READ),
+        TERMINAL_RESOURCE_ACTION_EXPORT => Some(TERMINAL_RESOURCE_ACTION_EXPORT),
         _ => None,
     }
 }
@@ -815,13 +920,58 @@ fn terminal_resource_error_message(code: &str, fallback: &str) -> String {
     match code.trim() {
         TERMINAL_RESOURCE_CODE_FILE_NOT_FOUND => "file not found".to_owned(),
         TERMINAL_RESOURCE_CODE_PATH_IS_DIR => "path is directory".to_owned(),
+        TERMINAL_RESOURCE_CODE_PATH_NOT_ALLOWED => "file path is not allowed".to_owned(),
         TERMINAL_RESOURCE_CODE_FILE_TOO_LARGE => "file exceeds read limit".to_owned(),
         _ => "terminal resource operation failed".to_owned(),
     }
 }
 
+fn is_terminal_resource_export_path_disallowed(file_path: &str) -> bool {
+    let trimmed = file_path.trim();
+    trimmed == "/tmp" || trimmed.starts_with("/tmp/")
+}
+
 fn add_duration(time: SystemTime, duration: Duration) -> SystemTime {
     time.checked_add(duration).unwrap_or(time)
+}
+
+fn build_export_temp_path() -> PathBuf {
+    std::env::temp_dir().join(format!("onlyboxes-export-{}", Uuid::new_v4()))
+}
+
+async fn put_file_to_signed_url(signed_url: &str, file_path: &Path) -> Result<(), String> {
+    let upload_path = file_path.to_path_buf();
+    let payload = tokio::fs::read(&upload_path)
+        .await
+        .map_err(|err| format!("open export file: {err}"))?;
+    let response = reqwest::Client::new()
+        .put(signed_url)
+        .header(reqwest::header::CONTENT_LENGTH, payload.len().to_string())
+        .body(payload)
+        .send()
+        .await
+        .map_err(|err| format!("upload export file: {err}"))?;
+    if response.status().is_success() {
+        return Ok(());
+    }
+
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .map_err(|err| format!("read export upload error body: {err}"))?;
+    let message = if body.trim().is_empty() {
+        status
+            .canonical_reason()
+            .unwrap_or_else(|| match status {
+                StatusCode::BAD_REQUEST => "Bad Request",
+                _ => status.as_str(),
+            })
+            .to_owned()
+    } else {
+        body.trim().to_owned()
+    };
+    Err(format!("upload export file failed: {message}"))
 }
 
 fn to_unix_millis(time: SystemTime) -> i64 {
@@ -850,10 +1000,28 @@ where
         .map_err(serde::de::Error::custom)
 }
 
+struct TempPathGuard {
+    path: PathBuf,
+}
+
+impl TempPathGuard {
+    fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+}
+
+impl Drop for TempPathGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Arc;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
     use tokio::sync::Notify;
 
     struct StatefulShellBackend {
@@ -938,6 +1106,17 @@ mod tests {
             })
         }
 
+        async fn copy_out_file(
+            &self,
+            _box_id: &str,
+            _container_src: &str,
+            host_dst: &Path,
+            _deadline_unix_ms: i64,
+        ) -> Result<(), BoxliteCommandError> {
+            std::fs::write(host_dst, b"hello")
+                .map_err(|err| BoxliteCommandError::ExecutionFailed(err.to_string()))
+        }
+
         async fn remove_box(&self, box_id: &str) {
             self.removed.lock().await.push(box_id.to_owned());
         }
@@ -980,6 +1159,16 @@ mod tests {
             _max_read_bytes: usize,
             _deadline_unix_ms: i64,
         ) -> Result<CollectedExecOutput, BoxliteCommandError> {
+            unreachable!()
+        }
+
+        async fn copy_out_file(
+            &self,
+            _box_id: &str,
+            _container_src: &str,
+            _host_dst: &Path,
+            _deadline_unix_ms: i64,
+        ) -> Result<(), BoxliteCommandError> {
             unreachable!()
         }
 
@@ -1032,6 +1221,17 @@ mod tests {
             })
         }
 
+        async fn copy_out_file(
+            &self,
+            _box_id: &str,
+            _container_src: &str,
+            host_dst: &Path,
+            _deadline_unix_ms: i64,
+        ) -> Result<(), BoxliteCommandError> {
+            std::fs::write(host_dst, b"x")
+                .map_err(|err| BoxliteCommandError::ExecutionFailed(err.to_string()))
+        }
+
         async fn remove_box(&self, _box_id: &str) {}
     }
 
@@ -1067,6 +1267,16 @@ mod tests {
             })
         }
 
+        async fn copy_out_file(
+            &self,
+            _box_id: &str,
+            _container_src: &str,
+            _host_dst: &Path,
+            _deadline_unix_ms: i64,
+        ) -> Result<(), BoxliteCommandError> {
+            unreachable!()
+        }
+
         async fn remove_box(&self, _box_id: &str) {}
     }
 
@@ -1097,6 +1307,16 @@ mod tests {
             _max_read_bytes: usize,
             _deadline_unix_ms: i64,
         ) -> Result<CollectedExecOutput, BoxliteCommandError> {
+            Err(BoxliteCommandError::DeadlineExceeded)
+        }
+
+        async fn copy_out_file(
+            &self,
+            _box_id: &str,
+            _container_src: &str,
+            _host_dst: &Path,
+            _deadline_unix_ms: i64,
+        ) -> Result<(), BoxliteCommandError> {
             Err(BoxliteCommandError::DeadlineExceeded)
         }
 
@@ -1140,7 +1360,74 @@ mod tests {
             })
         }
 
+        async fn copy_out_file(
+            &self,
+            _box_id: &str,
+            _container_src: &str,
+            _host_dst: &Path,
+            _deadline_unix_ms: i64,
+        ) -> Result<(), BoxliteCommandError> {
+            unreachable!()
+        }
+
         async fn remove_box(&self, _box_id: &str) {}
+    }
+
+    async fn spawn_put_server(
+        status_line: &str,
+    ) -> (String, tokio::sync::oneshot::Receiver<Vec<u8>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (body_tx, body_rx) = tokio::sync::oneshot::channel();
+        let status = status_line.to_owned();
+
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut header_buf = Vec::new();
+            let mut chunk = [0u8; 1024];
+            loop {
+                let read = stream.read(&mut chunk).await.unwrap();
+                if read == 0 {
+                    break;
+                }
+                header_buf.extend_from_slice(&chunk[..read]);
+                if header_buf.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+
+            let header_end = header_buf
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+                .map(|index| index + 4)
+                .unwrap();
+            let headers = String::from_utf8_lossy(&header_buf[..header_end]);
+            let content_length = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    if name.eq_ignore_ascii_case("content-length") {
+                        value.trim().parse::<usize>().ok()
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(0);
+
+            let mut body = header_buf[header_end..].to_vec();
+            while body.len() < content_length {
+                let read = stream.read(&mut chunk).await.unwrap();
+                if read == 0 {
+                    break;
+                }
+                body.extend_from_slice(&chunk[..read]);
+            }
+            let _ = body_tx.send(body);
+            let response = format!("{status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            stream.write_all(response.as_bytes()).await.unwrap();
+        });
+
+        (format!("http://{address}/upload"), body_rx)
     }
 
     fn manager_with_backend(
@@ -1350,6 +1637,7 @@ mod tests {
                 session_id: "sess-1".to_owned(),
                 file_path: "/tmp/hello.txt".to_owned(),
                 action: TERMINAL_RESOURCE_ACTION_VALIDATE.to_owned(),
+                signed_url: String::new(),
                 deadline_unix_ms: 0,
             })
             .await
@@ -1362,11 +1650,104 @@ mod tests {
                 session_id: "sess-1".to_owned(),
                 file_path: "/tmp/hello.txt".to_owned(),
                 action: TERMINAL_RESOURCE_ACTION_READ.to_owned(),
+                signed_url: String::new(),
                 deadline_unix_ms: 0,
             })
             .await
             .unwrap();
         assert_eq!(read.blob, b"hello");
+
+        manager.close().await;
+    }
+
+    #[tokio::test]
+    async fn resolve_resource_export_copies_and_uploads() {
+        let backend = StatefulShellBackend::new();
+        let manager = manager_with_backend(backend, 1024);
+        manager
+            .insert_test_session(
+                "sess-export",
+                "box-export",
+                add_duration(SystemTime::now(), Duration::from_secs(60)),
+                false,
+            )
+            .await;
+        let (upload_url, uploaded_body) = spawn_put_server("HTTP/1.1 200 OK").await;
+
+        let result = manager
+            .resolve_resource(TerminalResourceRequest {
+                session_id: "sess-export".to_owned(),
+                file_path: "/root/hello.txt".to_owned(),
+                action: TERMINAL_RESOURCE_ACTION_EXPORT.to_owned(),
+                signed_url: upload_url,
+                deadline_unix_ms: 0,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.mime_type, "text/plain");
+        assert_eq!(result.size_bytes, 5);
+        assert!(result.blob.is_empty());
+        assert_eq!(uploaded_body.await.unwrap(), b"hello");
+
+        manager.close().await;
+    }
+
+    #[tokio::test]
+    async fn resolve_resource_export_requires_signed_url() {
+        let backend = StatefulShellBackend::new();
+        let manager = manager_with_backend(backend, 1024);
+        manager
+            .insert_test_session(
+                "sess-export-missing-url",
+                "box-export-missing-url",
+                add_duration(SystemTime::now(), Duration::from_secs(60)),
+                false,
+            )
+            .await;
+
+        let err = manager
+            .resolve_resource(TerminalResourceRequest {
+                session_id: "sess-export-missing-url".to_owned(),
+                file_path: "/tmp/hello.txt".to_owned(),
+                action: TERMINAL_RESOURCE_ACTION_EXPORT.to_owned(),
+                signed_url: String::new(),
+                deadline_unix_ms: 0,
+            })
+            .await
+            .unwrap_err();
+
+        match err {
+            TerminalOperationError::Terminal(err) => {
+                assert_eq!(err.code(), TERMINAL_EXEC_CODE_INVALID_PAYLOAD)
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+
+        manager.close().await;
+    }
+
+    #[tokio::test]
+    async fn resolve_resource_export_rejects_tmp_paths_before_session_lookup() {
+        let manager = manager_with_backend(StatefulShellBackend::new(), 1024);
+
+        let err = manager
+            .resolve_resource(TerminalResourceRequest {
+                session_id: "missing-session".to_owned(),
+                file_path: "/tmp/hello.txt".to_owned(),
+                action: TERMINAL_RESOURCE_ACTION_EXPORT.to_owned(),
+                signed_url: "https://uploads.example.com/put".to_owned(),
+                deadline_unix_ms: 0,
+            })
+            .await
+            .unwrap_err();
+
+        match err {
+            TerminalOperationError::Terminal(err) => {
+                assert_eq!(err.code(), TERMINAL_RESOURCE_CODE_PATH_NOT_ALLOWED)
+            }
+            other => panic!("unexpected error: {other}"),
+        }
 
         manager.close().await;
     }
@@ -1413,6 +1794,7 @@ mod tests {
                     session_id: "sess-1".to_owned(),
                     file_path: "/tmp/hello.txt".to_owned(),
                     action: TERMINAL_RESOURCE_ACTION_READ.to_owned(),
+                    signed_url: String::new(),
                     deadline_unix_ms: 0,
                 })
                 .await
@@ -1444,6 +1826,7 @@ mod tests {
                 session_id: "sess-empty".to_owned(),
                 file_path: "/tmp/hello.txt".to_owned(),
                 action: TERMINAL_RESOURCE_ACTION_VALIDATE.to_owned(),
+                signed_url: String::new(),
                 deadline_unix_ms: 0,
             })
             .await
@@ -1471,6 +1854,7 @@ mod tests {
                 session_id: "missing".to_owned(),
                 file_path: "/tmp/hello.txt".to_owned(),
                 action: String::new(),
+                signed_url: String::new(),
                 deadline_unix_ms: 0,
             })
             .await
@@ -1495,6 +1879,7 @@ mod tests {
                 session_id: "busy".to_owned(),
                 file_path: "/tmp/hello.txt".to_owned(),
                 action: String::new(),
+                signed_url: String::new(),
                 deadline_unix_ms: 0,
             })
             .await
@@ -1519,6 +1904,7 @@ mod tests {
                 session_id: "sess-timeout".to_owned(),
                 file_path: "/tmp/hello.txt".to_owned(),
                 action: TERMINAL_RESOURCE_ACTION_READ.to_owned(),
+                signed_url: String::new(),
                 deadline_unix_ms: 0,
             })
             .await
@@ -1562,6 +1948,7 @@ mod tests {
                 session_id: "sess-shared".to_owned(),
                 file_path: "/tmp/hello.txt".to_owned(),
                 action: TERMINAL_RESOURCE_ACTION_VALIDATE.to_owned(),
+                signed_url: String::new(),
                 deadline_unix_ms: 0,
             })
             .await
@@ -1618,6 +2005,7 @@ mod tests {
                     session_id: "sess-resource".to_owned(),
                     file_path: "/tmp/hello.txt".to_owned(),
                     action: TERMINAL_RESOURCE_ACTION_VALIDATE.to_owned(),
+                    signed_url: String::new(),
                     deadline_unix_ms: 0,
                 })
                 .await

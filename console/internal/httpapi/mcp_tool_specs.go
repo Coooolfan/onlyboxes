@@ -108,7 +108,7 @@ var mcpComputerUseToolDescription = "Executes shell commands directly on the cal
 
 var mcpReadImageToolDescription = "Reads a file and returns it as inline image content when mime type is image/*. For unsupported mime types, returns a text explanation. When session_id is exactly \"computerUse\", routing uses the caller-owned worker-sys readImage capability; otherwise routing uses terminalResource for terminal sessions."
 
-var mcpExportFileToolDescription = "Exports a file from a terminal session to the configured S3-compatible object store and returns a presigned download URL. This tool is supported only for Docker-backed terminal sessions and is unavailable for the special session_id \"computerUse\"."
+var mcpExportFileToolDescription = "Exports a file from a session to the configured S3-compatible object store and returns a presigned download URL. When session_id is exactly \"computerUse\", routing uses the caller-owned worker-sys readImage capability; otherwise routing uses terminalResource for terminal sessions."
 
 var mcpEchoInputSchema = map[string]any{
 	"type":                 "object",
@@ -323,7 +323,7 @@ var mcpExportFileInputSchema = map[string]any{
 	"properties": map[string]any{
 		"session_id": map[string]any{
 			"type":        "string",
-			"description": "Terminal session identifier returned by terminalExec. exportFile does not support the special value \"computerUse\".",
+			"description": "Session identifier. Use exact value \"computerUse\" to route to caller-owned worker-sys readImage capability; other values route to terminalResource for terminal sessions.",
 		},
 		"file_path": map[string]any{
 			"type":        "string",

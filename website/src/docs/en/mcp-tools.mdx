@@ -50,7 +50,7 @@ Accept: application/json, text/event-stream
 | `terminalExec` | Persistent terminal session execution | Any worker supporting terminalResource |
 | `computerUse` | Real device command execution | Account's own `worker-sys` |
 | `readImage` | Read an image file from a worker | Depends on `session_id` (see below) |
-| `exportFile` | Export a terminal-session file to object storage | Docker-backed terminal sessions only |
+| `exportFile` | Export a session file to object storage | Depends on `session_id` (see below) |
 
 All tool parameter schemas set `additionalProperties: false`. Passing an undefined field returns JSON-RPC error `-32602 invalid params`.
 
@@ -284,28 +284,35 @@ unsupported mime type: <mime>; expected image/*
 
 ### `exportFile`
 
-Exports a file from a Docker-backed terminal session to the console's configured S3-compatible object store and returns a presigned download URL.
+Exports a file from a session to the console's configured S3-compatible object store and returns a presigned download URL.
 
 **Input:**
 
 | Field | Type | Required | Constraints |
 |-------|------|----------|-------------|
-| `session_id` | string | Yes | Terminal session ID returned by `terminalExec`; the special value `"computerUse"` is not supported |
-| `file_path` | string | Yes | Absolute path to the target file inside the terminal session |
+| `session_id` | string | Yes | Session ID; pass the string `"computerUse"` to route to the account's own `worker-sys` |
+| `file_path` | string | Yes | Absolute path to the target file |
 | `timeout_ms` | integer | No | `1..600000`, default `60000` |
 
 **Behavior:**
 
 - Available only when the console export object-store environment variables are configured.
 - Upload/download presign TTLs are controlled by `CONSOLE_EXPORT_FILE_UPLOAD_PRESIGN_TTL_SEC` and `CONSOLE_EXPORT_FILE_DOWNLOAD_PRESIGN_TTL_SEC`.
-- Routes to `terminalResource` with `action="export"` on the same Docker worker that owns the terminal session.
-- The worker first probes the file via `docker exec <container> python3 -c ...`, then copies it out with `docker cp`, uploads it through a presigned HTTP `PUT`, and returns a presigned download URL.
+- When `session_id` is `"computerUse"`, routes to the caller-owned `worker-sys` `readImage` capability with `action="export"`.
+- Any other `session_id` routes to `terminalResource` with `action="export"` on the same worker that owns the terminal session.
+- Terminal-session workers first probe the file, then export it from the session filesystem and upload it through a presigned HTTP `PUT` before the console returns a presigned download URL.
 - Non-JSON probe failures inside the worker (for example OCI / `docker exec` startup failures) are surfaced as tool errors with docker exit code and output summary; they are not rewritten as JSON parse errors.
 
 **Input example:**
 
 ```json
 { "session_id": "sess_xxx", "file_path": "/workspace/report.png", "timeout_ms": 60000 }
+```
+
+**Input example (from worker-sys host):**
+
+```json
+{ "session_id": "computerUse", "file_path": "/tmp/report.png", "timeout_ms": 10000 }
 ```
 
 **Output:**

@@ -39,9 +39,6 @@ func handleMCPExportFileTool(
 	if sessionID == "" {
 		return nil, mcpExportFileToolOutput{}, invalidParamsError("session_id is required")
 	}
-	if sessionID == computerUseSessionID {
-		return nil, mcpExportFileToolOutput{}, errors.New("exportFile is not supported for computerUse sessions")
-	}
 	filePath := strings.TrimSpace(input.FilePath)
 	if filePath == "" {
 		return nil, mcpExportFileToolOutput{}, invalidParamsError("file_path is required")
@@ -70,7 +67,11 @@ func handleMCPExportFileTool(
 	}
 
 	timeout := time.Duration(timeoutMS) * time.Millisecond
-	resourceResult, err := callTerminalResource(ctx, dispatcher, mcpTerminalResourcePayload{
+	resourceCapability := terminalResourceCapabilityName
+	if sessionID == computerUseSessionID {
+		resourceCapability = readImageCapabilityName
+	}
+	resourceResult, err := callResourceCapability(ctx, dispatcher, resourceCapability, mcpTerminalResourcePayload{
 		SessionID: sessionID,
 		FilePath:  filePath,
 		Action:    "export",

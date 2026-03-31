@@ -50,7 +50,7 @@ Accept: application/json, text/event-stream
 | `terminalExec` | 持久化 terminal 会话执行 | 任意支持 terminalResource 的 worker |
 | `computerUse` | 真实设备命令执行 | 账号自有 `worker-sys` |
 | `readImage` | 从 worker 读取图片文件 | 取决于 `session_id`（见下文） |
-| `exportFile` | 将 terminal 会话中的文件导出到对象存储 | 仅 Docker terminal 会话支持 |
+| `exportFile` | 将会话中的文件导出到对象存储 | 取决于 `session_id`（见下文） |
 
 所有工具的参数 schema 均设置 `additionalProperties: false`。传入未定义字段会返回 JSON-RPC 错误 `-32602 invalid params`。
 
@@ -284,28 +284,35 @@ unsupported mime type: <mime>; expected image/*
 
 ### `exportFile`
 
-将 Docker-backed terminal 会话中的文件导出到 console 配置的 S3 兼容对象存储，并返回一个预签名下载 URL。
+将会话中的文件导出到 console 配置的 S3 兼容对象存储，并返回一个预签名下载 URL。
 
 **入参：**
 
 | 字段 | 类型 | 必填 | 约束 |
 |------|------|------|------|
-| `session_id` | string | 是 | `terminalExec` 返回的 terminal 会话 ID；不支持特殊值 `"computerUse"` |
-| `file_path` | string | 是 | terminal 会话内目标文件的绝对路径 |
+| `session_id` | string | 是 | 会话 ID；传入字符串 `"computerUse"` 时路由到账号自有 `worker-sys` |
+| `file_path` | string | 是 | 目标文件的绝对路径 |
 | `timeout_ms` | integer | 否 | `1..600000`，默认 `60000` |
 
 **行为说明：**
 
 - 仅当 console 侧导出对象存储环境变量完整配置后才可用。
 - 上传/下载预签名 URL 的有效期分别由 `CONSOLE_EXPORT_FILE_UPLOAD_PRESIGN_TTL_SEC` 和 `CONSOLE_EXPORT_FILE_DOWNLOAD_PRESIGN_TTL_SEC` 控制。
-- 路由到持有该 terminal 会话的同一台 Docker worker，并以 `terminalResource` 的 `action="export"` 执行。
-- worker 会先通过 `docker exec <container> python3 -c ...` 探测文件，再通过 `docker cp` 拷出文件，使用预签名 HTTP `PUT` 上传，最后返回预签名下载 URL。
+- 当 `session_id` 为 `"computerUse"` 时，路由到调用账号自有 `worker-sys` 的 `readImage` capability，并以 `action="export"` 执行。
+- 其他任意 `session_id` 会路由到持有该 terminal 会话的同一台 worker，并以 `terminalResource` 的 `action="export"` 执行。
+- terminal 会话 worker 会先探测文件，再将文件从会话文件系统导出并通过预签名 HTTP `PUT` 上传，最后由 console 返回预签名下载 URL。
 - worker 内部若出现非 JSON 的探针失败（例如 OCI / `docker exec` 启动失败），会直接作为工具错误返回 docker 退出码和输出摘要，不会再被包装成 JSON 解析错误。
 
 **入参示例：**
 
 ```json
 { "session_id": "sess_xxx", "file_path": "/workspace/report.png", "timeout_ms": 60000 }
+```
+
+**入参示例（从 worker-sys 宿主机导出）：**
+
+```json
+{ "session_id": "computerUse", "file_path": "/tmp/report.png", "timeout_ms": 10000 }
 ```
 
 **出参：**

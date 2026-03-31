@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
@@ -99,6 +102,57 @@ func TestReadImageExecutorValidateAndReadSuccessWithFileAllowRule(t *testing.T) 
 	}
 }
 
+func TestReadImageExecutorExportSuccess(t *testing.T) {
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "sample.png")
+	content := []byte("hello-export")
+	if err := os.WriteFile(filePath, content, 0o600); err != nil {
+		t.Fatalf("write test image failed: %v", err)
+	}
+
+	var uploadedMethod string
+	var uploadedLength int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		uploadedMethod = r.Method
+		uploadedLength = r.ContentLength
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read upload body failed: %v", err)
+		}
+		if string(body) != string(content) {
+			t.Fatalf("unexpected upload body: %q", string(body))
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	executor := newReadImageExecutor([]string{filePath})
+	result, err := executor.Execute(context.Background(), readImageRequest{
+		SessionID: readImageSessionComputerUse,
+		FilePath:  filePath,
+		Action:    readImageActionExport,
+		SignedURL: server.URL,
+	})
+	if err != nil {
+		t.Fatalf("export failed: %v", err)
+	}
+	if uploadedMethod != http.MethodPut {
+		t.Fatalf("expected PUT upload, got %q", uploadedMethod)
+	}
+	if uploadedLength != int64(len(content)) {
+		t.Fatalf("expected content-length=%d, got %d", len(content), uploadedLength)
+	}
+	if result.MIMEType != "image/png" {
+		t.Fatalf("expected mime_type=image/png, got %q", result.MIMEType)
+	}
+	if result.SizeBytes != int64(len(content)) {
+		t.Fatalf("expected size=%d, got %d", len(content), result.SizeBytes)
+	}
+	if len(result.Blob) != 0 {
+		t.Fatalf("expected export blob to be empty")
+	}
+}
+
 func TestReadImageExecutorRejectsNonComputerUseSession(t *testing.T) {
 	executor := newReadImageExecutor([]string{t.TempDir()})
 	_, err := executor.Execute(context.Background(), readImageRequest{
@@ -166,6 +220,31 @@ func TestReadImageExecutorRejectsTraversalOutsideAllowlist(t *testing.T) {
 		SessionID: readImageSessionComputerUse,
 		FilePath:  traversalPath,
 		Action:    readImageActionValidate,
+	})
+	assertReadImageErrorCode(t, err, readImageCodePathNotAllowed)
+}
+
+func TestReadImageExecutorExportRejectsPathOutsideAllowlist(t *testing.T) {
+	tmpDir := t.TempDir()
+	allowedDir := filepath.Join(tmpDir, "allowed")
+	blockedDir := filepath.Join(tmpDir, "blocked")
+	if err := os.MkdirAll(allowedDir, 0o755); err != nil {
+		t.Fatalf("create allowed dir failed: %v", err)
+	}
+	if err := os.MkdirAll(blockedDir, 0o755); err != nil {
+		t.Fatalf("create blocked dir failed: %v", err)
+	}
+	blockedFile := filepath.Join(blockedDir, "sample.png")
+	if err := os.WriteFile(blockedFile, []byte("blocked"), 0o600); err != nil {
+		t.Fatalf("write blocked file failed: %v", err)
+	}
+
+	executor := newReadImageExecutor([]string{allowedDir})
+	_, err := executor.Execute(context.Background(), readImageRequest{
+		SessionID: readImageSessionComputerUse,
+		FilePath:  blockedFile,
+		Action:    readImageActionExport,
+		SignedURL: "https://uploads.example.com/put",
 	})
 	assertReadImageErrorCode(t, err, readImageCodePathNotAllowed)
 }
@@ -388,6 +467,58 @@ func TestReadImageExecutorMIMEFallbackToOctetStream(t *testing.T) {
 	}
 }
 
+func TestReadImageExecutorExportRequiresSignedURL(t *testing.T) {
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "sample.png")
+	if err := os.WriteFile(filePath, []byte("hello-export"), 0o600); err != nil {
+		t.Fatalf("write test file failed: %v", err)
+	}
+
+	executor := newReadImageExecutor([]string{filePath})
+	_, err := executor.Execute(context.Background(), readImageRequest{
+		SessionID: readImageSessionComputerUse,
+		FilePath:  filePath,
+		Action:    readImageActionExport,
+	})
+	assertReadImageErrorCode(t, err, readImageCodeInvalidPayload)
+}
+
+func TestReadImageExecutorExportPropagatesUploadFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "sample.png")
+	if err := os.WriteFile(filePath, []byte("hello-export"), 0o600); err != nil {
+		t.Fatalf("write test file failed: %v", err)
+	}
+
+	originalHTTPPutFile := httpPutFile
+	httpPutFile = func(_ context.Context, signedURL string, uploadPath string) error {
+		if signedURL != "https://uploads.example.com/put" {
+			t.Fatalf("unexpected signed url: %q", signedURL)
+		}
+		if uploadPath != filepath.Clean(filePath) {
+			t.Fatalf("unexpected upload path: %q", uploadPath)
+		}
+		return errors.New("upload export file failed: boom")
+	}
+	t.Cleanup(func() {
+		httpPutFile = originalHTTPPutFile
+	})
+
+	executor := newReadImageExecutor([]string{filePath})
+	_, err := executor.Execute(context.Background(), readImageRequest{
+		SessionID: readImageSessionComputerUse,
+		FilePath:  filePath,
+		Action:    readImageActionExport,
+		SignedURL: "https://uploads.example.com/put",
+	})
+	if err == nil {
+		t.Fatalf("expected upload failure")
+	}
+	if !strings.Contains(err.Error(), "upload export file failed: boom") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestBuildCommandResultReadImageMapsDomainError(t *testing.T) {
 	originalRunReadImage := runReadImage
 	t.Cleanup(func() {
@@ -453,6 +584,41 @@ func TestBuildCommandResultReadImageSuccess(t *testing.T) {
 	}
 	if decoded.MIMEType != "image/png" || string(decoded.Blob) != "abc" {
 		t.Fatalf("unexpected readImage payload: %#v", decoded)
+	}
+}
+
+func TestBuildCommandResultReadImageExportPassesSignedURL(t *testing.T) {
+	originalRunReadImage := runReadImage
+	t.Cleanup(func() {
+		runReadImage = originalRunReadImage
+	})
+
+	runReadImage = func(_ context.Context, req readImageRequest) (readImageRunResult, error) {
+		if req.SessionID != readImageSessionComputerUse ||
+			req.FilePath != "/tmp/a.png" ||
+			req.Action != readImageActionExport ||
+			req.SignedURL != "https://uploads.example.com/put" {
+			t.Fatalf("unexpected readImage request: %#v", req)
+		}
+		return readImageRunResult{
+			SessionID: readImageSessionComputerUse,
+			FilePath:  "/tmp/a.png",
+			MIMEType:  "image/png",
+			SizeBytes: 3,
+		}, nil
+	}
+
+	req := buildCommandResult(&registryv1.CommandDispatch{
+		CommandId:   "cmd-read-image-export",
+		Capability:  readImageCapabilityDeclared,
+		PayloadJson: []byte(`{"session_id":"computerUse","file_path":"/tmp/a.png","action":"export","signed_url":"https://uploads.example.com/put"}`),
+	})
+	result := req.GetCommandResult()
+	if result == nil {
+		t.Fatalf("expected command_result payload")
+	}
+	if result.GetError() != nil {
+		t.Fatalf("expected success, got error %#v", result.GetError())
 	}
 }
 
