@@ -7,6 +7,7 @@ const (
 	terminalResourceCapabilityName = "terminalResource"
 	computerUseCapabilityName      = "computerUse"
 	readImageCapabilityName        = "readImage"
+	exportFileToolName             = "exportFile"
 	computerUseSessionID           = "computerUse"
 	defaultMCPEchoTimeoutMS        = defaultEchoTimeoutMS
 	minMCPTaskTimeoutMS            = 1
@@ -19,6 +20,7 @@ const (
 	mcpTerminalExecToolTitle       = "Terminal Execute"
 	mcpComputerUseToolTitle        = "Computer Use"
 	mcpReadImageToolTitle          = "Read Image"
+	mcpExportFileToolTitle         = "Export File"
 )
 
 var mcpServerVersion = consoleVersion()
@@ -82,6 +84,16 @@ type mcpReadImageToolInput struct {
 	TimeoutMS *int   `json:"timeout_ms,omitempty"`
 }
 
+type mcpExportFileToolInput struct {
+	SessionID string `json:"session_id"`
+	FilePath  string `json:"file_path"`
+	TimeoutMS *int   `json:"timeout_ms,omitempty"`
+}
+
+type mcpExportFileToolOutput struct {
+	SignedURL string `json:"signed_url"`
+}
+
 type pythonExecPayload struct {
 	Code string `json:"code"`
 }
@@ -95,6 +107,8 @@ var mcpTerminalExecToolDescription = "Executes shell commands in a persistent Do
 var mcpComputerUseToolDescription = "Executes shell commands directly on the caller-owned worker-sys host OS via /bin/sh -lc. Unlike terminalExec, this tool runs on the bare host without container isolation and is stateless — each invocation is independent with no session persistence. Only one command runs at a time (single concurrency). This tool is account-scoped and requires a user-created worker-sys. timeout_ms is a synchronous execution timeout in milliseconds (1-600000, default 60000). request_id provides idempotency for retries."
 
 var mcpReadImageToolDescription = "Reads a file and returns it as inline image content when mime type is image/*. For unsupported mime types, returns a text explanation. When session_id is exactly \"computerUse\", routing uses the caller-owned worker-sys readImage capability; otherwise routing uses terminalResource for terminal sessions."
+
+var mcpExportFileToolDescription = "Exports a file from a terminal session to the configured S3-compatible object store and returns a presigned download URL. This tool is supported only for Docker-backed terminal sessions and is unavailable for the special session_id \"computerUse\"."
 
 var mcpEchoInputSchema = map[string]any{
 	"type":                 "object",
@@ -298,6 +312,41 @@ var mcpReadImageInputSchema = map[string]any{
 			"minimum":     minMCPTaskTimeoutMS,
 			"maximum":     maxMCPTaskTimeoutMS,
 			"default":     defaultMCPTaskTimeoutMS,
+		},
+	},
+}
+
+var mcpExportFileInputSchema = map[string]any{
+	"type":                 "object",
+	"additionalProperties": false,
+	"required":             []string{"session_id", "file_path"},
+	"properties": map[string]any{
+		"session_id": map[string]any{
+			"type":        "string",
+			"description": "Terminal session identifier returned by terminalExec. exportFile does not support the special value \"computerUse\".",
+		},
+		"file_path": map[string]any{
+			"type":        "string",
+			"description": "Path to the file in the terminal session filesystem.",
+		},
+		"timeout_ms": map[string]any{
+			"type":        "integer",
+			"description": "Optional synchronous execution timeout in milliseconds for this tool call.",
+			"minimum":     minMCPTaskTimeoutMS,
+			"maximum":     maxMCPTaskTimeoutMS,
+			"default":     defaultMCPTaskTimeoutMS,
+		},
+	},
+}
+
+var mcpExportFileOutputSchema = map[string]any{
+	"type":                 "object",
+	"additionalProperties": false,
+	"required":             []string{"signed_url"},
+	"properties": map[string]any{
+		"signed_url": map[string]any{
+			"type":        "string",
+			"description": "Presigned download URL for the exported object.",
 		},
 	},
 }

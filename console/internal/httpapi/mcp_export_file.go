@@ -1,0 +1,134 @@
+package httpapi
+
+import (
+	"context"
+	"errors"
+	"path/filepath"
+	"strings"
+	"time"
+	"unicode"
+
+	"github.com/google/uuid"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+const (
+	exportFileUploadPresignTTL   = 15 * time.Minute
+	exportFileDownloadPresignTTL = 1 * time.Hour
+)
+
+var newExportObjectID = func() string {
+	return uuid.NewString()
+}
+
+type ExportStore interface {
+	PresignUpload(ctx context.Context, objectKey string, expiresIn time.Duration) (string, error)
+	PresignDownload(ctx context.Context, objectKey string, expiresIn time.Duration) (string, error)
+}
+
+func handleMCPExportFileTool(
+	ctx context.Context,
+	dispatcher CommandDispatcher,
+	exportStore ExportStore,
+	exportPrefix string,
+	input mcpExportFileToolInput,
+) (*mcp.CallToolResult, mcpExportFileToolOutput, error) {
+	sessionID := strings.TrimSpace(input.SessionID)
+	if sessionID == "" {
+		return nil, mcpExportFileToolOutput{}, invalidParamsError("session_id is required")
+	}
+	if sessionID == computerUseSessionID {
+		return nil, mcpExportFileToolOutput{}, errors.New("exportFile is not supported for computerUse sessions")
+	}
+	filePath := strings.TrimSpace(input.FilePath)
+	if filePath == "" {
+		return nil, mcpExportFileToolOutput{}, invalidParamsError("file_path is required")
+	}
+
+	timeoutMS := defaultMCPTaskTimeoutMS
+	if input.TimeoutMS != nil {
+		timeoutMS = *input.TimeoutMS
+	}
+	if timeoutMS < minMCPTaskTimeoutMS || timeoutMS > maxMCPTaskTimeoutMS {
+		return nil, mcpExportFileToolOutput{}, invalidParamsError("timeout_ms must be between 1 and 600000")
+	}
+	if dispatcher == nil {
+		return nil, mcpExportFileToolOutput{}, errors.New("task dispatcher is unavailable")
+	}
+	if exportStore == nil {
+		return nil, mcpExportFileToolOutput{}, errors.New("exportFile is unavailable")
+	}
+
+	objectKey := buildExportObjectKey(exportPrefix, sessionID, filePath)
+	uploadURL, err := exportStore.PresignUpload(ctx, objectKey, exportFileUploadPresignTTL)
+	if err != nil {
+		return nil, mcpExportFileToolOutput{}, errors.New("failed to generate upload URL")
+	}
+
+	timeout := time.Duration(timeoutMS) * time.Millisecond
+	resourceResult, err := callTerminalResource(ctx, dispatcher, mcpTerminalResourcePayload{
+		SessionID: sessionID,
+		FilePath:  filePath,
+		Action:    "export",
+		SignedURL: uploadURL,
+	}, timeout)
+	if err != nil {
+		return nil, mcpExportFileToolOutput{}, err
+	}
+	if strings.TrimSpace(resourceResult.SessionID) == "" {
+		return nil, mcpExportFileToolOutput{}, errors.New("invalid exportFile result payload")
+	}
+
+	downloadURL, err := exportStore.PresignDownload(ctx, objectKey, exportFileDownloadPresignTTL)
+	if err != nil {
+		return nil, mcpExportFileToolOutput{}, errors.New("failed to generate download URL")
+	}
+
+	return nil, mcpExportFileToolOutput{SignedURL: downloadURL}, nil
+}
+
+func buildExportObjectKey(exportPrefix string, sessionID string, filePath string) string {
+	normalizedPrefix := strings.Trim(strings.TrimSpace(exportPrefix), "/")
+	sessionSegment := sanitizeExportObjectKeySegment(sessionID, "session")
+	fileName := sanitizeExportObjectKeySegment(exportFileName(filePath), "file")
+	objectID := sanitizeExportObjectKeySegment(newExportObjectID(), "object")
+
+	parts := make([]string, 0, 3)
+	if normalizedPrefix != "" {
+		parts = append(parts, normalizedPrefix)
+	}
+	parts = append(parts, sessionSegment, objectID+"-"+fileName)
+	return strings.Join(parts, "/")
+}
+
+func exportFileName(filePath string) string {
+	base := strings.TrimSpace(filepath.Base(strings.TrimSpace(filePath)))
+	switch base {
+	case "", ".", string(filepath.Separator):
+		return "file"
+	default:
+		return base
+	}
+}
+
+func sanitizeExportObjectKeySegment(value string, fallback string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return fallback
+	}
+
+	var builder strings.Builder
+	for _, r := range trimmed {
+		if r == '/' || r == '\\' || unicode.IsControl(r) {
+			builder.WriteByte('_')
+			continue
+		}
+		builder.WriteRune(r)
+	}
+
+	sanitized := strings.Trim(strings.TrimSpace(builder.String()), "/")
+	if sanitized == "" {
+		return fallback
+	}
+	return sanitized
+}

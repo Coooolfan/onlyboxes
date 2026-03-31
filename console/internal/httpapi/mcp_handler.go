@@ -3,11 +3,12 @@ package httpapi
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func NewMCPHandler(dispatcher CommandDispatcher, hiddenTools map[string]bool) http.Handler {
+func NewMCPHandler(dispatcher CommandDispatcher, hiddenTools map[string]bool, exportStore ExportStore, exportPrefix string) http.Handler {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    mcpServerName,
 		Version: mcpServerVersion,
@@ -92,6 +93,23 @@ func NewMCPHandler(dispatcher CommandDispatcher, hiddenTools map[string]bool) ht
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpReadImageToolInput) (*mcp.CallToolResult, any, error) {
 		return handleMCPReadImageTool(ctx, dispatcher, input)
 	})
+
+	if exportStore != nil && strings.TrimSpace(exportPrefix) != "" {
+		mcp.AddTool(server, &mcp.Tool{
+			Title:       mcpExportFileToolTitle,
+			Name:        "exportFile",
+			Description: mcpExportFileToolDescription,
+			Annotations: &mcp.ToolAnnotations{
+				Title:           mcpExportFileToolTitle,
+				DestructiveHint: boolPtr(false),
+				OpenWorldHint:   boolPtr(true),
+			},
+			InputSchema:  mcpExportFileInputSchema,
+			OutputSchema: mcpExportFileOutputSchema,
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpExportFileToolInput) (*mcp.CallToolResult, mcpExportFileToolOutput, error) {
+			return handleMCPExportFileTool(ctx, dispatcher, exportStore, exportPrefix, input)
+		})
+	}
 
 	if len(hiddenTools) > 0 {
 		server.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {

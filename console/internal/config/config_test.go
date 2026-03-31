@@ -16,6 +16,12 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("CONSOLE_DASHBOARD_PASSWORD", "")
 	t.Setenv("CONSOLE_INITIAL_ADMIN_API_KEY", "")
 	t.Setenv("CONSOLE_JIT_SIGNING_KEY", "")
+	t.Setenv("CONSOLE_EXPORT_FILE_ENDPOINT", "")
+	t.Setenv("CONSOLE_EXPORT_FILE_REGION", "")
+	t.Setenv("CONSOLE_EXPORT_FILE_BUCKET_NAME", "")
+	t.Setenv("CONSOLE_EXPORT_FILE_EXPORT_PREFIX", "")
+	t.Setenv("CONSOLE_EXPORT_FILE_AK", "")
+	t.Setenv("CONSOLE_EXPORT_FILE_SK", "")
 	t.Setenv("CONSOLE_ENABLE_REGISTRATION", "")
 	t.Setenv("CONSOLE_LOG_LEVEL", "")
 	t.Setenv("CONSOLE_LOG_FORMAT", "")
@@ -49,6 +55,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.JITSigningKey != "" {
 		t.Fatalf("expected empty jit signing key by default, got %q", cfg.JITSigningKey)
 	}
+	if cfg.ExportFileEnabled() {
+		t.Fatalf("expected exportFile disabled by default")
+	}
 	if cfg.EnableRegistration {
 		t.Fatalf("expected registration disabled by default")
 	}
@@ -72,6 +81,12 @@ func TestLoadReadsDashboardCredentialsAndDurations(t *testing.T) {
 	t.Setenv("CONSOLE_REPLAY_WINDOW_SEC", "120")
 	t.Setenv("CONSOLE_HEARTBEAT_INTERVAL_SEC", "10")
 	t.Setenv("CONSOLE_DB_PATH", "/var/lib/onlyboxes/console.db")
+	t.Setenv("CONSOLE_EXPORT_FILE_ENDPOINT", "https://minio.example.com")
+	t.Setenv("CONSOLE_EXPORT_FILE_REGION", "cn-test-1")
+	t.Setenv("CONSOLE_EXPORT_FILE_BUCKET_NAME", "exports")
+	t.Setenv("CONSOLE_EXPORT_FILE_EXPORT_PREFIX", "prefix")
+	t.Setenv("CONSOLE_EXPORT_FILE_AK", "ak-test")
+	t.Setenv("CONSOLE_EXPORT_FILE_SK", "sk-test")
 	t.Setenv("CONSOLE_ENABLE_REGISTRATION", "true")
 	t.Setenv("CONSOLE_LOG_LEVEL", "debug")
 	t.Setenv("CONSOLE_LOG_FORMAT", "text")
@@ -101,6 +116,24 @@ func TestLoadReadsDashboardCredentialsAndDurations(t *testing.T) {
 	}
 	if cfg.DBPath != "/var/lib/onlyboxes/console.db" {
 		t.Fatalf("expected DBPath override to be used, got %q", cfg.DBPath)
+	}
+	if cfg.ExportFileEndpoint != "https://minio.example.com" {
+		t.Fatalf("expected export endpoint override, got %q", cfg.ExportFileEndpoint)
+	}
+	if cfg.ExportFileRegion != "cn-test-1" {
+		t.Fatalf("expected export region override, got %q", cfg.ExportFileRegion)
+	}
+	if cfg.ExportFileBucketName != "exports" {
+		t.Fatalf("expected export bucket override, got %q", cfg.ExportFileBucketName)
+	}
+	if cfg.ExportFilePrefix != "prefix" {
+		t.Fatalf("expected export prefix override, got %q", cfg.ExportFilePrefix)
+	}
+	if cfg.ExportFileAK != "ak-test" || cfg.ExportFileSK != "sk-test" {
+		t.Fatalf("expected export credentials override, got ak=%q sk=%q", cfg.ExportFileAK, cfg.ExportFileSK)
+	}
+	if !cfg.ExportFileEnabled() {
+		t.Fatalf("expected exportFile enabled when all env vars are present")
 	}
 	if !cfg.EnableRegistration {
 		t.Fatalf("expected registration enabled")
@@ -159,7 +192,7 @@ func TestLoadLogConfigFallback(t *testing.T) {
 }
 
 func TestLoadNormalizesHiddenTools(t *testing.T) {
-	t.Setenv("CONSOLE_HIDDEN_TOOLS", " pythonexec, readimage , TERMINALEXEC ,, ")
+	t.Setenv("CONSOLE_HIDDEN_TOOLS", " pythonexec, readimage , TERMINALEXEC , exportfile ,, ")
 
 	cfg := Load()
 
@@ -167,6 +200,7 @@ func TestLoadNormalizesHiddenTools(t *testing.T) {
 		"pythonexec":   true,
 		"readimage":    true,
 		"terminalexec": true,
+		"exportfile":   true,
 	}
 	if len(cfg.HiddenTools) != len(expected) {
 		t.Fatalf("expected %d hidden tools, got %d: %#v", len(expected), len(cfg.HiddenTools), cfg.HiddenTools)
@@ -175,5 +209,19 @@ func TestLoadNormalizesHiddenTools(t *testing.T) {
 		if !cfg.HiddenTools[key] {
 			t.Fatalf("expected hidden tool key %q to be present in %#v", key, cfg.HiddenTools)
 		}
+	}
+}
+
+func TestExportFileEnabledRequiresAllFields(t *testing.T) {
+	t.Setenv("CONSOLE_EXPORT_FILE_ENDPOINT", "https://minio.example.com")
+	t.Setenv("CONSOLE_EXPORT_FILE_REGION", "cn-test-1")
+	t.Setenv("CONSOLE_EXPORT_FILE_BUCKET_NAME", "exports")
+	t.Setenv("CONSOLE_EXPORT_FILE_EXPORT_PREFIX", "prefix")
+	t.Setenv("CONSOLE_EXPORT_FILE_AK", "ak-test")
+	t.Setenv("CONSOLE_EXPORT_FILE_SK", "")
+
+	cfg := Load()
+	if cfg.ExportFileEnabled() {
+		t.Fatalf("expected exportFile disabled when secret key is missing")
 	}
 }

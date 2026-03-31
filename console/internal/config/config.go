@@ -35,6 +35,12 @@ type Config struct {
 	DBBusyTimeoutMS      int
 	HashKey              string
 	TaskRetentionDays    int
+	ExportFileEndpoint   string
+	ExportFileRegion     string
+	ExportFileBucketName string
+	ExportFilePrefix     string
+	ExportFileAK         string
+	ExportFileSK         string
 	EnableRegistration   bool
 	HiddenTools          map[string]bool
 	LogLevel             string
@@ -63,12 +69,27 @@ func Load() Config {
 		DBBusyTimeoutMS:      dbBusyTimeoutMS,
 		HashKey:              os.Getenv("CONSOLE_HASH_KEY"),
 		TaskRetentionDays:    taskRetentionDays,
+		ExportFileEndpoint:   strings.TrimSpace(os.Getenv("CONSOLE_EXPORT_FILE_ENDPOINT")),
+		ExportFileRegion:     strings.TrimSpace(os.Getenv("CONSOLE_EXPORT_FILE_REGION")),
+		ExportFileBucketName: strings.TrimSpace(os.Getenv("CONSOLE_EXPORT_FILE_BUCKET_NAME")),
+		ExportFilePrefix:     strings.TrimSpace(os.Getenv("CONSOLE_EXPORT_FILE_EXPORT_PREFIX")),
+		ExportFileAK:         strings.TrimSpace(os.Getenv("CONSOLE_EXPORT_FILE_AK")),
+		ExportFileSK:         strings.TrimSpace(os.Getenv("CONSOLE_EXPORT_FILE_SK")),
 		EnableRegistration:   parseBoolEnv("CONSOLE_ENABLE_REGISTRATION", false),
 		HiddenTools:          parseStringSetEnv("CONSOLE_HIDDEN_TOOLS"),
 		LogLevel:             parseLogLevelEnv("CONSOLE_LOG_LEVEL", defaultLogLevel),
 		LogFormat:            parseLogFormatEnv("CONSOLE_LOG_FORMAT", defaultLogFormat),
 		LogAddSource:         parseBoolEnv("CONSOLE_LOG_ADD_SOURCE", defaultLogAddSource),
 	}
+}
+
+func (c Config) ExportFileEnabled() bool {
+	return c.ExportFileEndpoint != "" &&
+		c.ExportFileRegion != "" &&
+		c.ExportFileBucketName != "" &&
+		c.ExportFilePrefix != "" &&
+		c.ExportFileAK != "" &&
+		c.ExportFileSK != ""
 }
 
 func getEnv(key string, defaultValue string) string {

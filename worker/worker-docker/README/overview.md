@@ -59,17 +59,21 @@ Capability behavior:
   - `stdout` and `stderr` are individually truncated by `WORKER_TERMINAL_OUTPUT_LIMIT_BYTES`.
   - truncation flags are exposed via `stdout_truncated` and `stderr_truncated`.
 - when receiving a `terminalResource` command, worker expects `payload_json` with:
-  - `{"session_id":"required","file_path":"required","action":"validate|read"}`
+  - `{"session_id":"required","file_path":"required","action":"validate|read|export","signed_url":"required for export"}`
   - `action` defaults to `validate` when omitted.
+  - the metadata probe is executed with `docker exec <container> python3 -c ...`; the terminal work image must provide `python3`.
   - target `file_path` must exist and must not be a directory.
   - `read` action returns file content as base64 JSON bytes in `blob`.
   - `read` action rejects files larger than `WORKER_TERMINAL_OUTPUT_LIMIT_BYTES` with `file_too_large`.
+  - `export` action validates the file, copies it out with `docker cp`, uploads it to the provided presigned URL via HTTP `PUT`, and does not return file bytes inline.
+  - non-JSON probe failures (for example `docker exec` / OCI startup errors) are surfaced as docker exec errors with exit code and output summary; they are not rewritten as JSON parse errors.
   - session concurrency follows terminal session rules:
     - unknown `session_id` returns `session_not_found`.
     - concurrent operation on same `session_id` returns `session_busy`.
 - `terminalResource` result uses JSON payload:
   - validate: `{"session_id":"...","file_path":"...","mime_type":"...","size_bytes":123}`
   - read: `{"session_id":"...","file_path":"...","mime_type":"...","size_bytes":123,"blob":"...base64..."}`
+  - export: `{"session_id":"...","file_path":"...","mime_type":"...","size_bytes":123}`
 - `terminalResource` domain error codes:
   - `file_not_found`
   - `path_is_directory`

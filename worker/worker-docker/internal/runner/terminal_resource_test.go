@@ -4,7 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -58,6 +63,21 @@ func TestBuildCommandResultTerminalResourceInvalidPayload(t *testing.T) {
 		CommandId:   "cmd-term-res-invalid",
 		Capability:  terminalResourceCapabilityDeclared,
 		PayloadJson: []byte(`{"session_id":"sess-1"}`),
+	})
+	result := req.GetCommandResult()
+	if result == nil || result.GetError() == nil {
+		t.Fatalf("expected invalid payload error, got %#v", result)
+	}
+	if result.GetError().GetCode() != terminalExecCodeInvalidPayload {
+		t.Fatalf("expected invalid_payload, got %s", result.GetError().GetCode())
+	}
+}
+
+func TestBuildCommandResultTerminalResourceInvalidExportPayload(t *testing.T) {
+	req := buildCommandResult(&registryv1.CommandDispatch{
+		CommandId:   "cmd-term-res-invalid-export",
+		Capability:  terminalResourceCapabilityDeclared,
+		PayloadJson: []byte(`{"session_id":"sess-1","file_path":"app/main.py","action":"export"}`),
 	})
 	result := req.GetCommandResult()
 	if result == nil || result.GetError() == nil {
@@ -237,6 +257,187 @@ func TestTerminalSessionManagerResolveResourceDomainErrors(t *testing.T) {
 	}
 }
 
+func TestTerminalSessionManagerResolveResourceProbeExecFailureReportsDockerError(t *testing.T) {
+	originalRunDockerCommand := runDockerCommand
+	t.Cleanup(func() {
+		runDockerCommand = originalRunDockerCommand
+	})
+
+	runDockerCommand = func(_ context.Context, args ...string) dockerCommandResult {
+		if args[0] == "exec" {
+			return dockerCommandResult{
+				Stdout:   `OCI runtime exec failed: exec: "python3": executable file not found in $PATH`,
+				ExitCode: 126,
+			}
+		}
+		return dockerCommandResult{ExitCode: 0}
+	}
+
+	manager := newTerminalSessionManager(terminalSessionManagerConfig{
+		LeaseMinSec:      60,
+		LeaseMaxSec:      1800,
+		LeaseDefaultSec:  60,
+		OutputLimitBytes: 1024,
+	})
+	defer manager.Close()
+
+	manager.mu.Lock()
+	manager.sessions["sess-1"] = &terminalSession{
+		sessionID:      "sess-1",
+		containerName:  "container-1",
+		leaseExpiresAt: time.Now().Add(time.Minute),
+	}
+	manager.mu.Unlock()
+
+	_, err := manager.ResolveResource(context.Background(), terminalResourceRequest{
+		SessionID: "sess-1",
+		FilePath:  "/tmp/hello.txt",
+		Action:    terminalResourceActionValidate,
+	})
+	if err == nil {
+		t.Fatalf("expected docker exec failure")
+	}
+	if !strings.Contains(err.Error(), `docker exec failed: exit code=126`) {
+		t.Fatalf("expected exit code in error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), `stdout=OCI runtime exec failed`) {
+		t.Fatalf("expected stdout summary in error, got %v", err)
+	}
+}
+
+func TestTerminalSessionManagerResolveResourceExportSuccess(t *testing.T) {
+	originalRunDockerCommand := runDockerCommand
+	t.Cleanup(func() {
+		runDockerCommand = originalRunDockerCommand
+	})
+
+	var uploadedBody string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			t.Fatalf("expected PUT request, got %s", r.Method)
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read upload body: %v", err)
+		}
+		uploadedBody = string(body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	var copiedTempPath string
+	runDockerCommand = func(_ context.Context, args ...string) dockerCommandResult {
+		switch args[0] {
+		case "exec":
+			return dockerCommandResult{
+				Stdout:   `{"mime_type":"text/plain","size_bytes":5}`,
+				ExitCode: 0,
+			}
+		case "cp":
+			copiedTempPath = args[2]
+			if err := os.WriteFile(copiedTempPath, []byte("hello"), 0o600); err != nil {
+				t.Fatalf("write copied temp file: %v", err)
+			}
+			return dockerCommandResult{ExitCode: 0}
+		default:
+			return dockerCommandResult{ExitCode: 0}
+		}
+	}
+
+	manager := newTerminalSessionManager(terminalSessionManagerConfig{
+		LeaseMinSec:      60,
+		LeaseMaxSec:      1800,
+		LeaseDefaultSec:  60,
+		OutputLimitBytes: 1024,
+	})
+	defer manager.Close()
+
+	manager.mu.Lock()
+	manager.sessions["sess-1"] = &terminalSession{
+		sessionID:      "sess-1",
+		containerName:  "container-1",
+		leaseExpiresAt: time.Now().Add(time.Minute),
+	}
+	manager.mu.Unlock()
+
+	result, err := manager.ResolveResource(context.Background(), terminalResourceRequest{
+		SessionID: "sess-1",
+		FilePath:  "/tmp/hello.txt",
+		Action:    terminalResourceActionExport,
+		SignedURL: server.URL,
+	})
+	if err != nil {
+		t.Fatalf("export failed: %v", err)
+	}
+	if result.MIMEType != "text/plain" || result.SizeBytes != 5 {
+		t.Fatalf("unexpected export result: %#v", result)
+	}
+	if uploadedBody != "hello" {
+		t.Fatalf("unexpected uploaded body: %q", uploadedBody)
+	}
+	if copiedTempPath == "" {
+		t.Fatalf("expected docker cp temp path to be captured")
+	}
+	if _, err := os.Stat(copiedTempPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected temp file cleanup, got err=%v", err)
+	}
+}
+
+func TestTerminalSessionManagerResolveResourceExportUploadFailure(t *testing.T) {
+	originalRunDockerCommand := runDockerCommand
+	t.Cleanup(func() {
+		runDockerCommand = originalRunDockerCommand
+	})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "upload failed", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	runDockerCommand = func(_ context.Context, args ...string) dockerCommandResult {
+		switch args[0] {
+		case "exec":
+			return dockerCommandResult{
+				Stdout:   `{"mime_type":"text/plain","size_bytes":5}`,
+				ExitCode: 0,
+			}
+		case "cp":
+			if err := os.WriteFile(args[2], []byte("hello"), 0o600); err != nil {
+				t.Fatalf("write copied temp file: %v", err)
+			}
+			return dockerCommandResult{ExitCode: 0}
+		default:
+			return dockerCommandResult{ExitCode: 0}
+		}
+	}
+
+	manager := newTerminalSessionManager(terminalSessionManagerConfig{
+		LeaseMinSec:      60,
+		LeaseMaxSec:      1800,
+		LeaseDefaultSec:  60,
+		OutputLimitBytes: 1024,
+	})
+	defer manager.Close()
+
+	manager.mu.Lock()
+	manager.sessions["sess-1"] = &terminalSession{
+		sessionID:      "sess-1",
+		containerName:  "container-1",
+		leaseExpiresAt: time.Now().Add(time.Minute),
+	}
+	manager.mu.Unlock()
+
+	_, err := manager.ResolveResource(context.Background(), terminalResourceRequest{
+		SessionID: "sess-1",
+		FilePath:  "/tmp/hello.txt",
+		Action:    terminalResourceActionExport,
+		SignedURL: server.URL,
+	})
+	if err == nil || !strings.Contains(err.Error(), "upload export file failed") {
+		t.Fatalf("expected upload error, got %v", err)
+	}
+}
+
 func TestTerminalSessionManagerResolveResourceSessionRules(t *testing.T) {
 	manager := newTerminalSessionManager(terminalSessionManagerConfig{
 		LeaseMinSec:      60,
@@ -329,7 +530,7 @@ func TestTerminalExecDockerResourceArgs(t *testing.T) {
 	want := []string{
 		"exec",
 		"container-a",
-		"python",
+		"python3",
 		"-c",
 		terminalResourceProbeScript,
 		"--action",

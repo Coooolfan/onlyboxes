@@ -89,6 +89,14 @@ The console service hosts:
       - non-image files return exactly one `text` content item:
         - `unsupported mime type: <mime>; expected image/*`
       - non-format failures (session/file missing, busy, timeout, read failure) are returned as tool errors.
+    - `exportFile`
+      - input: `{"session_id":"required","file_path":"required","timeout_ms":60000}`
+      - `session_id` and `file_path` are required (whitespace-only is rejected).
+      - only available when all export-file objectstore env vars are configured.
+      - `session_id=="computerUse"` is rejected; this tool only supports Docker-backed terminal sessions.
+      - console generates a presigned upload URL, dispatches terminalResource `action="export"` to worker-docker, then returns a presigned download URL.
+      - output: `{"signed_url":"..."}`
+      - non-format failures (session/file missing, busy, timeout, upload failure) are returned as tool errors.
 - dashboard authentication APIs:
   - `POST /api/v1/console/login` with `{"username":"...","password":"..."}`.
   - login response includes `authenticated`, `account`, `registration_enabled`, `console_version`, `console_repo_url`.
@@ -120,12 +128,21 @@ The console service hosts:
 
 Hidden tools (`CONSOLE_HIDDEN_TOOLS`):
 - comma-separated list of tool names to hide from MCP `tools/list`.
-- valid tool names: `echo`, `pythonExec`, `terminalExec`, `computerUse`, `readImage`.
+- valid tool names: `echo`, `pythonExec`, `terminalExec`, `computerUse`, `readImage`, `exportFile`.
 - hidden tools are omitted from MCP `tools/list`.
 - hidden tools remain callable via MCP `tools/call` if the caller already knows the tool name.
 - console currently has no separate HTTP tool-list endpoint, so there is no HTTP list filtering to apply here.
 - default: empty (all tools visible).
 - example: `CONSOLE_HIDDEN_TOOLS=echo,computerUse`
+
+Export file objectstore config:
+- `CONSOLE_EXPORT_FILE_ENDPOINT`: S3-compatible endpoint URL for presigned upload/download.
+- `CONSOLE_EXPORT_FILE_REGION`: explicit signing region for the S3-compatible endpoint.
+- `CONSOLE_EXPORT_FILE_BUCKET_NAME`: destination bucket for exported files.
+- `CONSOLE_EXPORT_FILE_EXPORT_PREFIX`: object key prefix prepended to every export.
+- `CONSOLE_EXPORT_FILE_AK`: access key used for presigning.
+- `CONSOLE_EXPORT_FILE_SK`: secret key used for presigning.
+- `exportFile` is registered only when all 6 variables above are non-empty.
 
 Security warning (high risk):
 - console gRPC currently has no built-in TLS/mTLS.
