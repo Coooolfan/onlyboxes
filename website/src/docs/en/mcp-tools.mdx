@@ -1,6 +1,6 @@
 export const meta = {
   title: 'MCP Tools Reference',
-  description: 'Complete reference for the five tools exposed by the OnlyBoxes MCP endpoint, including connection details, protocol notes, and per-tool input/output parameters.',
+  description: 'Complete reference for the six tools exposed by the OnlyBoxes MCP endpoint, including connection details, protocol notes, and per-tool input/output parameters.',
   section: 'Interfaces',
   order: 60,
   slug: 'mcp-tools',
@@ -50,6 +50,7 @@ Accept: application/json, text/event-stream
 | `terminalExec` | Persistent terminal session execution | Any worker supporting terminalResource |
 | `computerUse` | Real device command execution | Account's own `worker-sys` |
 | `readImage` | Read an image file from a worker | Depends on `session_id` (see below) |
+| `exportFile` | Export a terminal-session file to object storage | Docker-backed terminal sessions only |
 
 All tool parameter schemas set `additionalProperties: false`. Passing an undefined field returns JSON-RPC error `-32602 invalid params`.
 
@@ -278,6 +279,51 @@ Reads an image file from a terminal session environment or a `worker-sys` host, 
 ```
 unsupported mime type: <mime>; expected image/*
 ```
+
+---
+
+### `exportFile`
+
+Exports a file from a Docker-backed terminal session to the console's configured S3-compatible object store and returns a presigned download URL.
+
+**Input:**
+
+| Field | Type | Required | Constraints |
+|-------|------|----------|-------------|
+| `session_id` | string | Yes | Terminal session ID returned by `terminalExec`; the special value `"computerUse"` is not supported |
+| `file_path` | string | Yes | Absolute path to the target file inside the terminal session |
+| `timeout_ms` | integer | No | `1..600000`, default `60000` |
+
+**Behavior:**
+
+- Available only when the console export object-store environment variables are configured.
+- Routes to `terminalResource` with `action="export"` on the same Docker worker that owns the terminal session.
+- The worker first probes the file via `docker exec <container> python3 -c ...`, then copies it out with `docker cp`, uploads it through a presigned HTTP `PUT`, and returns a presigned download URL.
+- Non-JSON probe failures inside the worker (for example OCI / `docker exec` startup failures) are surfaced as tool errors with docker exit code and output summary; they are not rewritten as JSON parse errors.
+
+**Input example:**
+
+```json
+{ "session_id": "sess_xxx", "file_path": "/workspace/report.png", "timeout_ms": 60000 }
+```
+
+**Output:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `signed_url` | string | Presigned download URL for the exported object |
+
+**Output example:**
+
+```json
+{ "signed_url": "https://objectstore.example.com/bucket/exports/..." }
+```
+
+**Common constraints:**
+
+- `session_id == "computerUse"` is rejected.
+- Unknown session returns a tool error such as `session_not_found`.
+- This tool does not return file bytes inline.
 
 ---
 

@@ -23,6 +23,8 @@ export const meta = {
 3. Code runs inside the container with resource limits applied.
 4. Output is streamed back through the control plane.
 
+For `terminalResource` validate/read/export operations, the worker probes file metadata via `docker exec <container> python3 -c ...`, so the terminal execution image must provide `python3`.
+
 ## Prerequisites
 
 - Docker Engine
@@ -67,6 +69,8 @@ Set `WORKER_CONSOLE_INSECURE=true` when connecting without TLS.
 | `WORKER_PYTHON_EXEC_DOCKER_IMAGE` | No | `ghcr.io/astral-sh/uv:python3.12-bookworm-slim` | Image for Python execution |
 | `WORKER_TERMINAL_EXEC_DOCKER_IMAGE` | No | `coolfan1024/onlyboxes-default-worker:0.0.3` | Image for terminal execution |
 
+> `terminalExec`, `readImage`, and `exportFile` all rely on the terminal execution image. If that image does not include `python3`, file probe operations will fail before metadata can be validated or exported.
+
 ### Concurrency
 
 | Variable | Required | Default | Description |
@@ -84,6 +88,13 @@ Set `WORKER_CONSOLE_INSECURE=true` when connecting without TLS.
 | `WORKER_TERMINAL_LEASE_MAX_SEC` | No | `1800` | Maximum lease duration (seconds) |
 | `WORKER_TERMINAL_LEASE_DEFAULT_SEC` | No | `60` | Default lease duration (seconds) |
 | `WORKER_TERMINAL_OUTPUT_LIMIT_BYTES` | No | `1048576` | Output limit per stream (bytes) |
+
+## `terminalResource` behavior
+
+- Supports `validate`, `read`, and `export`.
+- `read` enforces `WORKER_TERMINAL_OUTPUT_LIMIT_BYTES`.
+- `export` is used by the MCP `exportFile` tool. It probes the file, copies it out of the container with `docker cp`, then uploads it through a presigned HTTP `PUT`.
+- Non-JSON probe failures from `docker exec` / OCI startup are surfaced as docker exec errors with exit code and output summary instead of a generic JSON parse error.
 
 ### Heartbeat
 

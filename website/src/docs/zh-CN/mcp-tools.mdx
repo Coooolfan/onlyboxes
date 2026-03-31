@@ -1,6 +1,6 @@
 export const meta = {
   title: 'MCP 工具参考',
-  description: 'OnlyBoxes MCP 端点暴露的五个工具的完整参考，含连接方式、协议细节与各工具的入参出参。',
+  description: 'OnlyBoxes MCP 端点暴露的六个工具的完整参考，含连接方式、协议细节与各工具的入参出参。',
   section: '接口',
   order: 60,
   slug: 'mcp-tools',
@@ -50,6 +50,7 @@ Accept: application/json, text/event-stream
 | `terminalExec` | 持久化 terminal 会话执行 | 任意支持 terminalResource 的 worker |
 | `computerUse` | 真实设备命令执行 | 账号自有 `worker-sys` |
 | `readImage` | 从 worker 读取图片文件 | 取决于 `session_id`（见下文） |
+| `exportFile` | 将 terminal 会话中的文件导出到对象存储 | 仅 Docker terminal 会话支持 |
 
 所有工具的参数 schema 均设置 `additionalProperties: false`。传入未定义字段会返回 JSON-RPC 错误 `-32602 invalid params`。
 
@@ -278,6 +279,51 @@ Accept: application/json, text/event-stream
 ```
 unsupported mime type: <mime>; expected image/*
 ```
+
+---
+
+### `exportFile`
+
+将 Docker-backed terminal 会话中的文件导出到 console 配置的 S3 兼容对象存储，并返回一个预签名下载 URL。
+
+**入参：**
+
+| 字段 | 类型 | 必填 | 约束 |
+|------|------|------|------|
+| `session_id` | string | 是 | `terminalExec` 返回的 terminal 会话 ID；不支持特殊值 `"computerUse"` |
+| `file_path` | string | 是 | terminal 会话内目标文件的绝对路径 |
+| `timeout_ms` | integer | 否 | `1..600000`，默认 `60000` |
+
+**行为说明：**
+
+- 仅当 console 侧导出对象存储环境变量完整配置后才可用。
+- 路由到持有该 terminal 会话的同一台 Docker worker，并以 `terminalResource` 的 `action="export"` 执行。
+- worker 会先通过 `docker exec <container> python3 -c ...` 探测文件，再通过 `docker cp` 拷出文件，使用预签名 HTTP `PUT` 上传，最后返回预签名下载 URL。
+- worker 内部若出现非 JSON 的探针失败（例如 OCI / `docker exec` 启动失败），会直接作为工具错误返回 docker 退出码和输出摘要，不会再被包装成 JSON 解析错误。
+
+**入参示例：**
+
+```json
+{ "session_id": "sess_xxx", "file_path": "/workspace/report.png", "timeout_ms": 60000 }
+```
+
+**出参：**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `signed_url` | string | 导出对象的预签名下载 URL |
+
+**出参示例：**
+
+```json
+{ "signed_url": "https://objectstore.example.com/bucket/exports/..." }
+```
+
+**常见约束：**
+
+- `session_id == "computerUse"` 会被拒绝。
+- 未知会话会返回 `session_not_found` 等工具错误。
+- 此工具不会以内联方式返回文件字节。
 
 ---
 
