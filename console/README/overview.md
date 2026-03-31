@@ -93,8 +93,9 @@ The console service hosts:
       - input: `{"session_id":"required","file_path":"required","timeout_ms":60000}`
       - `session_id` and `file_path` are required (whitespace-only is rejected).
       - only available when all export-file objectstore env vars are configured.
-      - `session_id=="computerUse"` is rejected; this tool only supports Docker-backed terminal sessions.
-      - console generates a presigned upload URL, dispatches terminalResource `action="export"` to worker-docker, then returns a presigned download URL.
+      - `session_id=="computerUse"` routes to the caller-owned `worker-sys` via `readImage` capability with `action="export"`.
+      - other `session_id` values route via worker `terminalResource` capability with `action="export"` (Docker-backed terminal sessions).
+      - console generates a presigned upload URL, dispatches the appropriate export action based on routing, then returns a presigned download URL.
       - output: `{"signed_url":"..."}`
       - non-format failures (session/file missing, busy, timeout, upload failure) are returned as tool errors.
 - dashboard authentication APIs:
