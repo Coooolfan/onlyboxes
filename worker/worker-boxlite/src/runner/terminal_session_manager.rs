@@ -10,6 +10,7 @@ use base64::Engine;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
+use tokio_util::io::ReaderStream;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -941,12 +942,18 @@ fn build_export_temp_path() -> PathBuf {
 
 async fn put_file_to_signed_url(signed_url: &str, file_path: &Path) -> Result<(), String> {
     let upload_path = file_path.to_path_buf();
-    let payload = tokio::fs::read(&upload_path)
+    let file = tokio::fs::File::open(&upload_path)
         .await
         .map_err(|err| format!("open export file: {err}"))?;
+    let file_size = file
+        .metadata()
+        .await
+        .map_err(|err| format!("stat export file: {err}"))?
+        .len();
+    let payload = reqwest::Body::wrap_stream(ReaderStream::new(file));
     let response = reqwest::Client::new()
         .put(signed_url)
-        .header(reqwest::header::CONTENT_LENGTH, payload.len().to_string())
+        .header(reqwest::header::CONTENT_LENGTH, file_size.to_string())
         .body(payload)
         .send()
         .await
@@ -1373,9 +1380,15 @@ mod tests {
         async fn remove_box(&self, _box_id: &str) {}
     }
 
+    #[derive(Debug)]
+    struct PutRequestCapture {
+        headers: String,
+        body: Vec<u8>,
+    }
+
     async fn spawn_put_server(
         status_line: &str,
-    ) -> (String, tokio::sync::oneshot::Receiver<Vec<u8>>) {
+    ) -> (String, tokio::sync::oneshot::Receiver<PutRequestCapture>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let (body_tx, body_rx) = tokio::sync::oneshot::channel();
@@ -1422,7 +1435,10 @@ mod tests {
                 }
                 body.extend_from_slice(&chunk[..read]);
             }
-            let _ = body_tx.send(body);
+            let _ = body_tx.send(PutRequestCapture {
+                headers: headers.into_owned(),
+                body,
+            });
             let response = format!("{status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
             stream.write_all(response.as_bytes()).await.unwrap();
         });
@@ -1672,7 +1688,7 @@ mod tests {
                 false,
             )
             .await;
-        let (upload_url, uploaded_body) = spawn_put_server("HTTP/1.1 200 OK").await;
+        let (upload_url, uploaded_request) = spawn_put_server("HTTP/1.1 200 OK").await;
 
         let result = manager
             .resolve_resource(TerminalResourceRequest {
@@ -1688,7 +1704,12 @@ mod tests {
         assert_eq!(result.mime_type, "text/plain");
         assert_eq!(result.size_bytes, 5);
         assert!(result.blob.is_empty());
-        assert_eq!(uploaded_body.await.unwrap(), b"hello");
+        let uploaded_request = uploaded_request.await.unwrap();
+        assert!(uploaded_request
+            .headers
+            .lines()
+            .any(|line| line.eq_ignore_ascii_case("content-length: 5")));
+        assert_eq!(uploaded_request.body, b"hello");
 
         manager.close().await;
     }
