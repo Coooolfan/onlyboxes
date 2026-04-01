@@ -64,6 +64,7 @@ export const meta = {
 | `CONSOLE_EXPORT_FILE_SK` | 否 | | 用于预签名的 Secret Key |
 | `CONSOLE_EXPORT_FILE_UPLOAD_PRESIGN_TTL_SEC` | 否 | `900` | 上传预签名 URL 的有效期（秒） |
 | `CONSOLE_EXPORT_FILE_DOWNLOAD_PRESIGN_TTL_SEC` | 否 | `3600` | 下载预签名 URL 的有效期（秒） |
+| `CONSOLE_EXPORT_RETURN_SCHEMA` | 否 | `ALL` | 控制 `exportFile` 返回哪些字段：`ALL`（`signed_url` + `object_key` + `filename`）、`SIGNED_URL`（仅 `signed_url`）、`OBJECTKEY`（仅 `object_key` + `filename`，跳过下载 URL 生成） |
 
 ### JIT Token 认证
 

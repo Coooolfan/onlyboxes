@@ -25,10 +25,11 @@ type WorkerHandler struct {
 	provisioning      WorkerProvisioning
 	inflightStats     InflightStatsProvider
 	consoleGRPCAddr   string
-	exportStore       ExportStore
-	exportPrefix      string
-	exportUploadTTL   time.Duration
-	exportDownloadTTL time.Duration
+	exportStore        ExportStore
+	exportPrefix       string
+	exportUploadTTL    time.Duration
+	exportDownloadTTL  time.Duration
+	exportReturnSchema string
 	nowFn             func() time.Time
 }
 
@@ -85,7 +86,7 @@ func NewWorkerHandler(
 	}
 }
 
-func (h *WorkerHandler) SetExportStore(store ExportStore, exportPrefix string, uploadTTL time.Duration, downloadTTL time.Duration) {
+func (h *WorkerHandler) SetExportStore(store ExportStore, exportPrefix string, uploadTTL time.Duration, downloadTTL time.Duration, returnSchema string) {
 	if h == nil {
 		return
 	}
@@ -93,6 +94,7 @@ func (h *WorkerHandler) SetExportStore(store ExportStore, exportPrefix string, u
 	h.exportPrefix = strings.TrimSpace(exportPrefix)
 	h.exportUploadTTL = uploadTTL
 	h.exportDownloadTTL = downloadTTL
+	h.exportReturnSchema = returnSchema
 }
 
 func NewRouter(workerHandler *WorkerHandler, consoleAuth *ConsoleAuth, mcpAuth *MCPAuth, apiKeyAuth *APIKeyAuth, hiddenTools map[string]bool) (*gin.Engine, error) {
@@ -109,6 +111,7 @@ func NewRouter(workerHandler *WorkerHandler, consoleAuth *ConsoleAuth, mcpAuth *
 		workerHandler.exportPrefix,
 		workerHandler.exportUploadTTL,
 		workerHandler.exportDownloadTTL,
+		workerHandler.exportReturnSchema,
 	)))
 
 	api := router.Group("/api/v1")

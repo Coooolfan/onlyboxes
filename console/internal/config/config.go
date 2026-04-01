@@ -45,6 +45,7 @@ type Config struct {
 	ExportFileSK          string
 	ExportFileUploadTTL   time.Duration
 	ExportFileDownloadTTL time.Duration
+	ExportReturnSchema    string
 	EnableRegistration    bool
 	HiddenTools           map[string]bool
 	LogLevel              string
@@ -83,6 +84,7 @@ func Load() Config {
 		ExportFileSK:          strings.TrimSpace(os.Getenv("CONSOLE_EXPORT_FILE_SK")),
 		ExportFileUploadTTL:   time.Duration(exportUploadTTLSec) * time.Second,
 		ExportFileDownloadTTL: time.Duration(exportDownloadTTLSec) * time.Second,
+		ExportReturnSchema:    parseExportReturnSchemaEnv("CONSOLE_EXPORT_RETURN_SCHEMA"),
 		EnableRegistration:    parseBoolEnv("CONSOLE_ENABLE_REGISTRATION", false),
 		HiddenTools:           parseStringSetEnv("CONSOLE_HIDDEN_TOOLS"),
 		LogLevel:              parseLogLevelEnv("CONSOLE_LOG_LEVEL", defaultLogLevel),
@@ -164,6 +166,16 @@ func parseLogLevelEnv(key string, defaultValue string) string {
 		return value
 	default:
 		return defaultValue
+	}
+}
+
+func parseExportReturnSchemaEnv(key string) string {
+	value := strings.TrimSpace(strings.ToUpper(os.Getenv(key)))
+	switch value {
+	case "ALL", "SIGNED_URL", "OBJECTKEY":
+		return value
+	default:
+		return "ALL"
 	}
 }
 

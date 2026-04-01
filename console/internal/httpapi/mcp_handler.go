@@ -16,6 +16,7 @@ func NewMCPHandler(
 	exportPrefix string,
 	exportUploadTTL time.Duration,
 	exportDownloadTTL time.Duration,
+	exportReturnSchema string,
 ) http.Handler {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    mcpServerName,
@@ -123,9 +124,9 @@ func NewMCPHandler(
 				OpenWorldHint:   boolPtr(false),
 			},
 			InputSchema:  mcpExportFileInputSchema,
-			OutputSchema: mcpExportFileOutputSchema,
+			OutputSchema: exportFileOutputSchemaForMode(exportReturnSchema),
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpExportFileToolInput) (*mcp.CallToolResult, mcpExportFileToolOutput, error) {
-			return handleMCPExportFileTool(ctx, dispatcher, exportStore, exportPrefix, exportUploadTTL, exportDownloadTTL, input)
+			return handleMCPExportFileTool(ctx, dispatcher, exportStore, exportPrefix, exportUploadTTL, exportDownloadTTL, exportReturnSchema, input)
 		})
 	}
 

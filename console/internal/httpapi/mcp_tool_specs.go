@@ -21,6 +21,10 @@ const (
 	mcpComputerUseToolTitle        = "Computer Use"
 	mcpReadImageToolTitle          = "Read Image"
 	mcpExportFileToolTitle         = "Export File"
+
+	ExportReturnSchemaAll       = "ALL"
+	ExportReturnSchemaSignedURL = "SIGNED_URL"
+	ExportReturnSchemaObjectKey = "OBJECTKEY"
 )
 
 var mcpServerVersion = consoleVersion()
@@ -91,9 +95,9 @@ type mcpExportFileToolInput struct {
 }
 
 type mcpExportFileToolOutput struct {
-	SignedURL string `json:"signed_url"`
-	ObjectKey string `json:"object_key"`
-	FileName  string `json:"filename"`
+	SignedURL string `json:"signed_url,omitempty"`
+	ObjectKey string `json:"object_key,omitempty"`
+	FileName  string `json:"filename,omitempty"`
 }
 
 type pythonExecPayload struct {
@@ -341,22 +345,52 @@ var mcpExportFileInputSchema = map[string]any{
 	},
 }
 
-var mcpExportFileOutputSchema = map[string]any{
-	"type":                 "object",
-	"additionalProperties": false,
-	"required":             []string{"signed_url", "object_key", "filename"},
-	"properties": map[string]any{
-		"signed_url": map[string]any{
-			"type":        "string",
-			"description": "Presigned download URL for the exported object.",
-		},
-		"object_key": map[string]any{
-			"type":        "string",
-			"description": "Object key written to the configured bucket.",
-		},
-		"filename": map[string]any{
-			"type":        "string",
-			"description": "Original basename derived from file_path.",
-		},
-	},
+var mcpExportFileOutputSchemaSignedURL = map[string]any{
+	"type":        "string",
+	"description": "Presigned download URL for the exported object.",
+}
+
+var mcpExportFileOutputSchemaObjectKey = map[string]any{
+	"type":        "string",
+	"description": "Object key written to the configured bucket.",
+}
+
+var mcpExportFileOutputSchemaFileName = map[string]any{
+	"type":        "string",
+	"description": "Original basename derived from file_path.",
+}
+
+func exportFileOutputSchemaForMode(schema string) map[string]any {
+	switch schema {
+	case ExportReturnSchemaSignedURL:
+		return map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"required":             []string{"signed_url"},
+			"properties": map[string]any{
+				"signed_url": mcpExportFileOutputSchemaSignedURL,
+			},
+		}
+	case ExportReturnSchemaObjectKey:
+		return map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"required":             []string{"object_key", "filename"},
+			"properties": map[string]any{
+				"object_key": mcpExportFileOutputSchemaObjectKey,
+				"filename":   mcpExportFileOutputSchemaFileName,
+			},
+		}
+	default:
+		return map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"required":             []string{"signed_url", "object_key", "filename"},
+			"properties": map[string]any{
+				"signed_url": mcpExportFileOutputSchemaSignedURL,
+				"object_key": mcpExportFileOutputSchemaObjectKey,
+				"filename":   mcpExportFileOutputSchemaFileName,
+			},
+		}
+	}
 }

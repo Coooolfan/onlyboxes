@@ -64,6 +64,7 @@ These variables enable the MCP `exportFile` tool. The tool is registered only wh
 | `CONSOLE_EXPORT_FILE_SK` | No | | Secret key used for presigning |
 | `CONSOLE_EXPORT_FILE_UPLOAD_PRESIGN_TTL_SEC` | No | `900` | Upload presign TTL in seconds |
 | `CONSOLE_EXPORT_FILE_DOWNLOAD_PRESIGN_TTL_SEC` | No | `3600` | Download presign TTL in seconds |
+| `CONSOLE_EXPORT_RETURN_SCHEMA` | No | `ALL` | Controls which fields `exportFile` returns: `ALL` (`signed_url` + `object_key` + `filename`), `SIGNED_URL` (`signed_url` only), `OBJECTKEY` (`object_key` + `filename` only; skips download URL generation) |
 
 ### JIT Token Authentication
 

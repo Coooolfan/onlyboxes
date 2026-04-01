@@ -33,6 +33,7 @@ func handleMCPExportFileTool(
 	exportPrefix string,
 	uploadPresignTTL time.Duration,
 	downloadPresignTTL time.Duration,
+	returnSchema string,
 	input mcpExportFileToolInput,
 ) (*mcp.CallToolResult, mcpExportFileToolOutput, error) {
 	sessionID := strings.TrimSpace(input.SessionID)
@@ -84,15 +85,30 @@ func handleMCPExportFileTool(
 		return nil, mcpExportFileToolOutput{}, errors.New("invalid exportFile result payload")
 	}
 
+	fileName := exportFileName(filePath)
+
+	if returnSchema == ExportReturnSchemaObjectKey {
+		return nil, mcpExportFileToolOutput{
+			ObjectKey: objectKey,
+			FileName:  fileName,
+		}, nil
+	}
+
 	downloadURL, err := exportStore.PresignDownload(ctx, objectKey, downloadTTL)
 	if err != nil {
 		return nil, mcpExportFileToolOutput{}, errors.New("failed to generate download URL")
 	}
 
+	if returnSchema == ExportReturnSchemaSignedURL {
+		return nil, mcpExportFileToolOutput{
+			SignedURL: downloadURL,
+		}, nil
+	}
+
 	return nil, mcpExportFileToolOutput{
 		SignedURL: downloadURL,
 		ObjectKey: objectKey,
-		FileName:  exportFileName(filePath),
+		FileName:  fileName,
 	}, nil
 }
 

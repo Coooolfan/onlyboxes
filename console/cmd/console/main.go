@@ -115,6 +115,7 @@ func main() {
 			cfg.ExportFilePrefix,
 			cfg.ExportFileUploadTTL,
 			cfg.ExportFileDownloadTTL,
+			cfg.ExportReturnSchema,
 		)
 	}
 	consoleAuth, err := httpapi.NewConsoleAuth(db.Queries, cfg.EnableRegistration)

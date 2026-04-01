@@ -317,14 +317,30 @@ Exports a file from a session to the console's configured S3-compatible object s
 
 **Output:**
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `signed_url` | string | Presigned download URL for the exported object |
+Output fields depend on the `CONSOLE_EXPORT_RETURN_SCHEMA` environment variable:
 
-**Output example:**
+| Mode | Fields | Description |
+|------|--------|-------------|
+| `ALL` (default) | `signed_url`, `object_key`, `filename` | Returns the presigned download URL, the object key in the bucket, and the original filename |
+| `SIGNED_URL` | `signed_url` | Returns only the presigned download URL |
+| `OBJECTKEY` | `object_key`, `filename` | Returns only the object key and filename; skips download URL generation |
+
+**Output example (`ALL` mode):**
+
+```json
+{ "signed_url": "https://objectstore.example.com/bucket/exports/...", "object_key": "exports/sess_xxx/abc-report.png", "filename": "report.png" }
+```
+
+**Output example (`SIGNED_URL` mode):**
 
 ```json
 { "signed_url": "https://objectstore.example.com/bucket/exports/..." }
+```
+
+**Output example (`OBJECTKEY` mode):**
+
+```json
+{ "object_key": "exports/sess_xxx/abc-report.png", "filename": "report.png" }
 ```
 
 **Common constraints:**

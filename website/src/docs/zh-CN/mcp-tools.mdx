@@ -317,14 +317,30 @@ unsupported mime type: <mime>; expected image/*
 
 **出参：**
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `signed_url` | string | 导出对象的预签名下载 URL |
+出参字段由环境变量 `CONSOLE_EXPORT_RETURN_SCHEMA` 控制：
 
-**出参示例：**
+| 模式 | 字段 | 说明 |
+|------|------|------|
+| `ALL`（默认） | `signed_url`、`object_key`、`filename` | 返回预签名下载 URL、Bucket 内对象 Key 和原始文件名 |
+| `SIGNED_URL` | `signed_url` | 仅返回预签名下载 URL |
+| `OBJECTKEY` | `object_key`、`filename` | 仅返回对象 Key 和文件名，跳过下载 URL 生成 |
+
+**出参示例（`ALL` 模式）：**
+
+```json
+{ "signed_url": "https://objectstore.example.com/bucket/exports/...", "object_key": "exports/sess_xxx/abc-report.png", "filename": "report.png" }
+```
+
+**出参示例（`SIGNED_URL` 模式）：**
 
 ```json
 { "signed_url": "https://objectstore.example.com/bucket/exports/..." }
+```
+
+**出参示例（`OBJECTKEY` 模式）：**
+
+```json
+{ "object_key": "exports/sess_xxx/abc-report.png", "filename": "report.png" }
 ```
 
 **常见约束：**

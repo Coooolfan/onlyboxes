@@ -96,7 +96,11 @@ The console service hosts:
       - `session_id=="computerUse"` routes to the caller-owned `worker-sys` via `readImage` capability with `action="export"`.
       - other `session_id` values route via worker `terminalResource` capability with `action="export"` (Docker-backed terminal sessions).
       - console generates a presigned upload URL, dispatches the appropriate export action based on routing, then returns a presigned download URL.
-      - output: `{"signed_url":"..."}`
+      - output fields depend on `CONSOLE_EXPORT_RETURN_SCHEMA`:
+        - `ALL` (default): `{"signed_url":"...","object_key":"...","filename":"..."}`
+        - `SIGNED_URL`: `{"signed_url":"..."}`
+        - `OBJECTKEY`: `{"object_key":"...","filename":"..."}`
+      - when `OBJECTKEY` is configured, the console skips generating a presigned download URL entirely.
       - non-format failures (session/file missing, busy, timeout, upload failure) are returned as tool errors.
 - dashboard authentication APIs:
   - `POST /api/v1/console/login` with `{"username":"...","password":"..."}`.
@@ -145,6 +149,7 @@ Export file objectstore config:
 - `CONSOLE_EXPORT_FILE_SK`: secret key used for presigning.
 - `CONSOLE_EXPORT_FILE_UPLOAD_PRESIGN_TTL_SEC`: upload presign TTL in seconds (default `900`).
 - `CONSOLE_EXPORT_FILE_DOWNLOAD_PRESIGN_TTL_SEC`: download presign TTL in seconds (default `3600`).
+- `CONSOLE_EXPORT_RETURN_SCHEMA`: controls which fields `exportFile` returns. Values: `ALL` (default, returns `signed_url` + `object_key` + `filename`), `SIGNED_URL` (returns only `signed_url`), `OBJECTKEY` (returns only `object_key` + `filename`, skips presigned download URL generation).
 - `exportFile` is registered only when the 6 core objectstore variables above (`ENDPOINT/REGION/BUCKET_NAME/EXPORT_PREFIX/AK/SK`) are non-empty.
 
 Security warning (high risk):
