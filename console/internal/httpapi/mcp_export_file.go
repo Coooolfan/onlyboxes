@@ -89,7 +89,11 @@ func handleMCPExportFileTool(
 		return nil, mcpExportFileToolOutput{}, errors.New("failed to generate download URL")
 	}
 
-	return nil, mcpExportFileToolOutput{SignedURL: downloadURL}, nil
+	return nil, mcpExportFileToolOutput{
+		SignedURL: downloadURL,
+		ObjectKey: objectKey,
+		FileName:  exportFileName(filePath),
+	}, nil
 }
 
 func normalizeExportPresignTTL(value time.Duration, fallback time.Duration) time.Duration {

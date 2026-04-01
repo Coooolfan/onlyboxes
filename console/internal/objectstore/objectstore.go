@@ -63,7 +63,6 @@ func New(cfg Config) (*Store, error) {
 		Credentials: aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")),
 	}
 	client := s3.NewFromConfig(awsCfg, func(opts *s3.Options) {
-		opts.UsePathStyle = true
 		opts.BaseEndpoint = aws.String(endpoint)
 	})
 

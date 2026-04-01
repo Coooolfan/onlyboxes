@@ -49,18 +49,18 @@ func TestPresignUploadAndDownload(t *testing.T) {
 		t.Fatalf("presign download: %v", err)
 	}
 
-	assertPresignedURL(t, uploadURL, "/exports/prefix/session/file.txt")
-	assertPresignedURL(t, downloadURL, "/exports/prefix/session/file.txt")
+	assertPresignedURL(t, uploadURL, "exports.minio.example.com", "/prefix/session/file.txt")
+	assertPresignedURL(t, downloadURL, "exports.minio.example.com", "/prefix/session/file.txt")
 }
 
-func assertPresignedURL(t *testing.T, rawURL string, wantPath string) {
+func assertPresignedURL(t *testing.T, rawURL string, wantHost string, wantPath string) {
 	t.Helper()
 
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
 		t.Fatalf("parse url: %v", err)
 	}
-	if parsed.Scheme != "https" || parsed.Host != "minio.example.com" {
+	if parsed.Scheme != "https" || parsed.Host != wantHost {
 		t.Fatalf("unexpected endpoint in presigned url: %s", rawURL)
 	}
 	if parsed.Path != wantPath {

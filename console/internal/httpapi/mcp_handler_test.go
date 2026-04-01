@@ -392,6 +392,8 @@ func TestMCPToolsListWithExportFile(t *testing.T) {
 	assertRequiredContains(t, exportInputSchema["required"], "file_path")
 	exportOutputSchema := mustObject(t, exportTool["outputSchema"], "exportFile.outputSchema")
 	assertRequiredContains(t, exportOutputSchema["required"], "signed_url")
+	assertRequiredContains(t, exportOutputSchema["required"], "object_key")
+	assertRequiredContains(t, exportOutputSchema["required"], "filename")
 }
 
 func TestMCPToolCallHiddenToolStillWorks(t *testing.T) {
@@ -758,6 +760,12 @@ func TestMCPToolCallExportFileSuccess(t *testing.T) {
 	if got := asString(t, structured["signed_url"]); got != "https://downloads.example.com/get" {
 		t.Fatalf("expected signed_url in response, got %q", got)
 	}
+	if got := asString(t, structured["object_key"]); got != "exports/session_1/fixed-id-report.png" {
+		t.Fatalf("expected object_key in response, got %q", got)
+	}
+	if got := asString(t, structured["filename"]); got != "report.png" {
+		t.Fatalf("expected filename in response, got %q", got)
+	}
 }
 
 func TestMCPToolCallExportFileUsesConfiguredPresignTTLs(t *testing.T) {
@@ -813,10 +821,23 @@ func TestMCPToolCallExportFileUsesConfiguredPresignTTLs(t *testing.T) {
 	if asBool(result["isError"]) {
 		t.Fatalf("expected tool call success, got error payload=%s", mustJSON(t, result))
 	}
+	structured := mustMapField(t, result, "structuredContent")
+	if got := asString(t, structured["object_key"]); got != "exports/session-1/fixed-id-report.png" {
+		t.Fatalf("expected object_key in response, got %q", got)
+	}
+	if got := asString(t, structured["filename"]); got != "report.png" {
+		t.Fatalf("expected filename in response, got %q", got)
+	}
 }
 
 func TestMCPToolCallExportFileComputerUseSessionRoutesToReadImageCapability(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
+	originalExportObjectID := newExportObjectID
+	newExportObjectID = func() string { return "fixed-id" }
+	t.Cleanup(func() {
+		newExportObjectID = originalExportObjectID
+	})
+
 	store := &fakeExportStore{
 		presignUpload: func(ctx context.Context, objectKey string, expiresIn time.Duration) (string, error) {
 			return "https://uploads.example.com/put", nil
@@ -873,6 +894,12 @@ func TestMCPToolCallExportFileComputerUseSessionRoutesToReadImageCapability(t *t
 	structured := mustMapField(t, result, "structuredContent")
 	if got := asString(t, structured["signed_url"]); got != "https://downloads.example.com/get" {
 		t.Fatalf("expected signed_url in response, got %q", got)
+	}
+	if got := asString(t, structured["object_key"]); got != "exports/computerUse/fixed-id-report.png" {
+		t.Fatalf("expected object_key in response, got %q", got)
+	}
+	if got := asString(t, structured["filename"]); got != "report.png" {
+		t.Fatalf("expected filename in response, got %q", got)
 	}
 }
 

@@ -92,6 +92,8 @@ type mcpExportFileToolInput struct {
 
 type mcpExportFileToolOutput struct {
 	SignedURL string `json:"signed_url"`
+	ObjectKey string `json:"object_key"`
+	FileName  string `json:"filename"`
 }
 
 type pythonExecPayload struct {
@@ -108,7 +110,7 @@ var mcpComputerUseToolDescription = "Executes shell commands directly on the cal
 
 var mcpReadImageToolDescription = "Reads a file and returns it as inline image content when mime type is image/*. For unsupported mime types, returns a text explanation. When session_id is exactly \"computerUse\", routing uses the caller-owned worker-sys readImage capability; otherwise routing uses terminalResource for terminal sessions."
 
-var mcpExportFileToolDescription = "Exports a file from a session to the configured S3-compatible object store and returns a presigned download URL. When session_id is exactly \"computerUse\", routing uses the caller-owned worker-sys readImage capability; otherwise routing uses terminalResource for terminal sessions."
+var mcpExportFileToolDescription = "Exports a file from a session to the configured S3-compatible object store and returns a presigned download URL, object key, and filename. When session_id is exactly \"computerUse\", routing uses the caller-owned worker-sys readImage capability; otherwise routing uses terminalResource for terminal sessions."
 
 var mcpEchoInputSchema = map[string]any{
 	"type":                 "object",
@@ -342,11 +344,19 @@ var mcpExportFileInputSchema = map[string]any{
 var mcpExportFileOutputSchema = map[string]any{
 	"type":                 "object",
 	"additionalProperties": false,
-	"required":             []string{"signed_url"},
+	"required":             []string{"signed_url", "object_key", "filename"},
 	"properties": map[string]any{
 		"signed_url": map[string]any{
 			"type":        "string",
 			"description": "Presigned download URL for the exported object.",
+		},
+		"object_key": map[string]any{
+			"type":        "string",
+			"description": "Object key written to the configured bucket.",
+		},
+		"filename": map[string]any{
+			"type":        "string",
+			"description": "Original basename derived from file_path.",
 		},
 	},
 }
