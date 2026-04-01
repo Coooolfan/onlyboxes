@@ -90,13 +90,6 @@ Set `WORKER_CONSOLE_INSECURE=true` when connecting without TLS.
 | `WORKER_TERMINAL_OUTPUT_LIMIT_BYTES` | No | `1048576` | Output limit per stream (bytes) |
 | `WORKER_TERMINAL_EXPORT_MAX_BYTES` | No | `0` (unlimited) | Maximum file size in bytes for export action; 0 disables the limit |
 
-## `terminalResource` behavior
-
-- Supports `validate`, `read`, and `export`.
-- `read` enforces `WORKER_TERMINAL_OUTPUT_LIMIT_BYTES`.
-- `export` is used by the MCP `exportFile` tool. It probes the file, copies it out of the container with `docker cp`, then uploads it through a presigned HTTP `PUT`.
-- Non-JSON probe failures from `docker exec` / OCI startup are surfaced as docker exec errors with exit code and output summary instead of a generic JSON parse error.
-
 ### Heartbeat
 
 | Variable | Required | Default | Description |
