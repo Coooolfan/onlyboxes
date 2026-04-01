@@ -52,7 +52,13 @@ These variables are only used during first startup when no admin account exists.
 
 ### Export file object store
 
-These variables enable the MCP `exportFile` tool. The tool is registered only when all of them are configured.
+These variables enable the MCP `exportFile` tool. The tool is registered in `tools/list` only after the following environment variables are configured.
+- `CONSOLE_EXPORT_FILE_ENDPOINT`
+- `CONSOLE_EXPORT_FILE_REGION`
+- `CONSOLE_EXPORT_FILE_BUCKET_NAME`
+- `CONSOLE_EXPORT_FILE_EXPORT_PREFIX`
+- `CONSOLE_EXPORT_FILE_AK`
+- `CONSOLE_EXPORT_FILE_SK`
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
