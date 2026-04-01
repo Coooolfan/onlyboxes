@@ -95,6 +95,7 @@ type terminalSessionManagerConfig struct {
 	LeaseMaxSec      int
 	LeaseDefaultSec  int
 	OutputLimitBytes int
+	ExportMaxBytes   int
 	DockerImage      string
 	MemoryLimit      string
 	CPULimit         string
@@ -109,6 +110,7 @@ type terminalSessionManager struct {
 	leaseMaxSec      int
 	leaseDefaultSec  int
 	outputLimitBytes int
+	exportMaxBytes   int
 	dockerImage      string
 	memoryLimit      string
 	cpuLimit         string
@@ -173,6 +175,7 @@ func newTerminalSessionManager(cfg terminalSessionManagerConfig) *terminalSessio
 		leaseMaxSec:      leaseMaxSec,
 		leaseDefaultSec:  leaseDefaultSec,
 		outputLimitBytes: outputLimitBytes,
+		exportMaxBytes:   cfg.ExportMaxBytes,
 		dockerImage:      dockerImage,
 		memoryLimit:      memoryLimit,
 		cpuLimit:         cpuLimit,

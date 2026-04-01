@@ -190,6 +190,9 @@ func (m *terminalSessionManager) resolveResourceInSession(
 
 	result := buildTerminalResourceResult(sessionID, filePath, probe)
 	if action == terminalResourceActionExport {
+		if m.exportMaxBytes > 0 && probe.Size > int64(m.exportMaxBytes) {
+			return terminalResourceRunResult{}, newTerminalExecError(terminalResourceCodeFileTooLarge, "file exceeds export limit")
+		}
 		if err := exportTerminalResource(ctx, containerName, filePath, signedURL); err != nil {
 			return terminalResourceRunResult{}, err
 		}

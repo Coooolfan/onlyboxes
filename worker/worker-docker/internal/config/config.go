@@ -44,6 +44,7 @@ type Config struct {
 	TerminalLeaseMaxSec      int
 	TerminalLeaseDefaultSec  int
 	TerminalOutputLimitBytes   int
+	TerminalExportMaxBytes     int
 	EchoMaxInflight             int
 	PythonExecMaxInflight       int
 	TerminalExecMaxInflight     int
@@ -65,6 +66,7 @@ func Load() Config {
 	terminalLeaseDefaultSec := parsePositiveIntEnv("WORKER_TERMINAL_LEASE_DEFAULT_SEC", defaultTerminalLeaseTTL)
 	terminalLeaseDefaultSec = clampInt(terminalLeaseDefaultSec, terminalLeaseMinSec, terminalLeaseMaxSec)
 	terminalOutputLimitBytes := parsePositiveIntEnv("WORKER_TERMINAL_OUTPUT_LIMIT_BYTES", defaultTerminalOutputMax)
+	terminalExportMaxBytes := parsePositiveIntEnv("WORKER_TERMINAL_EXPORT_MAX_BYTES", 0)
 
 	labelsCSV := os.Getenv("WORKER_LABELS")
 	defaultVersion := strings.TrimSpace(buildinfo.Version)
@@ -90,6 +92,7 @@ func Load() Config {
 		TerminalLeaseMaxSec:      terminalLeaseMaxSec,
 		TerminalLeaseDefaultSec:  terminalLeaseDefaultSec,
 		TerminalOutputLimitBytes:   terminalOutputLimitBytes,
+		TerminalExportMaxBytes:     terminalExportMaxBytes,
 		EchoMaxInflight:             parsePositiveIntEnv("WORKER_ECHO_MAX_INFLIGHT", defaultMaxInflight),
 		PythonExecMaxInflight:       parsePositiveIntEnv("WORKER_PYTHON_EXEC_MAX_INFLIGHT", defaultMaxInflight),
 		TerminalExecMaxInflight:     parsePositiveIntEnv("WORKER_TERMINAL_EXEC_MAX_INFLIGHT", defaultMaxInflight),

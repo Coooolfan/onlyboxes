@@ -438,6 +438,56 @@ func TestTerminalSessionManagerResolveResourceExportUploadFailure(t *testing.T) 
 	}
 }
 
+func TestTerminalSessionManagerResolveResourceExportRejectsOversizedFile(t *testing.T) {
+	originalRunDockerCommand := runDockerCommand
+	t.Cleanup(func() {
+		runDockerCommand = originalRunDockerCommand
+	})
+
+	runDockerCommand = func(_ context.Context, args ...string) dockerCommandResult {
+		switch args[0] {
+		case "exec":
+			return dockerCommandResult{
+				Stdout:   `{"mime_type":"text/plain","size_bytes":10}`,
+				ExitCode: 0,
+			}
+		case "cp":
+			t.Fatalf("docker cp should not be called for oversized files")
+			return dockerCommandResult{}
+		default:
+			return dockerCommandResult{ExitCode: 0}
+		}
+	}
+
+	manager := newTerminalSessionManager(terminalSessionManagerConfig{
+		LeaseMinSec:      60,
+		LeaseMaxSec:      1800,
+		LeaseDefaultSec:  60,
+		OutputLimitBytes: 1024,
+		ExportMaxBytes:   3,
+	})
+	defer manager.Close()
+
+	manager.mu.Lock()
+	manager.sessions["sess-export-limit"] = &terminalSession{
+		sessionID:      "sess-export-limit",
+		containerName:  "container-1",
+		leaseExpiresAt: time.Now().Add(time.Minute),
+	}
+	manager.mu.Unlock()
+
+	_, err := manager.ResolveResource(context.Background(), terminalResourceRequest{
+		SessionID: "sess-export-limit",
+		FilePath:  "/workspace/large.bin",
+		Action:    terminalResourceActionExport,
+		SignedURL: "https://uploads.example.com/put",
+	})
+	var terminalErr *terminalExecError
+	if !errors.As(err, &terminalErr) || terminalErr.Code() != terminalResourceCodeFileTooLarge {
+		t.Fatalf("expected file_too_large, got %v", err)
+	}
+}
+
 func TestTerminalSessionManagerResolveResourceSessionRules(t *testing.T) {
 	manager := newTerminalSessionManager(terminalSessionManagerConfig{
 		LeaseMinSec:      60,

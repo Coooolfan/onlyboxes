@@ -66,6 +66,7 @@ Capability behavior:
   - `read` action returns file content as base64 JSON bytes in `blob`.
   - `read` action rejects files larger than `WORKER_TERMINAL_OUTPUT_LIMIT_BYTES` with `file_too_large`.
   - `export` action validates the file, copies it out with `docker cp`, uploads it to the provided presigned URL via HTTP `PUT`, and does not return file bytes inline.
+  - `export` action rejects files larger than `WORKER_TERMINAL_EXPORT_MAX_BYTES` with `file_too_large` (0 = no limit, default).
   - non-JSON probe failures (for example `docker exec` / OCI startup errors) are surfaced as docker exec errors with exit code and output summary; they are not rewritten as JSON parse errors.
   - session concurrency follows terminal session rules:
     - unknown `session_id` returns `session_not_found`.

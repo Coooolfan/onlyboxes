@@ -222,6 +222,7 @@ pub(crate) struct TerminalSessionManagerConfig {
     pub lease_max_sec: u32,
     pub lease_default_sec: u32,
     pub output_limit_bytes: usize,
+    pub export_max_bytes: usize,
 }
 
 pub(crate) struct TerminalSessionManager {
@@ -231,6 +232,7 @@ pub(crate) struct TerminalSessionManager {
     lease_max_sec: u32,
     lease_default_sec: u32,
     output_limit_bytes: usize,
+    export_max_bytes: usize,
     shutdown: CancellationToken,
     closed: AtomicBool,
 }
@@ -244,6 +246,7 @@ pub(crate) fn shared_terminal_session_manager(cfg: &Config) -> Arc<TerminalSessi
                     lease_max_sec: cfg.terminal_lease_max_sec,
                     lease_default_sec: cfg.terminal_lease_default_sec,
                     output_limit_bytes: cfg.terminal_output_limit_bytes,
+                    export_max_bytes: cfg.terminal_export_max_bytes,
                 },
                 Arc::new(BoxliteTerminalBackend::new(cfg.clone())),
             )
@@ -280,6 +283,7 @@ impl TerminalSessionManager {
             lease_max_sec,
             lease_default_sec,
             output_limit_bytes: cfg.output_limit_bytes.max(1),
+            export_max_bytes: cfg.export_max_bytes,
             shutdown: CancellationToken::new(),
             closed: AtomicBool::new(false),
         });
@@ -476,6 +480,14 @@ impl TerminalSessionManager {
                 };
 
                 if action == TERMINAL_RESOURCE_ACTION_EXPORT {
+                    if self.export_max_bytes > 0 && probe.size_bytes > self.export_max_bytes as i64 {
+                        self.mark_session_idle(&session_id).await;
+                        return Err(TerminalExecError {
+                            code: TERMINAL_RESOURCE_CODE_FILE_TOO_LARGE.to_owned(),
+                            message: "file exceeds export limit".to_owned(),
+                        }
+                        .into());
+                    }
                     let temp_path = build_export_temp_path();
                     let _temp_path_guard = TempPathGuard::new(temp_path.clone());
                     match self
@@ -1456,6 +1468,7 @@ mod tests {
                 lease_max_sec: 1800,
                 lease_default_sec: 60,
                 output_limit_bytes,
+                export_max_bytes: 0,
             },
             backend,
         )
@@ -1766,6 +1779,49 @@ mod tests {
         match err {
             TerminalOperationError::Terminal(err) => {
                 assert_eq!(err.code(), TERMINAL_RESOURCE_CODE_PATH_NOT_ALLOWED)
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+
+        manager.close().await;
+    }
+
+    #[tokio::test]
+    async fn resolve_resource_export_rejects_oversized_file() {
+        let backend = StatefulShellBackend::new() as Arc<dyn TerminalBackend>;
+        let manager = TerminalSessionManager::new(
+            TerminalSessionManagerConfig {
+                lease_min_sec: 60,
+                lease_max_sec: 1800,
+                lease_default_sec: 60,
+                output_limit_bytes: 1024,
+                export_max_bytes: 3,
+            },
+            backend,
+        );
+        manager
+            .insert_test_session(
+                "sess-export-oversized",
+                "box-export-oversized",
+                add_duration(SystemTime::now(), Duration::from_secs(60)),
+                false,
+            )
+            .await;
+
+        let err = manager
+            .resolve_resource(TerminalResourceRequest {
+                session_id: "sess-export-oversized".to_owned(),
+                file_path: "/root/large.bin".to_owned(),
+                action: TERMINAL_RESOURCE_ACTION_EXPORT.to_owned(),
+                signed_url: "https://uploads.example.com/put".to_owned(),
+                deadline_unix_ms: 0,
+            })
+            .await
+            .unwrap_err();
+
+        match err {
+            TerminalOperationError::Terminal(err) => {
+                assert_eq!(err.code(), TERMINAL_RESOURCE_CODE_FILE_TOO_LARGE)
             }
             other => panic!("unexpected error: {other}"),
         }

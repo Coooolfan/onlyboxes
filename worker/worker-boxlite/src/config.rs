@@ -49,6 +49,7 @@ pub struct Config {
     pub terminal_lease_max_sec: u32,
     pub terminal_lease_default_sec: u32,
     pub terminal_output_limit_bytes: usize,
+    pub terminal_export_max_bytes: usize,
     pub echo_max_inflight: i32,
     pub python_exec_max_inflight: i32,
     pub terminal_exec_max_inflight: i32,
@@ -147,6 +148,10 @@ impl Config {
             terminal_output_limit_bytes: parse_positive_usize_env(
                 "WORKER_TERMINAL_OUTPUT_LIMIT_BYTES",
                 DEFAULT_TERMINAL_OUTPUT_LIMIT_BYTES,
+            ),
+            terminal_export_max_bytes: parse_positive_usize_env(
+                "WORKER_TERMINAL_EXPORT_MAX_BYTES",
+                0,
             ),
             echo_max_inflight: parse_positive_u32_env(
                 "WORKER_ECHO_MAX_INFLIGHT",

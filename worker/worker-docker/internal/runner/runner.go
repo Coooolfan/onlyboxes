@@ -57,6 +57,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 		LeaseMaxSec:      cfg.TerminalLeaseMaxSec,
 		LeaseDefaultSec:  cfg.TerminalLeaseDefaultSec,
 		OutputLimitBytes: cfg.TerminalOutputLimitBytes,
+		ExportMaxBytes:   cfg.TerminalExportMaxBytes,
 		DockerImage:      cfg.TerminalExecDockerImage,
 		MemoryLimit:      defaultTerminalExecMemoryLimit,
 		CPULimit:         defaultTerminalExecCPULimit,
