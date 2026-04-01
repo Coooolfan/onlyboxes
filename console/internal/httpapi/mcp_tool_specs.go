@@ -110,7 +110,7 @@ var mcpComputerUseToolDescription = "Executes shell commands directly on the cal
 
 var mcpReadImageToolDescription = "Reads a file and returns it as inline image content when mime type is image/*. For unsupported mime types, returns a text explanation. When session_id is exactly \"computerUse\", routing uses the caller-owned worker-sys readImage capability; otherwise routing uses terminalResource for terminal sessions."
 
-var mcpExportFileToolDescription = "Exports a file from a session to the configured S3-compatible object store and returns a presigned download URL, object key, and filename. When session_id is exactly \"computerUse\", routing uses the caller-owned worker-sys readImage capability; otherwise routing uses terminalResource for terminal sessions."
+var mcpExportFileToolDescription = "Exports a file from a session to the configured S3-compatible object store and returns a presigned download URL, object key, and filename. Pass the session_id returned by terminalExec to export from a terminal session, or the exact value \"computerUse\" to export from the caller-owned worker-sys host. timeout_ms is a synchronous execution timeout in milliseconds (1-600000, default 60000)."
 
 var mcpEchoInputSchema = map[string]any{
 	"type":                 "object",

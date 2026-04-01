@@ -49,7 +49,9 @@ func NewMCPHandler(
 		Description: mcpPythonExecToolDescription,
 		Annotations: &mcp.ToolAnnotations{
 			Title:           mcpPythonExecToolTitle,
+			ReadOnlyHint:    false,
 			DestructiveHint: boolPtr(true),
+			IdempotentHint:  false,
 			OpenWorldHint:   boolPtr(true),
 		},
 		InputSchema:  mcpPythonExecInputSchema,
@@ -64,7 +66,9 @@ func NewMCPHandler(
 		Description: mcpTerminalExecToolDescription,
 		Annotations: &mcp.ToolAnnotations{
 			Title:           mcpTerminalExecToolTitle,
+			ReadOnlyHint:    false,
 			DestructiveHint: boolPtr(true),
+			IdempotentHint:  false,
 			OpenWorldHint:   boolPtr(true),
 		},
 		InputSchema:  mcpTerminalExecInputSchema,
@@ -79,7 +83,9 @@ func NewMCPHandler(
 		Description: mcpComputerUseToolDescription,
 		Annotations: &mcp.ToolAnnotations{
 			Title:           mcpComputerUseToolTitle,
+			ReadOnlyHint:    false,
 			DestructiveHint: boolPtr(true),
+			IdempotentHint:  false,
 			OpenWorldHint:   boolPtr(true),
 		},
 		InputSchema:  mcpComputerUseInputSchema,
@@ -94,8 +100,10 @@ func NewMCPHandler(
 		Description: mcpReadImageToolDescription,
 		Annotations: &mcp.ToolAnnotations{
 			Title:           mcpReadImageToolTitle,
+			ReadOnlyHint:    true,
 			DestructiveHint: boolPtr(false),
-			OpenWorldHint:   boolPtr(true),
+			IdempotentHint:  true,
+			OpenWorldHint:   boolPtr(false),
 		},
 		InputSchema: mcpReadImageInputSchema,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpReadImageToolInput) (*mcp.CallToolResult, any, error) {
@@ -109,8 +117,10 @@ func NewMCPHandler(
 			Description: mcpExportFileToolDescription,
 			Annotations: &mcp.ToolAnnotations{
 				Title:           mcpExportFileToolTitle,
+				ReadOnlyHint:    true,
 				DestructiveHint: boolPtr(false),
-				OpenWorldHint:   boolPtr(true),
+				IdempotentHint:  false,
+				OpenWorldHint:   boolPtr(false),
 			},
 			InputSchema:  mcpExportFileInputSchema,
 			OutputSchema: mcpExportFileOutputSchema,

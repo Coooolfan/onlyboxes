@@ -311,6 +311,16 @@ func TestMCPToolsList(t *testing.T) {
 	if got := asString(t, readImageTool["description"]); got != mcpReadImageToolDescription {
 		t.Fatalf("unexpected readImage description: %q", got)
 	}
+	readImageAnnotations := mustObject(t, readImageTool["annotations"], "readImage.annotations")
+	if !asBool(readImageAnnotations["readOnlyHint"]) {
+		t.Fatalf("expected readImage.annotations.readOnlyHint=true")
+	}
+	if !asBool(readImageAnnotations["idempotentHint"]) {
+		t.Fatalf("expected readImage.annotations.idempotentHint=true")
+	}
+	if asBool(readImageAnnotations["destructiveHint"]) {
+		t.Fatalf("expected readImage.annotations.destructiveHint=false")
+	}
 	readImageInputSchema := mustObject(t, readImageTool["inputSchema"], "readImage.inputSchema")
 	assertRequiredContains(t, readImageInputSchema["required"], "session_id")
 	assertRequiredContains(t, readImageInputSchema["required"], "file_path")
