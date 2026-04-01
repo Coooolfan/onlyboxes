@@ -129,6 +129,7 @@ func buildReadImageCommandResult(baseCtx context.Context, commandID string, disp
 		SessionID: decoded.SessionID,
 		FilePath:  decoded.FilePath,
 		Action:    decoded.Action,
+		SignedURL: decoded.SignedURL,
 	})
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {

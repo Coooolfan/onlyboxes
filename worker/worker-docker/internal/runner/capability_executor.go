@@ -226,6 +226,9 @@ func buildTerminalResourceCommandResult(baseCtx context.Context, commandID strin
 	if strings.TrimSpace(decoded.SessionID) == "" || strings.TrimSpace(decoded.FilePath) == "" {
 		return commandErrorResult(commandID, terminalExecCodeInvalidPayload, "terminalResource session_id and file_path are required")
 	}
+	if strings.EqualFold(strings.TrimSpace(decoded.Action), terminalResourceActionExport) && strings.TrimSpace(decoded.SignedURL) == "" {
+		return commandErrorResult(commandID, terminalExecCodeInvalidPayload, "terminalResource signed_url is required for export")
+	}
 
 	commandCtx := baseCtx
 	if commandCtx == nil {
@@ -241,6 +244,7 @@ func buildTerminalResourceCommandResult(baseCtx context.Context, commandID strin
 		SessionID: decoded.SessionID,
 		FilePath:  decoded.FilePath,
 		Action:    decoded.Action,
+		SignedURL: decoded.SignedURL,
 	})
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {

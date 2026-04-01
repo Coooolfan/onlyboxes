@@ -14,6 +14,7 @@ import (
 	"github.com/onlyboxes/onlyboxes/console/internal/config"
 	"github.com/onlyboxes/onlyboxes/console/internal/grpcserver"
 	"github.com/onlyboxes/onlyboxes/console/internal/httpapi"
+	"github.com/onlyboxes/onlyboxes/console/internal/objectstore"
 	"github.com/onlyboxes/onlyboxes/console/internal/persistence"
 	"github.com/onlyboxes/onlyboxes/console/internal/registry"
 	"google.golang.org/grpc"
@@ -98,6 +99,25 @@ func main() {
 		registryService,
 		cfg.GRPCAddr,
 	)
+	if cfg.ExportFileEnabled() {
+		exportStore, err := objectstore.New(objectstore.Config{
+			Endpoint:   cfg.ExportFileEndpoint,
+			Region:     cfg.ExportFileRegion,
+			BucketName: cfg.ExportFileBucketName,
+			AccessKey:  cfg.ExportFileAK,
+			SecretKey:  cfg.ExportFileSK,
+		})
+		if err != nil {
+			fatal("failed to initialize export objectstore", "error", err)
+		}
+		httpHandler.SetExportStore(
+			exportStore,
+			cfg.ExportFilePrefix,
+			cfg.ExportFileUploadTTL,
+			cfg.ExportFileDownloadTTL,
+			cfg.ExportReturnSchema,
+		)
+	}
 	consoleAuth, err := httpapi.NewConsoleAuth(db.Queries, cfg.EnableRegistration)
 	if err != nil {
 		fatal("failed to initialize console auth", "error", err)

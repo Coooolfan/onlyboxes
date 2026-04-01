@@ -50,6 +50,8 @@ struct TerminalResourcePayload {
     file_path: String,
     #[serde(default)]
     action: String,
+    #[serde(default)]
+    signed_url: String,
 }
 
 static DEFAULT_CAPABILITY_RUNTIME: DefaultCapabilityRuntime = DefaultCapabilityRuntime;
@@ -267,6 +269,7 @@ where
                 session_id: decoded.session_id,
                 file_path: decoded.file_path,
                 action: decoded.action,
+                signed_url: decoded.signed_url,
                 deadline_unix_ms,
             },
         )
@@ -404,6 +407,10 @@ fn parse_terminal_resource_payload(
     if decoded.session_id.trim().is_empty() || decoded.file_path.trim().is_empty() {
         return Err("terminalResource session_id and file_path are required");
     }
+    if decoded.action.trim().eq_ignore_ascii_case("export") && decoded.signed_url.trim().is_empty()
+    {
+        return Err("terminalResource signed_url is required for export");
+    }
     Ok(decoded)
 }
 
@@ -477,6 +484,7 @@ pub(crate) fn command_dispatch_summary_for_log(capability: &str, payload: &[u8])
                 "" => "default",
                 "validate" => "validate",
                 "read" => "read",
+                "export" => "export",
                 _ => "invalid",
             };
             format!(
@@ -669,6 +677,7 @@ mod tests {
             terminal_lease_max_sec: 1800,
             terminal_lease_default_sec: 60,
             terminal_output_limit_bytes: 1024 * 1024,
+            terminal_export_max_bytes: 0,
             echo_max_inflight: 4,
             python_exec_max_inflight: 4,
             terminal_exec_max_inflight: 4,

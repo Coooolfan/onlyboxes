@@ -48,7 +48,23 @@ These variables are only used during first startup when no admin account exists.
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `CONSOLE_HIDDEN_TOOLS` | No | | Comma-separated tool names to hide from MCP `tools/list` (`echo`, `pythonExec`, `terminalExec`, `computerUse`, `readImage`). Hidden tools remain callable if the client already knows the tool name. |
+| `CONSOLE_HIDDEN_TOOLS` | No | | Comma-separated tool names to hide from MCP `tools/list` (`echo`, `pythonExec`, `terminalExec`, `computerUse`, `readImage`, `exportFile`). Hidden tools remain callable if the client already knows the tool name. |
+
+### Export file object store
+
+These variables enable the MCP `exportFile` tool. The tool is registered only when all of them are configured.
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `CONSOLE_EXPORT_FILE_ENDPOINT` | No | | S3-compatible endpoint URL used for presigned upload/download |
+| `CONSOLE_EXPORT_FILE_REGION` | No | | Explicit signing region |
+| `CONSOLE_EXPORT_FILE_BUCKET_NAME` | No | | Destination bucket name |
+| `CONSOLE_EXPORT_FILE_EXPORT_PREFIX` | No | | Object key prefix prepended to every export |
+| `CONSOLE_EXPORT_FILE_AK` | No | | Access key used for presigning |
+| `CONSOLE_EXPORT_FILE_SK` | No | | Secret key used for presigning |
+| `CONSOLE_EXPORT_FILE_UPLOAD_PRESIGN_TTL_SEC` | No | `900` | Upload presign TTL in seconds |
+| `CONSOLE_EXPORT_FILE_DOWNLOAD_PRESIGN_TTL_SEC` | No | `3600` | Download presign TTL in seconds |
+| `CONSOLE_EXPORT_RETURN_SCHEMA` | No | `ALL` | Controls which fields `exportFile` returns: `ALL` (`signed_url` + `object_key` + `filename`), `SIGNED_URL` (`signed_url` only), `OBJECTKEY` (`object_key` + `filename` only; skips download URL generation) |
 
 ### JIT Token Authentication
 

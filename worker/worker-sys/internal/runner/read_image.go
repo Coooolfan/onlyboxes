@@ -22,6 +22,7 @@ const (
 	readImageSessionComputerUse   = "computerUse"
 	readImageActionValidate       = "validate"
 	readImageActionRead           = "read"
+	readImageActionExport         = "export"
 	readImageDetectSniffByteLimit = 512
 )
 
@@ -29,12 +30,14 @@ type readImagePayload struct {
 	SessionID string `json:"session_id"`
 	FilePath  string `json:"file_path"`
 	Action    string `json:"action,omitempty"`
+	SignedURL string `json:"signed_url,omitempty"`
 }
 
 type readImageRequest struct {
 	SessionID string
 	FilePath  string
 	Action    string
+	SignedURL string
 }
 
 type readImageRunResult struct {
@@ -54,6 +57,8 @@ type readImagePathRule struct {
 	path  string
 	isDir bool
 }
+
+var httpPutFile = putFileToSignedURL
 
 func (e *readImageError) Error() string {
 	if e == nil {
@@ -142,6 +147,16 @@ func (e *readImageExecutor) Execute(ctx context.Context, req readImageRequest) (
 		MIMEType:  mimeType,
 		SizeBytes: openedInfo.Size(),
 	}
+	if action == readImageActionExport {
+		signedURL := strings.TrimSpace(req.SignedURL)
+		if signedURL == "" {
+			return readImageRunResult{}, newReadImageError(readImageCodeInvalidPayload, "signed_url is required for export")
+		}
+		if err := httpPutFile(ctx, signedURL, normalizedPath); err != nil {
+			return readImageRunResult{}, err
+		}
+		return result, nil
+	}
 	if action != readImageActionRead {
 		return result, nil
 	}
@@ -184,9 +199,46 @@ func normalizeReadImageAction(action string) string {
 		return readImageActionValidate
 	case readImageActionRead:
 		return readImageActionRead
+	case readImageActionExport:
+		return readImageActionExport
 	default:
 		return ""
 	}
+}
+
+func putFileToSignedURL(ctx context.Context, signedURL string, filePath string) error {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("open export file: %w", err)
+	}
+	defer file.Close()
+
+	stat, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("stat export file: %w", err)
+	}
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodPut, signedURL, file)
+	if err != nil {
+		return fmt.Errorf("build upload request: %w", err)
+	}
+	request.ContentLength = stat.Size()
+
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("upload export file: %w", err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		body, _ := io.ReadAll(io.LimitReader(response.Body, 1024))
+		message := strings.TrimSpace(string(body))
+		if message == "" {
+			message = response.Status
+		}
+		return fmt.Errorf("upload export file failed: %s", message)
+	}
+	return nil
 }
 
 func normalizeReadImagePath(rawPath string) (string, error) {

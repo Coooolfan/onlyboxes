@@ -223,14 +223,18 @@ func commandDispatchSummaryForLog(capability string, payload []byte) string {
 			actionSummary = terminalResourceActionValidate
 		case terminalResourceActionRead:
 			actionSummary = terminalResourceActionRead
+		case terminalResourceActionExport:
+			actionSummary = terminalResourceActionExport
 		default:
 			actionSummary = "invalid"
 		}
+		signedURLPresent := strings.TrimSpace(decoded.SignedURL) != ""
 		return fmt.Sprintf(
-			"action=%s session_id_present=%t file_path_len=%d",
+			"action=%s session_id_present=%t file_path_len=%d signed_url_present=%t",
 			actionSummary,
 			sessionPresent,
 			len(path),
+			signedURLPresent,
 		)
 	default:
 		return fmt.Sprintf("payload_len=%d summary=unsupported_capability", len(payload))

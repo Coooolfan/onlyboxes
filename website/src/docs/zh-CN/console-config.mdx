@@ -48,7 +48,23 @@ export const meta = {
 
 | 变量 | 必填 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `CONSOLE_HIDDEN_TOOLS` | 否 | | 逗号分隔的 MCP 工具隐藏列表（`echo`、`pythonExec`、`terminalExec`、`computerUse`、`readImage`）。被隐藏的工具不会出现在 `tools/list` 中，但如果客户端已知工具名，仍可继续调用。 |
+| `CONSOLE_HIDDEN_TOOLS` | 否 | | 逗号分隔的 MCP 工具隐藏列表（`echo`、`pythonExec`、`terminalExec`、`computerUse`、`readImage`、`exportFile`）。被隐藏的工具不会出现在 `tools/list` 中，但如果客户端已知工具名，仍可继续调用。 |
+
+### 导出文件对象存储
+
+以下变量用于启用 MCP `exportFile` 工具。只有全部配置后，该工具才会注册到 `tools/list`。
+
+| 变量 | 必填 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `CONSOLE_EXPORT_FILE_ENDPOINT` | 否 | | 用于预签名上传/下载的 S3 兼容 endpoint URL |
+| `CONSOLE_EXPORT_FILE_REGION` | 否 | | 显式签名 Region |
+| `CONSOLE_EXPORT_FILE_BUCKET_NAME` | 否 | | 目标 Bucket 名称 |
+| `CONSOLE_EXPORT_FILE_EXPORT_PREFIX` | 否 | | 追加到每个导出对象 Key 前的前缀 |
+| `CONSOLE_EXPORT_FILE_AK` | 否 | | 用于预签名的 Access Key |
+| `CONSOLE_EXPORT_FILE_SK` | 否 | | 用于预签名的 Secret Key |
+| `CONSOLE_EXPORT_FILE_UPLOAD_PRESIGN_TTL_SEC` | 否 | `900` | 上传预签名 URL 的有效期（秒） |
+| `CONSOLE_EXPORT_FILE_DOWNLOAD_PRESIGN_TTL_SEC` | 否 | `3600` | 下载预签名 URL 的有效期（秒） |
+| `CONSOLE_EXPORT_RETURN_SCHEMA` | 否 | `ALL` | 控制 `exportFile` 返回哪些字段：`ALL`（`signed_url` + `object_key` + `filename`）、`SIGNED_URL`（仅 `signed_url`）、`OBJECTKEY`（仅 `object_key` + `filename`，跳过下载 URL 生成） |
 
 ### JIT Token 认证
 

@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -15,6 +18,7 @@ const (
 	terminalResourceCapabilityDeclared = "terminalResource"
 	terminalResourceActionValidate     = "validate"
 	terminalResourceActionRead         = "read"
+	terminalResourceActionExport       = "export"
 	terminalResourceCodeFileNotFound   = "file_not_found"
 	terminalResourceCodePathIsDir      = "path_is_directory"
 	terminalResourceCodeFileTooLarge   = "file_too_large"
@@ -24,12 +28,14 @@ type terminalResourcePayload struct {
 	SessionID string `json:"session_id"`
 	FilePath  string `json:"file_path"`
 	Action    string `json:"action,omitempty"`
+	SignedURL string `json:"signed_url,omitempty"`
 }
 
 type terminalResourceRequest struct {
 	SessionID string
 	FilePath  string
 	Action    string
+	SignedURL string
 }
 
 type terminalResourceRunResult struct {
@@ -47,6 +53,8 @@ type terminalResourceProbeResult struct {
 	Size     int64  `json:"size_bytes"`
 	Blob     string `json:"blob,omitempty"`
 }
+
+var httpPutFile = putFileToSignedURL
 
 const terminalResourceProbeScript = `
 import argparse
@@ -120,7 +128,11 @@ func (m *terminalSessionManager) ResolveResource(ctx context.Context, req termin
 
 	action := normalizeTerminalResourceAction(req.Action)
 	if action == "" {
-		return terminalResourceRunResult{}, newTerminalExecError(terminalExecCodeInvalidPayload, "action must be validate or read")
+		return terminalResourceRunResult{}, newTerminalExecError(terminalExecCodeInvalidPayload, "action must be validate, read, or export")
+	}
+	signedURL := strings.TrimSpace(req.SignedURL)
+	if action == terminalResourceActionExport && signedURL == "" {
+		return terminalResourceRunResult{}, newTerminalExecError(terminalExecCodeInvalidPayload, "signed_url is required for export")
 	}
 
 	m.mu.Lock()
@@ -137,49 +149,54 @@ func (m *terminalSessionManager) ResolveResource(ctx context.Context, req termin
 	containerName := session.containerName
 	m.mu.Unlock()
 
-	execResult := runDockerCommand(ctx, terminalExecDockerResourceArgs(containerName, action, filePath, m.outputLimitBytes)...)
-	if execResult.Err != nil {
-		if errors.Is(execResult.Err, context.DeadlineExceeded) || errors.Is(execResult.Err, context.Canceled) {
+	resourceResult, err := m.resolveResourceInSession(ctx, sessionID, containerName, filePath, action, signedURL)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 			m.destroySession(sessionID)
-			return terminalResourceRunResult{}, execResult.Err
+			return terminalResourceRunResult{}, err
+		}
+		var terminalErr *terminalExecError
+		if errors.As(err, &terminalErr) && terminalErr.Code() == terminalExecCodeSessionNotFound {
+			m.destroySession(sessionID)
+			return terminalResourceRunResult{}, err
 		}
 		m.markSessionIdle(sessionID)
-		return terminalResourceRunResult{}, fmt.Errorf("docker exec failed: %w", execResult.Err)
+		return terminalResourceRunResult{}, err
 	}
-	if isNoSuchContainerMessage(execResult.Stderr) {
-		m.destroySession(sessionID)
-		return terminalResourceRunResult{}, newTerminalExecError(terminalExecCodeSessionNotFound, terminalExecNoSessionMessage)
-	}
+
 	if _, ok := m.markSessionIdle(sessionID); !ok {
 		return terminalResourceRunResult{}, newTerminalExecError(terminalExecCodeSessionNotFound, terminalExecNoSessionMessage)
 	}
+	return resourceResult, nil
+}
 
-	probe, err := decodeTerminalResourceProbeOutput(execResult.Stdout)
+func (m *terminalSessionManager) resolveResourceInSession(
+	ctx context.Context,
+	sessionID string,
+	containerName string,
+	filePath string,
+	action string,
+	signedURL string,
+) (terminalResourceRunResult, error) {
+	probeAction := action
+	if action == terminalResourceActionExport {
+		probeAction = terminalResourceActionValidate
+	}
+
+	probe, err := probeTerminalResource(ctx, containerName, filePath, probeAction, m.outputLimitBytes)
 	if err != nil {
-		return terminalResourceRunResult{}, fmt.Errorf("invalid terminalResource result: %w", err)
+		return terminalResourceRunResult{}, err
 	}
 
-	if code := strings.TrimSpace(probe.Error); code != "" {
-		message := terminalResourceErrorMessage(code, probe.Message)
-		return terminalResourceRunResult{}, newTerminalExecError(code, message)
-	}
-	if execResult.ExitCode != 0 {
-		return terminalResourceRunResult{}, fmt.Errorf(
-			"docker exec failed: %s",
-			dockerCommandFailureMessage("exit code", execResult.ExitCode, execResult.Stderr),
-		)
-	}
-
-	mimeType := strings.TrimSpace(probe.MIMEType)
-	if mimeType == "" {
-		mimeType = "application/octet-stream"
-	}
-
-	result := terminalResourceRunResult{
-		SessionID: sessionID,
-		FilePath:  filePath,
-		MIMEType:  mimeType,
-		SizeBytes: probe.Size,
+	result := buildTerminalResourceResult(sessionID, filePath, probe)
+	if action == terminalResourceActionExport {
+		if m.exportMaxBytes > 0 && probe.Size > int64(m.exportMaxBytes) {
+			return terminalResourceRunResult{}, newTerminalExecError(terminalResourceCodeFileTooLarge, "file exceeds export limit")
+		}
+		if err := exportTerminalResource(ctx, containerName, filePath, signedURL); err != nil {
+			return terminalResourceRunResult{}, err
+		}
+		return result, nil
 	}
 	if action != terminalResourceActionRead {
 		return result, nil
@@ -198,6 +215,122 @@ func (m *terminalSessionManager) ResolveResource(ctx context.Context, req termin
 	return result, nil
 }
 
+func probeTerminalResource(
+	ctx context.Context,
+	containerName string,
+	filePath string,
+	action string,
+	maxReadBytes int,
+) (terminalResourceProbeResult, error) {
+	execResult := runDockerCommand(ctx, terminalExecDockerResourceArgs(containerName, action, filePath, maxReadBytes)...)
+	if execResult.Err != nil {
+		return terminalResourceProbeResult{}, fmt.Errorf("docker exec failed: %w", execResult.Err)
+	}
+	if isNoSuchContainerMessage(execResult.Stderr) {
+		return terminalResourceProbeResult{}, newTerminalExecError(terminalExecCodeSessionNotFound, terminalExecNoSessionMessage)
+	}
+
+	if execResult.ExitCode != 0 {
+		if probe, ok := tryDecodeTerminalResourceProbeOutput(execResult.Stdout); ok {
+			if code := strings.TrimSpace(probe.Error); code != "" {
+				message := terminalResourceErrorMessage(code, probe.Message)
+				return terminalResourceProbeResult{}, newTerminalExecError(code, message)
+			}
+		}
+		return terminalResourceProbeResult{}, fmt.Errorf(
+			"docker exec failed: %s",
+			terminalResourceDockerFailureMessage("exit code", execResult.ExitCode, execResult.Stderr, execResult.Stdout),
+		)
+	}
+
+	probe, err := decodeTerminalResourceProbeOutput(execResult.Stdout)
+	if err != nil {
+		return terminalResourceProbeResult{}, fmt.Errorf("invalid terminalResource result: %w", err)
+	}
+	if code := strings.TrimSpace(probe.Error); code != "" {
+		message := terminalResourceErrorMessage(code, probe.Message)
+		return terminalResourceProbeResult{}, newTerminalExecError(code, message)
+	}
+	return probe, nil
+}
+
+func exportTerminalResource(ctx context.Context, containerName string, filePath string, signedURL string) error {
+	tempFile, err := os.CreateTemp("", "onlyboxes-export-*")
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	tempPath := tempFile.Name()
+	if closeErr := tempFile.Close(); closeErr != nil {
+		os.Remove(tempPath)
+		return fmt.Errorf("close temp file: %w", closeErr)
+	}
+	defer os.Remove(tempPath)
+
+	copyResult := runDockerCommand(ctx, terminalExecDockerCopyArgs(containerName, filePath, tempPath)...)
+	if copyResult.Err != nil {
+		return fmt.Errorf("docker cp failed: %w", copyResult.Err)
+	}
+	if isNoSuchContainerMessage(copyResult.Stderr) {
+		return newTerminalExecError(terminalExecCodeSessionNotFound, terminalExecNoSessionMessage)
+	}
+	if copyResult.ExitCode != 0 {
+		return fmt.Errorf(
+			"docker cp failed: %s",
+			dockerCommandFailureMessage("exit code", copyResult.ExitCode, copyResult.Stderr),
+		)
+	}
+	if err := httpPutFile(ctx, signedURL, tempPath); err != nil {
+		return err
+	}
+	return nil
+}
+
+func putFileToSignedURL(ctx context.Context, signedURL string, filePath string) error {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("open export file: %w", err)
+	}
+	defer file.Close()
+
+	stat, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("stat export file: %w", err)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPut, signedURL, file)
+	if err != nil {
+		return fmt.Errorf("build upload request: %w", err)
+	}
+	request.ContentLength = stat.Size()
+
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("upload export file: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		body, _ := io.ReadAll(io.LimitReader(response.Body, 1024))
+		message := strings.TrimSpace(string(body))
+		if message == "" {
+			message = response.Status
+		}
+		return fmt.Errorf("upload export file failed: %s", message)
+	}
+	return nil
+}
+
+func buildTerminalResourceResult(sessionID string, filePath string, probe terminalResourceProbeResult) terminalResourceRunResult {
+	mimeType := strings.TrimSpace(probe.MIMEType)
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+	return terminalResourceRunResult{
+		SessionID: sessionID,
+		FilePath:  filePath,
+		MIMEType:  mimeType,
+		SizeBytes: probe.Size,
+	}
+}
+
 func terminalExecDockerResourceArgs(containerName string, action string, filePath string, maxReadBytes int) []string {
 	limit := maxReadBytes
 	if limit <= 0 {
@@ -206,7 +339,7 @@ func terminalExecDockerResourceArgs(containerName string, action string, filePat
 	return []string{
 		"exec",
 		containerName,
-		"python",
+		"python3",
 		"-c",
 		terminalResourceProbeScript,
 		"--action",
@@ -218,6 +351,14 @@ func terminalExecDockerResourceArgs(containerName string, action string, filePat
 	}
 }
 
+func terminalExecDockerCopyArgs(containerName string, filePath string, targetPath string) []string {
+	return []string{
+		"cp",
+		containerName + ":" + filePath,
+		targetPath,
+	}
+}
+
 func normalizeTerminalResourceAction(action string) string {
 	switch strings.TrimSpace(strings.ToLower(action)) {
 	case "":
@@ -226,6 +367,8 @@ func normalizeTerminalResourceAction(action string) string {
 		return terminalResourceActionValidate
 	case terminalResourceActionRead:
 		return terminalResourceActionRead
+	case terminalResourceActionExport:
+		return terminalResourceActionExport
 	default:
 		return ""
 	}
@@ -241,6 +384,30 @@ func decodeTerminalResourceProbeOutput(stdout string) (terminalResourceProbeResu
 		return terminalResourceProbeResult{}, err
 	}
 	return decoded, nil
+}
+
+func tryDecodeTerminalResourceProbeOutput(stdout string) (terminalResourceProbeResult, bool) {
+	decoded, err := decodeTerminalResourceProbeOutput(stdout)
+	if err != nil {
+		return terminalResourceProbeResult{}, false
+	}
+	return decoded, true
+}
+
+func terminalResourceDockerFailureMessage(prefix string, value int, stderr string, stdout string) string {
+	message := dockerCommandFailureMessage(prefix, value, stderr)
+	if strings.TrimSpace(stderr) != "" {
+		return message
+	}
+
+	trimmedStdout := strings.TrimSpace(stdout)
+	if trimmedStdout == "" {
+		return message
+	}
+	if len(trimmedStdout) > 256 {
+		trimmedStdout = trimmedStdout[:256] + "..."
+	}
+	return message + ", stdout=" + trimmedStdout
 }
 
 func terminalResourceErrorMessage(code string, fallback string) string {

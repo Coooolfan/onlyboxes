@@ -3,11 +3,21 @@ package httpapi
 import (
 	"context"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func NewMCPHandler(dispatcher CommandDispatcher, hiddenTools map[string]bool) http.Handler {
+func NewMCPHandler(
+	dispatcher CommandDispatcher,
+	hiddenTools map[string]bool,
+	exportStore ExportStore,
+	exportPrefix string,
+	exportUploadTTL time.Duration,
+	exportDownloadTTL time.Duration,
+	exportReturnSchema string,
+) http.Handler {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    mcpServerName,
 		Version: mcpServerVersion,
@@ -40,7 +50,9 @@ func NewMCPHandler(dispatcher CommandDispatcher, hiddenTools map[string]bool) ht
 		Description: mcpPythonExecToolDescription,
 		Annotations: &mcp.ToolAnnotations{
 			Title:           mcpPythonExecToolTitle,
+			ReadOnlyHint:    false,
 			DestructiveHint: boolPtr(true),
+			IdempotentHint:  false,
 			OpenWorldHint:   boolPtr(true),
 		},
 		InputSchema:  mcpPythonExecInputSchema,
@@ -55,7 +67,9 @@ func NewMCPHandler(dispatcher CommandDispatcher, hiddenTools map[string]bool) ht
 		Description: mcpTerminalExecToolDescription,
 		Annotations: &mcp.ToolAnnotations{
 			Title:           mcpTerminalExecToolTitle,
+			ReadOnlyHint:    false,
 			DestructiveHint: boolPtr(true),
+			IdempotentHint:  false,
 			OpenWorldHint:   boolPtr(true),
 		},
 		InputSchema:  mcpTerminalExecInputSchema,
@@ -70,7 +84,9 @@ func NewMCPHandler(dispatcher CommandDispatcher, hiddenTools map[string]bool) ht
 		Description: mcpComputerUseToolDescription,
 		Annotations: &mcp.ToolAnnotations{
 			Title:           mcpComputerUseToolTitle,
+			ReadOnlyHint:    false,
 			DestructiveHint: boolPtr(true),
+			IdempotentHint:  false,
 			OpenWorldHint:   boolPtr(true),
 		},
 		InputSchema:  mcpComputerUseInputSchema,
@@ -85,13 +101,34 @@ func NewMCPHandler(dispatcher CommandDispatcher, hiddenTools map[string]bool) ht
 		Description: mcpReadImageToolDescription,
 		Annotations: &mcp.ToolAnnotations{
 			Title:           mcpReadImageToolTitle,
+			ReadOnlyHint:    true,
 			DestructiveHint: boolPtr(false),
-			OpenWorldHint:   boolPtr(true),
+			IdempotentHint:  true,
+			OpenWorldHint:   boolPtr(false),
 		},
 		InputSchema: mcpReadImageInputSchema,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpReadImageToolInput) (*mcp.CallToolResult, any, error) {
 		return handleMCPReadImageTool(ctx, dispatcher, input)
 	})
+
+	if exportStore != nil && strings.TrimSpace(exportPrefix) != "" {
+		mcp.AddTool(server, &mcp.Tool{
+			Title:       mcpExportFileToolTitle,
+			Name:        "exportFile",
+			Description: mcpExportFileToolDescription,
+			Annotations: &mcp.ToolAnnotations{
+				Title:           mcpExportFileToolTitle,
+				ReadOnlyHint:    true,
+				DestructiveHint: boolPtr(false),
+				IdempotentHint:  false,
+				OpenWorldHint:   boolPtr(false),
+			},
+			InputSchema:  mcpExportFileInputSchema,
+			OutputSchema: exportFileOutputSchemaForMode(exportReturnSchema),
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpExportFileToolInput) (*mcp.CallToolResult, mcpExportFileToolOutput, error) {
+			return handleMCPExportFileTool(ctx, dispatcher, exportStore, exportPrefix, exportUploadTTL, exportDownloadTTL, exportReturnSchema, input)
+		})
+	}
 
 	if len(hiddenTools) > 0 {
 		server.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {

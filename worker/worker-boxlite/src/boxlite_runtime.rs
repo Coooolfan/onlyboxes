@@ -1,11 +1,11 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use boxlite::{
-    BoxCommand, BoxOptions, BoxliteOptions, BoxliteRuntime, ExecStderr, ExecStdout, LiteBox,
-    RootfsSpec,
+    BoxCommand, BoxOptions, BoxliteOptions, BoxliteRuntime, CopyOptions, ExecStderr, ExecStdout,
+    LiteBox, RootfsSpec,
 };
 use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
@@ -152,6 +152,60 @@ pub(crate) async fn exec_terminal_resource_probe(
         deadline_unix_ms,
     )
     .await
+}
+
+pub(crate) async fn copy_out_terminal_file(
+    cfg: &Config,
+    box_id: &str,
+    container_src: &str,
+    host_dst: &Path,
+    deadline_unix_ms: i64,
+) -> Result<(), BoxliteCommandError> {
+    let runtime = runtime(cfg)?;
+    let litebox = get_terminal_session_box(runtime, box_id).await?;
+    let copy_options = CopyOptions::default().non_recursive().include_parent(false);
+
+    if let Some(remaining) = remaining_until_deadline(deadline_unix_ms) {
+        if remaining.is_zero() {
+            return Err(BoxliteCommandError::DeadlineExceeded);
+        }
+    }
+
+    match remaining_until_deadline(deadline_unix_ms) {
+        Some(remaining) => match tokio::time::timeout(
+            remaining,
+            litebox.copy_out(container_src, host_dst, copy_options),
+        )
+        .await
+        {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(err)) => {
+                if box_exists(runtime, box_id).await? {
+                    Err(BoxliteCommandError::ExecutionFailed(format!(
+                        "copy out file failed: {err}"
+                    )))
+                } else {
+                    Err(BoxliteCommandError::MissingBox)
+                }
+            }
+            Err(_) => Err(BoxliteCommandError::DeadlineExceeded),
+        },
+        None => match litebox
+            .copy_out(container_src, host_dst, copy_options)
+            .await
+        {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                if box_exists(runtime, box_id).await? {
+                    Err(BoxliteCommandError::ExecutionFailed(format!(
+                        "copy out file failed: {err}"
+                    )))
+                } else {
+                    Err(BoxliteCommandError::MissingBox)
+                }
+            }
+        },
+    }
 }
 
 pub(crate) async fn remove_box(cfg: &Config, box_id: &str) {
@@ -514,6 +568,7 @@ mod tests {
             terminal_lease_max_sec: 1800,
             terminal_lease_default_sec: 60,
             terminal_output_limit_bytes: 1024 * 1024,
+            terminal_export_max_bytes: 0,
             echo_max_inflight: 4,
             python_exec_max_inflight: 4,
             terminal_exec_max_inflight: 4,
@@ -561,6 +616,7 @@ mod tests {
             terminal_lease_max_sec: 1800,
             terminal_lease_default_sec: 60,
             terminal_output_limit_bytes: 1024 * 1024,
+            terminal_export_max_bytes: 0,
             echo_max_inflight: 4,
             python_exec_max_inflight: 4,
             terminal_exec_max_inflight: 4,
@@ -571,14 +627,8 @@ mod tests {
         };
 
         let options = build_python_exec_box_options(&cfg);
-        assert_eq!(
-            options.entrypoint,
-            Some(vec!["sleep".to_owned()])
-        );
-        assert_eq!(
-            options.cmd,
-            Some(vec!["infinity".to_owned()])
-        );
+        assert_eq!(options.entrypoint, Some(vec!["sleep".to_owned()]));
+        assert_eq!(options.cmd, Some(vec!["infinity".to_owned()]));
     }
 
     #[test]

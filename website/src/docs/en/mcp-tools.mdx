@@ -1,6 +1,6 @@
 export const meta = {
   title: 'MCP Tools Reference',
-  description: 'Complete reference for the five tools exposed by the OnlyBoxes MCP endpoint, including connection details, protocol notes, and per-tool input/output parameters.',
+  description: 'Complete reference for the six tools exposed by the OnlyBoxes MCP endpoint, including connection details, protocol notes, and per-tool input/output parameters.',
   section: 'Interfaces',
   order: 60,
   slug: 'mcp-tools',
@@ -50,6 +50,7 @@ Accept: application/json, text/event-stream
 | `terminalExec` | Persistent terminal session execution | Any worker supporting terminalResource |
 | `computerUse` | Real device command execution | Account's own `worker-sys` |
 | `readImage` | Read an image file from a worker | Depends on `session_id` (see below) |
+| `exportFile` | Export a session file to object storage | Depends on `session_id` (see below) |
 
 All tool parameter schemas set `additionalProperties: false`. Passing an undefined field returns JSON-RPC error `-32602 invalid params`.
 
@@ -278,6 +279,74 @@ Reads an image file from a terminal session environment or a `worker-sys` host, 
 ```
 unsupported mime type: <mime>; expected image/*
 ```
+
+---
+
+### `exportFile`
+
+Exports a file from a session to the console's configured S3-compatible object store and returns a presigned download URL.
+
+**Input:**
+
+| Field | Type | Required | Constraints |
+|-------|------|----------|-------------|
+| `session_id` | string | Yes | Session ID; pass the string `"computerUse"` to route to the account's own `worker-sys` |
+| `file_path` | string | Yes | Absolute path to the target file |
+| `timeout_ms` | integer | No | `1..600000`, default `60000` |
+
+**Behavior:**
+
+- Available only when the console export object-store environment variables are configured.
+- Upload/download presign TTLs are controlled by `CONSOLE_EXPORT_FILE_UPLOAD_PRESIGN_TTL_SEC` and `CONSOLE_EXPORT_FILE_DOWNLOAD_PRESIGN_TTL_SEC`.
+- When `session_id` is `"computerUse"`, routes to the caller-owned `worker-sys` `readImage` capability with `action="export"`.
+- Any other `session_id` routes to `terminalResource` with `action="export"` on the same worker that owns the terminal session.
+- Terminal-session workers first probe the file, then export it from the session filesystem and upload it through a presigned HTTP `PUT` before the console returns a presigned download URL.
+- Non-JSON probe failures inside the worker (for example OCI / `docker exec` startup failures) are surfaced as tool errors with docker exit code and output summary; they are not rewritten as JSON parse errors.
+
+**Input example:**
+
+```json
+{ "session_id": "sess_xxx", "file_path": "/workspace/report.png", "timeout_ms": 60000 }
+```
+
+**Input example (from worker-sys host):**
+
+```json
+{ "session_id": "computerUse", "file_path": "/tmp/report.png", "timeout_ms": 10000 }
+```
+
+**Output:**
+
+Output fields depend on the `CONSOLE_EXPORT_RETURN_SCHEMA` environment variable:
+
+| Mode | Fields | Description |
+|------|--------|-------------|
+| `ALL` (default) | `signed_url`, `object_key`, `filename` | Returns the presigned download URL, the object key in the bucket, and the original filename |
+| `SIGNED_URL` | `signed_url` | Returns only the presigned download URL |
+| `OBJECTKEY` | `object_key`, `filename` | Returns only the object key and filename; skips download URL generation |
+
+**Output example (`ALL` mode):**
+
+```json
+{ "signed_url": "https://objectstore.example.com/bucket/exports/...", "object_key": "exports/sess_xxx/abc-report.png", "filename": "report.png" }
+```
+
+**Output example (`SIGNED_URL` mode):**
+
+```json
+{ "signed_url": "https://objectstore.example.com/bucket/exports/..." }
+```
+
+**Output example (`OBJECTKEY` mode):**
+
+```json
+{ "object_key": "exports/sess_xxx/abc-report.png", "filename": "report.png" }
+```
+
+**Common constraints:**
+
+- Unknown session returns a tool error such as `session_not_found`.
+- This tool does not return file bytes inline.
 
 ---
 

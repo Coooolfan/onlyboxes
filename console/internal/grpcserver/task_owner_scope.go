@@ -29,6 +29,7 @@ type terminalResourceScopedPayload struct {
 	SessionID string `json:"session_id"`
 	FilePath  string `json:"file_path"`
 	Action    string `json:"action,omitempty"`
+	SignedURL string `json:"signed_url,omitempty"`
 }
 
 func normalizeTaskOwnerID(ownerID string) string {

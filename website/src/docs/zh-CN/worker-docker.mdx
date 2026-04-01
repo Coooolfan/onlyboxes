@@ -23,6 +23,8 @@ export const meta = {
 3. 代码在资源受限的容器内运行。
 4. 输出通过控制面流式返回。
 
+对于 `terminalResource` 的 validate/read/export，worker 会通过 `docker exec <container> python3 -c ...` 探测文件元数据，因此 terminal 执行镜像必须提供 `python3`。
+
 ## 前置条件
 
 - Docker Engine
@@ -67,6 +69,8 @@ WORKER_SECRET=<worker_secret> \
 | `WORKER_PYTHON_EXEC_DOCKER_IMAGE` | 否 | `ghcr.io/astral-sh/uv:python3.12-bookworm-slim` | Python 执行镜像 |
 | `WORKER_TERMINAL_EXEC_DOCKER_IMAGE` | 否 | `coolfan1024/onlyboxes-default-worker:0.0.3` | 终端执行镜像 |
 
+> `terminalExec`、`readImage` 和 `exportFile` 都依赖 terminal 执行镜像。如果该镜像不包含 `python3`，文件探针会在读取或导出元数据之前失败。
+
 ### 并发上限
 
 | 变量 | 必填 | 默认值 | 说明 |
@@ -84,6 +88,14 @@ WORKER_SECRET=<worker_secret> \
 | `WORKER_TERMINAL_LEASE_MAX_SEC` | 否 | `1800` | 最长租约时长（秒） |
 | `WORKER_TERMINAL_LEASE_DEFAULT_SEC` | 否 | `60` | 默认租约时长（秒） |
 | `WORKER_TERMINAL_OUTPUT_LIMIT_BYTES` | 否 | `1048576` | 每个流的输出上限（字节） |
+| `WORKER_TERMINAL_EXPORT_MAX_BYTES` | 否 | `0`（无限制） | export action 最大文件大小（字节），0 为无限制 |
+
+## `terminalResource` 行为
+
+- 支持 `validate`、`read` 和 `export`。
+- `read` 会受 `WORKER_TERMINAL_OUTPUT_LIMIT_BYTES` 限制。
+- `export` 由 MCP `exportFile` 工具调用；worker 会先探测文件，再通过 `docker cp` 将文件拷出容器，并用预签名 HTTP `PUT` 上传。
+- 来自 `docker exec` / OCI 启动阶段的非 JSON 探针失败，会直接以带退出码和输出摘要的 docker exec 错误返回，而不是泛化成 JSON 解析错误。
 
 ### 心跳
 

@@ -20,6 +20,11 @@ type fakeMCPDispatcher struct {
 	cancelTask   func(taskID string, ownerID string) (grpcserver.TaskSnapshot, error)
 }
 
+type fakeExportStore struct {
+	presignUpload   func(ctx context.Context, objectKey string, expiresIn time.Duration) (string, error)
+	presignDownload func(ctx context.Context, objectKey string, expiresIn time.Duration) (string, error)
+}
+
 func (f *fakeMCPDispatcher) DispatchEcho(ctx context.Context, message string, timeout time.Duration) (string, error) {
 	if f.dispatchEcho != nil {
 		return f.dispatchEcho(ctx, message, timeout)
@@ -46,6 +51,20 @@ func (f *fakeMCPDispatcher) CancelTask(taskID string, ownerID string) (grpcserve
 		return f.cancelTask(taskID, ownerID)
 	}
 	return grpcserver.TaskSnapshot{}, grpcserver.ErrTaskNotFound
+}
+
+func (f *fakeExportStore) PresignUpload(ctx context.Context, objectKey string, expiresIn time.Duration) (string, error) {
+	if f.presignUpload != nil {
+		return f.presignUpload(ctx, objectKey, expiresIn)
+	}
+	return "https://uploads.example.com/" + objectKey, nil
+}
+
+func (f *fakeExportStore) PresignDownload(ctx context.Context, objectKey string, expiresIn time.Duration) (string, error) {
+	if f.presignDownload != nil {
+		return f.presignDownload(ctx, objectKey, expiresIn)
+	}
+	return "https://downloads.example.com/" + objectKey, nil
 }
 
 func TestMCPInitialize(t *testing.T) {
@@ -292,6 +311,16 @@ func TestMCPToolsList(t *testing.T) {
 	if got := asString(t, readImageTool["description"]); got != mcpReadImageToolDescription {
 		t.Fatalf("unexpected readImage description: %q", got)
 	}
+	readImageAnnotations := mustObject(t, readImageTool["annotations"], "readImage.annotations")
+	if !asBool(readImageAnnotations["readOnlyHint"]) {
+		t.Fatalf("expected readImage.annotations.readOnlyHint=true")
+	}
+	if !asBool(readImageAnnotations["idempotentHint"]) {
+		t.Fatalf("expected readImage.annotations.idempotentHint=true")
+	}
+	if asBool(readImageAnnotations["destructiveHint"]) {
+		t.Fatalf("expected readImage.annotations.destructiveHint=false")
+	}
 	readImageInputSchema := mustObject(t, readImageTool["inputSchema"], "readImage.inputSchema")
 	assertRequiredContains(t, readImageInputSchema["required"], "session_id")
 	assertRequiredContains(t, readImageInputSchema["required"], "file_path")
@@ -337,6 +366,44 @@ func TestMCPToolsListWithHiddenTools(t *testing.T) {
 	if !toolByName["terminalExec"] {
 		t.Fatalf("expected terminalExec in tools/list")
 	}
+}
+
+func TestMCPToolsListWithExportFile(t *testing.T) {
+	router := newMCPTestRouterWithObjectStore(t, &fakeMCPDispatcher{}, &fakeExportStore{}, "exports")
+	payload := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`)
+
+	result := mustMapField(t, payload, "result")
+	toolsRaw, ok := result["tools"].([]any)
+	if !ok {
+		t.Fatalf("expected tools array, got %#v", result["tools"])
+	}
+	if len(toolsRaw) != 6 {
+		t.Fatalf("expected exactly 6 tools, got %d", len(toolsRaw))
+	}
+
+	toolByName := map[string]map[string]any{}
+	for _, toolRaw := range toolsRaw {
+		tool, ok := toolRaw.(map[string]any)
+		if !ok {
+			t.Fatalf("expected tool object, got %#v", toolRaw)
+		}
+		toolByName[asString(t, tool["name"])] = tool
+	}
+
+	exportTool := toolByName[exportFileToolName]
+	if got := asString(t, exportTool["title"]); got != mcpExportFileToolTitle {
+		t.Fatalf("expected exportFile title %q, got %q", mcpExportFileToolTitle, got)
+	}
+	if got := asString(t, exportTool["description"]); got != mcpExportFileToolDescription {
+		t.Fatalf("unexpected exportFile description: %q", got)
+	}
+	exportInputSchema := mustObject(t, exportTool["inputSchema"], "exportFile.inputSchema")
+	assertRequiredContains(t, exportInputSchema["required"], "session_id")
+	assertRequiredContains(t, exportInputSchema["required"], "file_path")
+	exportOutputSchema := mustObject(t, exportTool["outputSchema"], "exportFile.outputSchema")
+	assertRequiredContains(t, exportOutputSchema["required"], "signed_url")
+	assertRequiredContains(t, exportOutputSchema["required"], "object_key")
+	assertRequiredContains(t, exportOutputSchema["required"], "filename")
 }
 
 func TestMCPToolCallHiddenToolStillWorks(t *testing.T) {
@@ -626,6 +693,374 @@ func TestMCPToolCallReadImageSuccess(t *testing.T) {
 	}
 	if got := asString(t, first["data"]); got == "" {
 		t.Fatalf("expected inline image data")
+	}
+}
+
+func TestMCPToolCallExportFileSuccess(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	originalExportObjectID := newExportObjectID
+	newExportObjectID = func() string { return "fixed-id" }
+	t.Cleanup(func() {
+		newExportObjectID = originalExportObjectID
+	})
+
+	store := &fakeExportStore{
+		presignUpload: func(ctx context.Context, objectKey string, expiresIn time.Duration) (string, error) {
+			if objectKey != "exports/session_1/fixed-id-report.png" {
+				t.Fatalf("unexpected upload object key: %q", objectKey)
+			}
+			if expiresIn != exportFileUploadPresignTTL {
+				t.Fatalf("unexpected upload ttl: %s", expiresIn)
+			}
+			return "https://uploads.example.com/put", nil
+		},
+		presignDownload: func(ctx context.Context, objectKey string, expiresIn time.Duration) (string, error) {
+			if objectKey != "exports/session_1/fixed-id-report.png" {
+				t.Fatalf("unexpected download object key: %q", objectKey)
+			}
+			if expiresIn != exportFileDownloadPresignTTL {
+				t.Fatalf("unexpected download ttl: %s", expiresIn)
+			}
+			return "https://downloads.example.com/get", nil
+		},
+	}
+
+	router := newMCPTestRouterWithObjectStore(t, &fakeMCPDispatcher{
+		submitTask: func(ctx context.Context, req grpcserver.SubmitTaskRequest) (grpcserver.SubmitTaskResult, error) {
+			if req.Capability != terminalResourceCapabilityName {
+				t.Fatalf("expected capability=%q, got %q", terminalResourceCapabilityName, req.Capability)
+			}
+			payload := mcpTerminalResourcePayload{}
+			if err := json.Unmarshal(req.InputJSON, &payload); err != nil {
+				t.Fatalf("expected valid terminalResource payload, got %s", string(req.InputJSON))
+			}
+			if payload.Action != "export" {
+				t.Fatalf("expected export action, got %q", payload.Action)
+			}
+			if payload.SignedURL != "https://uploads.example.com/put" {
+				t.Fatalf("unexpected signed_url: %q", payload.SignedURL)
+			}
+			resultJSON, _ := json.Marshal(mcpTerminalResourceResult{
+				SessionID: payload.SessionID,
+				FilePath:  payload.FilePath,
+				MIMEType:  "image/png",
+				SizeBytes: 4,
+			})
+			return grpcserver.SubmitTaskResult{
+				Task: grpcserver.TaskSnapshot{
+					TaskID:     "task-export-file",
+					Capability: terminalResourceCapabilityName,
+					Status:     grpcserver.TaskStatusSucceeded,
+					ResultJSON: resultJSON,
+					CreatedAt:  now,
+					UpdatedAt:  now,
+					DeadlineAt: now.Add(60 * time.Second),
+				},
+				Completed: true,
+			}, nil
+		},
+	}, store, "exports")
+
+	payload := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"exportFile","arguments":{"session_id":"session/1","file_path":"/workspace/report.png"}}}`)
+	result := mustMapField(t, payload, "result")
+	if asBool(result["isError"]) {
+		t.Fatalf("expected tool call success, got error payload=%s", mustJSON(t, result))
+	}
+	structured := mustMapField(t, result, "structuredContent")
+	if got := asString(t, structured["signed_url"]); got != "https://downloads.example.com/get" {
+		t.Fatalf("expected signed_url in response, got %q", got)
+	}
+	if got := asString(t, structured["object_key"]); got != "exports/session_1/fixed-id-report.png" {
+		t.Fatalf("expected object_key in response, got %q", got)
+	}
+	if got := asString(t, structured["filename"]); got != "report.png" {
+		t.Fatalf("expected filename in response, got %q", got)
+	}
+}
+
+func TestMCPToolCallExportFileUsesConfiguredPresignTTLs(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	originalExportObjectID := newExportObjectID
+	newExportObjectID = func() string { return "fixed-id" }
+	t.Cleanup(func() {
+		newExportObjectID = originalExportObjectID
+	})
+
+	customUploadTTL := 2 * time.Minute
+	customDownloadTTL := 12 * time.Minute
+	store := &fakeExportStore{
+		presignUpload: func(ctx context.Context, objectKey string, expiresIn time.Duration) (string, error) {
+			if expiresIn != customUploadTTL {
+				t.Fatalf("unexpected upload ttl: %s", expiresIn)
+			}
+			return "https://uploads.example.com/put", nil
+		},
+		presignDownload: func(ctx context.Context, objectKey string, expiresIn time.Duration) (string, error) {
+			if expiresIn != customDownloadTTL {
+				t.Fatalf("unexpected download ttl: %s", expiresIn)
+			}
+			return "https://downloads.example.com/get", nil
+		},
+	}
+
+	router := newMCPTestRouterWithObjectStoreAndTTLs(t, &fakeMCPDispatcher{
+		submitTask: func(ctx context.Context, req grpcserver.SubmitTaskRequest) (grpcserver.SubmitTaskResult, error) {
+			resultJSON, _ := json.Marshal(mcpTerminalResourceResult{
+				SessionID: "session-1",
+				FilePath:  "/workspace/report.png",
+				MIMEType:  "image/png",
+				SizeBytes: 4,
+			})
+			return grpcserver.SubmitTaskResult{
+				Task: grpcserver.TaskSnapshot{
+					TaskID:     "task-export-file-custom-ttl",
+					Capability: terminalResourceCapabilityName,
+					Status:     grpcserver.TaskStatusSucceeded,
+					ResultJSON: resultJSON,
+					CreatedAt:  now,
+					UpdatedAt:  now,
+					DeadlineAt: now.Add(60 * time.Second),
+				},
+				Completed: true,
+			}, nil
+		},
+	}, store, "exports", customUploadTTL, customDownloadTTL, ExportReturnSchemaAll)
+
+	payload := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"exportFile","arguments":{"session_id":"session-1","file_path":"/workspace/report.png"}}}`)
+	result := mustMapField(t, payload, "result")
+	if asBool(result["isError"]) {
+		t.Fatalf("expected tool call success, got error payload=%s", mustJSON(t, result))
+	}
+	structured := mustMapField(t, result, "structuredContent")
+	if got := asString(t, structured["object_key"]); got != "exports/session-1/fixed-id-report.png" {
+		t.Fatalf("expected object_key in response, got %q", got)
+	}
+	if got := asString(t, structured["filename"]); got != "report.png" {
+		t.Fatalf("expected filename in response, got %q", got)
+	}
+}
+
+func TestMCPToolCallExportFileComputerUseSessionRoutesToReadImageCapability(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	originalExportObjectID := newExportObjectID
+	newExportObjectID = func() string { return "fixed-id" }
+	t.Cleanup(func() {
+		newExportObjectID = originalExportObjectID
+	})
+
+	store := &fakeExportStore{
+		presignUpload: func(ctx context.Context, objectKey string, expiresIn time.Duration) (string, error) {
+			return "https://uploads.example.com/put", nil
+		},
+		presignDownload: func(ctx context.Context, objectKey string, expiresIn time.Duration) (string, error) {
+			return "https://downloads.example.com/get", nil
+		},
+	}
+
+	router := newMCPTestRouterWithObjectStore(t, &fakeMCPDispatcher{
+		submitTask: func(ctx context.Context, req grpcserver.SubmitTaskRequest) (grpcserver.SubmitTaskResult, error) {
+			if req.Capability != readImageCapabilityName {
+				t.Fatalf("expected capability=%q, got %q", readImageCapabilityName, req.Capability)
+			}
+			payload := mcpTerminalResourcePayload{}
+			if err := json.Unmarshal(req.InputJSON, &payload); err != nil {
+				t.Fatalf("expected valid readImage payload, got %s", string(req.InputJSON))
+			}
+			if payload.SessionID != computerUseSessionID {
+				t.Fatalf("expected session_id=%q, got %q", computerUseSessionID, payload.SessionID)
+			}
+			if payload.Action != "export" {
+				t.Fatalf("expected export action, got %q", payload.Action)
+			}
+			if payload.SignedURL != "https://uploads.example.com/put" {
+				t.Fatalf("unexpected signed_url: %q", payload.SignedURL)
+			}
+			resultJSON, _ := json.Marshal(mcpTerminalResourceResult{
+				SessionID: payload.SessionID,
+				FilePath:  payload.FilePath,
+				MIMEType:  "image/png",
+				SizeBytes: 4,
+			})
+			return grpcserver.SubmitTaskResult{
+				Task: grpcserver.TaskSnapshot{
+					TaskID:     "task-export-file-computer-use",
+					Capability: readImageCapabilityName,
+					Status:     grpcserver.TaskStatusSucceeded,
+					ResultJSON: resultJSON,
+					CreatedAt:  now,
+					UpdatedAt:  now,
+					DeadlineAt: now.Add(60 * time.Second),
+				},
+				Completed: true,
+			}, nil
+		},
+	}, store, "exports")
+
+	payload := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"exportFile","arguments":{"session_id":"computerUse","file_path":"/workspace/report.png"}}}`)
+	result := mustMapField(t, payload, "result")
+	if asBool(result["isError"]) {
+		t.Fatalf("expected tool call success, got error payload=%s", mustJSON(t, result))
+	}
+	structured := mustMapField(t, result, "structuredContent")
+	if got := asString(t, structured["signed_url"]); got != "https://downloads.example.com/get" {
+		t.Fatalf("expected signed_url in response, got %q", got)
+	}
+	if got := asString(t, structured["object_key"]); got != "exports/computerUse/fixed-id-report.png" {
+		t.Fatalf("expected object_key in response, got %q", got)
+	}
+	if got := asString(t, structured["filename"]); got != "report.png" {
+		t.Fatalf("expected filename in response, got %q", got)
+	}
+}
+
+func TestMCPToolCallExportFileSignedURLOnly(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	originalExportObjectID := newExportObjectID
+	newExportObjectID = func() string { return "fixed-id" }
+	t.Cleanup(func() {
+		newExportObjectID = originalExportObjectID
+	})
+
+	store := &fakeExportStore{
+		presignUpload: func(ctx context.Context, objectKey string, expiresIn time.Duration) (string, error) {
+			return "https://uploads.example.com/put", nil
+		},
+		presignDownload: func(ctx context.Context, objectKey string, expiresIn time.Duration) (string, error) {
+			return "https://downloads.example.com/get", nil
+		},
+	}
+
+	router := newMCPTestRouterWithObjectStoreAndTTLs(t, &fakeMCPDispatcher{
+		submitTask: func(ctx context.Context, req grpcserver.SubmitTaskRequest) (grpcserver.SubmitTaskResult, error) {
+			resultJSON, _ := json.Marshal(mcpTerminalResourceResult{
+				SessionID: "session-1",
+				FilePath:  "/workspace/report.png",
+				MIMEType:  "image/png",
+				SizeBytes: 4,
+			})
+			return grpcserver.SubmitTaskResult{
+				Task: grpcserver.TaskSnapshot{
+					TaskID:     "task-export-signed",
+					Capability: terminalResourceCapabilityName,
+					Status:     grpcserver.TaskStatusSucceeded,
+					ResultJSON: resultJSON,
+					CreatedAt:  now,
+					UpdatedAt:  now,
+					DeadlineAt: now.Add(60 * time.Second),
+				},
+				Completed: true,
+			}, nil
+		},
+	}, store, "exports", exportFileUploadPresignTTL, exportFileDownloadPresignTTL, ExportReturnSchemaSignedURL)
+
+	// Verify output schema only declares signed_url
+	listPayload := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`)
+	listResult := mustMapField(t, listPayload, "result")
+	toolsRaw := listResult["tools"].([]any)
+	for _, toolRaw := range toolsRaw {
+		tool := toolRaw.(map[string]any)
+		if asString(t, tool["name"]) != exportFileToolName {
+			continue
+		}
+		outputSchema := mustObject(t, tool["outputSchema"], "exportFile.outputSchema")
+		assertRequiredContains(t, outputSchema["required"], "signed_url")
+		assertRequiredNotContains(t, outputSchema["required"], "object_key")
+		assertRequiredNotContains(t, outputSchema["required"], "filename")
+	}
+
+	// Verify tool call returns only signed_url
+	payload := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"exportFile","arguments":{"session_id":"session-1","file_path":"/workspace/report.png"}}}`)
+	result := mustMapField(t, payload, "result")
+	if asBool(result["isError"]) {
+		t.Fatalf("expected tool call success, got error payload=%s", mustJSON(t, result))
+	}
+	structured := mustMapField(t, result, "structuredContent")
+	if got := asString(t, structured["signed_url"]); got != "https://downloads.example.com/get" {
+		t.Fatalf("expected signed_url, got %q", got)
+	}
+	if _, ok := structured["object_key"]; ok {
+		t.Fatalf("expected no object_key in SIGNED_URL mode, got %v", structured["object_key"])
+	}
+	if _, ok := structured["filename"]; ok {
+		t.Fatalf("expected no filename in SIGNED_URL mode, got %v", structured["filename"])
+	}
+}
+
+func TestMCPToolCallExportFileObjectKeyOnly(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	originalExportObjectID := newExportObjectID
+	newExportObjectID = func() string { return "fixed-id" }
+	t.Cleanup(func() {
+		newExportObjectID = originalExportObjectID
+	})
+
+	presignDownloadCalled := false
+	store := &fakeExportStore{
+		presignUpload: func(ctx context.Context, objectKey string, expiresIn time.Duration) (string, error) {
+			return "https://uploads.example.com/put", nil
+		},
+		presignDownload: func(ctx context.Context, objectKey string, expiresIn time.Duration) (string, error) {
+			presignDownloadCalled = true
+			return "https://downloads.example.com/get", nil
+		},
+	}
+
+	router := newMCPTestRouterWithObjectStoreAndTTLs(t, &fakeMCPDispatcher{
+		submitTask: func(ctx context.Context, req grpcserver.SubmitTaskRequest) (grpcserver.SubmitTaskResult, error) {
+			resultJSON, _ := json.Marshal(mcpTerminalResourceResult{
+				SessionID: "session-1",
+				FilePath:  "/workspace/report.png",
+				MIMEType:  "image/png",
+				SizeBytes: 4,
+			})
+			return grpcserver.SubmitTaskResult{
+				Task: grpcserver.TaskSnapshot{
+					TaskID:     "task-export-objectkey",
+					Capability: terminalResourceCapabilityName,
+					Status:     grpcserver.TaskStatusSucceeded,
+					ResultJSON: resultJSON,
+					CreatedAt:  now,
+					UpdatedAt:  now,
+					DeadlineAt: now.Add(60 * time.Second),
+				},
+				Completed: true,
+			}, nil
+		},
+	}, store, "exports", exportFileUploadPresignTTL, exportFileDownloadPresignTTL, ExportReturnSchemaObjectKey)
+
+	// Verify output schema declares object_key and filename only
+	listPayload := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`)
+	listResult := mustMapField(t, listPayload, "result")
+	toolsRaw := listResult["tools"].([]any)
+	for _, toolRaw := range toolsRaw {
+		tool := toolRaw.(map[string]any)
+		if asString(t, tool["name"]) != exportFileToolName {
+			continue
+		}
+		outputSchema := mustObject(t, tool["outputSchema"], "exportFile.outputSchema")
+		assertRequiredContains(t, outputSchema["required"], "object_key")
+		assertRequiredContains(t, outputSchema["required"], "filename")
+		assertRequiredNotContains(t, outputSchema["required"], "signed_url")
+	}
+
+	// Verify tool call returns only object_key and filename
+	payload := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"exportFile","arguments":{"session_id":"session-1","file_path":"/workspace/report.png"}}}`)
+	result := mustMapField(t, payload, "result")
+	if asBool(result["isError"]) {
+		t.Fatalf("expected tool call success, got error payload=%s", mustJSON(t, result))
+	}
+	structured := mustMapField(t, result, "structuredContent")
+	if got := asString(t, structured["object_key"]); got != "exports/session-1/fixed-id-report.png" {
+		t.Fatalf("expected object_key, got %q", got)
+	}
+	if got := asString(t, structured["filename"]); got != "report.png" {
+		t.Fatalf("expected filename, got %q", got)
+	}
+	if _, ok := structured["signed_url"]; ok {
+		t.Fatalf("expected no signed_url in OBJECTKEY mode, got %v", structured["signed_url"])
+	}
+	if presignDownloadCalled {
+		t.Fatalf("expected PresignDownload to NOT be called in OBJECTKEY mode")
 	}
 }
 
@@ -1150,6 +1585,34 @@ func newMCPTestRouter(t *testing.T, dispatcher CommandDispatcher) http.Handler {
 	return mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
 }
 
+func newMCPTestRouterWithObjectStore(t *testing.T, dispatcher CommandDispatcher, store ExportStore, exportPrefix string) http.Handler {
+	return newMCPTestRouterWithObjectStoreAndTTLs(
+		t,
+		dispatcher,
+		store,
+		exportPrefix,
+		exportFileUploadPresignTTL,
+		exportFileDownloadPresignTTL,
+		ExportReturnSchemaAll,
+	)
+}
+
+func newMCPTestRouterWithObjectStoreAndTTLs(
+	t *testing.T,
+	dispatcher CommandDispatcher,
+	store ExportStore,
+	exportPrefix string,
+	uploadTTL time.Duration,
+	downloadTTL time.Duration,
+	returnSchema string,
+) http.Handler {
+	t.Helper()
+
+	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, dispatcher, nil, nil, "")
+	handler.SetExportStore(store, exportPrefix, uploadTTL, downloadTTL, returnSchema)
+	return mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
+}
+
 func newMCPTestRouterWithHiddenTools(t *testing.T, dispatcher CommandDispatcher, hiddenTools map[string]bool) http.Handler {
 	t.Helper()
 
@@ -1245,6 +1708,20 @@ func assertRequiredContains(t *testing.T, raw any, expected string) {
 		}
 	}
 	t.Fatalf("required array %#v does not contain %q", items, expected)
+}
+
+func assertRequiredNotContains(t *testing.T, raw any, unexpected string) {
+	t.Helper()
+	items, ok := raw.([]any)
+	if !ok {
+		t.Fatalf("expected required to be an array, got %#v", raw)
+	}
+	for _, item := range items {
+		value, ok := item.(string)
+		if ok && value == unexpected {
+			t.Fatalf("required array %#v should not contain %q", items, unexpected)
+		}
+	}
 }
 
 func asBool(value any) bool {

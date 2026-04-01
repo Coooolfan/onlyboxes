@@ -323,7 +323,10 @@ mod tests {
     use tonic::{Request, Response, Status};
 
     mod test_registryv1 {
-        include!(concat!(env!("OUT_DIR"), "/test-server/onlyboxes.registry.v1.rs"));
+        include!(concat!(
+            env!("OUT_DIR"),
+            "/test-server/onlyboxes.registry.v1.rs"
+        ));
     }
 
     use crate::proto::registryv1::{
@@ -397,12 +400,14 @@ mod tests {
             };
 
             ConnectRequest {
-                payload: Some(connect_request::Payload::CommandResult(ClientCommandResult {
-                    command_id: dispatch.command_id,
-                    error: None,
-                    payload_json: serde_json::to_vec(&payload_json).unwrap(),
-                    completed_unix_ms: 1,
-                })),
+                payload: Some(connect_request::Payload::CommandResult(
+                    ClientCommandResult {
+                        command_id: dispatch.command_id,
+                        error: None,
+                        payload_json: serde_json::to_vec(&payload_json).unwrap(),
+                        completed_unix_ms: 1,
+                    },
+                )),
             }
         }
     }
@@ -467,11 +472,12 @@ mod tests {
                                         .send(Ok(ConnectResponse {
                                             payload: Some(
                                                 test_connect_response::Payload::HeartbeatAck(
-                                                HeartbeatAck {
-                                                    heartbeat_interval_sec: shared
-                                                        .heartbeat_interval_sec,
-                                                },
-                                            )),
+                                                    HeartbeatAck {
+                                                        heartbeat_interval_sec: shared
+                                                            .heartbeat_interval_sec,
+                                                    },
+                                                ),
+                                            ),
                                         }))
                                         .await;
                                 }
@@ -565,6 +571,7 @@ mod tests {
             terminal_lease_max_sec: 1800,
             terminal_lease_default_sec: 60,
             terminal_output_limit_bytes: 1024 * 1024,
+            terminal_export_max_bytes: 0,
             echo_max_inflight: 4,
             python_exec_max_inflight: 4,
             terminal_exec_max_inflight: 4,
