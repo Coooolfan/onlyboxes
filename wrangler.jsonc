@@ -7,7 +7,8 @@
   },
   "assets": {
     "directory": "website/dist",
-    "not_found_handling": "single-page-application"
+    "not_found_handling": "404-page",
+    "html_handling": "force-trailing-slash"
   },
   "compatibility_flags": [
     "nodejs_compat"

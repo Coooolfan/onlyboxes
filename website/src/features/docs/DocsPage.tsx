@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { Github, Languages, List, Moon, Sun, X } from 'lucide-react'
 import {
@@ -7,8 +7,6 @@ import {
   getAlternateDocHref,
   getDocEntry,
   getDocHref,
-  getDocsRootHref,
-  getOtherDocsLocale,
   listLocaleSections,
 } from './registry'
 import { mdxComponents } from './mdx-components'
@@ -26,10 +24,6 @@ const docsCopy = {
     menu: 'Menu',
     onThisPage: 'On this page',
     languageSwitch: 'Language',
-    documentNotFound: 'Document not found',
-    documentNotFoundBody: 'The requested page is not available in this locale. Use the docs home or switch language.',
-    browseDocs: 'Browse docs home',
-    backHome: 'Back to home',
     github: 'GitHub',
   },
   'zh-CN': {
@@ -37,10 +31,6 @@ const docsCopy = {
     menu: '目录',
     onThisPage: '本页内容',
     languageSwitch: '语言',
-    documentNotFound: '文档不存在',
-    documentNotFoundBody: '当前语言下没有这个页面。你可以返回文档首页，或切换到另一种语言。',
-    browseDocs: '返回文档首页',
-    backHome: '返回首页',
     github: 'GitHub',
   },
 } as const
@@ -181,11 +171,6 @@ export function DocsPage({ locale }: { locale: DocsLocale }) {
   }, [locale, setSiteLocale])
 
   useEffect(() => {
-    const title = entry ? `${entry.meta.title} | OnlyBoxes Docs` : `404 | OnlyBoxes Docs`
-    document.title = title
-  }, [entry])
-
-  useEffect(() => {
     setIsMenuOpen(false)
   }, [locale, currentSlug])
 
@@ -200,15 +185,12 @@ export function DocsPage({ locale }: { locale: DocsLocale }) {
     return () => cancelAnimationFrame(frame)
   }, [entry])
 
-  const alternateHref = useMemo(() => {
-    if (!entry) {
-      return getDocsRootHref(getOtherDocsLocale(locale))
-    }
+  if (!entry) {
+    return null
+  }
 
-    return getAlternateDocHref(locale, entry.meta.slug)
-  }, [entry, locale])
-
-  const CurrentDoc = entry?.Component
+  const alternateHref = getAlternateDocHref(locale, entry.meta.slug)
+  const CurrentDoc = entry.Component
 
   const headerBtnClass = `inline-flex items-center gap-2 rounded px-3 py-2 text-sm font-medium transition-colors duration-300 ${
     isDark
@@ -304,55 +286,9 @@ export function DocsPage({ locale }: { locale: DocsLocale }) {
           }`}
         >
           <div className="px-2 py-2 sm:px-4">
-            {CurrentDoc ? (
-              <article id="docs-content">
-                <CurrentDoc components={mdxComponents} />
-              </article>
-            ) : (
-              <article id="docs-content">
-                <p
-                  className={`mb-2 text-xs font-semibold tracking-[0.2em] uppercase transition-colors duration-300 ${
-                    isDark ? 'text-neutral-500' : 'text-neutral-400'
-                  }`}
-                >
-                  404
-                </p>
-                <h1
-                  className={`mb-4 text-4xl font-semibold tracking-tight transition-colors duration-300 ${
-                    isDark ? 'text-white' : 'text-neutral-950'
-                  }`}
-                >
-                  {copy.documentNotFound}
-                </h1>
-                <p
-                  className={`max-w-2xl text-base leading-8 transition-colors duration-300 ${
-                    isDark ? 'text-neutral-400' : 'text-neutral-700'
-                  }`}
-                >
-                  {copy.documentNotFoundBody}
-                </p>
-                <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-                  <Link
-                    to={getDocsRootHref(locale)}
-                    className={`inline-flex items-center justify-center rounded px-6 py-3 font-medium transition-colors ${
-                      isDark ? 'bg-white text-black hover:bg-neutral-200' : 'bg-black text-white hover:bg-neutral-800'
-                    }`}
-                  >
-                    {copy.browseDocs}
-                  </Link>
-                  <Link
-                    to="/"
-                    className={`inline-flex items-center justify-center rounded border px-6 py-3 font-medium transition-colors ${
-                      isDark
-                        ? 'border-neutral-700 text-white hover:bg-neutral-900'
-                        : 'border-neutral-200 text-black hover:border-neutral-300 hover:bg-neutral-50'
-                    }`}
-                  >
-                    {copy.backHome}
-                  </Link>
-                </div>
-              </article>
-            )}
+            <article id="docs-content">
+              <CurrentDoc components={mdxComponents} />
+            </article>
           </div>
 
         </main>

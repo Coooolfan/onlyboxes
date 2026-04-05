@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react'
 import type { DocsLocale } from '../docs/registry'
+import { resolveSiteLocale, shouldUseStoredLocale } from '../../app/routing'
 
 const LOCALE_KEY = 'ob-locale'
 
@@ -18,7 +19,15 @@ export function useSiteContext() {
   return ctx
 }
 
+function canUseBrowserApis() {
+  return typeof window !== 'undefined'
+}
+
 function readStoredLocale(): DocsLocale | null {
+  if (!canUseBrowserApis()) {
+    return null
+  }
+
   try {
     const value = localStorage.getItem(LOCALE_KEY)
     if (value === 'en' || value === 'zh-CN') return value
@@ -26,21 +35,41 @@ function readStoredLocale(): DocsLocale | null {
   return null
 }
 
-export function SiteProvider({ children }: { children: ReactNode }) {
-  const [isDark, setIsDark] = useState(() =>
-    window.matchMedia('(prefers-color-scheme: dark)').matches,
-  )
+function readPreferredDarkMode() {
+  if (!canUseBrowserApis() || typeof window.matchMedia !== 'function') {
+    return false
+  }
 
-  const [locale, setLocaleRaw] = useState<DocsLocale>(() =>
-    readStoredLocale() ?? 'en',
-  )
+  return window.matchMedia('(prefers-color-scheme: dark)').matches
+}
+
+export function SiteProvider({ children, pathname }: { children: ReactNode; pathname: string }) {
+  const [isDark, setIsDark] = useState(false)
+  const [locale, setLocaleRaw] = useState<DocsLocale>(() => resolveSiteLocale(pathname))
 
   useEffect(() => {
+    setIsDark(readPreferredDarkMode())
+
+    if (!canUseBrowserApis() || typeof window.matchMedia !== 'function') {
+      return
+    }
+
     const mq = window.matchMedia('(prefers-color-scheme: dark)')
     const handler = (e: MediaQueryListEvent) => setIsDark(e.matches)
     mq.addEventListener('change', handler)
     return () => mq.removeEventListener('change', handler)
   }, [])
+
+  useEffect(() => {
+    const routeLocale = resolveSiteLocale(pathname)
+
+    if (shouldUseStoredLocale(pathname)) {
+      setLocaleRaw(readStoredLocale() ?? routeLocale)
+      return
+    }
+
+    setLocaleRaw(routeLocale)
+  }, [pathname])
 
   const setLocale = useCallback((next: DocsLocale) => {
     setLocaleRaw(next)

@@ -204,10 +204,15 @@ const SvgNode = ({
 )
 
 const ArchitectureDiagram = ({ isDark, copy }: { isDark: boolean; copy: HomeCopy }) => {
-  const [isCompact, setIsCompact] = useState(() => window.matchMedia('(max-width: 767px)').matches)
+  const [isCompact, setIsCompact] = useState(false)
 
   useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+      return
+    }
+
     const mediaQuery = window.matchMedia('(max-width: 767px)')
+    setIsCompact(mediaQuery.matches)
     const handler = (event: MediaQueryListEvent) => setIsCompact(event.matches)
     mediaQuery.addEventListener('change', handler)
     return () => mediaQuery.removeEventListener('change', handler)

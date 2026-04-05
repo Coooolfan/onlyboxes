@@ -41,6 +41,10 @@ function normalizeSlug(slug: string) {
   return slug.replace(/^\/+|\/+$/g, '')
 }
 
+function withTrailingSlash(pathname: string) {
+  return pathname.endsWith('/') ? pathname : `${pathname}/`
+}
+
 function assertDocsLocale(value: string): DocsLocale {
   if (isDocsLocale(value)) {
     return value
@@ -107,12 +111,12 @@ export function getOtherDocsLocale(locale: DocsLocale): DocsLocale {
 }
 
 export function getDocsRootHref(locale: DocsLocale) {
-  return `/${locale}/docs`
+  return withTrailingSlash(`/${locale}/docs`)
 }
 
 export function getDocHref(locale: DocsLocale, slug: string) {
   const normalizedSlug = normalizeSlug(slug)
-  return normalizedSlug ? `/${locale}/docs/${normalizedSlug}` : getDocsRootHref(locale)
+  return normalizedSlug ? withTrailingSlash(`/${locale}/docs/${normalizedSlug}`) : getDocsRootHref(locale)
 }
 
 export function listLocaleDocs(locale: DocsLocale) {

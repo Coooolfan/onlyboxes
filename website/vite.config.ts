@@ -26,6 +26,44 @@ interface SitemapEntry {
   alternates: Partial<Record<(typeof LOCALES)[number], string>>
 }
 
+function previewDirectoryRedirectPlugin(): Plugin {
+  let outDir = path.resolve(import.meta.dirname, 'dist')
+
+  return {
+    name: 'preview-directory-redirect',
+    configResolved(config) {
+      outDir = path.resolve(config.root, config.build.outDir)
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use((req, res, next) => {
+        if (!req.url || (req.method !== 'GET' && req.method !== 'HEAD')) {
+          next()
+          return
+        }
+
+        const requestUrl = new URL(req.url, 'http://localhost')
+        const pathname = requestUrl.pathname
+
+        if (pathname === '/' || pathname.endsWith('/') || path.extname(pathname)) {
+          next()
+          return
+        }
+
+        const targetIndex = path.join(outDir, pathname.replace(/^\//, ''), 'index.html')
+
+        if (!fs.existsSync(targetIndex)) {
+          next()
+          return
+        }
+
+        res.statusCode = 308
+        res.setHeader('Location', `${pathname}/${requestUrl.search}`)
+        res.end()
+      })
+    },
+  }
+}
+
 function sitemapPlugin(): Plugin {
   return {
     name: 'sitemap',
@@ -37,6 +75,13 @@ function sitemapPlugin(): Plugin {
         defaultLocale: 'en',
         alternates: { en: `${SITE_URL}/` },
       })
+
+      const docsLandingEntry = [
+        '  <url>',
+        `    <loc>${SITE_URL}/docs/</loc>`,
+        `    <xhtml:link rel="alternate" hreflang="x-default" href="${SITE_URL}/docs/"/>`,
+        '  </url>',
+      ].join('\n')
 
       // Collect slugs per locale
       const slugsByLocale: Partial<Record<(typeof LOCALES)[number], string[]>> = {}
@@ -60,7 +105,7 @@ function sitemapPlugin(): Plugin {
       const allSlugs = new Set([...enSlugs, ...zhSlugs])
 
       const docUrl = (locale: (typeof LOCALES)[number], slug: string) =>
-        slug ? `${SITE_URL}/${locale}/docs/${slug}` : `${SITE_URL}/${locale}/docs`
+        slug ? `${SITE_URL}/${locale}/docs/${slug}/` : `${SITE_URL}/${locale}/docs/`
 
       for (const slug of allSlugs) {
         const alternates: SitemapEntry['alternates'] = {}
@@ -85,6 +130,7 @@ function sitemapPlugin(): Plugin {
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"',
         '        xmlns:xhtml="http://www.w3.org/1999/xhtml">',
+        docsLandingEntry,
         ...entries.map(renderEntry),
         '</urlset>',
       ].join('\n')
@@ -96,8 +142,12 @@ function sitemapPlugin(): Plugin {
 
 // https://vite.dev/config/
 export default defineConfig({
+  build: {
+    manifest: true,
+  },
   plugins: [
     mdxPlugin,
+    previewDirectoryRedirectPlugin(),
     sitemapPlugin(),
     react({
       include: /\.(mdx|js|jsx|ts|tsx)$/,
