@@ -20,7 +20,7 @@ function selectKind(kind: WorkerStartupKind): void {
     <div
       role="tablist"
       aria-label="Worker profile selector"
-      class="grid grid-cols-1 gap-2 md:grid-cols-2"
+      class="grid grid-cols-1 gap-2 md:grid-cols-3"
     >
       <button
         data-testid="worker-kind-docker-btn"
@@ -37,6 +37,23 @@ function selectKind(kind: WorkerStartupKind): void {
       >
         <span class="text-sm font-medium">worker-docker</span>
         <span class="text-xs opacity-80">Container-based execution runtime.</span>
+      </button>
+
+      <button
+        data-testid="worker-kind-boxlite-btn"
+        type="button"
+        role="tab"
+        :aria-selected="props.modelValue === 'worker-boxlite'"
+        class="rounded-md border px-3 py-2 text-left transition-colors grid gap-0.5"
+        :class="
+          props.modelValue === 'worker-boxlite'
+            ? 'border-accent bg-surface-soft text-primary'
+            : 'border-stroke bg-surface text-secondary hover:border-stroke-hover hover:text-primary'
+        "
+        @click="selectKind('worker-boxlite')"
+      >
+        <span class="text-sm font-medium">worker-boxlite</span>
+        <span class="text-xs opacity-80">Boxlite runtime with per-execution Linux kernels.</span>
       </button>
 
       <button

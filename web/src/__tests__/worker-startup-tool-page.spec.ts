@@ -97,6 +97,28 @@ describe('Worker Startup Tool Page', () => {
     wrapper.unmount()
   })
 
+  it('updates command preview after switching to worker-boxlite', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/v1/console/session') {
+        return jsonResponse(memberSessionPayload)
+      }
+      throw new Error(`unexpected url: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch)
+
+    const wrapper = await mountRoute('/tools/worker-startup')
+
+    await wrapper.get('[data-testid="worker-kind-boxlite-btn"]').trigger('click')
+    await settleUI()
+
+    const previewText = wrapper.get('[data-testid="startup-command-preview"]').text()
+    expect(previewText).toContain('./onlyboxes-worker-boxlite')
+    expect(previewText).toContain('WORKER_PYTHON_EXEC_BOXLITE_IMAGE')
+
+    wrapper.unmount()
+  })
+
   it('shows prefilled credential hints and blocks route leave when opened from goToStartupTool', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)

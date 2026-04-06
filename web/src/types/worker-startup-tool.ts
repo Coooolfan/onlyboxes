@@ -1,4 +1,4 @@
-export type WorkerStartupKind = 'worker-docker' | 'worker-sys'
+export type WorkerStartupKind = 'worker-docker' | 'worker-boxlite' | 'worker-sys'
 
 export type WorkerCallTimeoutMode = 'auto' | 'manual'
 
@@ -26,6 +26,23 @@ export interface WorkerDockerStartupConfig extends WorkerStartupBaseConfig {
   terminalLeaseMaxSec: number
   terminalLeaseDefaultSec: number
   terminalOutputLimitBytes: number
+}
+
+export interface WorkerBoxliteStartupConfig extends WorkerStartupBaseConfig {
+  boxliteHome: string
+  pythonExecBoxliteImage: string
+  pythonExecMemoryMib: number
+  pythonExecCpus: number
+  pythonExecMaxProcesses: number
+  terminalExecBoxliteImage: string
+  terminalExecMemoryMib: number
+  terminalExecCpus: number
+  terminalExecMaxProcesses: number
+  terminalLeaseMinSec: number
+  terminalLeaseMaxSec: number
+  terminalLeaseDefaultSec: number
+  terminalOutputLimitBytes: number
+  terminalExportMaxBytes: number
 }
 
 export interface WorkerSysStartupConfig extends WorkerStartupBaseConfig {

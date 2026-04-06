@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 
 import ConsoleHeader from '@/components/dashboard/ConsoleHeader.vue'
+import WorkerBoxliteConfigForm from '@/components/worker-tool/WorkerBoxliteConfigForm.vue'
 import WorkerCommandPreviewPanel from '@/components/worker-tool/WorkerCommandPreviewPanel.vue'
 import WorkerDockerConfigForm from '@/components/worker-tool/WorkerDockerConfigForm.vue'
 import WorkerProfileSelector from '@/components/worker-tool/WorkerProfileSelector.vue'
@@ -19,6 +20,7 @@ const leavePromptMessage =
 const {
   workerKind,
   workerDockerConfig,
+  workerBoxliteConfig,
   workerSysConfig,
   commandText,
   errorMessages,
@@ -40,6 +42,10 @@ function normalizeHeartbeatForAutoTimeout(value: number): number {
 
 const dockerAutoCallTimeoutSec = computed(() =>
   normalizeHeartbeatForAutoTimeout(workerDockerConfig.heartbeatIntervalSec),
+)
+
+const boxliteAutoCallTimeoutSec = computed(() =>
+  normalizeHeartbeatForAutoTimeout(workerBoxliteConfig.heartbeatIntervalSec),
 )
 
 const sysAutoCallTimeoutSec = computed(() =>
@@ -92,6 +98,17 @@ watch(
 )
 
 watch(
+  () => [workerBoxliteConfig.callTimeoutMode, workerBoxliteConfig.heartbeatIntervalSec],
+  () => {
+    if (workerBoxliteConfig.callTimeoutMode !== 'auto') {
+      return
+    }
+    workerBoxliteConfig.callTimeoutSec = boxliteAutoCallTimeoutSec.value
+  },
+  { immediate: true },
+)
+
+watch(
   () => [workerSysConfig.callTimeoutMode, workerSysConfig.heartbeatIntervalSec],
   () => {
     if (workerSysConfig.callTimeoutMode !== 'auto') {
@@ -100,6 +117,53 @@ watch(
     workerSysConfig.callTimeoutSec = sysAutoCallTimeoutSec.value
   },
   { immediate: true },
+)
+
+watch(
+  () => [workerBoxliteConfig.terminalLeaseMinSec, workerBoxliteConfig.terminalLeaseMaxSec],
+  () => {
+    const min = Number.isFinite(workerBoxliteConfig.terminalLeaseMinSec)
+      ? Math.floor(workerBoxliteConfig.terminalLeaseMinSec)
+      : Number.NaN
+    const max = Number.isFinite(workerBoxliteConfig.terminalLeaseMaxSec)
+      ? Math.floor(workerBoxliteConfig.terminalLeaseMaxSec)
+      : Number.NaN
+    if (min <= 0 || max <= 0) {
+      return
+    }
+    if (max < min) {
+      workerBoxliteConfig.terminalLeaseMaxSec = min
+    }
+  },
+)
+
+watch(
+  () => [
+    workerBoxliteConfig.terminalLeaseMinSec,
+    workerBoxliteConfig.terminalLeaseMaxSec,
+    workerBoxliteConfig.terminalLeaseDefaultSec,
+  ],
+  () => {
+    const min = Number.isFinite(workerBoxliteConfig.terminalLeaseMinSec)
+      ? Math.floor(workerBoxliteConfig.terminalLeaseMinSec)
+      : Number.NaN
+    const max = Number.isFinite(workerBoxliteConfig.terminalLeaseMaxSec)
+      ? Math.floor(workerBoxliteConfig.terminalLeaseMaxSec)
+      : Number.NaN
+    const currentDefault = Number.isFinite(workerBoxliteConfig.terminalLeaseDefaultSec)
+      ? Math.floor(workerBoxliteConfig.terminalLeaseDefaultSec)
+      : Number.NaN
+    if (min <= 0 || max <= 0 || !Number.isFinite(currentDefault)) {
+      return
+    }
+    if (currentDefault < min) {
+      workerBoxliteConfig.terminalLeaseDefaultSec = min
+      return
+    }
+    if (currentDefault > max) {
+      workerBoxliteConfig.terminalLeaseDefaultSec = max
+    }
+  },
 )
 
 watch(
@@ -224,8 +288,8 @@ onBeforeUnmount(() => {
   <main class="relative z-2 mx-auto w-[min(1240px,100%)] grid gap-6">
     <ConsoleHeader eyebrow="Onlyboxes / Worker Tool" title="Worker Startup Tool" hide-refresh>
       <template #subtitle>
-        Configure startup parameters for worker-docker and worker-sys, then copy a ready-to-run
-        startup command.
+        Configure startup parameters for worker-docker, worker-boxlite, and worker-sys, then copy
+        a ready-to-run startup command.
       </template>
     </ConsoleHeader>
 
@@ -249,6 +313,12 @@ onBeforeUnmount(() => {
           v-if="workerKind === 'worker-docker'"
           :config="workerDockerConfig"
           :auto-call-timeout-sec="dockerAutoCallTimeoutSec"
+          :show-prefilled-credential-hint="openedFromGoToStartupTool"
+        />
+        <WorkerBoxliteConfigForm
+          v-else-if="workerKind === 'worker-boxlite'"
+          :config="workerBoxliteConfig"
+          :auto-call-timeout-sec="boxliteAutoCallTimeoutSec"
           :show-prefilled-credential-hint="openedFromGoToStartupTool"
         />
         <WorkerSysConfigForm

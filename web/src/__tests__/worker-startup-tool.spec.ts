@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  buildWorkerBoxliteStartupCommand,
   buildWorkerDockerStartupCommand,
   buildWorkerSysStartupCommand,
+  createDefaultWorkerBoxliteStartupConfig,
   createDefaultWorkerDockerStartupConfig,
   createDefaultWorkerSysStartupConfig,
   useWorkerStartupTool,
@@ -37,6 +39,26 @@ describe('worker startup tool command builder', () => {
     expect(result.command).toContain(
       'WORKER_READ_IMAGE_ALLOWED_PATHS=\'["/data/images","/tmp/a.png"]\' \\',
     )
+  })
+
+  it('builds worker-boxlite command with runtime-specific env vars', () => {
+    const config = createDefaultWorkerBoxliteStartupConfig()
+    config.workerID = 'node-boxlite-1'
+    config.workerSecret = 'secret-boxlite-1'
+    config.boxliteHome = '/var/lib/onlyboxes/boxlite'
+    config.pythonExecMemoryMib = 512
+    config.terminalExportMaxBytes = 0
+
+    const result = buildWorkerBoxliteStartupCommand(config)
+
+    expect(result.errors).toEqual([])
+    expect(result.command).toContain("WORKER_ID='node-boxlite-1' \\")
+    expect(result.command).toContain(
+      "WORKER_BOXLITE_HOME='/var/lib/onlyboxes/boxlite' \\",
+    )
+    expect(result.command).toContain("WORKER_PYTHON_EXEC_MEMORY_MIB='512' \\")
+    expect(result.command).toContain("WORKER_TERMINAL_EXPORT_MAX_BYTES='0' \\")
+    expect(result.command).toContain("'./onlyboxes-worker-boxlite'")
   })
 
   it('includes call timeout only in manual mode', () => {
@@ -116,6 +138,21 @@ describe('useWorkerStartupTool with initial values', () => {
 
     expect(workerKind.value).toBe('worker-docker')
     expect(workerDockerConfig.workerID).toBe('test-id')
+    expect(workerSysConfig.workerID).toBe('')
+  })
+
+  it('fills worker-boxlite config when workerKind is worker-boxlite', () => {
+    const { workerKind, workerBoxliteConfig, workerDockerConfig, workerSysConfig } =
+      useWorkerStartupTool({
+        workerKind: 'worker-boxlite',
+        workerID: 'test-id',
+        workerSecret: 'test-secret',
+      })
+
+    expect(workerKind.value).toBe('worker-boxlite')
+    expect(workerBoxliteConfig.workerID).toBe('test-id')
+    expect(workerBoxliteConfig.workerSecret).toBe('test-secret')
+    expect(workerDockerConfig.workerID).toBe('')
     expect(workerSysConfig.workerID).toBe('')
   })
 

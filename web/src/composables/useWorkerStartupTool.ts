@@ -2,6 +2,7 @@ import { computed, reactive, ref } from 'vue'
 
 import type {
   StartupCommandBuildResult,
+  WorkerBoxliteStartupConfig,
   WorkerDockerStartupConfig,
   WorkerStartupKind,
   WorkerSysStartupConfig,
@@ -12,6 +13,7 @@ const defaultConsoleGRPCTarget = '127.0.0.1:50051'
 const defaultHeartbeatIntervalSec = 5
 const defaultHeartbeatJitterPct = 20
 const defaultDockerBinaryPath = './onlyboxes-worker-docker'
+const defaultBoxliteBinaryPath = './onlyboxes-worker-boxlite'
 const defaultSysBinaryPath = './onlyboxes-worker-sys'
 const defaultTerminalOutputLimitBytes = 1024 * 1024
 const defaultComputerUseOutputLimitBytes = 1024 * 1024
@@ -19,7 +21,13 @@ const defaultTerminalLeaseMinSec = 60
 const defaultTerminalLeaseMaxSec = 1800
 const defaultTerminalLeaseDefaultSec = 60
 const defaultPythonExecDockerImage = 'ghcr.io/astral-sh/uv:python3.12-bookworm-slim'
+const defaultPythonExecBoxliteImage = 'ghcr.io/astral-sh/uv:python3.12-bookworm-slim'
 const defaultTerminalExecDockerImage = 'coolfan1024/onlyboxes-default-worker:0.0.5'
+const defaultTerminalExecBoxliteImage = 'coolfan1024/onlyboxes-default-worker:0.0.5'
+const defaultBoxliteMemoryMib = 256
+const defaultBoxliteCpus = 1
+const defaultBoxliteMaxProcesses = 128
+const defaultTerminalExportMaxBytes = 0
 
 type BuildState = {
   envEntries: Array<[string, string]>
@@ -58,6 +66,20 @@ function parsePercentInt(
 } {
   const normalized = Number.isFinite(value) ? Math.floor(value) : Number.NaN
   if (normalized >= 0 && normalized <= 100) {
+    return { value: normalized, valid: true }
+  }
+  return { value: fallbackValue, valid: false }
+}
+
+function parseNonNegativeInt(
+  value: number,
+  fallbackValue: number,
+): {
+  value: number
+  valid: boolean
+} {
+  const normalized = Number.isFinite(value) ? Math.floor(value) : Number.NaN
+  if (normalized >= 0) {
     return { value: normalized, valid: true }
   }
   return { value: fallbackValue, valid: false }
@@ -148,7 +170,7 @@ function formatMultilineCommand(envEntries: Array<[string, string]>, binaryPath:
 
 function appendCommonEnv(
   state: BuildState,
-  config: WorkerDockerStartupConfig | WorkerSysStartupConfig,
+  config: WorkerDockerStartupConfig | WorkerBoxliteStartupConfig | WorkerSysStartupConfig,
 ): {
   heartbeatSec: number
 } {
@@ -269,6 +291,37 @@ export function createDefaultWorkerSysStartupConfig(): WorkerSysStartupConfig {
   }
 }
 
+export function createDefaultWorkerBoxliteStartupConfig(): WorkerBoxliteStartupConfig {
+  return {
+    workerID: '',
+    workerSecret: '',
+    consoleGRPCTarget: defaultConsoleGRPCTarget,
+    consoleInsecure: false,
+    heartbeatIntervalSec: defaultHeartbeatIntervalSec,
+    heartbeatJitterPct: defaultHeartbeatJitterPct,
+    callTimeoutMode: 'auto',
+    callTimeoutSec: defaultCallTimeoutSec(defaultHeartbeatIntervalSec),
+    binaryPath: defaultBoxliteBinaryPath,
+    nodeName: '',
+    version: '',
+    labelsText: '',
+    boxliteHome: '',
+    pythonExecBoxliteImage: defaultPythonExecBoxliteImage,
+    pythonExecMemoryMib: defaultBoxliteMemoryMib,
+    pythonExecCpus: defaultBoxliteCpus,
+    pythonExecMaxProcesses: defaultBoxliteMaxProcesses,
+    terminalExecBoxliteImage: defaultTerminalExecBoxliteImage,
+    terminalExecMemoryMib: defaultBoxliteMemoryMib,
+    terminalExecCpus: defaultBoxliteCpus,
+    terminalExecMaxProcesses: defaultBoxliteMaxProcesses,
+    terminalLeaseMinSec: defaultTerminalLeaseMinSec,
+    terminalLeaseMaxSec: defaultTerminalLeaseMaxSec,
+    terminalLeaseDefaultSec: defaultTerminalLeaseDefaultSec,
+    terminalOutputLimitBytes: defaultTerminalOutputLimitBytes,
+    terminalExportMaxBytes: defaultTerminalExportMaxBytes,
+  }
+}
+
 export function buildWorkerDockerStartupCommand(
   config: WorkerDockerStartupConfig,
 ): StartupCommandBuildResult {
@@ -335,6 +388,151 @@ export function buildWorkerDockerStartupCommand(
   state.envEntries.push([
     'WORKER_TERMINAL_OUTPUT_LIMIT_BYTES',
     String(terminalOutputLimitBytes.value),
+  ])
+
+  return {
+    command: formatMultilineCommand(state.envEntries, config.binaryPath.trim()),
+    errors: state.errors,
+    warnings: state.warnings,
+  }
+}
+
+export function buildWorkerBoxliteStartupCommand(
+  config: WorkerBoxliteStartupConfig,
+): StartupCommandBuildResult {
+  const state = emptyBuildState()
+  appendCommonEnv(state, config)
+
+  const boxliteHome = config.boxliteHome.trim()
+  const pythonExecBoxliteImage = config.pythonExecBoxliteImage.trim()
+  const terminalExecBoxliteImage = config.terminalExecBoxliteImage.trim()
+  if (!pythonExecBoxliteImage) {
+    state.errors.push('WORKER_PYTHON_EXEC_BOXLITE_IMAGE is required.')
+  }
+  if (!terminalExecBoxliteImage) {
+    state.errors.push('WORKER_TERMINAL_EXEC_BOXLITE_IMAGE is required.')
+  }
+
+  const pythonExecMemoryMib = parsePositiveInt(
+    config.pythonExecMemoryMib,
+    defaultBoxliteMemoryMib,
+  )
+  if (!pythonExecMemoryMib.valid) {
+    state.errors.push('WORKER_PYTHON_EXEC_MEMORY_MIB must be a positive integer.')
+  }
+
+  const pythonExecCpus = parsePositiveInt(config.pythonExecCpus, defaultBoxliteCpus)
+  if (!pythonExecCpus.valid) {
+    state.errors.push('WORKER_PYTHON_EXEC_CPUS must be a positive integer.')
+  }
+
+  const pythonExecMaxProcesses = parsePositiveInt(
+    config.pythonExecMaxProcesses,
+    defaultBoxliteMaxProcesses,
+  )
+  if (!pythonExecMaxProcesses.valid) {
+    state.errors.push('WORKER_PYTHON_EXEC_MAX_PROCESSES must be a positive integer.')
+  }
+
+  const terminalExecMemoryMib = parsePositiveInt(
+    config.terminalExecMemoryMib,
+    defaultBoxliteMemoryMib,
+  )
+  if (!terminalExecMemoryMib.valid) {
+    state.errors.push('WORKER_TERMINAL_EXEC_MEMORY_MIB must be a positive integer.')
+  }
+
+  const terminalExecCpus = parsePositiveInt(config.terminalExecCpus, defaultBoxliteCpus)
+  if (!terminalExecCpus.valid) {
+    state.errors.push('WORKER_TERMINAL_EXEC_CPUS must be a positive integer.')
+  }
+
+  const terminalExecMaxProcesses = parsePositiveInt(
+    config.terminalExecMaxProcesses,
+    defaultBoxliteMaxProcesses,
+  )
+  if (!terminalExecMaxProcesses.valid) {
+    state.errors.push('WORKER_TERMINAL_EXEC_MAX_PROCESSES must be a positive integer.')
+  }
+
+  const terminalLeaseMinSec = parsePositiveInt(
+    config.terminalLeaseMinSec,
+    defaultTerminalLeaseMinSec,
+  )
+  if (!terminalLeaseMinSec.valid) {
+    state.errors.push('WORKER_TERMINAL_LEASE_MIN_SEC must be a positive integer.')
+  }
+
+  const terminalLeaseMaxRaw = parsePositiveInt(
+    config.terminalLeaseMaxSec,
+    defaultTerminalLeaseMaxSec,
+  )
+  if (!terminalLeaseMaxRaw.valid) {
+    state.errors.push('WORKER_TERMINAL_LEASE_MAX_SEC must be a positive integer.')
+  }
+
+  const terminalLeaseMaxSec = Math.max(terminalLeaseMinSec.value, terminalLeaseMaxRaw.value)
+  if (terminalLeaseMaxRaw.value < terminalLeaseMinSec.value) {
+    state.warnings.push(
+      'WORKER_TERMINAL_LEASE_MAX_SEC was lower than WORKER_TERMINAL_LEASE_MIN_SEC and was raised automatically.',
+    )
+  }
+
+  const terminalLeaseDefaultRaw = parsePositiveInt(
+    config.terminalLeaseDefaultSec,
+    defaultTerminalLeaseDefaultSec,
+  )
+  if (!terminalLeaseDefaultRaw.valid) {
+    state.errors.push('WORKER_TERMINAL_LEASE_DEFAULT_SEC must be a positive integer.')
+  }
+  const terminalLeaseDefaultSec = Math.max(
+    terminalLeaseMinSec.value,
+    Math.min(terminalLeaseMaxSec, terminalLeaseDefaultRaw.value),
+  )
+
+  const terminalOutputLimitBytes = parsePositiveInt(
+    config.terminalOutputLimitBytes,
+    defaultTerminalOutputLimitBytes,
+  )
+  if (!terminalOutputLimitBytes.valid) {
+    state.errors.push('WORKER_TERMINAL_OUTPUT_LIMIT_BYTES must be a positive integer.')
+  }
+
+  const terminalExportMaxBytes = parseNonNegativeInt(
+    config.terminalExportMaxBytes,
+    defaultTerminalExportMaxBytes,
+  )
+  if (!terminalExportMaxBytes.valid) {
+    state.errors.push('WORKER_TERMINAL_EXPORT_MAX_BYTES must be a non-negative integer.')
+  }
+
+  if (boxliteHome) {
+    state.envEntries.push(['WORKER_BOXLITE_HOME', boxliteHome])
+  }
+  state.envEntries.push(['WORKER_PYTHON_EXEC_BOXLITE_IMAGE', pythonExecBoxliteImage])
+  state.envEntries.push(['WORKER_PYTHON_EXEC_MEMORY_MIB', String(pythonExecMemoryMib.value)])
+  state.envEntries.push(['WORKER_PYTHON_EXEC_CPUS', String(pythonExecCpus.value)])
+  state.envEntries.push([
+    'WORKER_PYTHON_EXEC_MAX_PROCESSES',
+    String(pythonExecMaxProcesses.value),
+  ])
+  state.envEntries.push(['WORKER_TERMINAL_EXEC_BOXLITE_IMAGE', terminalExecBoxliteImage])
+  state.envEntries.push(['WORKER_TERMINAL_EXEC_MEMORY_MIB', String(terminalExecMemoryMib.value)])
+  state.envEntries.push(['WORKER_TERMINAL_EXEC_CPUS', String(terminalExecCpus.value)])
+  state.envEntries.push([
+    'WORKER_TERMINAL_EXEC_MAX_PROCESSES',
+    String(terminalExecMaxProcesses.value),
+  ])
+  state.envEntries.push(['WORKER_TERMINAL_LEASE_MIN_SEC', String(terminalLeaseMinSec.value)])
+  state.envEntries.push(['WORKER_TERMINAL_LEASE_MAX_SEC', String(terminalLeaseMaxSec)])
+  state.envEntries.push(['WORKER_TERMINAL_LEASE_DEFAULT_SEC', String(terminalLeaseDefaultSec)])
+  state.envEntries.push([
+    'WORKER_TERMINAL_OUTPUT_LIMIT_BYTES',
+    String(terminalOutputLimitBytes.value),
+  ])
+  state.envEntries.push([
+    'WORKER_TERMINAL_EXPORT_MAX_BYTES',
+    String(terminalExportMaxBytes.value),
   ])
 
   return {
@@ -419,10 +617,18 @@ export function useWorkerStartupTool(initial?: WorkerStartupToolInitialValues) {
   const workerDockerConfig = reactive<WorkerDockerStartupConfig>(
     createDefaultWorkerDockerStartupConfig(),
   )
+  const workerBoxliteConfig = reactive<WorkerBoxliteStartupConfig>(
+    createDefaultWorkerBoxliteStartupConfig(),
+  )
   const workerSysConfig = reactive<WorkerSysStartupConfig>(createDefaultWorkerSysStartupConfig())
 
   if (initial) {
-    const target = workerKind.value === 'worker-docker' ? workerDockerConfig : workerSysConfig
+    const target =
+      workerKind.value === 'worker-docker'
+        ? workerDockerConfig
+        : workerKind.value === 'worker-boxlite'
+          ? workerBoxliteConfig
+          : workerSysConfig
     if (initial.workerID !== undefined) {
       target.workerID = initial.workerID
     }
@@ -435,10 +641,19 @@ export function useWorkerStartupTool(initial?: WorkerStartupToolInitialValues) {
   }
 
   const workerDockerResult = computed(() => buildWorkerDockerStartupCommand(workerDockerConfig))
+  const workerBoxliteResult = computed(() =>
+    buildWorkerBoxliteStartupCommand(workerBoxliteConfig),
+  )
   const workerSysResult = computed(() => buildWorkerSysStartupCommand(workerSysConfig))
 
   const currentBuildResult = computed<StartupCommandBuildResult>(() => {
-    return workerKind.value === 'worker-docker' ? workerDockerResult.value : workerSysResult.value
+    if (workerKind.value === 'worker-docker') {
+      return workerDockerResult.value
+    }
+    if (workerKind.value === 'worker-boxlite') {
+      return workerBoxliteResult.value
+    }
+    return workerSysResult.value
   })
 
   const commandText = computed(() => currentBuildResult.value.command)
@@ -455,6 +670,7 @@ export function useWorkerStartupTool(initial?: WorkerStartupToolInitialValues) {
   return {
     workerKind,
     workerDockerConfig,
+    workerBoxliteConfig,
     workerSysConfig,
     commandText,
     errorMessages,
