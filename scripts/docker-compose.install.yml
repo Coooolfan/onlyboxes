@@ -13,4 +13,4 @@ services:
       - "{{HTTP_PORT}}:8089"
       - "{{GRPC_PORT}}:50051"
     volumes:
-      - ./db:/var/lib/onlyboxes/db
+      - ./db:/app/db
