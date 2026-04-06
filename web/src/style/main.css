@@ -36,6 +36,10 @@
   --color-code-bg: #0f141b;
   --color-code-fg: #eff5ff;
   --color-code-border: #202936;
+  --color-selection-bg: rgba(21, 25, 34, 0.14);
+  --color-selection-fg: #121926;
+  --color-selection-code-bg: #39475c;
+  --color-selection-code-fg: #ffffff;
   --color-overlay: rgba(9, 12, 16, 0.46);
   --color-focus-ring: rgba(21, 25, 34, 0.16);
 
@@ -94,6 +98,10 @@
   --color-code-bg: #070b10;
   --color-code-fg: #eef4ff;
   --color-code-border: #1c2735;
+  --color-selection-bg: rgba(238, 243, 248, 0.24);
+  --color-selection-fg: #f4f7fb;
+  --color-selection-code-bg: #dbe3ec;
+  --color-selection-code-fg: #0b1016;
   --color-overlay: rgba(4, 7, 11, 0.68);
   --color-focus-ring: rgba(238, 243, 248, 0.18);
 
@@ -126,7 +134,8 @@ body {
 }
 
 ::selection {
-  background: var(--color-surface-strong);
+  background: var(--color-selection-bg);
+  color: var(--color-selection-fg);
 }
 
 button,
@@ -290,6 +299,12 @@ summary::-webkit-details-marker {
   background: var(--color-code-bg);
   color: var(--color-code-fg);
   border-color: var(--color-code-border);
+}
+
+.ui-code-inline::selection,
+.ui-code-block::selection {
+  background: var(--color-selection-code-bg);
+  color: var(--color-selection-code-fg);
 }
 
 .ui-modal-overlay {
