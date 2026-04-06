@@ -193,7 +193,7 @@ Default endpoints:
 | `WORKER_HEARTBEAT_INTERVAL_SEC` | `5` | Worker heartbeat interval |
 | `WORKER_HEARTBEAT_JITTER_PCT` | `20` | Heartbeat jitter percent |
 | `WORKER_PYTHON_EXEC_DOCKER_IMAGE` | `ghcr.io/astral-sh/uv:python3.12-bookworm-slim` | Runtime image for `pythonExec` |
-| `WORKER_TERMINAL_EXEC_DOCKER_IMAGE` | `coolfan1024/onlyboxes-default-worker:0.0.3` | Runtime image for `terminalExec` |
+| `WORKER_TERMINAL_EXEC_DOCKER_IMAGE` | `coolfan1024/onlyboxes-default-worker:0.0.5` | Runtime image for `terminalExec` |
 | `WORKER_TERMINAL_OUTPUT_LIMIT_BYTES` | `1048576` | Per-stream output limit |
 
 ## API Surfaces

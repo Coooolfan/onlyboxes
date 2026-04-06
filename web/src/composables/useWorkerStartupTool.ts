@@ -19,7 +19,7 @@ const defaultTerminalLeaseMinSec = 60
 const defaultTerminalLeaseMaxSec = 1800
 const defaultTerminalLeaseDefaultSec = 60
 const defaultPythonExecDockerImage = 'ghcr.io/astral-sh/uv:python3.12-bookworm-slim'
-const defaultTerminalExecDockerImage = 'coolfan1024/onlyboxes-default-worker:0.0.3'
+const defaultTerminalExecDockerImage = 'coolfan1024/onlyboxes-default-worker:0.0.5'
 
 type BuildState = {
   envEntries: Array<[string, string]>
