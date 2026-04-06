@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { Github, Languages, List, Moon, Sun, X } from 'lucide-react'
 import {
@@ -16,6 +16,12 @@ interface TocItem {
   id: string
   title: string
   level: 2 | 3
+}
+
+interface TocHighlight {
+  top: number
+  height: number
+  visible: boolean
 }
 
 const docsCopy = {
@@ -64,6 +70,77 @@ function useTableOfContents(key: string) {
   }, [key])
 
   return items
+}
+
+function areSameIds(left: string[], right: string[]) {
+  if (left.length !== right.length) {
+    return false
+  }
+
+  return left.every((value, index) => value === right[index])
+}
+
+function useVisibleTocItems(items: TocItem[], key: string) {
+  const [activeIds, setActiveIds] = useState<string[]>([])
+
+  useEffect(() => {
+    if (!items.length) {
+      setActiveIds((current) => (current.length ? [] : current))
+      return
+    }
+
+    let frame = 0
+
+    const updateVisibleSections = () => {
+      const container = document.getElementById('docs-content')
+
+      if (!container) {
+        setActiveIds((current) => (current.length ? [] : current))
+        return
+      }
+
+      const headings = items
+        .map((item) => document.getElementById(item.id))
+        .filter((heading): heading is HTMLElement => heading instanceof HTMLElement)
+
+      if (!headings.length) {
+        setActiveIds((current) => (current.length ? [] : current))
+        return
+      }
+
+      const viewportTop = window.scrollY + 104
+      const viewportBottom = window.scrollY + window.innerHeight - 32
+      const contentBottom = container.getBoundingClientRect().bottom + window.scrollY
+      const nextActiveIds = headings.flatMap((heading, index) => {
+        const sectionTop = heading.getBoundingClientRect().top + window.scrollY
+        const nextHeading = headings[index + 1]
+        const sectionBottom = nextHeading
+          ? nextHeading.getBoundingClientRect().top + window.scrollY
+          : contentBottom
+
+        return sectionBottom > viewportTop && sectionTop < viewportBottom ? [heading.id] : []
+      })
+
+      setActiveIds((current) => (areSameIds(current, nextActiveIds) ? current : nextActiveIds))
+    }
+
+    const scheduleUpdate = () => {
+      window.cancelAnimationFrame(frame)
+      frame = window.requestAnimationFrame(updateVisibleSections)
+    }
+
+    scheduleUpdate()
+    window.addEventListener('scroll', scheduleUpdate, { passive: true })
+    window.addEventListener('resize', scheduleUpdate)
+
+    return () => {
+      window.cancelAnimationFrame(frame)
+      window.removeEventListener('scroll', scheduleUpdate)
+      window.removeEventListener('resize', scheduleUpdate)
+    }
+  }, [items, key])
+
+  return activeIds
 }
 
 function DocsNavigation({
@@ -121,8 +198,65 @@ function DocsNavigation({
   )
 }
 
-function DocsTableOfContents({ locale, items, isDark }: { locale: DocsLocale; items: TocItem[]; isDark: boolean }) {
+function DocsTableOfContents({
+  locale,
+  items,
+  activeIds,
+  isDark,
+}: {
+  locale: DocsLocale
+  items: TocItem[]
+  activeIds: string[]
+  isDark: boolean
+}) {
   const copy = docsCopy[locale]
+  const listRef = useRef<HTMLUListElement | null>(null)
+  const itemRefs = useRef<Record<string, HTMLAnchorElement | null>>({})
+  const [highlight, setHighlight] = useState<TocHighlight>({ top: 0, height: 0, visible: false })
+
+  useEffect(() => {
+    const updateHighlight = () => {
+      const list = listRef.current
+
+      if (!list || !activeIds.length) {
+        setHighlight((current) => (current.visible ? { top: 0, height: 0, visible: false } : current))
+        return
+      }
+
+      const activeLinks = activeIds
+        .map((id) => itemRefs.current[id])
+        .filter((link): link is HTMLAnchorElement => link instanceof HTMLAnchorElement)
+
+      if (!activeLinks.length) {
+        setHighlight((current) => (current.visible ? { top: 0, height: 0, visible: false } : current))
+        return
+      }
+
+      const listRect = list.getBoundingClientRect()
+      const firstRect = activeLinks[0].getBoundingClientRect()
+      const lastRect = activeLinks[activeLinks.length - 1].getBoundingClientRect()
+      const nextHighlight = {
+        top: firstRect.top - listRect.top,
+        height: lastRect.bottom - firstRect.top,
+        visible: true,
+      }
+
+      setHighlight((current) =>
+        current.top === nextHighlight.top &&
+        current.height === nextHighlight.height &&
+        current.visible === nextHighlight.visible
+          ? current
+          : nextHighlight,
+      )
+    }
+
+    updateHighlight()
+    window.addEventListener('resize', updateHighlight)
+
+    return () => {
+      window.removeEventListener('resize', updateHighlight)
+    }
+  }, [activeIds, items])
 
   if (!items.length) {
     return null
@@ -137,20 +271,47 @@ function DocsTableOfContents({ locale, items, isDark }: { locale: DocsLocale; it
       >
         {copy.onThisPage}
       </p>
-      <ul className="space-y-1.5">
-        {items.map((item) => (
-          <li key={item.id}>
-            <a
-              href={`#${item.id}`}
-              className={`block text-sm transition-colors duration-300 ${
-                isDark ? 'text-neutral-500 hover:text-white' : 'text-neutral-500 hover:text-neutral-950'
-              } ${item.level === 3 ? 'pl-3' : ''}`}
-            >
-              {item.title}
-            </a>
-          </li>
-        ))}
-      </ul>
+      <div className="relative">
+        <div
+          aria-hidden="true"
+          className={`pointer-events-none absolute inset-x-0 rounded-md transition-[transform,height,opacity] duration-300 ease-out ${
+            isDark ? 'bg-neutral-900/80' : 'bg-neutral-100'
+          }`}
+          style={{
+            height: `${highlight.height}px`,
+            opacity: highlight.visible ? 1 : 0,
+            transform: `translateY(${highlight.top}px)`,
+          }}
+        />
+        <ul ref={listRef} className="relative space-y-1.5">
+          {items.map((item) => {
+            const active = activeIds.includes(item.id)
+
+            return (
+              <li key={item.id}>
+                <a
+                  href={`#${item.id}`}
+                  ref={(node) => {
+                    itemRefs.current[item.id] = node
+                  }}
+                  data-active={active ? 'true' : 'false'}
+                  className={`relative z-10 block rounded-md px-2.5 py-1.5 text-sm transition-colors duration-300 ${
+                    active
+                      ? isDark
+                        ? 'text-white'
+                        : 'text-neutral-950'
+                      : isDark
+                        ? 'text-neutral-500 hover:text-white'
+                        : 'text-neutral-500 hover:text-neutral-950'
+                  } ${item.level === 3 ? 'pl-5' : ''}`}
+                >
+                  {item.title}
+                </a>
+              </li>
+            )
+          })}
+        </ul>
+      </div>
     </div>
   )
 }
@@ -162,6 +323,7 @@ export function DocsPage({ locale }: { locale: DocsLocale }) {
   const copy = docsCopy[locale]
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const tocItems = useTableOfContents(`${locale}:${currentSlug}:${entry?.meta.title ?? '404'}`)
+  const activeTocItems = useVisibleTocItems(tocItems, `${locale}:${currentSlug}:${entry?.meta.title ?? '404'}`)
   const targetLocale = locale === 'en' ? 'zh-CN' : 'en'
 
   const { isDark, setIsDark, setLocale: setSiteLocale } = useSiteContext()
@@ -298,7 +460,7 @@ export function DocsPage({ locale }: { locale: DocsLocale }) {
             isDark ? 'border-neutral-800' : 'border-neutral-200'
           }`}
         >
-          <DocsTableOfContents locale={locale} items={tocItems} isDark={isDark} />
+          <DocsTableOfContents locale={locale} items={tocItems} activeIds={activeTocItems} isDark={isDark} />
         </aside>
       </div>
 
