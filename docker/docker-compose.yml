@@ -12,4 +12,4 @@ services:
       - "8089:8089"
       - "50051:50051"
     volumes:
-      - ./db:/var/lib/onlyboxes/db
+      - ./db:/app/db
