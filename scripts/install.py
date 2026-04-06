@@ -25,7 +25,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 GITHUB_REPO = "Coooolfan/onlyboxes"
-DEFAULT_TAG = "0.3.0"
+DEFAULT_TAG = "0.3.1"
 COMPOSE_TEMPLATE_URL = (
     "https://raw.githubusercontent.com/{repo}/{tag}/scripts/docker-compose.install.yml"
 )
