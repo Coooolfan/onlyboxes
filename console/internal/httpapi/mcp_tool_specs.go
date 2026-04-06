@@ -104,15 +104,15 @@ type pythonExecPayload struct {
 	Code string `json:"code"`
 }
 
-var mcpEchoToolDescription = "Echoes the input message exactly as returned by an online worker supporting the echo capability. Use this tool for connectivity checks, request tracing, and latency baselines. Do not use it for code execution, file operations, or long-running work. timeout_ms is an end-to-end dispatch timeout in milliseconds (1-60000, default 5000)."
+var mcpEchoToolDescription = "Echoes the input message exactly as returned by an online worker. Use this tool for connectivity checks, request tracing, and latency baselines. Do not use it for code execution, file operations, or long-running work. timeout_ms is an end-to-end dispatch timeout in milliseconds (1-60000, default 5000)."
 
-var mcpPythonExecToolDescription = "Executes Python code in the worker sandbox via the pythonExec capability and returns stdout, stderr, and exit_code. Each invocation runs in a fresh, isolated environment that is destroyed immediately upon completion — no filesystem state, installed packages, or variables persist across calls. If you need to retain files or share state between steps, use terminalExec instead. Third-party packages are NOT available by default and cannot be installed via pip at runtime. The only way to use third-party dependencies is PEP 723 inline script metadata: add a '# /// script' block at the top of your code to declare dependencies (e.g. '# dependencies = [\"requests\"]') — they will be automatically installed before execution. Do not use it for long-running jobs. timeout_ms is a synchronous execution timeout in milliseconds (1-600000, default 60000). A non-zero exit_code is returned as normal tool output, not as a protocol error."
+var mcpPythonExecToolDescription = "Executes Python code in an ephemeral container and returns stdout, stderr, and exit_code. Each invocation runs in a fresh, isolated environment that is destroyed immediately upon completion — no filesystem state, installed packages, or variables persist across calls. If you need to retain files or share state between steps, use terminalExec instead. Third-party packages are NOT available by default and cannot be installed via pip at runtime. The only way to use third-party dependencies is PEP 723 inline script metadata: add a '# /// script' block at the top of your code to declare dependencies (e.g. '# dependencies = [\"requests\"]') — they will be automatically installed before execution. Do not use it for long-running jobs. timeout_ms is a synchronous execution timeout in milliseconds (1-600000, default 60000). A non-zero exit_code is returned as normal tool output, not as a protocol error."
 
-var mcpTerminalExecToolDescription = "Executes shell commands in a persistent Docker-backed terminal session via the terminalExec capability. Sessions run on onlyboxes default-work-image (ubuntu:24.04), commands are executed with sh -lc, and common tools are preinstalled (python3/pip/venv, git, curl/wget, jq, ripgrep, fd-find, tree, file, zip/unzip, sqlite3). Omitting session_id creates a new session per call with no state carried over — equivalent to a one-shot execution. To retain filesystem state across calls, supply the same session_id on every call. create_if_missing controls what happens when the given session_id does not exist on the worker: false (default) returns a session_not_found error; true creates the session instead. lease_ttl_sec extends session lease within configured bounds. timeout_ms is a synchronous execution timeout in milliseconds (1-600000, default 60000)."
+var mcpTerminalExecToolDescription = "Executes shell commands in a container-backed terminal session. Sessions are ephemeral by default but can be made persistent by reusing session_id across calls. Commands are executed with sh -lc, and common tools are preinstalled (python3/pip/venv, git, curl/wget, jq, ripgrep, fd-find, tree, file, zip/unzip, sqlite3, agent-browser). For headless browser automation, run `agent-browser --help` for usage. Omitting session_id creates a new session per call with no state carried over — equivalent to a one-shot execution. To retain filesystem state across calls, supply the same session_id on every call. create_if_missing controls what happens when the given session_id does not exist on the worker: false (default) returns a session_not_found error; true creates the session instead. lease_ttl_sec extends session lease within configured bounds. timeout_ms is a synchronous execution timeout in milliseconds (1-600000, default 60000)."
 
 var mcpComputerUseToolDescription = "Executes shell commands directly on the caller-owned worker-sys host OS via /bin/sh -lc. Unlike terminalExec, this tool runs on the bare host without container isolation and is stateless — each invocation is independent with no session persistence. Only one command runs at a time (single concurrency). This tool is account-scoped and requires a user-created worker-sys. timeout_ms is a synchronous execution timeout in milliseconds (1-600000, default 60000). request_id provides idempotency for retries."
 
-var mcpReadImageToolDescription = "Reads a file and returns it as inline image content when mime type is image/*. For unsupported mime types, returns a text explanation. When session_id is exactly \"computerUse\", routing uses the caller-owned worker-sys readImage capability; otherwise routing uses terminalResource for terminal sessions."
+var mcpReadImageToolDescription = "Reads a file and returns it as inline image content when mime type is image/*. For unsupported mime types, returns a text explanation. When session_id is exactly \"computerUse\", routing uses the caller-owned worker-sys (readImage); otherwise routing uses terminalResource for terminal sessions."
 
 var mcpExportFileToolDescription = "Exports a file from a session to the configured S3-compatible object store and returns a presigned download URL, object key, and filename. Pass the session_id returned by terminalExec to export from a terminal session, or the exact value \"computerUse\" to export from the caller-owned worker-sys host. timeout_ms is a synchronous execution timeout in milliseconds (1-600000, default 60000)."
 
@@ -127,7 +127,7 @@ var mcpEchoInputSchema = map[string]any{
 		},
 		"timeout_ms": map[string]any{
 			"type":        "integer",
-			"description": "Optional end-to-end dispatch timeout in milliseconds for the echo capability.",
+			"description": "Optional end-to-end dispatch timeout in milliseconds.",
 			"minimum":     minEchoTimeoutMS,
 			"maximum":     maxEchoTimeoutMS,
 			"default":     defaultMCPEchoTimeoutMS,
@@ -306,7 +306,7 @@ var mcpReadImageInputSchema = map[string]any{
 	"properties": map[string]any{
 		"session_id": map[string]any{
 			"type":        "string",
-			"description": "Terminal session identifier returned by terminalExec. Use exact value \"computerUse\" to route to caller-owned worker-sys readImage capability.",
+			"description": "Terminal session identifier returned by terminalExec. Use exact value \"computerUse\" to route to the caller-owned worker-sys (readImage).",
 		},
 		"file_path": map[string]any{
 			"type":        "string",
@@ -329,7 +329,7 @@ var mcpExportFileInputSchema = map[string]any{
 	"properties": map[string]any{
 		"session_id": map[string]any{
 			"type":        "string",
-			"description": "Session identifier. Use exact value \"computerUse\" to route to caller-owned worker-sys readImage capability; other values route to terminalResource for terminal sessions.",
+			"description": "Session identifier. Use exact value \"computerUse\" to route to the caller-owned worker-sys (readImage); other values route to terminalResource for terminal sessions.",
 		},
 		"file_path": map[string]any{
 			"type":        "string",
