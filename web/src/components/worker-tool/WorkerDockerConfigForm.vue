@@ -218,6 +218,74 @@ function handleCallTimeoutModeUpdate(value: string): void {
         </label>
 
         <label class="grid gap-1.5">
+          <span class="text-sm text-secondary">WORKER_PYTHON_EXEC_MEMORY_MIB</span>
+          <span class="text-xs text-secondary">Memory limit for pythonExec containers in MiB.</span>
+          <input
+            v-model.number="props.config.pythonExecMemoryMib"
+            type="number"
+            min="1"
+            class="ui-input rounded-md border px-3 py-2 text-sm"
+          />
+        </label>
+
+        <label class="grid gap-1.5">
+          <span class="text-sm text-secondary">WORKER_TERMINAL_EXEC_MEMORY_MIB</span>
+          <span class="text-xs text-secondary">Memory limit for terminalExec containers in MiB.</span>
+          <input
+            v-model.number="props.config.terminalExecMemoryMib"
+            type="number"
+            min="1"
+            class="ui-input rounded-md border px-3 py-2 text-sm"
+          />
+        </label>
+
+        <label class="grid gap-1.5">
+          <span class="text-sm text-secondary">WORKER_PYTHON_EXEC_CPUS</span>
+          <span class="text-xs text-secondary">CPU limit for pythonExec containers.</span>
+          <input
+            v-model.number="props.config.pythonExecCpus"
+            type="number"
+            min="0.1"
+            step="0.1"
+            class="ui-input rounded-md border px-3 py-2 text-sm"
+          />
+        </label>
+
+        <label class="grid gap-1.5">
+          <span class="text-sm text-secondary">WORKER_TERMINAL_EXEC_CPUS</span>
+          <span class="text-xs text-secondary">CPU limit for terminalExec containers.</span>
+          <input
+            v-model.number="props.config.terminalExecCpus"
+            type="number"
+            min="0.1"
+            step="0.1"
+            class="ui-input rounded-md border px-3 py-2 text-sm"
+          />
+        </label>
+
+        <label class="grid gap-1.5">
+          <span class="text-sm text-secondary">WORKER_PYTHON_EXEC_MAX_PROCESSES</span>
+          <span class="text-xs text-secondary">Maximum process count inside pythonExec containers.</span>
+          <input
+            v-model.number="props.config.pythonExecMaxProcesses"
+            type="number"
+            min="1"
+            class="ui-input rounded-md border px-3 py-2 text-sm"
+          />
+        </label>
+
+        <label class="grid gap-1.5">
+          <span class="text-sm text-secondary">WORKER_TERMINAL_EXEC_MAX_PROCESSES</span>
+          <span class="text-xs text-secondary">Maximum process count inside terminalExec containers.</span>
+          <input
+            v-model.number="props.config.terminalExecMaxProcesses"
+            type="number"
+            min="1"
+            class="ui-input rounded-md border px-3 py-2 text-sm"
+          />
+        </label>
+
+        <label class="grid gap-1.5">
           <span class="text-sm text-secondary">WORKER_TERMINAL_LEASE_MIN_SEC</span>
           <span class="text-xs text-secondary">Minimum lease duration for terminal sessions.</span>
           <input
@@ -261,6 +329,17 @@ function handleCallTimeoutModeUpdate(value: string): void {
             v-model.number="props.config.terminalOutputLimitBytes"
             type="number"
             min="1"
+            class="ui-input rounded-md border px-3 py-2 text-sm"
+          />
+        </label>
+
+        <label class="grid gap-1.5">
+          <span class="text-sm text-secondary">WORKER_TERMINAL_EXPORT_MAX_BYTES</span>
+          <span class="text-xs text-secondary">Maximum export file size in bytes; 0 disables the limit.</span>
+          <input
+            v-model.number="props.config.terminalExportMaxBytes"
+            type="number"
+            min="0"
             class="ui-input rounded-md border px-3 py-2 text-sm"
           />
         </label>

@@ -38,7 +38,7 @@ const (
 
 var waitReconnect = waitReconnectDelay
 var applyJitter = jitterDuration
-var runPythonExec = newPythonExecRunner("").Execute
+var runPythonExec = newPythonExecRunner("", "", "", 0).Execute
 var runTerminalExec = runTerminalExecUnavailable
 var runTerminalResource = runTerminalResourceUnavailable
 var runDockerCommand = runDockerCommandCLI
@@ -59,11 +59,16 @@ func Run(ctx context.Context, cfg config.Config) error {
 		OutputLimitBytes: cfg.TerminalOutputLimitBytes,
 		ExportMaxBytes:   cfg.TerminalExportMaxBytes,
 		DockerImage:      cfg.TerminalExecDockerImage,
-		MemoryLimit:      defaultTerminalExecMemoryLimit,
-		CPULimit:         defaultTerminalExecCPULimit,
-		PidsLimit:        defaultTerminalExecPidsLimit,
+		MemoryLimit:      cfg.TerminalExecMemoryLimit,
+		CPULimit:         cfg.TerminalExecCPULimit,
+		PidsLimit:        cfg.TerminalExecPidsLimit,
 	})
-	pythonRunner := newPythonExecRunner(cfg.PythonExecDockerImage)
+	pythonRunner := newPythonExecRunner(
+		cfg.PythonExecDockerImage,
+		cfg.PythonExecMemoryLimit,
+		cfg.PythonExecCPULimit,
+		cfg.PythonExecPidsLimit,
+	)
 	originalRunPythonExec := runPythonExec
 	runPythonExec = pythonRunner.Execute
 	originalRunTerminalExec := runTerminalExec

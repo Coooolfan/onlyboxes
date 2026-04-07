@@ -15,12 +15,26 @@ describe('worker startup tool command builder', () => {
     const config = createDefaultWorkerDockerStartupConfig()
     config.workerID = 'node-docker-1'
     config.workerSecret = 'secret-docker-1'
+    config.pythonExecMemoryMib = 512
+    config.pythonExecCpus = 2
+    config.pythonExecMaxProcesses = 256
+    config.terminalExecMemoryMib = 1024
+    config.terminalExecCpus = 3
+    config.terminalExecMaxProcesses = 512
+    config.terminalExportMaxBytes = 2048
 
     const result = buildWorkerDockerStartupCommand(config)
 
     expect(result.errors).toEqual([])
     expect(result.command).toContain("WORKER_ID='node-docker-1' \\")
     expect(result.command).toContain("WORKER_SECRET='secret-docker-1' \\")
+    expect(result.command).toContain("WORKER_PYTHON_EXEC_MEMORY_MIB='512' \\")
+    expect(result.command).toContain("WORKER_PYTHON_EXEC_CPUS='2' \\")
+    expect(result.command).toContain("WORKER_PYTHON_EXEC_MAX_PROCESSES='256' \\")
+    expect(result.command).toContain("WORKER_TERMINAL_EXEC_MEMORY_MIB='1024' \\")
+    expect(result.command).toContain("WORKER_TERMINAL_EXEC_CPUS='3' \\")
+    expect(result.command).toContain("WORKER_TERMINAL_EXEC_MAX_PROCESSES='512' \\")
+    expect(result.command).toContain("WORKER_TERMINAL_EXPORT_MAX_BYTES='2048' \\")
     expect(result.command).toContain('\n')
     expect(result.command).toContain("'./onlyboxes-worker-docker'")
   })

@@ -16,19 +16,25 @@ import (
 
 type pythonExecRunner struct {
 	dockerImage string
+	memoryLimit string
+	cpuLimit    string
+	pidsLimit   int
 }
 
-func newPythonExecRunner(dockerImage string) *pythonExecRunner {
+func newPythonExecRunner(dockerImage string, memoryLimit string, cpuLimit string, pidsLimit int) *pythonExecRunner {
 	return &pythonExecRunner{
 		dockerImage: dockerImage,
+		memoryLimit: memoryLimit,
+		cpuLimit:    cpuLimit,
+		pidsLimit:   pidsLimit,
 	}
 }
 
 func (r *pythonExecRunner) Execute(ctx context.Context, code string) (pythonExecRunResult, error) {
 	if r == nil {
-		return runPythonExecInDockerWithImage(ctx, "", code)
+		return runPythonExecInDockerWithImage(ctx, "", "", "", 0, code)
 	}
-	return runPythonExecInDockerWithImage(ctx, r.dockerImage, code)
+	return runPythonExecInDockerWithImage(ctx, r.dockerImage, r.memoryLimit, r.cpuLimit, r.pidsLimit, code)
 }
 
 type dockerCommandResult struct {
@@ -43,13 +49,13 @@ type dockerContainerState struct {
 	ExitCode int
 }
 
-func runPythonExecInDockerWithImage(ctx context.Context, dockerImage string, code string) (pythonExecRunResult, error) {
+func runPythonExecInDockerWithImage(ctx context.Context, dockerImage string, memoryLimit string, cpuLimit string, pidsLimit int, code string) (pythonExecRunResult, error) {
 	containerName, err := pythonExecContainerNameFn()
 	if err != nil {
 		return pythonExecRunResult{}, fmt.Errorf("allocate pythonExec container name: %w", err)
 	}
 
-	createResult := runDockerCommand(ctx, pythonExecDockerCreateArgsWithImage(containerName, dockerImage, code)...)
+	createResult := runDockerCommand(ctx, pythonExecDockerCreateArgsWithImage(containerName, dockerImage, memoryLimit, cpuLimit, pidsLimit, code)...)
 	if createResult.Err != nil {
 		return pythonExecRunResult{}, fmt.Errorf("docker create failed: %w", createResult.Err)
 	}
@@ -136,13 +142,32 @@ func runDockerCommandCLI(ctx context.Context, args ...string) dockerCommandResul
 }
 
 func pythonExecDockerCreateArgs(containerName string, code string) []string {
-	return pythonExecDockerCreateArgsWithImage(containerName, defaultPythonExecDockerImage, code)
+	return pythonExecDockerCreateArgsWithImage(
+		containerName,
+		defaultPythonExecDockerImage,
+		defaultPythonExecMemoryLimit,
+		defaultPythonExecCPULimit,
+		defaultPythonExecPidsLimit,
+		code,
+	)
 }
 
-func pythonExecDockerCreateArgsWithImage(containerName string, dockerImage string, code string) []string {
+func pythonExecDockerCreateArgsWithImage(containerName string, dockerImage string, memoryLimit string, cpuLimit string, pidsLimit int, code string) []string {
 	resolvedDockerImage := strings.TrimSpace(dockerImage)
 	if resolvedDockerImage == "" {
 		resolvedDockerImage = defaultPythonExecDockerImage
+	}
+	resolvedMemoryLimit := strings.TrimSpace(memoryLimit)
+	if resolvedMemoryLimit == "" {
+		resolvedMemoryLimit = defaultPythonExecMemoryLimit
+	}
+	resolvedCPULimit := strings.TrimSpace(cpuLimit)
+	if resolvedCPULimit == "" {
+		resolvedCPULimit = defaultPythonExecCPULimit
+	}
+	resolvedPidsLimit := pidsLimit
+	if resolvedPidsLimit <= 0 {
+		resolvedPidsLimit = defaultPythonExecPidsLimit
 	}
 
 	return []string{
@@ -151,9 +176,9 @@ func pythonExecDockerCreateArgsWithImage(containerName string, dockerImage strin
 		"--label", pythonExecManagedLabel,
 		"--label", pythonExecCapabilityLabel,
 		"--label", pythonExecRuntimeLabel,
-		"--memory", defaultPythonExecMemoryLimit,
-		"--cpus", defaultPythonExecCPULimit,
-		"--pids-limit", strconv.Itoa(defaultPythonExecPidsLimit),
+		"--memory", resolvedMemoryLimit,
+		"--cpus", resolvedCPULimit,
+		"--pids-limit", strconv.Itoa(resolvedPidsLimit),
 		"--entrypoint", "sh",
 		resolvedDockerImage,
 		"-c",

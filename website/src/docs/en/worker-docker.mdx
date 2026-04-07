@@ -69,7 +69,18 @@ Set `WORKER_CONSOLE_INSECURE=true` when connecting without TLS.
 | `WORKER_PYTHON_EXEC_DOCKER_IMAGE` | No | `ghcr.io/astral-sh/uv:python3.12-bookworm-slim` | Image for Python execution |
 | `WORKER_TERMINAL_EXEC_DOCKER_IMAGE` | No | `coolfan1024/onlyboxes-default-worker:0.0.5` | Image for terminal execution |
 
-> `terminalExec`, `readImage`, and `exportFile` all rely on the terminal execution image. If that image does not include `python3`, file probe operations will fail before metadata can be validated or exported.
+> `terminalExec` and `terminalResource` both rely on the terminal execution image. If that image does not include `python3`, file probe operations will fail before metadata can be validated or exported.
+
+### Execution resources
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `WORKER_PYTHON_EXEC_MEMORY_MIB` | No | `256` | Memory limit for pythonExec containers in MiB |
+| `WORKER_PYTHON_EXEC_CPUS` | No | `1.0` | CPU limit for pythonExec containers |
+| `WORKER_PYTHON_EXEC_MAX_PROCESSES` | No | `128` | Max process / task count for pythonExec containers |
+| `WORKER_TERMINAL_EXEC_MEMORY_MIB` | No | `256` | Memory limit for terminalExec containers in MiB |
+| `WORKER_TERMINAL_EXEC_CPUS` | No | `1.0` | CPU limit for terminalExec containers |
+| `WORKER_TERMINAL_EXEC_MAX_PROCESSES` | No | `128` | Max process / task count for terminalExec containers |
 
 ### Concurrency
 

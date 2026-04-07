@@ -53,4 +53,5 @@ RUN bash -o pipefail -c 'curl -fsSL https://pkg.lightpanda.io/install.sh | bash'
 WORKDIR /tmp
 
 ENV PIP_BREAK_SYSTEM_PACKAGES=1 \
+    PIP_ROOT_USER_ACTION=ignore \
     AGENT_BROWSER_ENGINE=lightpanda

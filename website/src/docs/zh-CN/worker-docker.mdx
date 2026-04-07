@@ -69,7 +69,18 @@ WORKER_SECRET=<worker_secret> \
 | `WORKER_PYTHON_EXEC_DOCKER_IMAGE` | 否 | `ghcr.io/astral-sh/uv:python3.12-bookworm-slim` | Python 执行镜像 |
 | `WORKER_TERMINAL_EXEC_DOCKER_IMAGE` | 否 | `coolfan1024/onlyboxes-default-worker:0.0.5` | 终端执行镜像 |
 
-> `terminalExec`、`readImage` 和 `exportFile` 都依赖 terminal 执行镜像。如果该镜像不包含 `python3`，文件探针会在读取或导出元数据之前失败。
+> `terminalExec` 和 `terminalResource` 都依赖 terminal 执行镜像。如果该镜像不包含 `python3`，文件探针会在校验、读取或导出元数据之前失败。
+
+### 执行资源
+
+| 变量 | 必填 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `WORKER_PYTHON_EXEC_MEMORY_MIB` | 否 | `256` | pythonExec 容器的内存限制，单位 MiB |
+| `WORKER_PYTHON_EXEC_CPUS` | 否 | `1.0` | pythonExec 容器的 CPU 限制 |
+| `WORKER_PYTHON_EXEC_MAX_PROCESSES` | 否 | `128` | pythonExec 容器的最大进程 / task 数 |
+| `WORKER_TERMINAL_EXEC_MEMORY_MIB` | 否 | `256` | terminalExec 容器的内存限制，单位 MiB |
+| `WORKER_TERMINAL_EXEC_CPUS` | 否 | `1.0` | terminalExec 容器的 CPU 限制 |
+| `WORKER_TERMINAL_EXEC_MAX_PROCESSES` | 否 | `128` | terminalExec 容器的最大进程 / task 数 |
 
 ### 并发上限
 

@@ -21,11 +21,18 @@ export interface WorkerStartupBaseConfig {
 
 export interface WorkerDockerStartupConfig extends WorkerStartupBaseConfig {
   pythonExecDockerImage: string
+  pythonExecMemoryMib: number
+  pythonExecCpus: number
+  pythonExecMaxProcesses: number
   terminalExecDockerImage: string
+  terminalExecMemoryMib: number
+  terminalExecCpus: number
+  terminalExecMaxProcesses: number
   terminalLeaseMinSec: number
   terminalLeaseMaxSec: number
   terminalLeaseDefaultSec: number
   terminalOutputLimitBytes: number
+  terminalExportMaxBytes: number
 }
 
 export interface WorkerBoxliteStartupConfig extends WorkerStartupBaseConfig {

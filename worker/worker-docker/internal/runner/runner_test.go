@@ -452,13 +452,13 @@ func TestRunPythonExecInDockerWithImageUsesConfiguredImage(t *testing.T) {
 		}
 	}
 
-	_, err := runPythonExecInDockerWithImage(context.Background(), "python:3.12-alpine", "print(1)")
+	_, err := runPythonExecInDockerWithImage(context.Background(), "python:3.12-alpine", "512m", "0.5", 256, "print(1)")
 	if err == nil || !strings.Contains(err.Error(), "docker create failed") {
 		t.Fatalf("expected docker create failed error, got %v", err)
 	}
 
 	wantCalls := [][]string{
-		pythonExecDockerCreateArgsWithImage("container-custom-image", "python:3.12-alpine", "print(1)"),
+		pythonExecDockerCreateArgsWithImage("container-custom-image", "python:3.12-alpine", "512m", "0.5", 256, "print(1)"),
 	}
 	if !reflect.DeepEqual(gotCalls, wantCalls) {
 		t.Fatalf("unexpected docker call sequence:\nwant=%#v\ngot=%#v", wantCalls, gotCalls)
@@ -499,7 +499,7 @@ func TestRunPythonExecInDockerReturnsNonZeroExitAsResult(t *testing.T) {
 		}
 	}
 
-	result, err := runPythonExecInDockerWithImage(context.Background(), defaultPythonExecDockerImage, "raise Exception('boom')")
+	result, err := runPythonExecInDockerWithImage(context.Background(), defaultPythonExecDockerImage, defaultPythonExecMemoryLimit, defaultPythonExecCPULimit, defaultPythonExecPidsLimit, "raise Exception('boom')")
 	if err != nil {
 		t.Fatalf("expected non-zero exit to be returned as result, got error: %v", err)
 	}
@@ -549,7 +549,7 @@ func TestRunPythonExecInDockerTimeoutTriggersForceRemove(t *testing.T) {
 		}
 	}
 
-	_, err := runPythonExecInDockerWithImage(context.Background(), defaultPythonExecDockerImage, "import time;time.sleep(10)")
+	_, err := runPythonExecInDockerWithImage(context.Background(), defaultPythonExecDockerImage, defaultPythonExecMemoryLimit, defaultPythonExecCPULimit, defaultPythonExecPidsLimit, "import time;time.sleep(10)")
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected deadline exceeded, got %v", err)
 	}
@@ -585,7 +585,7 @@ func TestRunPythonExecInDockerCreateFailureReturnsErrorWithoutCleanup(t *testing
 		}
 	}
 
-	_, err := runPythonExecInDockerWithImage(context.Background(), defaultPythonExecDockerImage, "print(1)")
+	_, err := runPythonExecInDockerWithImage(context.Background(), defaultPythonExecDockerImage, defaultPythonExecMemoryLimit, defaultPythonExecCPULimit, defaultPythonExecPidsLimit, "print(1)")
 	if err == nil || !strings.Contains(err.Error(), "docker create failed") {
 		t.Fatalf("expected docker create failed error, got %v", err)
 	}
@@ -631,7 +631,7 @@ func TestRunPythonExecInDockerStartFailureReturnsExecutionError(t *testing.T) {
 		}
 	}
 
-	_, err := runPythonExecInDockerWithImage(context.Background(), defaultPythonExecDockerImage, "print(1)")
+	_, err := runPythonExecInDockerWithImage(context.Background(), defaultPythonExecDockerImage, defaultPythonExecMemoryLimit, defaultPythonExecCPULimit, defaultPythonExecPidsLimit, "print(1)")
 	if err == nil || !strings.Contains(err.Error(), "docker start failed") {
 		t.Fatalf("expected docker start failed error, got %v", err)
 	}
@@ -673,7 +673,7 @@ func TestRunPythonExecInDockerCleanupFailureDoesNotOverrideDeadline(t *testing.T
 		}
 	}
 
-	_, err := runPythonExecInDockerWithImage(context.Background(), defaultPythonExecDockerImage, "import time;time.sleep(10)")
+	_, err := runPythonExecInDockerWithImage(context.Background(), defaultPythonExecDockerImage, defaultPythonExecMemoryLimit, defaultPythonExecCPULimit, defaultPythonExecPidsLimit, "import time;time.sleep(10)")
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected deadline exceeded, got %v", err)
 	}

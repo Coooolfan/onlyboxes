@@ -422,6 +422,30 @@ func TestTerminalSessionManagerSessionNotFoundWithoutCreate(t *testing.T) {
 	}
 }
 
+func TestNewTerminalSessionManagerUsesConfiguredResourceLimits(t *testing.T) {
+	manager := newTerminalSessionManager(terminalSessionManagerConfig{
+		LeaseMinSec:      60,
+		LeaseMaxSec:      1800,
+		LeaseDefaultSec:  60,
+		OutputLimitBytes: 1024 * 1024,
+		DockerImage:      "python:slim",
+		MemoryLimit:      "512m",
+		CPULimit:         "0.5",
+		PidsLimit:        256,
+	})
+	defer manager.Close()
+
+	if manager.memoryLimit != "512m" {
+		t.Fatalf("expected memoryLimit=512m, got %q", manager.memoryLimit)
+	}
+	if manager.cpuLimit != "0.5" {
+		t.Fatalf("expected cpuLimit=0.5, got %q", manager.cpuLimit)
+	}
+	if manager.pidsLimit != 256 {
+		t.Fatalf("expected pidsLimit=256, got %d", manager.pidsLimit)
+	}
+}
+
 func TestTerminalExecDockerCreateArgs(t *testing.T) {
 	got := terminalExecDockerCreateArgs("container-a", "python:slim", "256m", "1.0", 128)
 	want := []string{

@@ -24,6 +24,9 @@ const defaultPythonExecDockerImage = 'ghcr.io/astral-sh/uv:python3.12-bookworm-s
 const defaultPythonExecBoxliteImage = 'ghcr.io/astral-sh/uv:python3.12-bookworm-slim'
 const defaultTerminalExecDockerImage = 'coolfan1024/onlyboxes-default-worker:0.0.5'
 const defaultTerminalExecBoxliteImage = 'coolfan1024/onlyboxes-default-worker:0.0.5'
+const defaultDockerMemoryMib = 256
+const defaultDockerCpus = 1
+const defaultDockerMaxProcesses = 128
 const defaultBoxliteMemoryMib = 256
 const defaultBoxliteCpus = 1
 const defaultBoxliteMaxProcesses = 128
@@ -51,6 +54,20 @@ function parsePositiveInt(
   valid: boolean
 } {
   const normalized = Number.isFinite(value) ? Math.floor(value) : Number.NaN
+  if (normalized > 0) {
+    return { value: normalized, valid: true }
+  }
+  return { value: fallbackValue, valid: false }
+}
+
+function parsePositiveNumber(
+  value: number,
+  fallbackValue: number,
+): {
+  value: number
+  valid: boolean
+} {
+  const normalized = Number.isFinite(value) ? value : Number.NaN
   if (normalized > 0) {
     return { value: normalized, valid: true }
   }
@@ -262,11 +279,18 @@ export function createDefaultWorkerDockerStartupConfig(): WorkerDockerStartupCon
     version: '',
     labelsText: '',
     pythonExecDockerImage: defaultPythonExecDockerImage,
+    pythonExecMemoryMib: defaultDockerMemoryMib,
+    pythonExecCpus: defaultDockerCpus,
+    pythonExecMaxProcesses: defaultDockerMaxProcesses,
     terminalExecDockerImage: defaultTerminalExecDockerImage,
+    terminalExecMemoryMib: defaultDockerMemoryMib,
+    terminalExecCpus: defaultDockerCpus,
+    terminalExecMaxProcesses: defaultDockerMaxProcesses,
     terminalLeaseMinSec: defaultTerminalLeaseMinSec,
     terminalLeaseMaxSec: defaultTerminalLeaseMaxSec,
     terminalLeaseDefaultSec: defaultTerminalLeaseDefaultSec,
     terminalOutputLimitBytes: defaultTerminalOutputLimitBytes,
+    terminalExportMaxBytes: defaultTerminalExportMaxBytes,
   }
 }
 
@@ -337,6 +361,48 @@ export function buildWorkerDockerStartupCommand(
     state.errors.push('WORKER_TERMINAL_EXEC_DOCKER_IMAGE is required.')
   }
 
+  const pythonExecMemoryMib = parsePositiveInt(
+    config.pythonExecMemoryMib,
+    defaultDockerMemoryMib,
+  )
+  if (!pythonExecMemoryMib.valid) {
+    state.errors.push('WORKER_PYTHON_EXEC_MEMORY_MIB must be a positive integer.')
+  }
+
+  const pythonExecCpus = parsePositiveNumber(config.pythonExecCpus, defaultDockerCpus)
+  if (!pythonExecCpus.valid) {
+    state.errors.push('WORKER_PYTHON_EXEC_CPUS must be a positive number.')
+  }
+
+  const pythonExecMaxProcesses = parsePositiveInt(
+    config.pythonExecMaxProcesses,
+    defaultDockerMaxProcesses,
+  )
+  if (!pythonExecMaxProcesses.valid) {
+    state.errors.push('WORKER_PYTHON_EXEC_MAX_PROCESSES must be a positive integer.')
+  }
+
+  const terminalExecMemoryMib = parsePositiveInt(
+    config.terminalExecMemoryMib,
+    defaultDockerMemoryMib,
+  )
+  if (!terminalExecMemoryMib.valid) {
+    state.errors.push('WORKER_TERMINAL_EXEC_MEMORY_MIB must be a positive integer.')
+  }
+
+  const terminalExecCpus = parsePositiveNumber(config.terminalExecCpus, defaultDockerCpus)
+  if (!terminalExecCpus.valid) {
+    state.errors.push('WORKER_TERMINAL_EXEC_CPUS must be a positive number.')
+  }
+
+  const terminalExecMaxProcesses = parsePositiveInt(
+    config.terminalExecMaxProcesses,
+    defaultDockerMaxProcesses,
+  )
+  if (!terminalExecMaxProcesses.valid) {
+    state.errors.push('WORKER_TERMINAL_EXEC_MAX_PROCESSES must be a positive integer.')
+  }
+
   const terminalLeaseMinSec = parsePositiveInt(
     config.terminalLeaseMinSec,
     defaultTerminalLeaseMinSec,
@@ -380,14 +446,38 @@ export function buildWorkerDockerStartupCommand(
     state.errors.push('WORKER_TERMINAL_OUTPUT_LIMIT_BYTES must be a positive integer.')
   }
 
+  const terminalExportMaxBytes = parseNonNegativeInt(
+    config.terminalExportMaxBytes,
+    defaultTerminalExportMaxBytes,
+  )
+  if (!terminalExportMaxBytes.valid) {
+    state.errors.push('WORKER_TERMINAL_EXPORT_MAX_BYTES must be a non-negative integer.')
+  }
+
   state.envEntries.push(['WORKER_PYTHON_EXEC_DOCKER_IMAGE', pythonExecDockerImage])
+  state.envEntries.push(['WORKER_PYTHON_EXEC_MEMORY_MIB', String(pythonExecMemoryMib.value)])
+  state.envEntries.push(['WORKER_PYTHON_EXEC_CPUS', String(pythonExecCpus.value)])
+  state.envEntries.push([
+    'WORKER_PYTHON_EXEC_MAX_PROCESSES',
+    String(pythonExecMaxProcesses.value),
+  ])
   state.envEntries.push(['WORKER_TERMINAL_EXEC_DOCKER_IMAGE', terminalExecDockerImage])
+  state.envEntries.push(['WORKER_TERMINAL_EXEC_MEMORY_MIB', String(terminalExecMemoryMib.value)])
+  state.envEntries.push(['WORKER_TERMINAL_EXEC_CPUS', String(terminalExecCpus.value)])
+  state.envEntries.push([
+    'WORKER_TERMINAL_EXEC_MAX_PROCESSES',
+    String(terminalExecMaxProcesses.value),
+  ])
   state.envEntries.push(['WORKER_TERMINAL_LEASE_MIN_SEC', String(terminalLeaseMinSec.value)])
   state.envEntries.push(['WORKER_TERMINAL_LEASE_MAX_SEC', String(terminalLeaseMaxSec)])
   state.envEntries.push(['WORKER_TERMINAL_LEASE_DEFAULT_SEC', String(terminalLeaseDefaultSec)])
   state.envEntries.push([
     'WORKER_TERMINAL_OUTPUT_LIMIT_BYTES',
     String(terminalOutputLimitBytes.value),
+  ])
+  state.envEntries.push([
+    'WORKER_TERMINAL_EXPORT_MAX_BYTES',
+    String(terminalExportMaxBytes.value),
   ])
 
   return {

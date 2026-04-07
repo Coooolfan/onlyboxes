@@ -10,41 +10,53 @@ import (
 )
 
 const (
-	defaultConsoleTarget     = "127.0.0.1:50051"
-	defaultHeartbeatInterval = 5
-	defaultHeartbeatJitter   = 20
-	defaultExecutorKind      = "docker"
-	defaultPythonExecImage   = "ghcr.io/astral-sh/uv:python3.12-bookworm-slim"
-	defaultTerminalExecImage = "coolfan1024/onlyboxes-default-worker:0.0.5"
-	defaultTerminalLeaseMin  = 60
-	defaultTerminalLeaseMax  = 1800
-	defaultTerminalLeaseTTL  = 60
-	defaultTerminalOutputMax = 1024 * 1024
-	defaultLogLevel          = "info"
-	defaultLogFormat         = "json"
-	defaultLogAddSource      = false
-	defaultMaxInflight       = 4
+	defaultConsoleTarget            = "127.0.0.1:50051"
+	defaultHeartbeatInterval        = 5
+	defaultHeartbeatJitter          = 20
+	defaultExecutorKind             = "docker"
+	defaultPythonExecImage          = "ghcr.io/astral-sh/uv:python3.12-bookworm-slim"
+	defaultPythonExecMemoryMiB      = 256
+	defaultPythonExecCPULimit       = "1.0"
+	defaultPythonExecMaxProcesses   = 128
+	defaultTerminalExecImage        = "coolfan1024/onlyboxes-default-worker:0.0.5"
+	defaultTerminalExecMemoryMiB    = 256
+	defaultTerminalExecCPULimit     = "1.0"
+	defaultTerminalExecMaxProcesses = 128
+	defaultTerminalLeaseMin         = 60
+	defaultTerminalLeaseMax         = 1800
+	defaultTerminalLeaseTTL         = 60
+	defaultTerminalOutputMax        = 1024 * 1024
+	defaultLogLevel                 = "info"
+	defaultLogFormat                = "json"
+	defaultLogAddSource             = false
+	defaultMaxInflight              = 4
 )
 
 type Config struct {
-	ConsoleGRPCTarget        string
-	ConsoleTLS               bool
-	WorkerID                 string
-	WorkerSecret             string
-	HeartbeatInterval        time.Duration
-	HeartbeatJitter          int
-	CallTimeout              time.Duration
-	NodeName                 string
-	ExecutorKind             string
-	Version                  string
-	PythonExecDockerImage    string
-	TerminalExecDockerImage  string
-	Labels                   map[string]string
-	TerminalLeaseMinSec      int
-	TerminalLeaseMaxSec      int
-	TerminalLeaseDefaultSec  int
-	TerminalOutputLimitBytes   int
-	TerminalExportMaxBytes     int
+	ConsoleGRPCTarget           string
+	ConsoleTLS                  bool
+	WorkerID                    string
+	WorkerSecret                string
+	HeartbeatInterval           time.Duration
+	HeartbeatJitter             int
+	CallTimeout                 time.Duration
+	NodeName                    string
+	ExecutorKind                string
+	Version                     string
+	PythonExecDockerImage       string
+	PythonExecMemoryLimit       string
+	PythonExecCPULimit          string
+	PythonExecPidsLimit         int
+	TerminalExecDockerImage     string
+	TerminalExecMemoryLimit     string
+	TerminalExecCPULimit        string
+	TerminalExecPidsLimit       int
+	Labels                      map[string]string
+	TerminalLeaseMinSec         int
+	TerminalLeaseMaxSec         int
+	TerminalLeaseDefaultSec     int
+	TerminalOutputLimitBytes    int
+	TerminalExportMaxBytes      int
 	EchoMaxInflight             int
 	PythonExecMaxInflight       int
 	TerminalExecMaxInflight     int
@@ -75,31 +87,37 @@ func Load() Config {
 	}
 
 	return Config{
-		ConsoleGRPCTarget:        getEnv("WORKER_CONSOLE_GRPC_TARGET", defaultConsoleTarget),
-		ConsoleTLS:               os.Getenv("WORKER_CONSOLE_INSECURE") != "true",
-		WorkerID:                 strings.TrimSpace(os.Getenv("WORKER_ID")),
-		WorkerSecret:             strings.TrimSpace(os.Getenv("WORKER_SECRET")),
-		HeartbeatInterval:        time.Duration(heartbeatSec) * time.Second,
-		HeartbeatJitter:          heartbeatJitter,
-		CallTimeout:              time.Duration(callTimeoutSec) * time.Second,
-		NodeName:                 os.Getenv("WORKER_NODE_NAME"),
-		ExecutorKind:             defaultExecutorKind,
-		Version:                  getEnv("WORKER_VERSION", defaultVersion),
-		PythonExecDockerImage:    getEnv("WORKER_PYTHON_EXEC_DOCKER_IMAGE", defaultPythonExecImage),
-		TerminalExecDockerImage:  getEnv("WORKER_TERMINAL_EXEC_DOCKER_IMAGE", defaultTerminalExecImage),
-		Labels:                   parseLabels(labelsCSV),
-		TerminalLeaseMinSec:      terminalLeaseMinSec,
-		TerminalLeaseMaxSec:      terminalLeaseMaxSec,
-		TerminalLeaseDefaultSec:  terminalLeaseDefaultSec,
-		TerminalOutputLimitBytes:   terminalOutputLimitBytes,
-		TerminalExportMaxBytes:     terminalExportMaxBytes,
+		ConsoleGRPCTarget:           getEnv("WORKER_CONSOLE_GRPC_TARGET", defaultConsoleTarget),
+		ConsoleTLS:                  os.Getenv("WORKER_CONSOLE_INSECURE") != "true",
+		WorkerID:                    strings.TrimSpace(os.Getenv("WORKER_ID")),
+		WorkerSecret:                strings.TrimSpace(os.Getenv("WORKER_SECRET")),
+		HeartbeatInterval:           time.Duration(heartbeatSec) * time.Second,
+		HeartbeatJitter:             heartbeatJitter,
+		CallTimeout:                 time.Duration(callTimeoutSec) * time.Second,
+		NodeName:                    os.Getenv("WORKER_NODE_NAME"),
+		ExecutorKind:                defaultExecutorKind,
+		Version:                     getEnv("WORKER_VERSION", defaultVersion),
+		PythonExecDockerImage:       getEnv("WORKER_PYTHON_EXEC_DOCKER_IMAGE", defaultPythonExecImage),
+		PythonExecMemoryLimit:       parseDockerMemoryLimitMiBEnv("WORKER_PYTHON_EXEC_MEMORY_MIB", defaultPythonExecMemoryMiB),
+		PythonExecCPULimit:          parseDockerCPULimitEnv("WORKER_PYTHON_EXEC_CPUS", defaultPythonExecCPULimit),
+		PythonExecPidsLimit:         parsePositiveIntEnv("WORKER_PYTHON_EXEC_MAX_PROCESSES", defaultPythonExecMaxProcesses),
+		TerminalExecDockerImage:     getEnv("WORKER_TERMINAL_EXEC_DOCKER_IMAGE", defaultTerminalExecImage),
+		TerminalExecMemoryLimit:     parseDockerMemoryLimitMiBEnv("WORKER_TERMINAL_EXEC_MEMORY_MIB", defaultTerminalExecMemoryMiB),
+		TerminalExecCPULimit:        parseDockerCPULimitEnv("WORKER_TERMINAL_EXEC_CPUS", defaultTerminalExecCPULimit),
+		TerminalExecPidsLimit:       parsePositiveIntEnv("WORKER_TERMINAL_EXEC_MAX_PROCESSES", defaultTerminalExecMaxProcesses),
+		Labels:                      parseLabels(labelsCSV),
+		TerminalLeaseMinSec:         terminalLeaseMinSec,
+		TerminalLeaseMaxSec:         terminalLeaseMaxSec,
+		TerminalLeaseDefaultSec:     terminalLeaseDefaultSec,
+		TerminalOutputLimitBytes:    terminalOutputLimitBytes,
+		TerminalExportMaxBytes:      terminalExportMaxBytes,
 		EchoMaxInflight:             parsePositiveIntEnv("WORKER_ECHO_MAX_INFLIGHT", defaultMaxInflight),
 		PythonExecMaxInflight:       parsePositiveIntEnv("WORKER_PYTHON_EXEC_MAX_INFLIGHT", defaultMaxInflight),
 		TerminalExecMaxInflight:     parsePositiveIntEnv("WORKER_TERMINAL_EXEC_MAX_INFLIGHT", defaultMaxInflight),
 		TerminalResourceMaxInflight: parsePositiveIntEnv("WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT", defaultMaxInflight),
 		LogLevel:                    parseLogLevelEnv("WORKER_LOG_LEVEL", defaultLogLevel),
-		LogFormat:                parseLogFormatEnv("WORKER_LOG_FORMAT", defaultLogFormat),
-		LogAddSource:             parseBoolEnv("WORKER_LOG_ADD_SOURCE", defaultLogAddSource),
+		LogFormat:                   parseLogFormatEnv("WORKER_LOG_FORMAT", defaultLogFormat),
+		LogAddSource:                parseBoolEnv("WORKER_LOG_ADD_SOURCE", defaultLogAddSource),
 	}
 }
 
@@ -121,6 +139,23 @@ func parsePositiveIntEnv(key string, defaultValue int) int {
 		return defaultValue
 	}
 	return parsed
+}
+
+func parseDockerCPULimitEnv(key string, defaultValue string) string {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return defaultValue
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil || parsed <= 0 {
+		return defaultValue
+	}
+	return value
+}
+
+func parseDockerMemoryLimitMiBEnv(key string, defaultValueMiB int) string {
+	value := parsePositiveIntEnv(key, defaultValueMiB)
+	return strconv.Itoa(value) + "m"
 }
 
 func parsePercentEnv(key string, defaultValue int) int {
