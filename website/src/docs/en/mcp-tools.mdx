@@ -56,6 +56,8 @@ All tool parameter schemas set `additionalProperties: false`. Passing an undefin
 
 > Tools listed in `CONSOLE_HIDDEN_TOOLS` are omitted from `tools/list`. They remain callable if the client already knows the tool name. See [Console Configuration](/docs/console-config) for details.
 
+> Tool titles, tool descriptions, and individual parameter descriptions can be overridden via environment variables (`CONSOLE_MCP_TOOL_<TOOL>_TITLE` / `_DESCRIPTION` / `_PARAM_<PARAM>_DESCRIPTION`). Setting a parameter description to an empty string hides that parameter from `tools/list` while still accepting it over HTTP — on such a schema `additionalProperties` becomes `true`. See [Console Configuration](/docs/console-config#tool-description-parameter-overrides).
+
 ---
 
 ## Tool Reference

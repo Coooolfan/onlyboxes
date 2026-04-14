@@ -140,6 +140,15 @@ Hidden tools (`CONSOLE_HIDDEN_TOOLS`):
 - default: empty (all tools visible).
 - example: `CONSOLE_HIDDEN_TOOLS=echo,computerUse`
 
+MCP tool description / parameter overrides:
+- `CONSOLE_MCP_TOOL_<TOOL>_TITLE` — override the tool's human-readable title (empty string = fallback + warn).
+- `CONSOLE_MCP_TOOL_<TOOL>_DESCRIPTION` — override the tool's `description` (empty string = fallback + warn).
+- `CONSOLE_MCP_TOOL_<TOOL>_PARAM_<PARAM>_DESCRIPTION` — override one parameter's `description`; empty string hides the parameter from `tools/list` (removed from `properties` + `required`, `additionalProperties` flipped to `true`) while `tools/call` still accepts the field. Every hidden parameter emits `WARN hiding MCP tool parameter ... required=<bool>` on startup; hiding a required parameter means the model cannot construct a valid call.
+- `<TOOL>` uses `UPPER_SNAKE_CASE` (e.g. `pythonExec` → `PYTHON_EXEC`); `<PARAM>` is the uppercased snake_case JSON key (e.g. `session_id` → `SESSION_ID`).
+- unset vars keep the built-in defaults; `os.LookupEnv` is used so an explicitly empty string is distinguishable.
+- catalog: `ECHO` (`MESSAGE`, `TIMEOUT_MS`), `PYTHON_EXEC` (`CODE`, `TIMEOUT_MS`), `TERMINAL_EXEC` (`COMMAND`, `SESSION_ID`, `CREATE_IF_MISSING`, `LEASE_TTL_SEC`, `TIMEOUT_MS`), `COMPUTER_USE` (`COMMAND`, `TIMEOUT_MS`, `REQUEST_ID`), `READ_IMAGE` (`SESSION_ID`, `FILE_PATH`, `TIMEOUT_MS`), `EXPORT_FILE` (`SESSION_ID`, `FILE_PATH`, `TIMEOUT_MS`).
+- example: `CONSOLE_MCP_TOOL_ECHO_DESCRIPTION="ping-only echo"`, `CONSOLE_MCP_TOOL_TERMINAL_EXEC_PARAM_SESSION_ID_DESCRIPTION=""`.
+
 Export file objectstore config:
 - `CONSOLE_EXPORT_FILE_ENDPOINT`: S3-compatible endpoint URL for presigned upload/download.
 - `CONSOLE_EXPORT_FILE_REGION`: explicit signing region for the S3-compatible endpoint.

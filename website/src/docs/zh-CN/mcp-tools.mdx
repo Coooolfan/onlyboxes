@@ -56,6 +56,8 @@ Accept: application/json, text/event-stream
 
 > 在 `CONSOLE_HIDDEN_TOOLS` 中列出的工具会从 `tools/list` 中隐藏；如果客户端已知工具名，仍可继续调用。详见 [Console 配置](/docs/console-config)。
 
+> 工具的 title、description 以及单个参数的 description 可以通过环境变量覆盖（`CONSOLE_MCP_TOOL_<TOOL>_TITLE` / `_DESCRIPTION` / `_PARAM_<PARAM>_DESCRIPTION`）。将参数描述设置为空串会把该参数从 `tools/list` 中隐藏，但 HTTP 调用仍然可以传入该字段——此时对应 schema 的 `additionalProperties` 会变为 `true`。详见 [Console 配置](/docs/console-config)。
+
 ---
 
 ## 工具详情

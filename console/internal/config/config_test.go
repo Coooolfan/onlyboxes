@@ -236,6 +236,96 @@ func TestLoadNormalizesHiddenTools(t *testing.T) {
 	}
 }
 
+func TestLoadMCPToolOverrides_NoEnv_Nil(t *testing.T) {
+	cfg := Load()
+	if cfg.MCPToolOverrides != nil {
+		t.Fatalf("expected nil MCPToolOverrides when no env set, got %#v", cfg.MCPToolOverrides)
+	}
+}
+
+func TestLoadMCPToolOverrides_Description_Override(t *testing.T) {
+	t.Setenv("CONSOLE_MCP_TOOL_ECHO_DESCRIPTION", "custom echo")
+	cfg := Load()
+	o, ok := cfg.MCPToolOverrides["echo"]
+	if !ok {
+		t.Fatalf("expected echo override, got %#v", cfg.MCPToolOverrides)
+	}
+	if o.Description == nil || *o.Description != "custom echo" {
+		t.Fatalf("expected description=custom echo, got %#v", o.Description)
+	}
+	if o.Title != nil {
+		t.Fatalf("expected nil Title, got %#v", o.Title)
+	}
+}
+
+func TestLoadMCPToolOverrides_Title_Override(t *testing.T) {
+	t.Setenv("CONSOLE_MCP_TOOL_PYTHON_EXEC_TITLE", "Py Runner")
+	cfg := Load()
+	o := cfg.MCPToolOverrides["pythonExec"]
+	if o.Title == nil || *o.Title != "Py Runner" {
+		t.Fatalf("expected Title=Py Runner, got %#v", o.Title)
+	}
+}
+
+func TestLoadMCPToolOverrides_ParamDescription_Override(t *testing.T) {
+	t.Setenv("CONSOLE_MCP_TOOL_TERMINAL_EXEC_PARAM_SESSION_ID_DESCRIPTION", "session token")
+	cfg := Load()
+	o := cfg.MCPToolOverrides["terminalExec"]
+	got, ok := o.ParamDescriptions["session_id"]
+	if !ok {
+		t.Fatalf("expected session_id param override, got %#v", o.ParamDescriptions)
+	}
+	if got == nil || *got != "session token" {
+		t.Fatalf("expected session_id=session token, got %#v", got)
+	}
+}
+
+func TestLoadMCPToolOverrides_ParamHidden_EmptyString(t *testing.T) {
+	t.Setenv("CONSOLE_MCP_TOOL_TERMINAL_EXEC_PARAM_SESSION_ID_DESCRIPTION", "")
+	cfg := Load()
+	o := cfg.MCPToolOverrides["terminalExec"]
+	got, ok := o.ParamDescriptions["session_id"]
+	if !ok {
+		t.Fatalf("expected session_id override present, got %#v", o.ParamDescriptions)
+	}
+	if got == nil {
+		t.Fatalf("expected non-nil pointer, got nil (means env not detected)")
+	}
+	if *got != "" {
+		t.Fatalf("expected empty string for hidden, got %q", *got)
+	}
+}
+
+func TestLoadMCPToolOverrides_DescriptionEmptyString_Preserved(t *testing.T) {
+	// Empty string is preserved in config; the handler layer decides the
+	// fallback+warn for Title/Description.
+	t.Setenv("CONSOLE_MCP_TOOL_ECHO_DESCRIPTION", "")
+	cfg := Load()
+	o := cfg.MCPToolOverrides["echo"]
+	if o.Description == nil {
+		t.Fatalf("expected non-nil Description pointer (env set to empty)")
+	}
+	if *o.Description != "" {
+		t.Fatalf("expected empty string, got %q", *o.Description)
+	}
+}
+
+func TestToolNameToEnvSegment(t *testing.T) {
+	cases := map[string]string{
+		"echo":         "ECHO",
+		"pythonExec":   "PYTHON_EXEC",
+		"terminalExec": "TERMINAL_EXEC",
+		"computerUse":  "COMPUTER_USE",
+		"readImage":    "READ_IMAGE",
+		"exportFile":   "EXPORT_FILE",
+	}
+	for in, want := range cases {
+		if got := toolNameToEnvSegment(in); got != want {
+			t.Errorf("toolNameToEnvSegment(%q)=%q want %q", in, got, want)
+		}
+	}
+}
+
 func TestExportFileEnabledRequiresAllFields(t *testing.T) {
 	t.Setenv("CONSOLE_EXPORT_FILE_ENDPOINT", "https://minio.example.com")
 	t.Setenv("CONSOLE_EXPORT_FILE_REGION", "cn-test-1")

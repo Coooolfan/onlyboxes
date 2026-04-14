@@ -1,5 +1,9 @@
 package httpapi
 
+import (
+	"log/slog"
+)
+
 const (
 	mcpServerName                  = "onlyboxes"
 	pythonExecCapabilityName       = "pythonExec"
@@ -358,6 +362,161 @@ var mcpExportFileOutputSchemaObjectKey = map[string]any{
 var mcpExportFileOutputSchemaFileName = map[string]any{
 	"type":        "string",
 	"description": "Original basename derived from file_path.",
+}
+
+// deepCopySchema returns a deep copy of a schema fragment represented as
+// map[string]any, []string, or []any. It is used to derive per-request
+// overrides without mutating the package-level schema vars.
+func deepCopySchema(src map[string]any) map[string]any {
+	if src == nil {
+		return nil
+	}
+	out := make(map[string]any, len(src))
+	for k, v := range src {
+		out[k] = deepCopyValue(v)
+	}
+	return out
+}
+
+func deepCopyValue(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		return deepCopySchema(t)
+	case []string:
+		cp := make([]string, len(t))
+		copy(cp, t)
+		return cp
+	case []any:
+		cp := make([]any, len(t))
+		for i, item := range t {
+			cp[i] = deepCopyValue(item)
+		}
+		return cp
+	default:
+		return v
+	}
+}
+
+// applyToolDescriptionOverride returns the final Description string given a
+// default and an optional override pointer. Empty string is treated as invalid
+// (warn + fallback). A nil pointer means no override was requested.
+func applyToolDescriptionOverride(defaultValue string, override *string, logger *slog.Logger, toolName string) string {
+	if override == nil {
+		return defaultValue
+	}
+	if *override == "" {
+		if logger != nil {
+			logger.Warn("ignoring empty MCP tool description override; falling back to default",
+				"tool", toolName)
+		}
+		return defaultValue
+	}
+	return *override
+}
+
+// applyToolTitleOverride mirrors applyToolDescriptionOverride for the Title
+// field. Empty string is treated as invalid.
+func applyToolTitleOverride(defaultValue string, override *string, logger *slog.Logger, toolName string) string {
+	if override == nil {
+		return defaultValue
+	}
+	if *override == "" {
+		if logger != nil {
+			logger.Warn("ignoring empty MCP tool title override; falling back to default",
+				"tool", toolName)
+		}
+		return defaultValue
+	}
+	return *override
+}
+
+// applyInputSchemaOverride returns a deep-copied input schema with per-param
+// descriptions overridden. For params whose override is an empty string, the
+// property is removed from `properties` and `required`, and `additionalProperties`
+// is flipped to true so that clients may still transmit the field without being
+// rejected by JSON Schema validation. Non-empty overrides replace only the
+// `description` field of the corresponding property, leaving type/minimum/
+// maximum/default untouched.
+//
+// If no overrides apply (paramOverrides empty or only non-matching keys), the
+// original schema pointer is returned unchanged to preserve the strict-mode
+// default (additionalProperties: false).
+func applyInputSchemaOverride(base map[string]any, paramOverrides map[string]*string, logger *slog.Logger, toolName string) map[string]any {
+	if len(paramOverrides) == 0 {
+		return base
+	}
+	// Pre-scan to see if anything matters; avoids an unnecessary deep copy.
+	properties, _ := base["properties"].(map[string]any)
+	anyHit := false
+	for name := range paramOverrides {
+		if _, exists := properties[name]; exists {
+			anyHit = true
+			break
+		}
+	}
+	if !anyHit {
+		return base
+	}
+
+	out := deepCopySchema(base)
+	outProps, _ := out["properties"].(map[string]any)
+	outRequired, _ := out["required"].([]string)
+	hiddenAny := false
+
+	for name, val := range paramOverrides {
+		if val == nil {
+			continue
+		}
+		if _, exists := outProps[name]; !exists {
+			// Catalog/schema mismatch; skip silently.
+			continue
+		}
+		if *val == "" {
+			// Hide: remove from properties and required.
+			wasRequired := false
+			for _, r := range outRequired {
+				if r == name {
+					wasRequired = true
+					break
+				}
+			}
+			delete(outProps, name)
+			if wasRequired {
+				filtered := make([]string, 0, len(outRequired))
+				for _, r := range outRequired {
+					if r != name {
+						filtered = append(filtered, r)
+					}
+				}
+				outRequired = filtered
+			}
+			if logger != nil {
+				logger.Warn("hiding MCP tool parameter from inputSchema; HTTP callers may still pass it",
+					"tool", toolName, "param", name, "required", wasRequired)
+			}
+			hiddenAny = true
+			continue
+		}
+		// Override description in place.
+		propMap, ok := outProps[name].(map[string]any)
+		if !ok {
+			continue
+		}
+		propMap["description"] = *val
+	}
+
+	// Write back required (may have shrunk).
+	if _, has := out["required"]; has {
+		if len(outRequired) == 0 {
+			delete(out, "required")
+		} else {
+			out["required"] = outRequired
+		}
+	}
+	if hiddenAny {
+		out["additionalProperties"] = true
+	}
+	return out
 }
 
 func exportFileOutputSchemaForMode(schema string) map[string]any {

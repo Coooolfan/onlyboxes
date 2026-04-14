@@ -48,9 +48,24 @@ type Config struct {
 	ExportReturnSchema    string
 	EnableRegistration    bool
 	HiddenTools           map[string]bool
+	MCPToolOverrides      map[string]MCPToolOverride
 	LogLevel              string
 	LogFormat             string
 	LogAddSource          bool
+}
+
+// MCPToolOverride holds optional env-driven overrides for a single MCP tool's
+// Title, Description, and per-parameter descriptions.
+//
+// Pointer semantics:
+//   - nil       → env not set, use built-in default.
+//   - non-nil   → env set. For Title/Description: empty string is treated as
+//                invalid (fallback + warn). For ParamDescriptions: empty
+//                string means "hide this parameter from tools/list inputSchema".
+type MCPToolOverride struct {
+	Title             *string
+	Description       *string
+	ParamDescriptions map[string]*string
 }
 
 func Load() Config {
@@ -87,6 +102,7 @@ func Load() Config {
 		ExportReturnSchema:    parseExportReturnSchemaEnv("CONSOLE_EXPORT_RETURN_SCHEMA"),
 		EnableRegistration:    parseBoolEnv("CONSOLE_ENABLE_REGISTRATION", false),
 		HiddenTools:           parseStringSetEnv("CONSOLE_HIDDEN_TOOLS"),
+		MCPToolOverrides:      loadMCPToolOverrides(),
 		LogLevel:              parseLogLevelEnv("CONSOLE_LOG_LEVEL", defaultLogLevel),
 		LogFormat:             parseLogFormatEnv("CONSOLE_LOG_FORMAT", defaultLogFormat),
 		LogAddSource:          parseBoolEnv("CONSOLE_LOG_ADD_SOURCE", defaultLogAddSource),
@@ -190,4 +206,89 @@ func parseLogFormatEnv(key string, defaultValue string) string {
 	default:
 		return defaultValue
 	}
+}
+
+// mcpToolParamCatalog enumerates every (toolName, paramName) pair that participates
+// in env-driven override. Tool names match those registered in NewMCPHandler;
+// param names match the snake_case JSON field keys in each input schema.
+//
+// Keeping this catalog in config (rather than httpapi) avoids an import cycle
+// and localizes the mapping used to derive env var names.
+var mcpToolParamCatalog = []struct {
+	ToolName string
+	Params   []string
+}{
+	{"echo", []string{"message", "timeout_ms"}},
+	{"pythonExec", []string{"code", "timeout_ms"}},
+	{"terminalExec", []string{"command", "session_id", "create_if_missing", "lease_ttl_sec", "timeout_ms"}},
+	{"computerUse", []string{"command", "timeout_ms", "request_id"}},
+	{"readImage", []string{"session_id", "file_path", "timeout_ms"}},
+	{"exportFile", []string{"session_id", "file_path", "timeout_ms"}},
+}
+
+// loadMCPToolOverrides reads env vars of the form:
+//   CONSOLE_MCP_TOOL_<TOOL>_TITLE
+//   CONSOLE_MCP_TOOL_<TOOL>_DESCRIPTION
+//   CONSOLE_MCP_TOOL_<TOOL>_PARAM_<PARAM>_DESCRIPTION
+// where <TOOL> is the camelCase tool name translated to UPPER_SNAKE (e.g.
+// pythonExec → PYTHON_EXEC) and <PARAM> is the snake_case param name uppercased
+// (e.g. session_id → SESSION_ID).
+//
+// It uses os.LookupEnv so that an explicitly empty string is distinguishable
+// from an unset variable.
+func loadMCPToolOverrides() map[string]MCPToolOverride {
+	result := make(map[string]MCPToolOverride)
+	for _, entry := range mcpToolParamCatalog {
+		toolEnv := toolNameToEnvSegment(entry.ToolName)
+		override := MCPToolOverride{}
+		if v, ok := os.LookupEnv("CONSOLE_MCP_TOOL_" + toolEnv + "_TITLE"); ok {
+			s := v
+			override.Title = &s
+		}
+		if v, ok := os.LookupEnv("CONSOLE_MCP_TOOL_" + toolEnv + "_DESCRIPTION"); ok {
+			s := v
+			override.Description = &s
+		}
+		params := make(map[string]*string)
+		for _, param := range entry.Params {
+			paramEnv := paramNameToEnvSegment(param)
+			if v, ok := os.LookupEnv("CONSOLE_MCP_TOOL_" + toolEnv + "_PARAM_" + paramEnv + "_DESCRIPTION"); ok {
+				s := v
+				params[param] = &s
+			}
+		}
+		if len(params) > 0 {
+			override.ParamDescriptions = params
+		}
+		if override.Title != nil || override.Description != nil || override.ParamDescriptions != nil {
+			result[entry.ToolName] = override
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+// toolNameToEnvSegment converts a camelCase tool name (e.g. "pythonExec") to
+// the UPPER_SNAKE_CASE segment used in env variable names ("PYTHON_EXEC").
+func toolNameToEnvSegment(name string) string {
+	var b strings.Builder
+	for i, r := range name {
+		if i > 0 && r >= 'A' && r <= 'Z' {
+			b.WriteByte('_')
+		}
+		if r >= 'a' && r <= 'z' {
+			b.WriteRune(r - 32)
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// paramNameToEnvSegment converts a snake_case param name (e.g. "session_id")
+// to the UPPER_SNAKE_CASE segment used in env variable names ("SESSION_ID").
+func paramNameToEnvSegment(name string) string {
+	return strings.ToUpper(name)
 }

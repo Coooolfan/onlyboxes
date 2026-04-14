@@ -2,11 +2,13 @@ package httpapi
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/onlyboxes/onlyboxes/console/internal/config"
 )
 
 func NewMCPHandler(
@@ -17,7 +19,9 @@ func NewMCPHandler(
 	exportUploadTTL time.Duration,
 	exportDownloadTTL time.Duration,
 	exportReturnSchema string,
+	toolOverrides map[string]config.MCPToolOverride,
 ) http.Handler {
+	logger := slog.Default()
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    mcpServerName,
 		Version: mcpServerVersion,
@@ -27,103 +31,122 @@ func NewMCPHandler(
 		},
 	})
 
+	resolveOverride := func(tool string) config.MCPToolOverride {
+		if toolOverrides == nil {
+			return config.MCPToolOverride{}
+		}
+		return toolOverrides[tool]
+	}
+
+	echoOverride := resolveOverride("echo")
+	echoTitle := applyToolTitleOverride(mcpEchoToolTitle, echoOverride.Title, logger, "echo")
 	mcp.AddTool(server, &mcp.Tool{
-		Title:       mcpEchoToolTitle,
+		Title:       echoTitle,
 		Name:        "echo",
-		Description: mcpEchoToolDescription,
+		Description: applyToolDescriptionOverride(mcpEchoToolDescription, echoOverride.Description, logger, "echo"),
 		Annotations: &mcp.ToolAnnotations{
-			Title:           mcpEchoToolTitle,
+			Title:           echoTitle,
 			ReadOnlyHint:    true,
 			IdempotentHint:  true,
 			DestructiveHint: boolPtr(false),
 			OpenWorldHint:   boolPtr(false),
 		},
-		InputSchema:  mcpEchoInputSchema,
+		InputSchema:  applyInputSchemaOverride(mcpEchoInputSchema, echoOverride.ParamDescriptions, logger, "echo"),
 		OutputSchema: mcpEchoOutputSchema,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpEchoToolInput) (*mcp.CallToolResult, mcpEchoToolOutput, error) {
 		return handleMCPEchoTool(ctx, dispatcher, input)
 	})
 
+	pyOverride := resolveOverride("pythonExec")
+	pyTitle := applyToolTitleOverride(mcpPythonExecToolTitle, pyOverride.Title, logger, "pythonExec")
 	mcp.AddTool(server, &mcp.Tool{
-		Title:       mcpPythonExecToolTitle,
+		Title:       pyTitle,
 		Name:        "pythonExec",
-		Description: mcpPythonExecToolDescription,
+		Description: applyToolDescriptionOverride(mcpPythonExecToolDescription, pyOverride.Description, logger, "pythonExec"),
 		Annotations: &mcp.ToolAnnotations{
-			Title:           mcpPythonExecToolTitle,
+			Title:           pyTitle,
 			ReadOnlyHint:    false,
 			DestructiveHint: boolPtr(true),
 			IdempotentHint:  false,
 			OpenWorldHint:   boolPtr(true),
 		},
-		InputSchema:  mcpPythonExecInputSchema,
+		InputSchema:  applyInputSchemaOverride(mcpPythonExecInputSchema, pyOverride.ParamDescriptions, logger, "pythonExec"),
 		OutputSchema: mcpPythonExecOutputSchema,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpPythonExecToolInput) (*mcp.CallToolResult, mcpPythonExecToolOutput, error) {
 		return handleMCPPythonExecTool(ctx, dispatcher, input)
 	})
 
+	termOverride := resolveOverride("terminalExec")
+	termTitle := applyToolTitleOverride(mcpTerminalExecToolTitle, termOverride.Title, logger, "terminalExec")
 	mcp.AddTool(server, &mcp.Tool{
-		Title:       mcpTerminalExecToolTitle,
+		Title:       termTitle,
 		Name:        "terminalExec",
-		Description: mcpTerminalExecToolDescription,
+		Description: applyToolDescriptionOverride(mcpTerminalExecToolDescription, termOverride.Description, logger, "terminalExec"),
 		Annotations: &mcp.ToolAnnotations{
-			Title:           mcpTerminalExecToolTitle,
+			Title:           termTitle,
 			ReadOnlyHint:    false,
 			DestructiveHint: boolPtr(true),
 			IdempotentHint:  false,
 			OpenWorldHint:   boolPtr(true),
 		},
-		InputSchema:  mcpTerminalExecInputSchema,
+		InputSchema:  applyInputSchemaOverride(mcpTerminalExecInputSchema, termOverride.ParamDescriptions, logger, "terminalExec"),
 		OutputSchema: mcpTerminalExecOutputSchema,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpTerminalExecToolInput) (*mcp.CallToolResult, mcpTerminalExecToolOutput, error) {
 		return handleMCPTerminalExecTool(ctx, dispatcher, input)
 	})
 
+	cuOverride := resolveOverride("computerUse")
+	cuTitle := applyToolTitleOverride(mcpComputerUseToolTitle, cuOverride.Title, logger, "computerUse")
 	mcp.AddTool(server, &mcp.Tool{
-		Title:       mcpComputerUseToolTitle,
+		Title:       cuTitle,
 		Name:        "computerUse",
-		Description: mcpComputerUseToolDescription,
+		Description: applyToolDescriptionOverride(mcpComputerUseToolDescription, cuOverride.Description, logger, "computerUse"),
 		Annotations: &mcp.ToolAnnotations{
-			Title:           mcpComputerUseToolTitle,
+			Title:           cuTitle,
 			ReadOnlyHint:    false,
 			DestructiveHint: boolPtr(true),
 			IdempotentHint:  false,
 			OpenWorldHint:   boolPtr(true),
 		},
-		InputSchema:  mcpComputerUseInputSchema,
+		InputSchema:  applyInputSchemaOverride(mcpComputerUseInputSchema, cuOverride.ParamDescriptions, logger, "computerUse"),
 		OutputSchema: mcpComputerUseOutputSchema,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpComputerUseToolInput) (*mcp.CallToolResult, mcpComputerUseToolOutput, error) {
 		return handleMCPComputerUseTool(ctx, dispatcher, input)
 	})
 
+	riOverride := resolveOverride("readImage")
+	riTitle := applyToolTitleOverride(mcpReadImageToolTitle, riOverride.Title, logger, "readImage")
 	mcp.AddTool(server, &mcp.Tool{
-		Title:       mcpReadImageToolTitle,
+		Title:       riTitle,
 		Name:        "readImage",
-		Description: mcpReadImageToolDescription,
+		Description: applyToolDescriptionOverride(mcpReadImageToolDescription, riOverride.Description, logger, "readImage"),
 		Annotations: &mcp.ToolAnnotations{
-			Title:           mcpReadImageToolTitle,
+			Title:           riTitle,
 			ReadOnlyHint:    true,
 			DestructiveHint: boolPtr(false),
 			IdempotentHint:  true,
 			OpenWorldHint:   boolPtr(false),
 		},
-		InputSchema: mcpReadImageInputSchema,
+		InputSchema: applyInputSchemaOverride(mcpReadImageInputSchema, riOverride.ParamDescriptions, logger, "readImage"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpReadImageToolInput) (*mcp.CallToolResult, any, error) {
 		return handleMCPReadImageTool(ctx, dispatcher, input)
 	})
 
 	if exportStore != nil && strings.TrimSpace(exportPrefix) != "" {
+		efOverride := resolveOverride("exportFile")
+		efTitle := applyToolTitleOverride(mcpExportFileToolTitle, efOverride.Title, logger, "exportFile")
 		mcp.AddTool(server, &mcp.Tool{
-			Title:       mcpExportFileToolTitle,
+			Title:       efTitle,
 			Name:        "exportFile",
-			Description: mcpExportFileToolDescription,
+			Description: applyToolDescriptionOverride(mcpExportFileToolDescription, efOverride.Description, logger, "exportFile"),
 			Annotations: &mcp.ToolAnnotations{
-				Title:           mcpExportFileToolTitle,
+				Title:           efTitle,
 				ReadOnlyHint:    true,
 				DestructiveHint: boolPtr(false),
 				IdempotentHint:  false,
 				OpenWorldHint:   boolPtr(false),
 			},
-			InputSchema:  mcpExportFileInputSchema,
+			InputSchema:  applyInputSchemaOverride(mcpExportFileInputSchema, efOverride.ParamDescriptions, logger, "exportFile"),
 			OutputSchema: exportFileOutputSchemaForMode(exportReturnSchema),
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpExportFileToolInput) (*mcp.CallToolResult, mcpExportFileToolOutput, error) {
 			return handleMCPExportFileTool(ctx, dispatcher, exportStore, exportPrefix, exportUploadTTL, exportDownloadTTL, exportReturnSchema, input)

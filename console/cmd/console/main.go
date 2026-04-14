@@ -131,7 +131,7 @@ func main() {
 	if err != nil {
 		fatal("failed to initialize api key auth", "error", err)
 	}
-	router, err := httpapi.NewRouter(httpHandler, consoleAuth, mcpAuth, apiKeyAuth, cfg.HiddenTools)
+	router, err := httpapi.NewRouter(httpHandler, consoleAuth, mcpAuth, apiKeyAuth, cfg.HiddenTools, cfg.MCPToolOverrides)
 	if err != nil {
 		fatal("failed to initialize http router", "error", err)
 	}
