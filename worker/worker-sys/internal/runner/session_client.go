@@ -268,8 +268,9 @@ func heartbeatLoop(
 		if err := enqueueRequest(ctx, outbound, &registryv1.ConnectRequest{
 			Payload: &registryv1.ConnectRequest_Heartbeat{
 				Heartbeat: &registryv1.HeartbeatFrame{
-					NodeId:    cfg.WorkerID,
-					SessionId: sessionID,
+					NodeId:             cfg.WorkerID,
+					SessionId:          sessionID,
+					ActiveSessionCount: 1,
 				},
 			},
 		}); err != nil {

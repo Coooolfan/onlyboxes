@@ -22,6 +22,7 @@ message ConnectHello {
 message HeartbeatFrame {
   string node_id = 1;
   string session_id = 2;
+  int32 active_session_count = 3;
 }
 
 message ConnectRequest {

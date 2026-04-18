@@ -75,6 +75,12 @@ export const useWorkersStore = defineStore('workers', () => {
   const onlineWorkers = computed(() => dashboardStats.value.online)
   const offlineWorkers = computed(() => dashboardStats.value.offline)
   const staleWorkers = computed(() => dashboardStats.value.stale)
+  const activeSessions = computed(() =>
+    inflightData.value.workers.reduce(
+      (total, worker) => total + (worker.active_session_count ?? 0),
+      0,
+    ),
+  )
   const staleWorkersLabel = computed(() => `Heartbeat > ${dashboardStats.value.stale_after_sec}s`)
 
   const totalPages = computed(() => {
@@ -369,6 +375,7 @@ export const useWorkersStore = defineStore('workers', () => {
     onlineWorkers,
     offlineWorkers,
     staleWorkers,
+    activeSessions,
     staleWorkersLabel,
     totalPages,
     workerRows,

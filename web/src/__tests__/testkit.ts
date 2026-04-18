@@ -60,6 +60,7 @@ export const inflightPayload = {
   workers: [
     {
       node_id: 'node-1',
+      active_session_count: 3,
       capabilities: [{ name: 'echo', inflight: 1, max_inflight: 4 }],
     },
   ],

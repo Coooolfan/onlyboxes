@@ -41,6 +41,7 @@ export interface CapabilityInflightItem {
 
 export interface WorkerInflightItem {
   node_id: string
+  active_session_count: number
   capabilities: CapabilityInflightItem[]
 }
 

@@ -258,6 +258,9 @@ func TestHeartbeatLoopToleratesSingleAckTimeout(t *testing.T) {
 			if req.GetHeartbeat() == nil {
 				t.Fatalf("expected heartbeat frame, got %#v", req.GetPayload())
 			}
+			if req.GetHeartbeat().GetActiveSessionCount() != 1 {
+				t.Fatalf("expected active_session_count=1, got %d", req.GetHeartbeat().GetActiveSessionCount())
+			}
 			receivedHeartbeats++
 			if receivedHeartbeats == 2 {
 				heartbeatAckCh <- &registryv1.HeartbeatAck{HeartbeatIntervalSec: 1}

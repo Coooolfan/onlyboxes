@@ -126,6 +126,12 @@ func TestHeartbeatLoopToleratesSingleAckTimeout(t *testing.T) {
 	cfg.CallTimeout = 20 * time.Millisecond
 	cfg.HeartbeatJitter = 0
 
+	originalActiveSessionCountFn := activeSessionCountFn
+	activeSessionCountFn = func() int32 { return 7 }
+	defer func() {
+		activeSessionCountFn = originalActiveSessionCountFn
+	}()
+
 	outbound := make(chan *registryv1.ConnectRequest, 4)
 	heartbeatAckCh := make(chan *registryv1.HeartbeatAck, 1)
 	sessionErrCh := make(chan error, 1)
@@ -147,6 +153,9 @@ func TestHeartbeatLoopToleratesSingleAckTimeout(t *testing.T) {
 		case req := <-outbound:
 			if req.GetHeartbeat() == nil {
 				t.Fatalf("expected heartbeat frame, got %#v", req.GetPayload())
+			}
+			if req.GetHeartbeat().GetActiveSessionCount() != 7 {
+				t.Fatalf("expected active_session_count=7, got %d", req.GetHeartbeat().GetActiveSessionCount())
 			}
 			receivedHeartbeats++
 			if receivedHeartbeats == 2 {
@@ -875,6 +884,9 @@ func (s *fakeRegistryService) Connect(stream grpc.BidiStreamingServer[registryv1
 		}
 		if heartbeat.GetNodeId() == "" || heartbeat.GetSessionId() == "" {
 			return status.Error(codes.InvalidArgument, "invalid heartbeat frame")
+		}
+		if heartbeat.GetActiveSessionCount() < 0 {
+			return status.Error(codes.InvalidArgument, "invalid active_session_count")
 		}
 
 		count := atomic.AddInt32(&s.heartbeatCount, 1)

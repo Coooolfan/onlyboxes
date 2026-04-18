@@ -416,8 +416,9 @@ type CapabilityInflightEntry struct {
 
 // WorkerInflightSnapshot holds the inflight snapshot for a single worker.
 type WorkerInflightSnapshot struct {
-	NodeID       string
-	Capabilities []CapabilityInflightEntry
+	NodeID             string
+	ActiveSessionCount int
+	Capabilities       []CapabilityInflightEntry
 }
 
 // InflightStats returns inflight data for all active sessions.
@@ -444,8 +445,9 @@ func (s *RegistryService) InflightStats() []WorkerInflightSnapshot {
 			}
 		}
 		out = append(out, WorkerInflightSnapshot{
-			NodeID:       session.nodeID,
-			Capabilities: entries,
+			NodeID:             session.nodeID,
+			ActiveSessionCount: int(session.activeSessionCount()),
+			Capabilities:       entries,
 		})
 	}
 	return out

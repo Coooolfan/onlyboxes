@@ -32,8 +32,9 @@ type capabilityInflightJSON struct {
 }
 
 type workerInflightJSON struct {
-	NodeID       string                   `json:"node_id"`
-	Capabilities []capabilityInflightJSON `json:"capabilities"`
+	NodeID             string                   `json:"node_id"`
+	ActiveSessionCount int                      `json:"active_session_count"`
+	Capabilities       []capabilityInflightJSON `json:"capabilities"`
 }
 
 type workerInflightResponse struct {
@@ -116,8 +117,9 @@ func (h *WorkerHandler) WorkerInflight(c *gin.Context) {
 			}
 		}
 		workers = append(workers, workerInflightJSON{
-			NodeID:       snap.NodeID,
-			Capabilities: entries,
+			NodeID:             snap.NodeID,
+			ActiveSessionCount: snap.ActiveSessionCount,
+			Capabilities:       entries,
 		})
 	}
 	c.JSON(http.StatusOK, workerInflightResponse{

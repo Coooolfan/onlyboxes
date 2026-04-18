@@ -159,13 +159,15 @@ func TestWorkerStatsAndInflightAreOwnerScopedForNonAdmin(t *testing.T) {
 		&staticInflightProvider{
 			snapshots: []grpcserver.WorkerInflightSnapshot{
 				{
-					NodeID: "node-own-sys",
+					NodeID:             "node-own-sys",
+					ActiveSessionCount: 1,
 					Capabilities: []grpcserver.CapabilityInflightEntry{
 						{Name: "computeruse", Inflight: 1, MaxInflight: 1},
 					},
 				},
 				{
-					NodeID: "node-other-sys",
+					NodeID:             "node-other-sys",
+					ActiveSessionCount: 1,
 					Capabilities: []grpcserver.CapabilityInflightEntry{
 						{Name: "computeruse", Inflight: 0, MaxInflight: 1},
 					},
@@ -206,5 +208,8 @@ func TestWorkerStatsAndInflightAreOwnerScopedForNonAdmin(t *testing.T) {
 	}
 	if len(inflightPayload.Workers) != 1 || inflightPayload.Workers[0].NodeID != "node-own-sys" {
 		t.Fatalf("expected scoped inflight worker list, got %#v", inflightPayload.Workers)
+	}
+	if inflightPayload.Workers[0].ActiveSessionCount != 1 {
+		t.Fatalf("expected active_session_count=1, got %d", inflightPayload.Workers[0].ActiveSessionCount)
 	}
 }

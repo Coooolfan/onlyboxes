@@ -25,7 +25,7 @@ describe('Workers Page', () => {
     vi.unstubAllGlobals()
   })
 
-  it('shows online workers as online over total in the stats grid', async () => {
+  it('shows worker health and active sessions in the stats grid', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url === '/api/v1/console/session') {
@@ -48,6 +48,8 @@ describe('Workers Page', () => {
 
     expect(wrapper.text()).toContain('Online Workers')
     expect(wrapper.text()).toContain('120/150')
+    expect(wrapper.text()).toContain('Active Sessions')
+    expect(wrapper.text()).toContain('active sessions: 3')
     expect(wrapper.text()).not.toContain('Total Workers')
 
     wrapper.unmount()

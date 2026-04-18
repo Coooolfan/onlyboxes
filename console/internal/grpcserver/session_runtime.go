@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
@@ -34,6 +35,7 @@ type activeSession struct {
 
 	capabilitiesMu sync.Mutex
 	capabilities   map[string]*sessionCapability
+	activeSessions atomic.Int32
 
 	controlOutbound chan *registryv1.ConnectResponse
 	commandOutbound chan *registryv1.ConnectResponse
@@ -113,6 +115,27 @@ func (s *activeSession) allCapabilitiesSnapshot() []capabilitySnapshot {
 		})
 	}
 	return out
+}
+
+func (s *activeSession) setActiveSessionCount(count int32) {
+	if s == nil {
+		return
+	}
+	if count < 0 {
+		count = 0
+	}
+	s.activeSessions.Store(count)
+}
+
+func (s *activeSession) activeSessionCount() int32 {
+	if s == nil {
+		return 0
+	}
+	count := s.activeSessions.Load()
+	if count < 0 {
+		return 0
+	}
+	return count
 }
 
 func (s *activeSession) tryAcquireCapability(capability string) bool {

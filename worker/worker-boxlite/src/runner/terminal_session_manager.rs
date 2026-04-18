@@ -260,6 +260,13 @@ pub(crate) async fn shutdown_shared_terminal_sessions() {
     }
 }
 
+pub(crate) async fn shared_active_session_count() -> i32 {
+    match TERMINAL_SESSION_MANAGER.get() {
+        Some(manager) => manager.active_session_count().await,
+        None => 0,
+    }
+}
+
 impl TerminalSessionManager {
     pub(crate) fn new(
         cfg: TerminalSessionManagerConfig,
@@ -480,7 +487,8 @@ impl TerminalSessionManager {
                 };
 
                 if action == TERMINAL_RESOURCE_ACTION_EXPORT {
-                    if self.export_max_bytes > 0 && probe.size_bytes > self.export_max_bytes as i64 {
+                    if self.export_max_bytes > 0 && probe.size_bytes > self.export_max_bytes as i64
+                    {
                         self.mark_session_idle(&session_id).await;
                         return Err(TerminalExecError {
                             code: TERMINAL_RESOURCE_CODE_FILE_TOO_LARGE.to_owned(),
@@ -594,6 +602,11 @@ impl TerminalSessionManager {
         for box_id in sessions {
             self.backend.remove_box(&box_id).await;
         }
+    }
+
+    pub(crate) async fn active_session_count(&self) -> i32 {
+        let sessions = self.sessions.lock().await;
+        sessions.len().try_into().unwrap_or(i32::MAX)
     }
 
     pub(crate) async fn cleanup_expired_sessions(&self) {

@@ -43,6 +43,7 @@ var runTerminalExec = runTerminalExecUnavailable
 var runTerminalResource = runTerminalResourceUnavailable
 var runDockerCommand = runDockerCommandCLI
 var pythonExecContainerNameFn = newPythonExecContainerName
+var activeSessionCountFn = func() int32 { return 0 }
 
 func Run(ctx context.Context, cfg config.Config) error {
 	if strings.TrimSpace(cfg.WorkerID) == "" {
@@ -75,10 +76,13 @@ func Run(ctx context.Context, cfg config.Config) error {
 	runTerminalExec = terminalManager.Execute
 	originalRunTerminalResource := runTerminalResource
 	runTerminalResource = terminalManager.ResolveResource
+	originalActiveSessionCountFn := activeSessionCountFn
+	activeSessionCountFn = terminalManager.ActiveSessionCount
 	defer func() {
 		runPythonExec = originalRunPythonExec
 		runTerminalExec = originalRunTerminalExec
 		runTerminalResource = originalRunTerminalResource
+		activeSessionCountFn = originalActiveSessionCountFn
 		terminalManager.Close()
 	}()
 

@@ -70,7 +70,11 @@ export async function fetchWorkerInflightAPI(signal: AbortSignal): Promise<Worke
 
   const payload = (await response.json()) as WorkerInflightResponse
   return {
-    workers: payload.workers ?? [],
+    workers: (payload.workers ?? []).map((worker) => ({
+      node_id: worker.node_id ?? '',
+      active_session_count: worker.active_session_count ?? 0,
+      capabilities: worker.capabilities ?? [],
+    })),
     generated_at: payload.generated_at ?? '',
   }
 }

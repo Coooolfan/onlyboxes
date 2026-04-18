@@ -258,6 +258,7 @@ onBeforeUnmount(() => {
       :online-workers="workersStore.onlineWorkers"
       :offline-workers="workersStore.offlineWorkers"
       :stale-workers="workersStore.staleWorkers"
+      :active-sessions="workersStore.activeSessions"
       :stale-workers-label="workersStore.staleWorkersLabel"
     />
 

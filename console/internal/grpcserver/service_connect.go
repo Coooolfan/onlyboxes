@@ -214,6 +214,7 @@ func (s *RegistryService) handleHeartbeat(ctx context.Context, session *activeSe
 		}
 		return status.Error(codes.Internal, "failed to update heartbeat")
 	}
+	session.setActiveSessionCount(heartbeat.GetActiveSessionCount())
 
 	if err := session.enqueueControl(ctx, newHeartbeatAck(s.heartbeatIntervalSec)); err != nil {
 		if status.Code(err) != codes.Unknown {

@@ -15,6 +15,7 @@ use crate::proto::registryv1::{
     CommandDispatch, ConnectRequest, ConnectResponse, HeartbeatAck, HeartbeatFrame,
 };
 
+use super::terminal_session_manager::shared_active_session_count;
 use super::{
     build_command_result, build_hello, command_dispatch_summary_for_log, duration_from_server,
     RunnerError,
@@ -245,6 +246,7 @@ async fn heartbeat_loop(
                 payload: Some(connect_request::Payload::Heartbeat(HeartbeatFrame {
                     node_id: cfg.worker_id.clone(),
                     session_id: session_id.clone(),
+                    active_session_count: shared_active_session_count().await,
                 })),
             })
             .await
@@ -659,6 +661,7 @@ mod tests {
             .unwrap();
         assert_eq!(heartbeat.node_id, cfg.worker_id);
         assert_eq!(heartbeat.session_id, TEST_SESSION_ID);
+        assert_eq!(heartbeat.active_session_count, 0);
 
         shutdown.cancel();
         let result = session_task.await.unwrap();

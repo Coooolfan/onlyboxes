@@ -19,6 +19,7 @@ const emit = defineEmits<{
 }>()
 
 type InflightCapability = WorkerInflightItem['capabilities'][number]
+type InflightWorker = WorkerInflightItem
 
 function normalizeCapabilityName(name: string): string {
   return name.trim().toLowerCase()
@@ -40,12 +41,24 @@ const inflightByWorker = computed(() => {
   return out
 })
 
+const inflightWorkerByNode = computed(() => {
+  const out = new Map<string, InflightWorker>()
+  for (const worker of props.inflightWorkers) {
+    out.set(worker.node_id, worker)
+  }
+  return out
+})
+
 function getInflight(nodeId: string, capName: string): InflightCapability | null {
   const normalized = normalizeCapabilityName(capName)
   if (!normalized) {
     return null
   }
   return inflightByWorker.value.get(nodeId)?.get(normalized) ?? null
+}
+
+function getInflightWorker(nodeId: string): InflightWorker | null {
+  return inflightWorkerByNode.value.get(nodeId) ?? null
 }
 </script>
 
@@ -113,6 +126,10 @@ function getInflight(nodeId: string, capName: string): InflightCapability | null
             <div>{{ worker.executor_kind || '--' }}</div>
             <div class="mt-1 text-secondary font-mono text-xs">
               version: {{ worker.version || '--' }}
+            </div>
+            <div class="mt-1 text-secondary font-mono text-xs">
+              active sessions:
+              {{ getInflightWorker(worker.node_id)?.active_session_count ?? '--' }}
             </div>
           </td>
           <td class="text-left px-6 py-4 border-b border-stroke text-sm text-primary align-middle">

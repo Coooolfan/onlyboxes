@@ -121,6 +121,17 @@ type terminalSessionManager struct {
 	closeOnce sync.Once
 }
 
+func (m *terminalSessionManager) ActiveSessionCount() int32 {
+	if m == nil {
+		return 0
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return int32(len(m.sessions))
+}
+
 func newTerminalSessionManager(cfg terminalSessionManagerConfig) *terminalSessionManager {
 	leaseMinSec := cfg.LeaseMinSec
 	if leaseMinSec <= 0 {
