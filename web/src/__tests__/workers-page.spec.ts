@@ -25,6 +25,34 @@ describe('Workers Page', () => {
     vi.unstubAllGlobals()
   })
 
+  it('shows online workers as online over total in the stats grid', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/v1/console/session') {
+        return jsonResponse(adminSessionPayload)
+      }
+      if (url.startsWith('/api/v1/workers/stats')) {
+        return jsonResponse(statsPayload)
+      }
+      if (url.startsWith('/api/v1/workers/inflight')) {
+        return jsonResponse(inflightPayload)
+      }
+      if (url.startsWith('/api/v1/workers?')) {
+        return jsonResponse(workersPayload)
+      }
+      throw new Error(`unexpected url: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch)
+
+    const wrapper = await mountApp('/workers')
+
+    expect(wrapper.text()).toContain('Online Workers')
+    expect(wrapper.text()).toContain('120/150')
+    expect(wrapper.text()).not.toContain('Total Workers')
+
+    wrapper.unmount()
+  })
+
   it('logs out and returns to login panel', async () => {
     let authenticated = true
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
