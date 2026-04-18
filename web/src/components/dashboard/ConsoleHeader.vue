@@ -1,5 +1,5 @@
 <script setup lang="ts">
-defineProps<{
+const props = defineProps<{
   eyebrow: string
   title: string
   loading?: boolean
@@ -38,9 +38,25 @@ const emit = defineEmits<{
           class="ui-btn-primary rounded-md px-3.5 py-2 text-sm font-medium h-9 inline-flex items-center justify-center border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
           type="button"
           :disabled="loading"
+          :aria-label="loading ? 'Refreshing...' : props.refreshLabel || 'Refresh'"
           @click="emit('refresh')"
         >
-          {{ loading ? 'Refreshing...' : refreshLabel || 'Refresh' }}
+          <span class="grid">
+            <span
+              aria-hidden="true"
+              class="[grid-area:1/1] transition-opacity duration-200"
+              :class="loading ? 'opacity-100' : 'opacity-0'"
+            >
+              Refreshing...
+            </span>
+            <span
+              aria-hidden="true"
+              class="[grid-area:1/1] transition-opacity duration-200"
+              :class="loading ? 'opacity-0' : 'opacity-100'"
+            >
+              {{ props.refreshLabel || 'Refresh' }}
+            </span>
+          </span>
         </button>
       </div>
     </header>

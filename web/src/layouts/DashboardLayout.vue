@@ -245,7 +245,7 @@ watch(sidebarCollapsed, (collapsed) => {
           <!-- Dropdown -->
           <div
             v-if="showUserMenu"
-            class="absolute right-0 mt-2 w-48 bg-surface border border-stroke rounded-md shadow-card py-1 z-50 animate-in fade-in zoom-in-95 duration-100"
+            class="absolute right-0 mt-2 w-56 bg-surface border border-stroke rounded-md shadow-card py-1 z-50 animate-in fade-in zoom-in-95 duration-100"
           >
             <div class="px-4 py-2 border-b border-stroke/50">
               <p class="text-sm font-medium text-primary truncate">
@@ -256,21 +256,21 @@ watch(sidebarCollapsed, (collapsed) => {
               </p>
             </div>
             <button
-              class="w-full text-left px-4 py-2 text-sm text-primary hover:bg-surface-soft transition-colors flex items-center gap-2"
+              class="w-full whitespace-nowrap text-left px-4 py-2 text-sm text-primary hover:bg-surface-soft transition-colors flex items-center gap-2"
               @click="openChangePasswordModal"
             >
               <AppIcon name="lock" :size="14" />
               Change Password
             </button>
             <button
-              class="w-full text-left px-4 py-2 text-sm text-primary hover:bg-surface-soft transition-colors flex items-center gap-2"
+              class="w-full whitespace-nowrap text-left px-4 py-2 text-sm text-primary hover:bg-surface-soft transition-colors flex items-center gap-2"
               @click="openAPIKeysModal"
             >
               <AppIcon name="key" :size="14" />
               API Keys
             </button>
             <button
-              class="w-full text-left px-4 py-2 text-sm text-offline hover:bg-offline/10 transition-colors flex items-center gap-2"
+              class="w-full whitespace-nowrap text-left px-4 py-2 text-sm text-offline hover:bg-offline/10 transition-colors flex items-center gap-2"
               @click="handleLogout"
             >
               <AppIcon name="logout" :size="14" />

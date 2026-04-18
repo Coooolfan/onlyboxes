@@ -185,9 +185,9 @@ describe('Accounts Page', () => {
     const wrapper = await mountApp('/accounts')
     try {
       forceUnauthorized = true
-      const refreshBtn = wrapper.findAll('button').find((button) => button.text() === 'Refresh')
-      expect(refreshBtn).toBeTruthy()
-      await refreshBtn?.trigger('click')
+      const refreshBtn = wrapper.find('button[aria-label="Refresh"]')
+      expect(refreshBtn.exists()).toBe(true)
+      await refreshBtn.trigger('click')
       await flushPromises()
       await flushPromises()
       await waitForRoute('/login')

@@ -59,7 +59,6 @@ export const useWorkersStore = defineStore('workers', () => {
   const errorMessage = ref('')
   const refreshedAt = ref<Date | null>(null)
 
-  const autoRefreshEnabled = ref(true)
   const creatingWorker = ref(false)
   const deletingNodeID = ref('')
 
@@ -302,15 +301,11 @@ export const useWorkersStore = defineStore('workers', () => {
     }
   }
 
-  function toggleAutoRefresh(): void {
-    autoRefreshEnabled.value = !autoRefreshEnabled.value
-  }
-
   function startAutoRefresh(): void {
     stopAutoRefresh()
 
     timer = setInterval(() => {
-      if (!autoRefreshEnabled.value || loading.value) {
+      if (loading.value) {
         return
       }
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
@@ -336,7 +331,7 @@ export const useWorkersStore = defineStore('workers', () => {
     if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
       return
     }
-    if (!autoRefreshEnabled.value || loading.value) {
+    if (loading.value) {
       return
     }
     void loadDashboard()
@@ -352,7 +347,6 @@ export const useWorkersStore = defineStore('workers', () => {
     loading.value = false
     errorMessage.value = ''
     refreshedAt.value = null
-    autoRefreshEnabled.value = true
     creatingWorker.value = false
     deletingNodeID.value = ''
     resetDashboard()
@@ -365,7 +359,6 @@ export const useWorkersStore = defineStore('workers', () => {
     loading,
     errorMessage,
     refreshedAt,
-    autoRefreshEnabled,
     creatingWorker,
     deletingNodeID,
     dashboardStats,
@@ -393,7 +386,6 @@ export const useWorkersStore = defineStore('workers', () => {
     formatCapabilities,
     createWorker,
     deleteWorker,
-    toggleAutoRefresh,
     startAutoRefresh,
     stopAutoRefresh,
     onPageVisibilityChange,

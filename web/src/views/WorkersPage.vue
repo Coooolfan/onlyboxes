@@ -7,9 +7,9 @@ import ConsoleHeader from '@/components/dashboard/ConsoleHeader.vue'
 import PaginationBar from '@/components/dashboard/PaginationBar.vue'
 import StatsGrid from '@/components/dashboard/StatsGrid.vue'
 import WorkerCreateResultModal from '@/components/dashboard/WorkerCreateResultModal.vue'
+import WorkerTypeSelectModal from '@/components/dashboard/WorkerTypeSelectModal.vue'
 import WorkersTable from '@/components/dashboard/WorkersTable.vue'
 import WorkersToolbar from '@/components/dashboard/WorkersToolbar.vue'
-import { useDismissibleMenu } from '@/composables/useDismissibleMenu'
 import { useAuthStore } from '@/stores/auth'
 import { useWorkersStore } from '@/stores/workers'
 import type { WorkerStartupCommandResponse, WorkerStatus, WorkerType } from '@/types/workers'
@@ -19,9 +19,8 @@ const authStore = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 const createdWorkerPayload = ref<WorkerStartupCommandResponse | null>(null)
-const refreshControlRef = ref<HTMLElement | null>(null)
-const showRefreshControlMenu = ref(false)
-const selectedWorkerType = ref<WorkerType>('normal')
+const showWorkerTypeModal = ref(false)
+const showDetails = ref(false)
 
 function parseStatus(raw: unknown): WorkerStatus {
   return raw === 'online' || raw === 'offline' || raw === 'all' ? raw : 'all'
@@ -85,14 +84,6 @@ const refreshedAtText = computed(() => {
   return workersStore.formatDateTime(workersStore.refreshedAt.toISOString())
 })
 
-const refreshControlButtonText = computed(() => {
-  const statusText = workersStore.autoRefreshEnabled ? 'Auto ON' : 'Auto OFF'
-  if (workersStore.loading) {
-    return `Refreshing · ${statusText}`
-  }
-  return `Refresh Controls · ${statusText}`
-})
-
 function handleVisibilityChange(): void {
   workersStore.onPageVisibilityChange()
 }
@@ -101,37 +92,33 @@ async function handleRefresh(): Promise<void> {
   await workersStore.loadDashboard()
 }
 
-function toggleRefreshControlMenu(): void {
-  showRefreshControlMenu.value = !showRefreshControlMenu.value
+function handleShowDetailsChange(value: boolean): void {
+  showDetails.value = value
 }
-
-function closeRefreshControlMenu(): void {
-  showRefreshControlMenu.value = false
-}
-
-async function handleRefreshFromMenu(): Promise<void> {
-  closeRefreshControlMenu()
-  await handleRefresh()
-}
-
-function handleToggleAutoRefreshFromMenu(): void {
-  workersStore.toggleAutoRefresh()
-  closeRefreshControlMenu()
-}
-
-useDismissibleMenu({
-  containerRef: refreshControlRef,
-  isOpen: showRefreshControlMenu,
-  onClose: closeRefreshControlMenu,
-})
 
 async function handleAddWorker(): Promise<void> {
-  const workerType: WorkerType = authStore.isAdmin ? selectedWorkerType.value : 'worker-sys'
+  if (authStore.isAdmin) {
+    showWorkerTypeModal.value = true
+    return
+  }
+
+  await handleCreateWorker('worker-sys')
+}
+
+async function handleCreateWorker(workerType: WorkerType): Promise<void> {
   const payload = await workersStore.createWorker(workerType)
   if (!payload) {
     return
   }
+  showWorkerTypeModal.value = false
   createdWorkerPayload.value = payload
+}
+
+function closeWorkerTypeModal(): void {
+  if (workersStore.creatingWorker) {
+    return
+  }
+  showWorkerTypeModal.value = false
 }
 
 function closeWorkerCreateResultModal(): void {
@@ -145,7 +132,7 @@ const createButtonText = computed(() => {
   if (!authStore.isAdmin) {
     return 'Create Worker-Sys'
   }
-  return selectedWorkerType.value === 'normal' ? 'Add Normal Worker' : 'Add Worker-Sys'
+  return 'Add Worker'
 })
 
 watch(
@@ -172,7 +159,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   workersStore.teardown()
   document.removeEventListener('visibilitychange', handleVisibilityChange)
-  closeRefreshControlMenu()
+  closeWorkerTypeModal()
 })
 </script>
 
@@ -183,27 +170,12 @@ onBeforeUnmount(() => {
       title="Execution Node Control Panel"
       :loading="workersStore.loading"
       :refreshed-at-text="refreshedAtText"
-      hide-refresh
+      @refresh="handleRefresh"
     >
       <template #subtitle>
         Real-time monitoring for worker registration and heartbeat health.
       </template>
       <template #actions>
-        <label
-          v-if="authStore.isAdmin"
-          class="inline-flex items-center gap-2 rounded-md border border-stroke bg-surface px-2.5 py-1.5 text-sm text-secondary"
-        >
-          <span>Type</span>
-          <select
-            v-model="selectedWorkerType"
-            data-testid="create-worker-type-select"
-            class="ui-input rounded border px-2 py-1 text-sm"
-            :disabled="workersStore.creatingWorker"
-          >
-            <option value="normal">normal</option>
-            <option value="worker-sys">worker-sys</option>
-          </select>
-        </label>
         <button
           data-testid="create-worker-button"
           class="ui-btn-primary rounded-md px-3.5 py-2 text-sm font-medium h-9 inline-flex items-center justify-center border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
@@ -213,43 +185,6 @@ onBeforeUnmount(() => {
         >
           {{ createButtonText }}
         </button>
-        <div ref="refreshControlRef" class="relative">
-          <button
-            class="ui-btn-secondary rounded-md px-3.5 py-2 text-sm font-medium h-9 inline-flex items-center justify-center border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
-            type="button"
-            aria-haspopup="menu"
-            :aria-expanded="showRefreshControlMenu"
-            @click="toggleRefreshControlMenu"
-          >
-            {{ refreshControlButtonText }}
-          </button>
-
-          <div
-            v-if="showRefreshControlMenu"
-            role="menu"
-            aria-label="Refresh controls"
-            class="absolute right-0 top-[calc(100%+8px)] z-20 w-[230px] rounded-default border border-stroke bg-surface shadow-card p-1.5 grid gap-1"
-          >
-            <button
-              type="button"
-              role="menuitem"
-              class="rounded-default border border-transparent px-3 py-2 text-left text-sm text-primary transition-all duration-200 hover:border-stroke hover:bg-surface-soft disabled:cursor-not-allowed disabled:opacity-50"
-              :disabled="workersStore.loading"
-              @click="handleRefreshFromMenu"
-            >
-              Refresh Now
-            </button>
-            <button
-              type="button"
-              role="menuitemcheckbox"
-              :aria-checked="workersStore.autoRefreshEnabled"
-              class="rounded-default border border-transparent px-3 py-2 text-left text-sm text-primary transition-all duration-200 hover:border-stroke hover:bg-surface-soft"
-              @click="handleToggleAutoRefreshFromMenu"
-            >
-              {{ workersStore.autoRefreshEnabled ? 'Auto Refresh: ON' : 'Auto Refresh: OFF' }}
-            </button>
-          </div>
-        </div>
       </template>
     </ConsoleHeader>
 
@@ -267,7 +202,9 @@ onBeforeUnmount(() => {
     >
       <WorkersToolbar
         :status-filter="workersStore.statusFilter"
+        :show-details="showDetails"
         @set-status="workersStore.setFilter"
+        @update-show-details="handleShowDetailsChange"
       />
 
       <ErrorBanner
@@ -279,6 +216,7 @@ onBeforeUnmount(() => {
       <WorkersTable
         :worker-rows="workersStore.workerRows"
         :inflight-workers="workersStore.inflightData.workers"
+        :show-details="showDetails"
         :loading="workersStore.loading"
         :deleting-node-id="workersStore.deletingNodeID"
         :format-capabilities="workersStore.formatCapabilities"
@@ -299,6 +237,13 @@ onBeforeUnmount(() => {
         @next="workersStore.nextPage"
       />
     </section>
+
+    <WorkerTypeSelectModal
+      :open="showWorkerTypeModal"
+      :loading="workersStore.creatingWorker"
+      @close="closeWorkerTypeModal"
+      @select="handleCreateWorker"
+    />
 
     <WorkerCreateResultModal
       :payload="createdWorkerPayload"

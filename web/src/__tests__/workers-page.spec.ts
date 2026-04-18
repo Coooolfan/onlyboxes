@@ -49,7 +49,8 @@ describe('Workers Page', () => {
     expect(wrapper.text()).toContain('Online Workers')
     expect(wrapper.text()).toContain('120/150')
     expect(wrapper.text()).toContain('Active Sessions')
-    expect(wrapper.text()).toContain('active sessions: 3')
+    expect(wrapper.text()).toContain('3')
+    expect(wrapper.text()).not.toContain('active sessions:')
     expect(wrapper.text()).not.toContain('Total Workers')
 
     wrapper.unmount()
@@ -124,15 +125,9 @@ describe('Workers Page', () => {
     await flushPromises()
 
     forceUnauthorized = true
-    const refreshMenuBtn = wrapper
-      .findAll('button')
-      .find((button) => button.text().includes('Refresh Controls'))
-    expect(refreshMenuBtn).toBeTruthy()
-    await refreshMenuBtn?.trigger('click')
-    await flushPromises()
-    const refreshBtn = wrapper.findAll('button').find((button) => button.text() === 'Refresh Now')
-    expect(refreshBtn).toBeTruthy()
-    await refreshBtn?.trigger('click')
+    const refreshBtn = wrapper.find('button[aria-label="Refresh"]')
+    expect(refreshBtn.exists()).toBe(true)
+    await refreshBtn.trigger('click')
     await flushPromises()
     await flushPromises()
     await waitForRoute('/login')
@@ -179,6 +174,13 @@ describe('Workers Page', () => {
     expect(addBtn.exists()).toBe(true)
     await addBtn.trigger('click')
     await flushPromises()
+    expect(document.body.querySelector('.worker-type-modal')).toBeTruthy()
+    const normalOption = document.body.querySelector<HTMLButtonElement>(
+      '[data-testid="worker-type-option-normal"]',
+    )
+    expect(normalOption).toBeTruthy()
+    normalOption!.click()
+    await flushPromises()
     await flushPromises()
 
     expect(fetchMock.mock.calls.some(([url]) => String(url) === '/api/v1/workers')).toBe(true)
@@ -216,6 +218,12 @@ describe('Workers Page', () => {
     try {
       const addBtn = wrapper.find('[data-testid="create-worker-button"]')
       await addBtn.trigger('click')
+      await flushPromises()
+      const normalOption = document.body.querySelector<HTMLButtonElement>(
+        '[data-testid="worker-type-option-normal"]',
+      )
+      expect(normalOption).toBeTruthy()
+      normalOption!.click()
       await flushPromises()
       await flushPromises()
 
@@ -412,6 +420,12 @@ describe('Workers Page', () => {
 
     const wrapper = await mountApp('/workers')
     try {
+      const toggle = wrapper.find('input[type="checkbox"]')
+      expect(toggle.exists()).toBe(true)
+      await toggle.setValue(true)
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('node-1')
       const labelList = wrapper.find('.worker-label-list')
       expect(labelList.exists()).toBeTruthy()
       expect(labelList.classes()).toContain('max-h-24')
@@ -426,6 +440,50 @@ describe('Workers Page', () => {
       expect(labelTexts).toContain('team=core')
       expect(labelTexts).toContain('tier=backend')
       expect(labelTexts).toContain('runtime=docker')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('keeps labels column hidden by default', async () => {
+    const workersWithLabels = {
+      ...workersPayload,
+      items: [
+        {
+          ...workersPayload.items[0],
+          labels: {
+            zone: 'a',
+            env: 'prod',
+          },
+        },
+      ],
+    }
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/v1/console/session') {
+        return jsonResponse(adminSessionPayload)
+      }
+      if (url.startsWith('/api/v1/workers/stats')) {
+        return jsonResponse(statsPayload)
+      }
+      if (url.startsWith('/api/v1/workers/inflight')) {
+        return jsonResponse(inflightPayload)
+      }
+      if (url.startsWith('/api/v1/workers?')) {
+        return jsonResponse(workersWithLabels)
+      }
+      throw new Error(`unexpected url: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch)
+
+    const wrapper = await mountApp('/workers')
+    try {
+      const headerTexts = wrapper.findAll('th').map((item) => item.text())
+      expect(headerTexts).not.toContain('Labels')
+      expect(wrapper.text()).not.toContain('node-1')
+      expect(wrapper.text()).not.toContain('zone=a')
+      expect(wrapper.find('.worker-label-list').exists()).toBe(false)
     } finally {
       wrapper.unmount()
     }

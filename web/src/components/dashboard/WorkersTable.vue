@@ -6,6 +6,7 @@ import type { WorkerItem, WorkerInflightItem } from '@/types/workers'
 const props = defineProps<{
   workerRows: WorkerItem[]
   inflightWorkers: WorkerInflightItem[]
+  showDetails: boolean
   loading: boolean
   deletingNodeId: string
   formatCapabilities: (worker: WorkerItem) => string
@@ -64,7 +65,7 @@ function getInflightWorker(nodeId: string): InflightWorker | null {
 
 <template>
   <div class="overflow-auto">
-    <table class="w-full border-collapse min-w-[920px]">
+    <table class="w-full border-collapse min-w-[1040px]">
       <thead>
         <tr>
           <th
@@ -83,6 +84,12 @@ function getInflightWorker(nodeId: string): InflightWorker | null {
             Capabilities
           </th>
           <th
+            class="text-left px-6 py-4 border-b border-stroke text-[13px] font-medium text-secondary bg-surface-soft sticky top-0 z-1 align-middle"
+          >
+            Active Sessions
+          </th>
+          <th
+            v-if="showDetails"
             class="text-left px-6 py-4 border-b border-stroke text-[13px] font-medium text-secondary bg-surface-soft sticky top-0 z-1 align-middle"
           >
             Labels
@@ -107,7 +114,7 @@ function getInflightWorker(nodeId: string): InflightWorker | null {
       <tbody>
         <tr v-if="!loading && workerRows.length === 0">
           <td
-            colspan="7"
+            :colspan="showDetails ? 8 : 7"
             class="text-secondary text-center px-6 py-12 text-sm border-b border-stroke align-middle"
           >
             No workers found in current filter.
@@ -120,25 +127,23 @@ function getInflightWorker(nodeId: string): InflightWorker | null {
         >
           <td class="text-left px-6 py-4 border-b border-stroke text-sm text-primary align-middle">
             <div class="font-semibold">{{ worker.node_name || worker.node_id }}</div>
-            <div class="mt-1 text-secondary font-mono text-xs">{{ worker.node_id }}</div>
+            <div v-if="showDetails" class="mt-1 text-secondary font-mono text-xs">
+              {{ worker.node_id }}
+            </div>
           </td>
           <td class="text-left px-6 py-4 border-b border-stroke text-sm text-primary align-middle">
             <div>{{ worker.executor_kind || '--' }}</div>
             <div class="mt-1 text-secondary font-mono text-xs">
               version: {{ worker.version || '--' }}
             </div>
-            <div class="mt-1 text-secondary font-mono text-xs">
-              active sessions:
-              {{ getInflightWorker(worker.node_id)?.active_session_count ?? '--' }}
-            </div>
           </td>
           <td class="text-left px-6 py-4 border-b border-stroke text-sm text-primary align-middle">
             <div
-              class="flex flex-wrap gap-1.5"
+              class="flex flex-col items-start gap-1.5"
               v-if="worker.capabilities && worker.capabilities.length > 0"
             >
               <span
-                class="ui-badge-soft capability-badge inline-flex items-center justify-center px-2 py-1 border rounded-default font-mono text-[11px] gap-1.5"
+                class="ui-badge-soft capability-badge inline-flex items-center justify-center whitespace-nowrap px-2 py-1 border rounded-default font-mono text-[11px] gap-1.5"
                 v-for="cap in worker.capabilities"
                 :key="cap.name"
               >
@@ -164,6 +169,14 @@ function getInflightWorker(nodeId: string): InflightWorker | null {
             <span v-else>--</span>
           </td>
           <td class="text-left px-6 py-4 border-b border-stroke text-sm text-primary align-middle">
+            <span class="font-mono">
+              {{ getInflightWorker(worker.node_id)?.active_session_count ?? '--' }}
+            </span>
+          </td>
+          <td
+            v-if="showDetails"
+            class="text-left px-6 py-4 border-b border-stroke text-sm text-primary align-middle"
+          >
             <div
               v-if="worker.labels && Object.keys(worker.labels).length > 0"
               class="worker-label-list flex max-h-24 flex-col gap-1 overflow-y-auto pr-1"
