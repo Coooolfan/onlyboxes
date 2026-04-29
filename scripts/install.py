@@ -19,6 +19,15 @@ import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+MIN_PYTHON = (3, 6)
+if sys.version_info < MIN_PYTHON:
+    print(
+        "Onlyboxes installer requires Python {}.{} or newer.".format(*MIN_PYTHON),
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -85,8 +94,8 @@ class DeploymentPlan:
 # Foreground process tracking & cleanup (atexit)
 # ---------------------------------------------------------------------------
 
-_fg_processes: list[subprocess.Popen] = []
-_fg_compose_workdir: str | None = None
+_fg_processes: List[subprocess.Popen] = []
+_fg_compose_workdir: Optional[str] = None
 
 
 def _cleanup_foreground():
@@ -105,7 +114,8 @@ def _cleanup_foreground():
         subprocess.run(
             ["docker", "compose", "down"],
             cwd=_fg_compose_workdir,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
 
 
@@ -174,8 +184,14 @@ def sanitize_version(tag: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "-", tag)
 
 
-def run_cmd(args: list[str], cwd: str | None = None, check: bool = True) -> subprocess.CompletedProcess:
-    result = subprocess.run(args, cwd=cwd, capture_output=True, text=True)
+def run_cmd(args: List[str], cwd: Optional[str] = None, check: bool = True) -> subprocess.CompletedProcess:
+    result = subprocess.run(
+        args,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        universal_newlines=True,
+    )
     if check and result.returncode != 0:
         stderr = result.stderr.strip() or result.stdout.strip()
         fatal("command", f"`{' '.join(args)}` failed:\n{stderr}")
@@ -185,8 +201,8 @@ def run_cmd(args: list[str], cwd: str | None = None, check: bool = True) -> subp
 def api_request(
     url: str,
     method: str = "GET",
-    data: dict | None = None,
-    api_key: str | None = None,
+    data: Optional[dict] = None,
+    api_key: Optional[str] = None,
 ) -> dict:
     body = json.dumps(data).encode() if data is not None else None
     req = urllib.request.Request(url, data=body, method=method)
@@ -448,7 +464,7 @@ def _print_console_ready(http_port: int, admin_password: str) -> None:
 
 
 
-def create_worker(http_port: int, api_key: str) -> tuple[str, str]:
+def create_worker(http_port: int, api_key: str) -> Tuple[str, str]:
     url = f"http://127.0.0.1:{http_port}/api/v1/workers"
     result = api_request(url, method="POST", data={"type": "normal"}, api_key=api_key)
 
@@ -561,7 +577,7 @@ WantedBy=multi-user.target
 
 
 def build_console_env(workdir: Path, hash_key: str, admin_password: str,
-                      initial_api_key: str, http_port: int, grpc_port: int) -> dict[str, str]:
+                      initial_api_key: str, http_port: int, grpc_port: int) -> Dict[str, str]:
     env = os.environ.copy()
     env["CONSOLE_HASH_KEY"] = hash_key
     env["CONSOLE_DASHBOARD_USERNAME"] = "admin"
@@ -575,7 +591,7 @@ def build_console_env(workdir: Path, hash_key: str, admin_password: str,
 
 
 def build_worker_env(plan: DeploymentPlan, workdir: Path, grpc_port: int,
-                     worker_id: str, worker_secret: str) -> dict[str, str]:
+                     worker_id: str, worker_secret: str) -> Dict[str, str]:
     env = os.environ.copy()
     env["WORKER_CONSOLE_INSECURE"] = "true"
     env["WORKER_CONSOLE_GRPC_TARGET"] = f"127.0.0.1:{grpc_port}"
@@ -673,7 +689,7 @@ def print_summary(
     ]
 
     # Collect systemd services
-    systemd_services: list[str] = []
+    systemd_services: List[str] = []
     if plan.console_start == "systemd":
         systemd_services.append(CONSOLE_SERVICE_NAME)
     if plan.worker_start == "systemd":
