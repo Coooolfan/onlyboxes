@@ -191,8 +191,31 @@ func TestMCPAuthRequireTokenAllowsJITTokenAndCreatesAccount(t *testing.T) {
 	if account.Username != expectedIdentity.Username {
 		t.Fatalf("expected jit username %q, got %q", expectedIdentity.Username, account.Username)
 	}
+	if account.PasswordHash != jitAccountPasswordHash {
+		t.Fatalf("expected JIT account password sentinel %q, got %q", jitAccountPasswordHash, account.PasswordHash)
+	}
+	if account.HashAlgo != jitAccountHashAlgo {
+		t.Fatalf("expected JIT account hash algo %q, got %q", jitAccountHashAlgo, account.HashAlgo)
+	}
 	if account.IsAdmin != 0 {
 		t.Fatalf("expected non-admin JIT account, got is_admin=%d", account.IsAdmin)
+	}
+
+	consoleAuth, err := NewConsoleAuth(auth.queries, false)
+	if err != nil {
+		t.Fatalf("new console auth: %v", err)
+	}
+	loginRouter := gin.New()
+	loginRouter.POST("/api/v1/console/login", consoleAuth.Login)
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/v1/console/login", strings.NewReader(`{"username":"`+expectedIdentity.Username+`","password":"any-password"}`))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginRec := httptest.NewRecorder()
+	loginRouter.ServeHTTP(loginRec, loginReq)
+	if loginRec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected JIT account dashboard login to fail with 401, got %d body=%s", loginRec.Code, loginRec.Body.String())
+	}
+	if !strings.Contains(loginRec.Body.String(), "invalid username or password") {
+		t.Fatalf("expected invalid credential response, got %s", loginRec.Body.String())
 	}
 }
 

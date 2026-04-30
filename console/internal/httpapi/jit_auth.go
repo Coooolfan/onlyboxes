@@ -16,14 +16,15 @@ import (
 )
 
 const (
-	jitTokenPrefix                = "obx_jit_v1."
-	jitAccountIDPrefix            = "acc_jit_"
-	jitAccountIDIssuerMaxLen      = 20
-	jitAccountIDSubjectMaxLen     = 20
-	jitAccountIDHashHexLen        = 12
-	jitUsernamePrefix             = "jit_"
-	jitUsernameHashHexLen         = 24
-	jitAccountPasswordRandomBytes = 24
+	jitTokenPrefix            = "obx_jit_v1."
+	jitAccountIDPrefix        = "acc_jit_"
+	jitAccountIDIssuerMaxLen  = 20
+	jitAccountIDSubjectMaxLen = 20
+	jitAccountIDHashHexLen    = 12
+	jitUsernamePrefix         = "jit_"
+	jitUsernameHashHexLen     = 24
+	jitAccountPasswordHash    = "jit-account-no-dashboard-login"
+	jitAccountHashAlgo        = "jit-disabled"
 )
 
 type jitTokenClaims struct {
@@ -197,15 +198,6 @@ func (a *MCPAuth) ensureJITAccount(ctx context.Context, identity jitAccountIdent
 		return sqlc.Account{}, false
 	}
 
-	password, err := randomHex(jitAccountPasswordRandomBytes)
-	if err != nil {
-		return sqlc.Account{}, false
-	}
-	passwordHash, err := hashDashboardPassword(password)
-	if err != nil {
-		return sqlc.Account{}, false
-	}
-
 	now := time.Now()
 	if a.nowFn != nil {
 		now = a.nowFn()
@@ -216,8 +208,8 @@ func (a *MCPAuth) ensureJITAccount(ctx context.Context, identity jitAccountIdent
 		AccountID:       accountID,
 		Username:        username,
 		UsernameKey:     strings.ToLower(username),
-		PasswordHash:    passwordHash,
-		HashAlgo:        dashboardPasswordHashAlgo,
+		PasswordHash:    jitAccountPasswordHash,
+		HashAlgo:        jitAccountHashAlgo,
 		IsAdmin:         0,
 		CreatedAtUnixMs: nowMS,
 		UpdatedAtUnixMs: nowMS,
@@ -237,8 +229,8 @@ func (a *MCPAuth) ensureJITAccount(ctx context.Context, identity jitAccountIdent
 			AccountID:       accountID,
 			Username:        username,
 			UsernameKey:     strings.ToLower(username),
-			PasswordHash:    passwordHash,
-			HashAlgo:        dashboardPasswordHashAlgo,
+			PasswordHash:    jitAccountPasswordHash,
+			HashAlgo:        jitAccountHashAlgo,
 			IsAdmin:         0,
 			CreatedAtUnixMs: nowMS,
 			UpdatedAtUnixMs: nowMS,

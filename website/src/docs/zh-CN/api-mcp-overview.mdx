@@ -965,7 +965,7 @@ Task 适合需要异步执行或结果轮询的场景。所有权按 token 对�
 
 ## JIT Token 认证
 
-JIT（Just-in-Time）Token 允许外部系统以任意用户身份进行认证，无需提前创建账户。Console 验证签名后，首次使用时自动派生并创建非管理员账户。
+JIT（Just-in-Time）Token 允许外部系统以任意用户身份进行认证，无需提前创建账户。Console 验证签名后，首次使用时自动派生并创建禁用 Dashboard 登录的非管理员账户。
 
 **前提条件：** 需在 Console 上配置 `CONSOLE_JIT_SIGNING_KEY`。未设置时所有 JIT Token 均被拒绝。
 
@@ -989,10 +989,12 @@ obx_jit_v1.<base64url-payload>.<base64url-signature>
 2. **签名** — 调用方将 `{"iss":"...","sub":"..."}` Base64url 编码为 payload，再对 `obx_jit_v1.<payload>` 做 HMAC-SHA256 签名。
 3. **请求** — 以 `Authorization: Bearer obx_jit_v1.<payload>.<sig>` 调用任意命令执行端点。
 4. **验证** — Console 校验 HMAC 签名；密钥未配置或签名错误时返回 `401`。
-5. **账户创建（仅首次）** — Console 由 `(iss, sub)` 确定性推导出 `acc_jit_*` 账户 ID，若不存在则自动创建。后续相同组合的调用跳过此步。
+5. **账户创建（仅首次）** — Console 由 `(iss, sub)` 确定性推导出 `acc_jit_*` 账户 ID，若不存在则使用禁用的 Dashboard credential 自动创建。后续相同组合的调用跳过此步。
 6. **执行** — 请求在该账户的所有权下执行，受正常的账户级资源规则约束。
 
 > **账户隔离：** 每个 `(issuer, subject)` 组合对应独立账户，相同 `iss` 不同 `sub` 的 Token 互不影响。
+>
+> **Dashboard 访问：** JIT 创建的账户只用于执行资源归属，不能通过密码登录 Dashboard。
 >
 > **吊销：** 轮换 `CONSOLE_JIT_SIGNING_KEY` 可立即使所有已签发的 JIT Token 失效。
 

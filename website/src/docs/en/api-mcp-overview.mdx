@@ -965,7 +965,7 @@ Tasks are suited for asynchronous execution or polling workflows. Ownership is s
 
 ## JIT Token Authentication
 
-JIT (Just-in-Time) Tokens allow external systems to authenticate on behalf of arbitrary users without pre-creating accounts. The console verifies the token signature and automatically provisions a non-admin account on first use.
+JIT (Just-in-Time) Tokens allow external systems to authenticate on behalf of arbitrary users without pre-creating accounts. The console verifies the token signature and automatically provisions a non-admin, dashboard-login-disabled account on first use.
 
 **Prerequisites:** Set `CONSOLE_JIT_SIGNING_KEY` on the console. If unset, all JIT tokens are rejected.
 
@@ -989,10 +989,12 @@ obx_jit_v1.<base64url-payload>.<base64url-signature>
 2. **Sign** — The caller encodes `{"iss":"...","sub":"..."}` as a Base64url payload and signs `obx_jit_v1.<payload>` with HMAC-SHA256.
 3. **Request** — Send `Authorization: Bearer obx_jit_v1.<payload>.<sig>` to any command execution endpoint.
 4. **Verify** — The Console checks the HMAC signature; returns `401` if the key is unset or the signature is invalid.
-5. **Provision (first use only)** — The Console derives a deterministic `acc_jit_*` account from `(iss, sub)` and creates it if it does not yet exist. Subsequent calls with the same pair skip this step.
+5. **Provision (first use only)** — The Console derives a deterministic `acc_jit_*` account from `(iss, sub)` and creates it with disabled dashboard credentials if it does not yet exist. Subsequent calls with the same pair skip this step.
 6. **Execute** — The request proceeds under that account's ownership, subject to normal per-account resource rules.
 
 > **Account isolation:** each `(issuer, subject)` pair maps to a separate account. Tokens with the same `iss` but different `sub` values are independent.
+>
+> **Dashboard access:** JIT-created accounts own execution resources, but they cannot log in to the dashboard with a password.
 >
 > **Revocation:** rotate `CONSOLE_JIT_SIGNING_KEY` to immediately invalidate all previously issued JIT tokens.
 

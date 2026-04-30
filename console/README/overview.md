@@ -223,7 +223,8 @@ JIT token behavior:
 - token format is `obx_jit_v1.<payload>.<signature>`, where `<signature>` is HMAC-SHA256 over `obx_jit_v1.<payload>` using `CONSOLE_JIT_SIGNING_KEY`.
 - payload JSON currently requires `iss` and `sub`.
 - a valid JIT token deterministically derives an account-scoped owner identity from `iss` + `sub`.
-- on first use, the derived account is auto-created as a non-admin dashboard account and reused on later requests.
+- on first use, the derived account is auto-created as a non-admin account with disabled dashboard credentials and reused on later requests.
+- JIT-created accounts own execution resources but cannot log in through dashboard password authentication.
 - dashboard routes under `/api/v1/console/*` do not accept JIT tokens as session or API key credentials.
 - `CONSOLE_JIT_SIGNING_KEY` should be treated as a high-privilege signing secret: its holder can mint bearer tokens for any `iss`/`sub` identity.
 
