@@ -1,3 +1,5 @@
+import { TagSelector } from '../../features/docs/TagSelector'
+
 export const meta = {
   title: '安装',
   description: 'Linux/Mac 下一键安装路径。',
@@ -32,7 +34,7 @@ curl -fsSL https://onlybox.es/install.sh | bash
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
-| `--tag` | `0.2.0-beta-5` | 可选的 Release 版本覆盖参数，仅建议在高级场景下使用 |
+| `--tag` | `0.4.0` | 可选的 Release 版本覆盖参数，仅建议在高级场景下使用 |
 | `--workdir` | `$PWD/onlyboxes` | 工作目录 |
 | `--yes` / `-y` | `false` | 非交互模式 |
 | `--console-http-port` | `8089` | 宿主机上的 Console HTTP 端口 |
@@ -40,6 +42,36 @@ curl -fsSL https://onlybox.es/install.sh | bash
 | `--console-start` | `auto` | 控制台启动模式 |
 | `--worker-runtime` | `auto` | Worker 运行时选择（`docker` / `boxlite` / `auto`） |
 | `--worker-start` | `auto` | Worker 启动模式 |
+
+### 常用示例
+
+通过 `bash -s --` 把参数透传给安装脚本。
+
+安装指定版本（下拉框中的 tag 实时来自 GitHub）：
+
+<TagSelector locale="zh-CN" />
+
+非交互安装到自定义目录：
+
+```bash
+curl -fsSL https://onlybox.es/install.sh | bash -s -- \
+  --yes \
+  --workdir /opt/onlyboxes
+```
+
+自定义控制台端口：
+
+```bash
+curl -fsSL https://onlybox.es/install.sh | bash -s -- \
+  --console-http-port 18089 \
+  --console-grpc-port 50052
+```
+
+强制使用 boxlite 运行时（无 Docker 的环境）：
+
+```bash
+curl -fsSL https://onlybox.es/install.sh | bash -s -- --worker-runtime boxlite
+```
 
 ### 运行要求
 

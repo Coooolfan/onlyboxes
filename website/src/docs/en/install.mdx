@@ -1,3 +1,5 @@
+import { TagSelector } from '../../features/docs/TagSelector'
+
 export const meta = {
   title: 'Install',
   description: 'One-click installation path for Linux/Mac.',
@@ -32,7 +34,7 @@ curl -fsSL https://onlybox.es/install.sh | bash
 
 | Flag | Default | Description |
 | --- | --- | --- |
-| `--tag` | `0.2.0-beta-5` | Optional release override, only recommended for advanced use cases |
+| `--tag` | `0.4.0` | Optional release override, only recommended for advanced use cases |
 | `--workdir` | `$PWD/onlyboxes` | Working directory |
 | `--yes` / `-y` | `false` | Non-interactive mode |
 | `--console-http-port` | `8089` | Console HTTP port on the host |
@@ -40,6 +42,36 @@ curl -fsSL https://onlybox.es/install.sh | bash
 | `--console-start` | `auto` | Console startup mode |
 | `--worker-runtime` | `auto` | Worker runtime selection (`docker` / `boxlite` / `auto`) |
 | `--worker-start` | `auto` | Worker startup mode |
+
+### Common examples
+
+Forward arguments to the installer with `bash -s --`.
+
+Pin a specific release (the dropdown is populated live from GitHub tags):
+
+<TagSelector locale="en" />
+
+Unattended install into a custom directory:
+
+```bash
+curl -fsSL https://onlybox.es/install.sh | bash -s -- \
+  --yes \
+  --workdir /opt/onlyboxes
+```
+
+Custom console ports:
+
+```bash
+curl -fsSL https://onlybox.es/install.sh | bash -s -- \
+  --console-http-port 18089 \
+  --console-grpc-port 50052
+```
+
+Force the boxlite runtime (hosts without Docker):
+
+```bash
+curl -fsSL https://onlybox.es/install.sh | bash -s -- --worker-runtime boxlite
+```
 
 ### Requirements
 
