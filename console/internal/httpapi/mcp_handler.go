@@ -38,11 +38,56 @@ func NewMCPHandler(
 		return toolOverrides[tool]
 	}
 
+	// builtinDefaultNames captures every tool's source-level Name. It is used to
+	// reject overrides that collide with another capability's built-in default,
+	// so that e.g. CONSOLE_MCP_TOOL_ECHO_NAME=pythonExec falls back instead of
+	// shadowing pythonExec.
+	builtinDefaultNames := map[string]string{
+		"echo":         "echo",
+		"pythonExec":   "pythonExec",
+		"terminalExec": "terminalExec",
+		"computerUse":  "computerUse",
+		"readImage":    "readImage",
+		"exportFile":   "exportFile",
+	}
+	defaultNameToCap := make(map[string]string, len(builtinDefaultNames))
+	for capID, def := range builtinDefaultNames {
+		defaultNameToCap[def] = capID
+	}
+	// nameToCapabilityID maps the FINAL exposed tool name (post-override) back
+	// to the internal capability ID. Used by the hiddenTools middleware so
+	// filtering keeps working when an override renames a tool.
+	nameToCapabilityID := make(map[string]string, len(builtinDefaultNames))
+	resolveExposedName := func(capabilityID, defaultName string, override *string) string {
+		final := applyToolNameOverride(defaultName, override, logger, capabilityID)
+		if final != defaultName {
+			if other, ok := defaultNameToCap[final]; ok && other != capabilityID {
+				logger.Warn("MCP tool name override collides with another tool's built-in name; falling back to default",
+					"tool", capabilityID, "override", final, "conflictsWith", other)
+				final = defaultName
+			} else if owner, ok := nameToCapabilityID[final]; ok && owner != capabilityID {
+				logger.Warn("MCP tool name override already in use by another tool; falling back to default",
+					"tool", capabilityID, "override", final, "owner", owner)
+				final = defaultName
+			}
+		}
+		if owner, ok := nameToCapabilityID[final]; ok && owner != capabilityID {
+			// Fallback also conflicts (another capability already grabbed this
+			// default name via override). Refuse to register a duplicate.
+			logger.Error("MCP tool default name already taken by another tool's override; aborting MCP server registration",
+				"tool", capabilityID, "name", final, "owner", owner)
+			panic("onlyboxes: duplicate MCP tool name " + final + " for capability " + capabilityID)
+		}
+		nameToCapabilityID[final] = capabilityID
+		return final
+	}
+
 	echoOverride := resolveOverride("echo")
+	echoName := resolveExposedName("echo", "echo", echoOverride.Name)
 	echoTitle := applyToolTitleOverride(mcpEchoToolTitle, echoOverride.Title, logger, "echo")
 	mcp.AddTool(server, &mcp.Tool{
 		Title:       echoTitle,
-		Name:        "echo",
+		Name:        echoName,
 		Description: applyToolDescriptionOverride(mcpEchoToolDescription, echoOverride.Description, logger, "echo"),
 		Annotations: &mcp.ToolAnnotations{
 			Title:           echoTitle,
@@ -59,9 +104,10 @@ func NewMCPHandler(
 
 	pyOverride := resolveOverride("pythonExec")
 	pyTitle := applyToolTitleOverride(mcpPythonExecToolTitle, pyOverride.Title, logger, "pythonExec")
+	pyName := resolveExposedName("pythonExec", "pythonExec", pyOverride.Name)
 	mcp.AddTool(server, &mcp.Tool{
 		Title:       pyTitle,
-		Name:        "pythonExec",
+		Name:        pyName,
 		Description: applyToolDescriptionOverride(mcpPythonExecToolDescription, pyOverride.Description, logger, "pythonExec"),
 		Annotations: &mcp.ToolAnnotations{
 			Title:           pyTitle,
@@ -78,9 +124,10 @@ func NewMCPHandler(
 
 	termOverride := resolveOverride("terminalExec")
 	termTitle := applyToolTitleOverride(mcpTerminalExecToolTitle, termOverride.Title, logger, "terminalExec")
+	termName := resolveExposedName("terminalExec", "terminalExec", termOverride.Name)
 	mcp.AddTool(server, &mcp.Tool{
 		Title:       termTitle,
-		Name:        "terminalExec",
+		Name:        termName,
 		Description: applyToolDescriptionOverride(mcpTerminalExecToolDescription, termOverride.Description, logger, "terminalExec"),
 		Annotations: &mcp.ToolAnnotations{
 			Title:           termTitle,
@@ -97,9 +144,10 @@ func NewMCPHandler(
 
 	cuOverride := resolveOverride("computerUse")
 	cuTitle := applyToolTitleOverride(mcpComputerUseToolTitle, cuOverride.Title, logger, "computerUse")
+	cuName := resolveExposedName("computerUse", "computerUse", cuOverride.Name)
 	mcp.AddTool(server, &mcp.Tool{
 		Title:       cuTitle,
-		Name:        "computerUse",
+		Name:        cuName,
 		Description: applyToolDescriptionOverride(mcpComputerUseToolDescription, cuOverride.Description, logger, "computerUse"),
 		Annotations: &mcp.ToolAnnotations{
 			Title:           cuTitle,
@@ -116,9 +164,10 @@ func NewMCPHandler(
 
 	riOverride := resolveOverride("readImage")
 	riTitle := applyToolTitleOverride(mcpReadImageToolTitle, riOverride.Title, logger, "readImage")
+	riName := resolveExposedName("readImage", "readImage", riOverride.Name)
 	mcp.AddTool(server, &mcp.Tool{
 		Title:       riTitle,
-		Name:        "readImage",
+		Name:        riName,
 		Description: applyToolDescriptionOverride(mcpReadImageToolDescription, riOverride.Description, logger, "readImage"),
 		Annotations: &mcp.ToolAnnotations{
 			Title:           riTitle,
@@ -135,9 +184,10 @@ func NewMCPHandler(
 	if exportStore != nil && strings.TrimSpace(exportPrefix) != "" {
 		efOverride := resolveOverride("exportFile")
 		efTitle := applyToolTitleOverride(mcpExportFileToolTitle, efOverride.Title, logger, "exportFile")
+		efName := resolveExposedName("exportFile", "exportFile", efOverride.Name)
 		mcp.AddTool(server, &mcp.Tool{
 			Title:       efTitle,
-			Name:        "exportFile",
+			Name:        efName,
 			Description: applyToolDescriptionOverride(mcpExportFileToolDescription, efOverride.Description, logger, "exportFile"),
 			Annotations: &mcp.ToolAnnotations{
 				Title:           efTitle,
@@ -166,7 +216,14 @@ func NewMCPHandler(
 				}
 				filtered := make([]*mcp.Tool, 0, len(listResult.Tools))
 				for _, tool := range listResult.Tools {
-					if tool == nil || isCapabilityHidden(hiddenTools, tool.Name) {
+					if tool == nil {
+						continue
+					}
+					capID, ok := nameToCapabilityID[tool.Name]
+					if !ok {
+						capID = tool.Name
+					}
+					if isCapabilityHidden(hiddenTools, capID) {
 						continue
 					}
 					filtered = append(filtered, tool)

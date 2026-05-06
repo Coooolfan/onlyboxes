@@ -538,6 +538,122 @@ func TestMCPToolsList_WithParamHidden(t *testing.T) {
 	assertRequiredContains(t, schema["required"], "command")
 }
 
+func TestMCPToolsList_WithNameOverride(t *testing.T) {
+	custom := "ping"
+	overrides := map[string]config.MCPToolOverride{
+		"echo": {Name: &custom},
+	}
+	dispatcher := &fakeMCPDispatcher{
+		dispatchEcho: func(ctx context.Context, message string, timeout time.Duration) (string, error) {
+			return message, nil
+		},
+	}
+	router := newMCPTestRouterWithOverrides(t, dispatcher, overrides, nil)
+
+	listPayload := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`)
+	result := mustMapField(t, listPayload, "result")
+	toolsRaw, _ := result["tools"].([]any)
+	names := map[string]bool{}
+	for _, tl := range toolsRaw {
+		m, _ := tl.(map[string]any)
+		if n, _ := m["name"].(string); n != "" {
+			names[n] = true
+		}
+	}
+	if !names["ping"] {
+		t.Fatalf("expected exposed name 'ping' in tools/list, got %#v", names)
+	}
+	if names["echo"] {
+		t.Fatalf("default name 'echo' should be replaced by override, got %#v", names)
+	}
+
+	callPayload := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"ping","arguments":{"message":"hello"}}}`)
+	callResult := mustMapField(t, callPayload, "result")
+	if asBool(callResult["isError"]) {
+		t.Fatalf("expected success calling overridden name, got %s", mustJSON(t, callResult))
+	}
+	structured := mustMapField(t, callResult, "structuredContent")
+	if got := asString(t, structured["message"]); got != "hello" {
+		t.Fatalf("expected echoed message=hello, got %q", got)
+	}
+}
+
+func TestMCPToolsList_NameOverride_InvalidFallsBack(t *testing.T) {
+	bad := "bad name with spaces"
+	overrides := map[string]config.MCPToolOverride{
+		"echo": {Name: &bad},
+	}
+	logger, cap := newCaptureLogger()
+	router := newMCPTestRouterWithOverrides(t, &fakeMCPDispatcher{}, overrides, logger)
+	payload := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`)
+	result := mustMapField(t, payload, "result")
+	toolsRaw, _ := result["tools"].([]any)
+	var has bool
+	for _, tl := range toolsRaw {
+		m, _ := tl.(map[string]any)
+		if n, _ := m["name"].(string); n == "echo" {
+			has = true
+		}
+	}
+	if !has {
+		t.Fatalf("expected fallback to default name 'echo' on invalid override")
+	}
+	if logs := cap.String(); !strings.Contains(logs, "invalid MCP tool name override") {
+		t.Fatalf("expected warn about invalid name; logs=%q", logs)
+	}
+}
+
+func TestMCPToolsList_NameOverride_CollisionFallsBack(t *testing.T) {
+	collide := "pythonExec"
+	overrides := map[string]config.MCPToolOverride{
+		"echo": {Name: &collide},
+	}
+	logger, cap := newCaptureLogger()
+	router := newMCPTestRouterWithOverrides(t, &fakeMCPDispatcher{}, overrides, logger)
+	payload := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`)
+	result := mustMapField(t, payload, "result")
+	toolsRaw, _ := result["tools"].([]any)
+	count := map[string]int{}
+	for _, tl := range toolsRaw {
+		m, _ := tl.(map[string]any)
+		if n, _ := m["name"].(string); n != "" {
+			count[n]++
+		}
+	}
+	if count["echo"] != 1 {
+		t.Fatalf("expected echo to fall back to default name (1 occurrence), got %d", count["echo"])
+	}
+	if count["pythonExec"] != 1 {
+		t.Fatalf("expected pythonExec to remain itself (1 occurrence), got %d", count["pythonExec"])
+	}
+	if logs := cap.String(); !strings.Contains(logs, "collides with another tool's built-in name") {
+		t.Fatalf("expected warn about builtin collision; logs=%q", logs)
+	}
+}
+
+func TestMCPToolsList_NameOverride_HiddenStillFiltered(t *testing.T) {
+	custom := "ping"
+	overrides := map[string]config.MCPToolOverride{
+		"echo": {Name: &custom},
+	}
+	hidden := map[string]bool{"echo": true}
+	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, &fakeMCPDispatcher{}, nil, nil, "")
+	router, err := NewRouter(handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil, hidden, overrides)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+	payload := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`)
+	result := mustMapField(t, payload, "result")
+	toolsRaw, _ := result["tools"].([]any)
+	for _, tl := range toolsRaw {
+		m, _ := tl.(map[string]any)
+		switch n, _ := m["name"].(string); n {
+		case "echo", "ping":
+			t.Fatalf("expected echo capability to remain hidden under override; saw %q", n)
+		}
+	}
+}
+
 func TestMCPToolCall_HiddenParamStillAccepted(t *testing.T) {
 	empty := ""
 	overrides := map[string]config.MCPToolOverride{

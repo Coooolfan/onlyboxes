@@ -55,14 +55,19 @@ type Config struct {
 }
 
 // MCPToolOverride holds optional env-driven overrides for a single MCP tool's
-// Title, Description, and per-parameter descriptions.
+// Name, Title, Description, and per-parameter descriptions.
 //
 // Pointer semantics:
 //   - nil       → env not set, use built-in default.
-//   - non-nil   → env set. For Title/Description: empty string is treated as
-//                invalid (fallback + warn). For ParamDescriptions: empty
-//                string means "hide this parameter from tools/list inputSchema".
+//   - non-nil   → env set. For Name/Title/Description: empty string is treated
+//                as invalid (fallback + warn at the handler layer). Name is
+//                additionally validated against an MCP-compatible regex; an
+//                override that collides with another tool's built-in default
+//                name (or another tool's exposed name) also falls back. For
+//                ParamDescriptions: empty string means "hide this parameter
+//                from tools/list inputSchema".
 type MCPToolOverride struct {
+	Name              *string
 	Title             *string
 	Description       *string
 	ParamDescriptions map[string]*string
@@ -227,6 +232,7 @@ var mcpToolParamCatalog = []struct {
 }
 
 // loadMCPToolOverrides reads env vars of the form:
+//   CONSOLE_MCP_TOOL_<TOOL>_NAME
 //   CONSOLE_MCP_TOOL_<TOOL>_TITLE
 //   CONSOLE_MCP_TOOL_<TOOL>_DESCRIPTION
 //   CONSOLE_MCP_TOOL_<TOOL>_PARAM_<PARAM>_DESCRIPTION
@@ -241,6 +247,10 @@ func loadMCPToolOverrides() map[string]MCPToolOverride {
 	for _, entry := range mcpToolParamCatalog {
 		toolEnv := toolNameToEnvSegment(entry.ToolName)
 		override := MCPToolOverride{}
+		if v, ok := os.LookupEnv("CONSOLE_MCP_TOOL_" + toolEnv + "_NAME"); ok {
+			s := v
+			override.Name = &s
+		}
 		if v, ok := os.LookupEnv("CONSOLE_MCP_TOOL_" + toolEnv + "_TITLE"); ok {
 			s := v
 			override.Title = &s
@@ -260,7 +270,7 @@ func loadMCPToolOverrides() map[string]MCPToolOverride {
 		if len(params) > 0 {
 			override.ParamDescriptions = params
 		}
-		if override.Title != nil || override.Description != nil || override.ParamDescriptions != nil {
+		if override.Name != nil || override.Title != nil || override.Description != nil || override.ParamDescriptions != nil {
 			result[entry.ToolName] = override
 		}
 	}

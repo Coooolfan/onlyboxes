@@ -736,7 +736,7 @@ Task 所有权按账号隔离（由 token 对应账号决定）。
 
 > 在 `CONSOLE_HIDDEN_TOOLS` 中列出的工具不会出现在 `tools/list` 中；如果客户端已知工具名，仍可继续通过 `tools/call` 调用。
 
-> 每个工具的 `title` / `description`、以及每个参数的 `description` 可以通过 `CONSOLE_MCP_TOOL_<TOOL>_TITLE`、`CONSOLE_MCP_TOOL_<TOOL>_DESCRIPTION`、`CONSOLE_MCP_TOOL_<TOOL>_PARAM_<PARAM>_DESCRIPTION` 在运行时覆盖。将参数描述设置为空字符串会把该参数从 `inputSchema.properties` 与 `required` 中移除（并把对应 schema 的 `additionalProperties` 翻转为 `true`），但 `tools/call` 依然会接受该字段。完整的 `<TOOL>` / `<PARAM>` 映射详见 Console 配置文档。
+> 每个工具的 `name` / `title` / `description`、以及每个参数的 `description` 可以通过 `CONSOLE_MCP_TOOL_<TOOL>_NAME`、`CONSOLE_MCP_TOOL_<TOOL>_TITLE`、`CONSOLE_MCP_TOOL_<TOOL>_DESCRIPTION`、`CONSOLE_MCP_TOOL_<TOOL>_PARAM_<PARAM>_DESCRIPTION` 在运行时覆盖。`_NAME` 会改变客户端在 `tools/list` 中看到、`tools/call` 用作路由键的值（必须匹配 `^[a-zA-Z0-9_-]{1,64}$`，若与其他工具的内置默认名冲突会回退）；`CONSOLE_HIDDEN_TOOLS` 仍然填内部 capability ID，不能填改名后的值。将参数描述设置为空字符串会把该参数从 `inputSchema.properties` 与 `required` 中移除（并把对应 schema 的 `additionalProperties` 翻转为 `true`），但 `tools/call` 依然会接受该字段。完整的 `<TOOL>` / `<PARAM>` 映射详见 Console 配置文档。
 
 #### 工具：`echo`
 

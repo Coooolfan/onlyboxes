@@ -734,7 +734,7 @@ Unknown arguments are rejected with JSON-RPC `-32602 invalid params`.
 
 > Tools listed in `CONSOLE_HIDDEN_TOOLS` are omitted from `tools/list`. They remain callable via `tools/call` if the client already knows the tool name.
 
-> Each tool's `title` / `description` and each parameter's `description` can be overridden at runtime via `CONSOLE_MCP_TOOL_<TOOL>_TITLE`, `CONSOLE_MCP_TOOL_<TOOL>_DESCRIPTION`, and `CONSOLE_MCP_TOOL_<TOOL>_PARAM_<PARAM>_DESCRIPTION`. Setting a parameter description to an empty string removes that parameter from `inputSchema.properties` and `required` (and flips `additionalProperties` to `true` on that schema), while `tools/call` still accepts the field. See the Console Configuration doc for the full `<TOOL>` / `<PARAM>` mapping.
+> Each tool's `name` / `title` / `description` and each parameter's `description` can be overridden at runtime via `CONSOLE_MCP_TOOL_<TOOL>_NAME`, `CONSOLE_MCP_TOOL_<TOOL>_TITLE`, `CONSOLE_MCP_TOOL_<TOOL>_DESCRIPTION`, and `CONSOLE_MCP_TOOL_<TOOL>_PARAM_<PARAM>_DESCRIPTION`. The `_NAME` override changes the value clients see in `tools/list` and use as the `tools/call` routing key (must match `^[a-zA-Z0-9_-]{1,64}$`; conflicts with another tool's built-in name fall back); `CONSOLE_HIDDEN_TOOLS` always uses the internal capability ID, never the renamed value. Setting a parameter description to an empty string removes that parameter from `inputSchema.properties` and `required` (and flips `additionalProperties` to `true` on that schema), while `tools/call` still accepts the field. See the Console Configuration doc for the full `<TOOL>` / `<PARAM>` mapping.
 
 #### Tool: `echo`
 

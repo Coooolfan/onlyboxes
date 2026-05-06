@@ -2,7 +2,10 @@ package httpapi
 
 import (
 	"log/slog"
+	"regexp"
 )
+
+var mcpToolNamePattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 
 const (
 	mcpServerName                  = "onlyboxes"
@@ -408,6 +411,35 @@ func applyToolDescriptionOverride(defaultValue string, override *string, logger 
 		if logger != nil {
 			logger.Warn("ignoring empty MCP tool description override; falling back to default",
 				"tool", toolName)
+		}
+		return defaultValue
+	}
+	return *override
+}
+
+// applyToolNameOverride returns the final Name string given a default and an
+// optional override pointer. Empty strings or values not matching
+// mcpToolNamePattern fall back to defaultValue with a warn log. A nil pointer
+// means no override was requested.
+//
+// Conflict-against-other-tools (override duplicating another tool's exposed
+// name or built-in default) is enforced one layer up by the handler-level
+// resolveExposedName closure, which has visibility into the full tool catalog.
+func applyToolNameOverride(defaultValue string, override *string, logger *slog.Logger, toolName string) string {
+	if override == nil {
+		return defaultValue
+	}
+	if *override == "" {
+		if logger != nil {
+			logger.Warn("ignoring empty MCP tool name override; falling back to default",
+				"tool", toolName)
+		}
+		return defaultValue
+	}
+	if !mcpToolNamePattern.MatchString(*override) {
+		if logger != nil {
+			logger.Warn("ignoring invalid MCP tool name override; must match ^[a-zA-Z0-9_-]{1,64}$",
+				"tool", toolName, "override", *override)
 		}
 		return defaultValue
 	}

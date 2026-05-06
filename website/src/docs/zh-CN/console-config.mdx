@@ -48,7 +48,7 @@ export const meta = {
 
 | 变量 | 必填 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `CONSOLE_HIDDEN_TOOLS` | 否 | | 逗号分隔的 MCP 工具隐藏列表（`echo`、`pythonExec`、`terminalExec`、`computerUse`、`readImage`、`exportFile`）。被隐藏的工具不会出现在 `tools/list` 中，但如果客户端已知工具名，仍可继续调用。 |
+| `CONSOLE_HIDDEN_TOOLS` | 否 | | 逗号分隔的 MCP **内部 capability ID** 隐藏列表（`echo`、`pythonExec`、`terminalExec`、`computerUse`、`readImage`、`exportFile`）。这里始终填写内置 ID，**不要**填 `CONSOLE_MCP_TOOL_<TOOL>_NAME` 改名后的对外 name。被隐藏的工具不会出现在 `tools/list` 中，但如果客户端已知工具名，仍可继续调用。 |
 
 #### 工具描述 / 参数描述覆盖
 
@@ -56,6 +56,7 @@ export const meta = {
 
 | 变量 | 必填 | 默认值 | 说明 |
 | --- | --- | --- | --- |
+| `CONSOLE_MCP_TOOL_<TOOL>_NAME` | 否 | 内置 | 覆盖工具在 `tools/list` 中暴露的 `name`（即 `tools/call` 的路由键）。必须匹配 `^[a-zA-Z0-9_-]{1,64}$`；空串/非法字符会回退默认并打印 warn。若覆盖值与其他工具的内置默认名冲突（例如把 `ECHO_NAME` 设为 `pythonExec`）也会回退。改名后客户端需重新拉取 `tools/list`，否则用旧名调用 `tools/call` 会 404。`CONSOLE_HIDDEN_TOOLS` 仍填内部 capability ID（`echo`），不填改名后的值。 |
 | `CONSOLE_MCP_TOOL_<TOOL>_TITLE` | 否 | 内置 | 覆盖工具在 `tools/list` 与 `annotations.title` 中展示的标题。空串会回退默认并打印一条 warning 日志。 |
 | `CONSOLE_MCP_TOOL_<TOOL>_DESCRIPTION` | 否 | 内置 | 覆盖工具的 `description`。空串会回退默认并打印一条 warning 日志。 |
 | `CONSOLE_MCP_TOOL_<TOOL>_PARAM_<PARAM>_DESCRIPTION` | 否 | 内置 | 覆盖 `inputSchema.properties.<param>` 中单个参数的 `description`。**设置为空字符串会从 `tools/list` 中隐藏该参数**：该键会从 `properties` 与 `required` 中移除，且 schema 的 `additionalProperties` 会被翻转为 `true`，MCP/HTTP 调用方依然可以传入该字段（handler 仍能收到）。每隐藏一个参数都会在启动时打印一条 `WARN hiding MCP tool parameter ... required=<bool>` 日志。如果被隐藏的参数原本是 required，模型将无法构造合法调用。 |
@@ -74,7 +75,8 @@ export const meta = {
 示例：
 
 ```bash
-# 覆盖 echo 的描述，并隐藏 terminalExec 的 session_id 参数
+# 把 echo 改名为 ping，覆盖描述，并隐藏 terminalExec 的 session_id 参数
+CONSOLE_MCP_TOOL_ECHO_NAME="ping"
 CONSOLE_MCP_TOOL_ECHO_DESCRIPTION="ping-only echo"
 CONSOLE_MCP_TOOL_TERMINAL_EXEC_PARAM_SESSION_ID_DESCRIPTION=""
 ```

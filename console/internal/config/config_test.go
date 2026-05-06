@@ -296,6 +296,35 @@ func TestLoadMCPToolOverrides_ParamHidden_EmptyString(t *testing.T) {
 	}
 }
 
+func TestLoadMCPToolOverrides_Name_Override(t *testing.T) {
+	t.Setenv("CONSOLE_MCP_TOOL_PYTHON_EXEC_NAME", "py")
+	cfg := Load()
+	o, ok := cfg.MCPToolOverrides["pythonExec"]
+	if !ok {
+		t.Fatalf("expected pythonExec override, got %#v", cfg.MCPToolOverrides)
+	}
+	if o.Name == nil || *o.Name != "py" {
+		t.Fatalf("expected Name=py, got %#v", o.Name)
+	}
+	if o.Title != nil || o.Description != nil {
+		t.Fatalf("expected only Name to be set, got %#v", o)
+	}
+}
+
+func TestLoadMCPToolOverrides_NameEmptyString_Preserved(t *testing.T) {
+	// Empty string is preserved in config; the handler layer decides the
+	// fallback+warn behavior.
+	t.Setenv("CONSOLE_MCP_TOOL_ECHO_NAME", "")
+	cfg := Load()
+	o := cfg.MCPToolOverrides["echo"]
+	if o.Name == nil {
+		t.Fatalf("expected non-nil Name pointer (env set to empty)")
+	}
+	if *o.Name != "" {
+		t.Fatalf("expected empty string, got %q", *o.Name)
+	}
+}
+
 func TestLoadMCPToolOverrides_DescriptionEmptyString_Preserved(t *testing.T) {
 	// Empty string is preserved in config; the handler layer decides the
 	// fallback+warn for Title/Description.
