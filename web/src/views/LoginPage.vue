@@ -29,7 +29,7 @@ async function submitLogin(): Promise<void> {
 
   loginErrorMessage.value = ''
   if (loginUsername.value.trim() === '' || loginPassword.value === '') {
-    loginErrorMessage.value = '请输入账号和密码。'
+    loginErrorMessage.value = 'Enter your username and password.'
     return
   }
 
@@ -39,9 +39,9 @@ async function submitLogin(): Promise<void> {
     await router.replace(resolveRedirect())
   } catch (error) {
     if (isInvalidCredentialsError(error)) {
-      loginErrorMessage.value = '账号或密码错误'
+      loginErrorMessage.value = 'Invalid username or password.'
     } else {
-      loginErrorMessage.value = error instanceof Error ? error.message : '登录失败，请稍后重试。'
+      loginErrorMessage.value = error instanceof Error ? error.message : 'Sign in failed. Try again later.'
     }
   } finally {
     loginSubmitting.value = false
