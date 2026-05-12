@@ -4,6 +4,8 @@ export type WorkerCallTimeoutMode = 'auto' | 'manual'
 
 export type WorkerSysWhitelistMode = 'exact' | 'prefix' | 'allow_all'
 
+export type WorkerSysStartupPreset = 'custom' | 'temporary-probe'
+
 export interface WorkerStartupBaseConfig {
   workerID: string
   workerSecret: string
@@ -53,6 +55,9 @@ export interface WorkerBoxliteStartupConfig extends WorkerStartupBaseConfig {
 }
 
 export interface WorkerSysStartupConfig extends WorkerStartupBaseConfig {
+  startupPreset: WorkerSysStartupPreset
+  temporaryProbeInstallerOrigin: string
+  temporaryProbeTag: string
   computerUseOutputLimitBytes: number
   computerUseCommandWhitelistMode: WorkerSysWhitelistMode
   computerUseCommandWhitelistText: string

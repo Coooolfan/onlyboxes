@@ -5,6 +5,7 @@ The console service hosts:
 - embedded web dashboard static hosting:
   - `GET /` serves embedded `web` frontend.
   - `GET /assets/*` serves bundled static assets.
+  - `GET /static/*` serves embedded static public files such as `/static/worker-startup.sh`.
   - unknown `GET/HEAD` routes return `404 Not Found`.
   - `/api/*` and `/mcp` are reserved for backend handlers and are not served as frontend pages.
 - REST APIs for worker data (dashboard authentication, role-scoped):

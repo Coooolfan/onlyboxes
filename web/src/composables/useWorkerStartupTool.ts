@@ -31,6 +31,8 @@ const defaultBoxliteMemoryMib = 256
 const defaultBoxliteCpus = 1
 const defaultBoxliteMaxProcesses = 128
 const defaultTerminalExportMaxBytes = 0
+const defaultTemporaryProbeNodeName = 'Temporary Probe'
+const defaultTemporaryProbeInstallerTag = '0.4.0'
 
 type BuildState = {
   envEntries: Array<[string, string]>
@@ -185,6 +187,46 @@ function formatMultilineCommand(envEntries: Array<[string, string]>, binaryPath:
   return lines.join('\n')
 }
 
+function formatTemporaryProbeCommand(config: WorkerSysStartupConfig): StartupCommandBuildResult {
+  const errors: string[] = []
+  const workerID = config.workerID.trim()
+  const workerSecret = config.workerSecret.trim()
+  const consoleGRPCTarget = config.consoleGRPCTarget.trim()
+  const installerOrigin = config.temporaryProbeInstallerOrigin.trim().replace(/\/$/, '')
+  const tag = config.temporaryProbeTag.trim()
+
+  if (!workerID) {
+    errors.push('WORKER_ID is required.')
+  }
+  if (!workerSecret) {
+    errors.push('WORKER_SECRET is required.')
+  }
+  if (!consoleGRPCTarget) {
+    errors.push('WORKER_CONSOLE_GRPC_TARGET is required.')
+  }
+  if (!installerOrigin) {
+    errors.push('Temporary Probe installer origin is required.')
+  }
+
+  const args = [
+    '--worker-id',
+    shellQuote(workerID),
+    '--worker-secret',
+    shellQuote(workerSecret),
+    '--grpc-target',
+    shellQuote(consoleGRPCTarget),
+  ]
+  if (tag && tag !== defaultTemporaryProbeInstallerTag) {
+    args.push('--tag', shellQuote(tag))
+  }
+
+  return {
+    command: `curl -fsSL ${shellQuote(`${installerOrigin}/static/worker-startup.sh`)} | bash -s -- ${args.join(' ')}`,
+    errors,
+    warnings: [],
+  }
+}
+
 function appendCommonEnv(
   state: BuildState,
   config: WorkerDockerStartupConfig | WorkerBoxliteStartupConfig | WorkerSysStartupConfig,
@@ -308,6 +350,9 @@ export function createDefaultWorkerSysStartupConfig(): WorkerSysStartupConfig {
     nodeName: '',
     version: '',
     labelsText: '',
+    startupPreset: 'custom',
+    temporaryProbeInstallerOrigin: '',
+    temporaryProbeTag: defaultTemporaryProbeInstallerTag,
     computerUseOutputLimitBytes: defaultComputerUseOutputLimitBytes,
     computerUseCommandWhitelistMode: 'exact',
     computerUseCommandWhitelistText: '',
@@ -361,10 +406,7 @@ export function buildWorkerDockerStartupCommand(
     state.errors.push('WORKER_TERMINAL_EXEC_DOCKER_IMAGE is required.')
   }
 
-  const pythonExecMemoryMib = parsePositiveInt(
-    config.pythonExecMemoryMib,
-    defaultDockerMemoryMib,
-  )
+  const pythonExecMemoryMib = parsePositiveInt(config.pythonExecMemoryMib, defaultDockerMemoryMib)
   if (!pythonExecMemoryMib.valid) {
     state.errors.push('WORKER_PYTHON_EXEC_MEMORY_MIB must be a positive integer.')
   }
@@ -457,10 +499,7 @@ export function buildWorkerDockerStartupCommand(
   state.envEntries.push(['WORKER_PYTHON_EXEC_DOCKER_IMAGE', pythonExecDockerImage])
   state.envEntries.push(['WORKER_PYTHON_EXEC_MEMORY_MIB', String(pythonExecMemoryMib.value)])
   state.envEntries.push(['WORKER_PYTHON_EXEC_CPUS', String(pythonExecCpus.value)])
-  state.envEntries.push([
-    'WORKER_PYTHON_EXEC_MAX_PROCESSES',
-    String(pythonExecMaxProcesses.value),
-  ])
+  state.envEntries.push(['WORKER_PYTHON_EXEC_MAX_PROCESSES', String(pythonExecMaxProcesses.value)])
   state.envEntries.push(['WORKER_TERMINAL_EXEC_DOCKER_IMAGE', terminalExecDockerImage])
   state.envEntries.push(['WORKER_TERMINAL_EXEC_MEMORY_MIB', String(terminalExecMemoryMib.value)])
   state.envEntries.push(['WORKER_TERMINAL_EXEC_CPUS', String(terminalExecCpus.value)])
@@ -475,10 +514,7 @@ export function buildWorkerDockerStartupCommand(
     'WORKER_TERMINAL_OUTPUT_LIMIT_BYTES',
     String(terminalOutputLimitBytes.value),
   ])
-  state.envEntries.push([
-    'WORKER_TERMINAL_EXPORT_MAX_BYTES',
-    String(terminalExportMaxBytes.value),
-  ])
+  state.envEntries.push(['WORKER_TERMINAL_EXPORT_MAX_BYTES', String(terminalExportMaxBytes.value)])
 
   return {
     command: formatMultilineCommand(state.envEntries, config.binaryPath.trim()),
@@ -503,10 +539,7 @@ export function buildWorkerBoxliteStartupCommand(
     state.errors.push('WORKER_TERMINAL_EXEC_BOXLITE_IMAGE is required.')
   }
 
-  const pythonExecMemoryMib = parsePositiveInt(
-    config.pythonExecMemoryMib,
-    defaultBoxliteMemoryMib,
-  )
+  const pythonExecMemoryMib = parsePositiveInt(config.pythonExecMemoryMib, defaultBoxliteMemoryMib)
   if (!pythonExecMemoryMib.valid) {
     state.errors.push('WORKER_PYTHON_EXEC_MEMORY_MIB must be a positive integer.')
   }
@@ -602,10 +635,7 @@ export function buildWorkerBoxliteStartupCommand(
   state.envEntries.push(['WORKER_PYTHON_EXEC_BOXLITE_IMAGE', pythonExecBoxliteImage])
   state.envEntries.push(['WORKER_PYTHON_EXEC_MEMORY_MIB', String(pythonExecMemoryMib.value)])
   state.envEntries.push(['WORKER_PYTHON_EXEC_CPUS', String(pythonExecCpus.value)])
-  state.envEntries.push([
-    'WORKER_PYTHON_EXEC_MAX_PROCESSES',
-    String(pythonExecMaxProcesses.value),
-  ])
+  state.envEntries.push(['WORKER_PYTHON_EXEC_MAX_PROCESSES', String(pythonExecMaxProcesses.value)])
   state.envEntries.push(['WORKER_TERMINAL_EXEC_BOXLITE_IMAGE', terminalExecBoxliteImage])
   state.envEntries.push(['WORKER_TERMINAL_EXEC_MEMORY_MIB', String(terminalExecMemoryMib.value)])
   state.envEntries.push(['WORKER_TERMINAL_EXEC_CPUS', String(terminalExecCpus.value)])
@@ -620,10 +650,7 @@ export function buildWorkerBoxliteStartupCommand(
     'WORKER_TERMINAL_OUTPUT_LIMIT_BYTES',
     String(terminalOutputLimitBytes.value),
   ])
-  state.envEntries.push([
-    'WORKER_TERMINAL_EXPORT_MAX_BYTES',
-    String(terminalExportMaxBytes.value),
-  ])
+  state.envEntries.push(['WORKER_TERMINAL_EXPORT_MAX_BYTES', String(terminalExportMaxBytes.value)])
 
   return {
     command: formatMultilineCommand(state.envEntries, config.binaryPath.trim()),
@@ -642,6 +669,10 @@ function normalizeWhitelistMode(mode: string): WorkerSysWhitelistMode {
 export function buildWorkerSysStartupCommand(
   config: WorkerSysStartupConfig,
 ): StartupCommandBuildResult {
+  if (config.startupPreset === 'temporary-probe') {
+    return formatTemporaryProbeCommand(config)
+  }
+
   const state = emptyBuildState()
   appendCommonEnv(state, config)
 
@@ -695,6 +726,31 @@ export function buildWorkerSysStartupCommand(
   }
 }
 
+export function getCurrentSiteTemporaryProbeValues(): { origin: string; grpcTarget: string } {
+  if (typeof window === 'undefined') {
+    return { origin: '', grpcTarget: ':50051' }
+  }
+  return {
+    origin: window.location.origin,
+    grpcTarget: `${window.location.hostname}:50051`,
+  }
+}
+
+export function applyTemporaryProbePreset(config: WorkerSysStartupConfig): void {
+  const { origin, grpcTarget } = getCurrentSiteTemporaryProbeValues()
+  config.startupPreset = 'temporary-probe'
+  config.consoleGRPCTarget = grpcTarget
+  config.consoleInsecure = true
+  config.nodeName = defaultTemporaryProbeNodeName
+  config.computerUseCommandWhitelistMode = 'allow_all'
+  config.computerUseCommandWhitelistText = ''
+  config.readImageAllowedPathsText = '/'
+  config.temporaryProbeInstallerOrigin = origin
+  if (!config.temporaryProbeTag.trim()) {
+    config.temporaryProbeTag = defaultTemporaryProbeInstallerTag
+  }
+}
+
 export interface WorkerStartupToolInitialValues {
   workerKind?: WorkerStartupKind
   workerID?: string
@@ -731,9 +787,7 @@ export function useWorkerStartupTool(initial?: WorkerStartupToolInitialValues) {
   }
 
   const workerDockerResult = computed(() => buildWorkerDockerStartupCommand(workerDockerConfig))
-  const workerBoxliteResult = computed(() =>
-    buildWorkerBoxliteStartupCommand(workerBoxliteConfig),
-  )
+  const workerBoxliteResult = computed(() => buildWorkerBoxliteStartupCommand(workerBoxliteConfig))
   const workerSysResult = computed(() => buildWorkerSysStartupCommand(workerSysConfig))
 
   const currentBuildResult = computed<StartupCommandBuildResult>(() => {
@@ -757,6 +811,11 @@ export function useWorkerStartupTool(initial?: WorkerStartupToolInitialValues) {
     workerKind.value = kind
   }
 
+  function selectTemporaryProbePreset(): void {
+    workerKind.value = 'worker-sys'
+    applyTemporaryProbePreset(workerSysConfig)
+  }
+
   return {
     workerKind,
     workerDockerConfig,
@@ -767,5 +826,6 @@ export function useWorkerStartupTool(initial?: WorkerStartupToolInitialValues) {
     warningMessages,
     canCopyCommand,
     selectWorkerKind,
+    selectTemporaryProbePreset,
   }
 }

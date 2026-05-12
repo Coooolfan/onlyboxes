@@ -5,6 +5,7 @@ import SegmentedToggle from '@/components/worker-tool/SegmentedToggle.vue'
 import type {
   WorkerCallTimeoutMode,
   WorkerSysStartupConfig,
+  WorkerSysStartupPreset,
   WorkerSysWhitelistMode,
 } from '@/types/worker-startup-tool'
 
@@ -15,7 +16,16 @@ const props = defineProps<{
   whitelistModeDescription: string
 }>()
 
+const emit = defineEmits<{
+  applyTemporaryProbe: []
+}>()
+
 const showSecret = ref(false)
+
+const presetOptions: Array<{ value: WorkerSysStartupPreset; label: string }> = [
+  { value: 'custom', label: 'Custom' },
+  { value: 'temporary-probe', label: 'Temporary Probe' },
+]
 
 const callTimeoutOptions: Array<{ value: WorkerCallTimeoutMode; label: string }> = [
   { value: 'auto', label: 'Auto' },
@@ -27,6 +37,16 @@ const whitelistModeOptions: Array<{ value: WorkerSysWhitelistMode; label: string
   { value: 'prefix', label: 'prefix' },
   { value: 'allow_all', label: 'allow_all' },
 ]
+
+function handlePresetUpdate(value: string): void {
+  if (value === 'temporary-probe') {
+    emit('applyTemporaryProbe')
+    return
+  }
+  if (value === 'custom') {
+    props.config.startupPreset = 'custom'
+  }
+}
 
 function handleCallTimeoutModeUpdate(value: string): void {
   if (value === 'auto' || value === 'manual') {
@@ -43,6 +63,21 @@ function handleWhitelistModeUpdate(value: string): void {
 
 <template>
   <div class="grid gap-4">
+    <section class="grid gap-2 rounded-md border border-stroke bg-surface-soft p-3">
+      <div class="grid gap-1">
+        <h2 class="m-0 text-base font-semibold">worker-sys Preset</h2>
+        <p class="m-0 text-xs text-secondary">
+          Temporary Probe prepares a short installer command for quick host checks.
+        </p>
+      </div>
+      <SegmentedToggle
+        :model-value="props.config.startupPreset"
+        :options="presetOptions"
+        data-testid="sys-preset-toggle"
+        @update:model-value="handlePresetUpdate"
+      />
+    </section>
+
     <h2 class="text-base font-semibold m-0">Core Configuration</h2>
     <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
       <label class="grid gap-1.5">
@@ -171,6 +206,23 @@ function handleWhitelistModeUpdate(value: string): void {
           type="text"
           class="ui-input rounded-md border px-3 py-2 text-sm"
           placeholder="./onlyboxes-worker-sys"
+        />
+      </label>
+
+      <label
+        v-if="props.config.startupPreset === 'temporary-probe'"
+        class="grid gap-1.5 md:col-span-2"
+      >
+        <span class="text-sm text-secondary">Temporary Probe release tag</span>
+        <span class="text-xs text-secondary">
+          Optional installer release tag override. Leave as 0.4.0 for the current default.
+        </span>
+        <input
+          v-model.trim="props.config.temporaryProbeTag"
+          data-testid="temporary-probe-tag-input"
+          type="text"
+          class="ui-input rounded-md border px-3 py-2 text-sm"
+          placeholder="0.4.0"
         />
       </label>
     </div>

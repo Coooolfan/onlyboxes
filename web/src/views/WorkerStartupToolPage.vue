@@ -26,6 +26,7 @@ const {
   errorMessages,
   warningMessages,
   canCopyCommand,
+  selectTemporaryProbePreset,
 } = useWorkerStartupTool(prefill ?? undefined)
 
 const copyingCommand = ref(false)
@@ -288,8 +289,8 @@ onBeforeUnmount(() => {
   <main class="relative z-2 mx-auto w-[min(1240px,100%)] grid gap-6">
     <ConsoleHeader eyebrow="Onlyboxes / Worker Tool" title="Worker Startup Tool" hide-refresh>
       <template #subtitle>
-        Configure startup parameters for worker-docker, worker-boxlite, and worker-sys, then copy
-        a ready-to-run startup command.
+        Configure startup parameters for worker-docker, worker-boxlite, and worker-sys, then copy a
+        ready-to-run startup command.
       </template>
     </ConsoleHeader>
 
@@ -327,6 +328,7 @@ onBeforeUnmount(() => {
           :auto-call-timeout-sec="sysAutoCallTimeoutSec"
           :whitelist-mode-description="whitelistModeDescription"
           :show-prefilled-credential-hint="openedFromGoToStartupTool"
+          @apply-temporary-probe="selectTemporaryProbePreset"
         />
 
         <div

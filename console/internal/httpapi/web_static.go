@@ -31,6 +31,11 @@ func registerEmbeddedWebRoutes(router *gin.Engine) error {
 	if err != nil {
 		return err
 	}
+	registerWebRoutes(router, webFS)
+	return nil
+}
+
+func registerWebRoutes(router *gin.Engine, webFS fs.FS) {
 	fileServer := http.FileServer(http.FS(webFS))
 
 	router.GET("/", gin.WrapH(fileServer))
@@ -38,6 +43,8 @@ func registerEmbeddedWebRoutes(router *gin.Engine) error {
 	router.GET("/favicon.ico", gin.WrapH(fileServer))
 	router.GET("/onlyboxes.avif", gin.WrapH(fileServer))
 	router.GET("/assets/*filepath", gin.WrapH(fileServer))
+	router.GET("/static/*filepath", gin.WrapH(fileServer))
+	router.HEAD("/static/*filepath", gin.WrapH(fileServer))
 
 	router.NoRoute(func(c *gin.Context) {
 		method := c.Request.Method
@@ -52,5 +59,4 @@ func registerEmbeddedWebRoutes(router *gin.Engine) error {
 		}
 		c.Status(http.StatusNotFound)
 	})
-	return nil
 }
