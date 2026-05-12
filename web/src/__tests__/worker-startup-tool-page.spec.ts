@@ -193,7 +193,7 @@ describe('Worker Startup Tool Page', () => {
     const expectedGRPCTarget = `${window.location.hostname}:50051`
     const previewText = wrapper.get('[data-testid="startup-command-preview"]').text()
     expect(previewText).toContain('/static/worker-startup.sh')
-    expect(previewText).toContain("bash -s -- --worker-id 'prefilled-id'")
+    expect(previewText).toContain("bash -s -- --node-id 'prefilled-id'")
     expect(previewText).toContain("--worker-secret 'prefilled-secret'")
     expect(previewText).toContain(`--grpc-target '${expectedGRPCTarget}'`)
     expect(previewText).not.toContain('WORKER_NODE_NAME=')

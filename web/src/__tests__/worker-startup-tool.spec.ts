@@ -71,7 +71,7 @@ describe('worker startup tool command builder', () => {
 
     expect(result.errors).toEqual([])
     expect(result.command).toBe(
-      "curl -fsSL 'https://console.example.test/static/worker-startup.sh' | bash -s -- --worker-id 'node-sys-1' --worker-secret 'secret-sys-1' --grpc-target 'console.example.test:50051'",
+      "curl -fsSL 'https://console.example.test/static/worker-startup.sh' | bash -s -- --node-id 'node-sys-1' --worker-secret 'secret-sys-1' --grpc-target 'console.example.test:50051'",
     )
     expect(result.command).not.toContain('WORKER_NODE_NAME')
     expect(result.command).not.toContain('WORKER_CONSOLE_INSECURE')

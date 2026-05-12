@@ -209,7 +209,7 @@ function formatTemporaryProbeCommand(config: WorkerSysStartupConfig): StartupCom
   }
 
   const args = [
-    '--worker-id',
+    '--node-id',
     shellQuote(workerID),
     '--worker-secret',
     shellQuote(workerSecret),
