@@ -161,6 +161,49 @@ describe('Worker Startup Tool Page', () => {
     wrapper.unmount()
   })
 
+  it('applies Temporary Probe preset without clearing prefilled credentials', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/v1/console/session') {
+        return jsonResponse(memberSessionPayload)
+      }
+      throw new Error(`unexpected url: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch)
+
+    setPrefill({
+      workerKind: 'worker-sys',
+      workerID: 'prefilled-id',
+      workerSecret: 'prefilled-secret',
+      consoleGRPCTarget: 'old.example.test:50051',
+    })
+
+    const wrapper = await mountRoute('/tools/worker-startup')
+
+    const temporaryProbeButton = wrapper
+      .findAll('button')
+      .find((node) => node.text().trim() === 'Temporary Probe')
+    if (!temporaryProbeButton) {
+      throw new Error('Temporary Probe preset button not found')
+    }
+
+    await temporaryProbeButton.trigger('click')
+    await settleUI()
+
+    const expectedGRPCTarget = `${window.location.hostname}:50051`
+    const previewText = wrapper.get('[data-testid="startup-command-preview"]').text()
+    expect(previewText).toContain('/static/worker-startup.sh')
+    expect(previewText).toContain("bash -s -- --worker-id 'prefilled-id'")
+    expect(previewText).toContain("--worker-secret 'prefilled-secret'")
+    expect(previewText).toContain(`--grpc-target '${expectedGRPCTarget}'`)
+    expect(previewText).not.toContain('WORKER_NODE_NAME=')
+    expect(previewText).not.toContain('WORKER_CONSOLE_INSECURE=')
+    expect(previewText).not.toContain('WORKER_COMPUTER_USE_COMMAND_WHITELIST_MODE=')
+    expect(previewText).not.toContain('WORKER_READ_IMAGE_ALLOWED_PATHS=')
+
+    wrapper.unmount()
+  })
+
   it('reflects advanced sys inputs into command preview', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)

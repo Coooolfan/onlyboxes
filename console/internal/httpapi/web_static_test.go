@@ -5,7 +5,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
+
+	"github.com/gin-gonic/gin"
 
 	"github.com/onlyboxes/onlyboxes/console/internal/testutil/registrytest"
 )
@@ -32,6 +35,25 @@ func TestEmbeddedWebRootServesIndex(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(rec.Body.String()), "<!doctype html") {
 		t.Fatalf("expected embedded index html body, got %q", rec.Body.String())
+	}
+}
+
+func TestWebStaticRouteServesWorkerStartupScriptFromProvidedWebFS(t *testing.T) {
+	router := gin.New()
+	registerWebRoutes(router, fstest.MapFS{
+		"index.html":               &fstest.MapFile{Data: []byte("<!doctype html>")},
+		"static/worker-startup.sh": &fstest.MapFile{Data: []byte("#!/usr/bin/env bash\necho worker-startup\n")},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/static/worker-startup.sh", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "worker-startup") {
+		t.Fatalf("expected worker startup script body, got %q", rec.Body.String())
 	}
 }
 

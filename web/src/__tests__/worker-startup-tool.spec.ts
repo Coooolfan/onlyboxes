@@ -55,6 +55,45 @@ describe('worker startup tool command builder', () => {
     )
   })
 
+  it('builds Temporary Probe installer command with only dynamic CLI args', () => {
+    const config = createDefaultWorkerSysStartupConfig()
+    config.startupPreset = 'temporary-probe'
+    config.temporaryProbeInstallerOrigin = 'https://console.example.test'
+    config.workerID = 'node-sys-1'
+    config.workerSecret = 'secret-sys-1'
+    config.consoleGRPCTarget = 'console.example.test:50051'
+    config.consoleInsecure = true
+    config.nodeName = 'Temporary Probe'
+    config.computerUseCommandWhitelistMode = 'allow_all'
+    config.readImageAllowedPathsText = '/'
+
+    const result = buildWorkerSysStartupCommand(config)
+
+    expect(result.errors).toEqual([])
+    expect(result.command).toBe(
+      "curl -fsSL 'https://console.example.test/static/worker-startup.sh' | bash -s -- --worker-id 'node-sys-1' --worker-secret 'secret-sys-1' --grpc-target 'console.example.test:50051'",
+    )
+    expect(result.command).not.toContain('WORKER_NODE_NAME')
+    expect(result.command).not.toContain('WORKER_CONSOLE_INSECURE')
+    expect(result.command).not.toContain('WORKER_COMPUTER_USE_COMMAND_WHITELIST_MODE')
+    expect(result.command).not.toContain('WORKER_READ_IMAGE_ALLOWED_PATHS')
+  })
+
+  it('adds an optional tag arg to Temporary Probe installer command when overridden', () => {
+    const config = createDefaultWorkerSysStartupConfig()
+    config.startupPreset = 'temporary-probe'
+    config.temporaryProbeInstallerOrigin = 'https://console.example.test'
+    config.workerID = 'node-sys-1'
+    config.workerSecret = 'secret-sys-1'
+    config.consoleGRPCTarget = 'console.example.test:50051'
+    config.temporaryProbeTag = 'v0.5.0'
+
+    const result = buildWorkerSysStartupCommand(config)
+
+    expect(result.errors).toEqual([])
+    expect(result.command).toContain(" --tag 'v0.5.0'")
+  })
+
   it('builds worker-boxlite command with runtime-specific env vars', () => {
     const config = createDefaultWorkerBoxliteStartupConfig()
     config.workerID = 'node-boxlite-1'
@@ -67,9 +106,7 @@ describe('worker startup tool command builder', () => {
 
     expect(result.errors).toEqual([])
     expect(result.command).toContain("WORKER_ID='node-boxlite-1' \\")
-    expect(result.command).toContain(
-      "WORKER_BOXLITE_HOME='/var/lib/onlyboxes/boxlite' \\",
-    )
+    expect(result.command).toContain("WORKER_BOXLITE_HOME='/var/lib/onlyboxes/boxlite' \\")
     expect(result.command).toContain("WORKER_PYTHON_EXEC_MEMORY_MIB='512' \\")
     expect(result.command).toContain("WORKER_TERMINAL_EXPORT_MAX_BYTES='0' \\")
     expect(result.command).toContain("'./onlyboxes-worker-boxlite'")
