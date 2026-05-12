@@ -15,7 +15,7 @@ export const meta = {
 | URL | `POST http://<console-host>:8089/mcp` |
 | 传输协议 | MCP Streamable HTTP |
 | 服务模式 | 无状态 JSON 响应 |
-| 鉴权 | `Authorization: Bearer <access-token>` |
+| 鉴权 | 推荐：`Authorization: Bearer <access-token>`；URL 兜底：`?token=<access-token>` |
 
 `GET /mcp` 返回 `405 Method Not Allowed`（`Allow: POST`）。
 
@@ -28,6 +28,8 @@ Accept: application/json, text/event-stream
 ```
 
 > Token 缺失或无效时，HTTP 层直接返回 `401`，不进入 MCP 协议。
+
+如果 MCP 客户端只能配置 server URL，无法设置自定义请求头，可使用 `http://<console-host>:8089/mcp?token=<access-token>`。查询参数名默认是 `token`，可通过 `CONSOLE_MCP_TOKEN_QUERY_PARAM` 修改。能设置请求头时仍建议优先使用 Bearer header，因为 URL token 可能出现在日志、浏览器历史或中间代理链路中；生产环境请使用 HTTPS。
 
 ---
 

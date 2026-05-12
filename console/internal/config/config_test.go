@@ -25,6 +25,7 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("CONSOLE_EXPORT_FILE_UPLOAD_PRESIGN_TTL_SEC", "")
 	t.Setenv("CONSOLE_EXPORT_FILE_DOWNLOAD_PRESIGN_TTL_SEC", "")
 	t.Setenv("CONSOLE_ENABLE_REGISTRATION", "")
+	t.Setenv("CONSOLE_MCP_TOKEN_QUERY_PARAM", "")
 	t.Setenv("CONSOLE_LOG_LEVEL", "")
 	t.Setenv("CONSOLE_LOG_FORMAT", "")
 	t.Setenv("CONSOLE_LOG_ADD_SOURCE", "")
@@ -69,6 +70,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.EnableRegistration {
 		t.Fatalf("expected registration disabled by default")
 	}
+	if cfg.MCPTokenQueryParam != defaultMCPTokenQueryParam {
+		t.Fatalf("expected MCPTokenQueryParam=%q, got %q", defaultMCPTokenQueryParam, cfg.MCPTokenQueryParam)
+	}
 	if cfg.LogLevel != defaultLogLevel {
 		t.Fatalf("expected LogLevel=%q, got %q", defaultLogLevel, cfg.LogLevel)
 	}
@@ -98,6 +102,7 @@ func TestLoadReadsDashboardCredentialsAndDurations(t *testing.T) {
 	t.Setenv("CONSOLE_EXPORT_FILE_UPLOAD_PRESIGN_TTL_SEC", "120")
 	t.Setenv("CONSOLE_EXPORT_FILE_DOWNLOAD_PRESIGN_TTL_SEC", "900")
 	t.Setenv("CONSOLE_ENABLE_REGISTRATION", "true")
+	t.Setenv("CONSOLE_MCP_TOKEN_QUERY_PARAM", "access_token")
 	t.Setenv("CONSOLE_LOG_LEVEL", "debug")
 	t.Setenv("CONSOLE_LOG_FORMAT", "text")
 	t.Setenv("CONSOLE_LOG_ADD_SOURCE", "true")
@@ -153,6 +158,9 @@ func TestLoadReadsDashboardCredentialsAndDurations(t *testing.T) {
 	}
 	if !cfg.EnableRegistration {
 		t.Fatalf("expected registration enabled")
+	}
+	if cfg.MCPTokenQueryParam != "access_token" {
+		t.Fatalf("expected MCPTokenQueryParam access_token, got %q", cfg.MCPTokenQueryParam)
 	}
 	if cfg.LogLevel != "debug" {
 		t.Fatalf("expected LogLevel=debug, got %q", cfg.LogLevel)

@@ -22,6 +22,7 @@ import (
 const (
 	trustedTokenHeader = "Authorization"
 	bearerTokenScheme  = "Bearer"
+	defaultTokenQuery  = "token"
 )
 
 const (
@@ -99,6 +100,7 @@ type MCPAuth struct {
 	queries     *sqlc.Queries
 	hasher      *persistence.Hasher
 	jitVerifier *jitTokenVerifier
+	tokenQuery  string
 	nowFn       func() time.Time
 }
 
@@ -107,17 +109,41 @@ func NewMCPAuthWithPersistence(db *persistence.DB) (*MCPAuth, error) {
 		return nil, ErrMCPPersistenceDBRequired
 	}
 	auth := &MCPAuth{
-		db:      db,
-		queries: db.Queries,
-		hasher:  db.Hasher,
-		nowFn:   time.Now,
+		db:         db,
+		queries:    db.Queries,
+		hasher:     db.Hasher,
+		tokenQuery: defaultTokenQuery,
+		nowFn:      time.Now,
 	}
 	return auth, nil
 }
 
+func (a *MCPAuth) SetTokenQueryParam(name string) {
+	if a == nil {
+		return
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = defaultTokenQuery
+	}
+	a.tokenQuery = name
+}
+
 func (a *MCPAuth) RequireToken() gin.HandlerFunc {
+	return a.requireToken(false)
+}
+
+func (a *MCPAuth) RequireTokenWithQueryFallback() gin.HandlerFunc {
+	return a.requireToken(true)
+}
+
+func (a *MCPAuth) requireToken(allowQueryFallback bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token, ok := parseBearerToken(c.GetHeader(trustedTokenHeader))
+		if !ok && allowQueryFallback {
+			token = strings.TrimSpace(c.Query(a.tokenQueryParam()))
+			ok = token != ""
+		}
 		if !ok || a == nil || a.hasher == nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or missing token"})
 			c.Abort()
@@ -148,6 +174,13 @@ func (a *MCPAuth) RequireToken() gin.HandlerFunc {
 		setRequestOwnerID(c, strings.TrimSpace(record.AccountID))
 		c.Next()
 	}
+}
+
+func (a *MCPAuth) tokenQueryParam() string {
+	if a == nil || strings.TrimSpace(a.tokenQuery) == "" {
+		return defaultTokenQuery
+	}
+	return strings.TrimSpace(a.tokenQuery)
 }
 
 func parseBearerToken(value string) (string, bool) {

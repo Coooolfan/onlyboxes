@@ -660,6 +660,8 @@ This endpoint always returns `410 Gone`. The startup command (including the secr
 
 The following endpoints use Bearer token auth (`Authorization: Bearer <token>`) and are intended for external programs, AI agents, and MCP clients.
 
+For `/mcp` only, clients that cannot set custom headers may pass the same token as a URL query parameter: `POST /mcp?token=<token>`. Bearer headers remain the recommended path and take precedence when present; command execution and task REST endpoints do not accept query-token auth. The query parameter name defaults to `token` and can be changed with `CONSOLE_MCP_TOKEN_QUERY_PARAM`.
+
 ### Command Execution
 
 #### Echo

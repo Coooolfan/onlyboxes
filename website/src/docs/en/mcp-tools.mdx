@@ -15,7 +15,7 @@ export const meta = {
 | URL | `POST http://<console-host>:8089/mcp` |
 | Transport | MCP Streamable HTTP |
 | Mode | Stateless JSON responses |
-| Auth | `Authorization: Bearer <access-token>` |
+| Auth | Recommended: `Authorization: Bearer <access-token>`; URL fallback: `?token=<access-token>` |
 
 `GET /mcp` returns `405 Method Not Allowed` (`Allow: POST`).
 
@@ -28,6 +28,8 @@ Accept: application/json, text/event-stream
 ```
 
 > Missing or invalid token: the HTTP layer returns `401` before entering the MCP protocol.
+
+For MCP clients that can only configure a server URL and cannot send custom headers, use `http://<console-host>:8089/mcp?token=<access-token>`. The query parameter name defaults to `token` and can be changed with `CONSOLE_MCP_TOKEN_QUERY_PARAM`. Prefer the header when available because URL tokens may appear in logs, browser history, or intermediaries; use HTTPS in production.
 
 ---
 

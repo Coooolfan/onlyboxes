@@ -127,6 +127,7 @@ func main() {
 		fatal("failed to initialize mcp auth", "error", err)
 	}
 	mcpAuth.SetJITSigningKey(cfg.JITSigningKey)
+	mcpAuth.SetTokenQueryParam(cfg.MCPTokenQueryParam)
 	apiKeyAuth, err := httpapi.NewAPIKeyAuth(db)
 	if err != nil {
 		fatal("failed to initialize api key auth", "error", err)

@@ -41,7 +41,10 @@ The console service hosts:
   - task idempotency: `request_id` de-duplication is scoped per account.
 - MCP Streamable HTTP API (bearer token required):
   - `POST /mcp` for JSON-RPC requests over Streamable HTTP transport.
-  - request header: `Authorization: Bearer <access-token>`.
+  - recommended request header: `Authorization: Bearer <access-token>`.
+  - fallback for MCP clients that cannot set custom headers: `POST /mcp?token=<access-token>`.
+    The query parameter name defaults to `token` and can be changed with `CONSOLE_MCP_TOKEN_QUERY_PARAM`.
+    Prefer the header when available because URL query tokens can be captured by logs, browser history, or intermediaries; use HTTPS in production.
   - accepted bearer token types:
     - trusted token managed by dashboard `GET/POST/DELETE /api/v1/console/tokens`
     - JIT token (`obx_jit_v1.<payload>.<signature>`) signed with `CONSOLE_JIT_SIGNING_KEY`
@@ -242,6 +245,7 @@ Persistence config:
 - `CONSOLE_TASK_RETENTION_DAYS`: terminal task retention days (default `30`)
 - `CONSOLE_HASH_KEY`: required HMAC key for hashing worker secret and trusted token; missing value fails startup
 - `CONSOLE_JIT_SIGNING_KEY`: optional HMAC key for JIT bearer tokens; when configured, valid JIT tokens can authenticate MCP and execution APIs without a `trusted_tokens` entry
+- `CONSOLE_MCP_TOKEN_QUERY_PARAM`: query parameter name for `/mcp` URL token fallback (default `token`)
 
 Logging config:
 - `CONSOLE_LOG_LEVEL`: `debug|info|warn|error` (default `info`)
@@ -268,4 +272,13 @@ curl -X POST "http://127.0.0.1:8089/mcp" \
   -H "Accept: application/json, text/event-stream" \
   -H "Authorization: Bearer <access-token>" \
   -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"pythonExec","arguments":{"code":"print(1)"}}}'
+```
+
+For MCP clients that only accept a server URL and cannot send custom headers, put the same access token in the MCP endpoint URL:
+
+```bash
+curl -X POST "http://127.0.0.1:8089/mcp?token=<access-token>" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 ```

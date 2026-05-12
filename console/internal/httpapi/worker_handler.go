@@ -20,18 +20,18 @@ const (
 var ErrMCPAuthRequired = errors.New("mcp auth is required")
 
 type WorkerHandler struct {
-	store             *registry.Store
-	offlineTTL        time.Duration
-	dispatcher        CommandDispatcher
-	provisioning      WorkerProvisioning
-	inflightStats     InflightStatsProvider
-	consoleGRPCAddr   string
+	store              *registry.Store
+	offlineTTL         time.Duration
+	dispatcher         CommandDispatcher
+	provisioning       WorkerProvisioning
+	inflightStats      InflightStatsProvider
+	consoleGRPCAddr    string
 	exportStore        ExportStore
 	exportPrefix       string
 	exportUploadTTL    time.Duration
 	exportDownloadTTL  time.Duration
 	exportReturnSchema string
-	nowFn             func() time.Time
+	nowFn              func() time.Time
 }
 
 type WorkerProvisioning interface {
@@ -105,7 +105,7 @@ func NewRouter(workerHandler *WorkerHandler, consoleAuth *ConsoleAuth, mcpAuth *
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 	router.Use(gin.Recovery())
-	router.Any("/mcp", mcpAuth.RequireToken(), gin.WrapH(NewMCPHandler(
+	router.Any("/mcp", mcpAuth.RequireTokenWithQueryFallback(), gin.WrapH(NewMCPHandler(
 		workerHandler.dispatcher,
 		hiddenTools,
 		workerHandler.exportStore,

@@ -18,6 +18,7 @@ const (
 	defaultTaskRetentionDays    = 30
 	defaultExportUploadTTLSec   = 15 * 60
 	defaultExportDownloadTTLSec = 60 * 60
+	defaultMCPTokenQueryParam   = "token"
 	defaultLogLevel             = "info"
 	defaultLogFormat            = "json"
 	defaultLogAddSource         = false
@@ -48,6 +49,7 @@ type Config struct {
 	ExportReturnSchema    string
 	EnableRegistration    bool
 	HiddenTools           map[string]bool
+	MCPTokenQueryParam    string
 	MCPToolOverrides      map[string]MCPToolOverride
 	LogLevel              string
 	LogFormat             string
@@ -60,12 +62,12 @@ type Config struct {
 // Pointer semantics:
 //   - nil       → env not set, use built-in default.
 //   - non-nil   → env set. For Name/Title/Description: empty string is treated
-//                as invalid (fallback + warn at the handler layer). Name is
-//                additionally validated against an MCP-compatible regex; an
-//                override that collides with another tool's built-in default
-//                name (or another tool's exposed name) also falls back. For
-//                ParamDescriptions: empty string means "hide this parameter
-//                from tools/list inputSchema".
+//     as invalid (fallback + warn at the handler layer). Name is
+//     additionally validated against an MCP-compatible regex; an
+//     override that collides with another tool's built-in default
+//     name (or another tool's exposed name) also falls back. For
+//     ParamDescriptions: empty string means "hide this parameter
+//     from tools/list inputSchema".
 type MCPToolOverride struct {
 	Name              *string
 	Title             *string
@@ -107,6 +109,7 @@ func Load() Config {
 		ExportReturnSchema:    parseExportReturnSchemaEnv("CONSOLE_EXPORT_RETURN_SCHEMA"),
 		EnableRegistration:    parseBoolEnv("CONSOLE_ENABLE_REGISTRATION", false),
 		HiddenTools:           parseStringSetEnv("CONSOLE_HIDDEN_TOOLS"),
+		MCPTokenQueryParam:    getTrimmedEnv("CONSOLE_MCP_TOKEN_QUERY_PARAM", defaultMCPTokenQueryParam),
 		MCPToolOverrides:      loadMCPToolOverrides(),
 		LogLevel:              parseLogLevelEnv("CONSOLE_LOG_LEVEL", defaultLogLevel),
 		LogFormat:             parseLogFormatEnv("CONSOLE_LOG_FORMAT", defaultLogFormat),
@@ -125,6 +128,14 @@ func (c Config) ExportFileEnabled() bool {
 
 func getEnv(key string, defaultValue string) string {
 	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	return value
+}
+
+func getTrimmedEnv(key string, defaultValue string) string {
+	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {
 		return defaultValue
 	}
@@ -232,10 +243,12 @@ var mcpToolParamCatalog = []struct {
 }
 
 // loadMCPToolOverrides reads env vars of the form:
-//   CONSOLE_MCP_TOOL_<TOOL>_NAME
-//   CONSOLE_MCP_TOOL_<TOOL>_TITLE
-//   CONSOLE_MCP_TOOL_<TOOL>_DESCRIPTION
-//   CONSOLE_MCP_TOOL_<TOOL>_PARAM_<PARAM>_DESCRIPTION
+//
+//	CONSOLE_MCP_TOOL_<TOOL>_NAME
+//	CONSOLE_MCP_TOOL_<TOOL>_TITLE
+//	CONSOLE_MCP_TOOL_<TOOL>_DESCRIPTION
+//	CONSOLE_MCP_TOOL_<TOOL>_PARAM_<PARAM>_DESCRIPTION
+//
 // where <TOOL> is the camelCase tool name translated to UPPER_SNAKE (e.g.
 // pythonExec → PYTHON_EXEC) and <PARAM> is the snake_case param name uppercased
 // (e.g. session_id → SESSION_ID).

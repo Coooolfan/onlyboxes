@@ -49,6 +49,7 @@ These variables are only used during first startup when no admin account exists.
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
 | `CONSOLE_HIDDEN_TOOLS` | No | | Comma-separated **internal capability IDs** to hide from MCP `tools/list` (`echo`, `pythonExec`, `terminalExec`, `computerUse`, `readImage`, `exportFile`). Always use the built-in IDs here — never the renamed value supplied via `CONSOLE_MCP_TOOL_<TOOL>_NAME`. Hidden tools remain callable if the client already knows the tool name. |
+| `CONSOLE_MCP_TOKEN_QUERY_PARAM` | No | `token` | Query parameter name for the `/mcp` URL-token fallback used by clients that cannot send custom headers. Bearer headers remain recommended. |
 
 #### Tool description / parameter overrides
 

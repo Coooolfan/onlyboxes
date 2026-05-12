@@ -660,6 +660,8 @@ Worker 类型：`normal`（对应 `worker-docker`/`worker-boxlite`）、`worker-
 
 以下端点使用 Bearer Token 鉴权（`Authorization: Bearer <token>`），供外部程序、AI Agent 或 MCP 客户端调用。
 
+仅 `/mcp` 支持给无法设置自定义请求头的客户端使用 URL 查询参数兜底：`POST /mcp?token=<token>`。Bearer header 仍是推荐方式，且存在时优先；命令执行和任务 REST 端点不接受 query-token 鉴权。查询参数名默认是 `token`，可通过 `CONSOLE_MCP_TOKEN_QUERY_PARAM` 修改。
+
 ### 命令执行
 
 #### Echo

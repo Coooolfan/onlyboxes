@@ -153,6 +153,155 @@ func TestMCPAuthRequireTokenAllowsTrustedToken(t *testing.T) {
 	}
 }
 
+func TestMCPAuthRequireTokenWithQueryFallbackAllowsTrustedToken(t *testing.T) {
+	auth := newBareTestMCPAuth(t)
+	token := "token-a"
+	if _, _, err := auth.createToken(context.Background(), testDashboardAccountID, "token-a", &token); err != nil {
+		t.Fatalf("seed token: %v", err)
+	}
+	router := gin.New()
+	router.GET("/mcp", auth.RequireTokenWithQueryFallback(), func(c *gin.Context) {
+		if got := requestOwnerIDFromGin(c); got != testDashboardAccountID {
+			t.Fatalf("expected owner id in gin context=%q, got %q", testDashboardAccountID, got)
+		}
+		if got := requestOwnerIDFromContext(c.Request.Context()); got != testDashboardAccountID {
+			t.Fatalf("expected owner id in request context=%q, got %q", testDashboardAccountID, got)
+		}
+		c.Status(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/mcp?token=token-a", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMCPAuthRequireTokenWithQueryFallbackUsesConfiguredQueryParam(t *testing.T) {
+	auth := newBareTestMCPAuth(t)
+	auth.SetTokenQueryParam("access_token")
+	token := "token-a"
+	if _, _, err := auth.createToken(context.Background(), testDashboardAccountID, "token-a", &token); err != nil {
+		t.Fatalf("seed token: %v", err)
+	}
+	router := gin.New()
+	router.GET("/mcp", auth.RequireTokenWithQueryFallback(), func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	defaultParamReq := httptest.NewRequest(http.MethodGet, "/mcp?token=token-a", nil)
+	defaultParamRec := httptest.NewRecorder()
+	router.ServeHTTP(defaultParamRec, defaultParamReq)
+	if defaultParamRec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected default query param to be rejected, got %d body=%s", defaultParamRec.Code, defaultParamRec.Body.String())
+	}
+
+	customParamReq := httptest.NewRequest(http.MethodGet, "/mcp?access_token=token-a", nil)
+	customParamRec := httptest.NewRecorder()
+	router.ServeHTTP(customParamRec, customParamReq)
+	if customParamRec.Code != http.StatusOK {
+		t.Fatalf("expected custom query param to be accepted, got %d body=%s", customParamRec.Code, customParamRec.Body.String())
+	}
+}
+
+func TestMCPAuthRequireTokenWithQueryFallbackAllowsJITTokenAndCreatesAccount(t *testing.T) {
+	auth := newBareTestMCPAuth(t)
+	jitToken := makeTestJITToken(t, "Acme Platform", "User 42")
+	expectedIdentity, ok := deriveJITAccountIdentity(jitTokenClaims{
+		Issuer:  "Acme Platform",
+		Subject: "User 42",
+	})
+	if !ok {
+		t.Fatalf("expected deterministic JIT identity")
+	}
+
+	router := gin.New()
+	router.GET("/mcp", auth.RequireTokenWithQueryFallback(), func(c *gin.Context) {
+		if got := requestOwnerIDFromGin(c); got != expectedIdentity.AccountID {
+			t.Fatalf("expected owner id in gin context=%q, got %q", expectedIdentity.AccountID, got)
+		}
+		if got := requestOwnerIDFromContext(c.Request.Context()); got != expectedIdentity.AccountID {
+			t.Fatalf("expected owner id in request context=%q, got %q", expectedIdentity.AccountID, got)
+		}
+		c.Status(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/mcp?token="+jitToken, nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	account, err := auth.queries.GetAccountByID(context.Background(), expectedIdentity.AccountID)
+	if err != nil {
+		t.Fatalf("expected JIT account to be created: %v", err)
+	}
+	if account.Username != expectedIdentity.Username {
+		t.Fatalf("expected jit username %q, got %q", expectedIdentity.Username, account.Username)
+	}
+}
+
+func TestMCPAuthRequireTokenWithQueryFallbackRejectsWhenBearerTokenIsInvalid(t *testing.T) {
+	auth := newBareTestMCPAuth(t)
+	token := "token-a"
+	if _, _, err := auth.createToken(context.Background(), testDashboardAccountID, "token-a", &token); err != nil {
+		t.Fatalf("seed token: %v", err)
+	}
+	router := gin.New()
+	router.GET("/mcp", auth.RequireTokenWithQueryFallback(), func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/mcp?token=token-a", nil)
+	req.Header.Set(trustedTokenHeader, "Bearer token-b")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMCPAuthRequireTokenWithQueryFallbackRejectsBlankQueryToken(t *testing.T) {
+	auth := newBareTestMCPAuth(t)
+	router := gin.New()
+	router.GET("/mcp", auth.RequireTokenWithQueryFallback(), func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/mcp?token=%20%20", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMCPAuthRequireTokenRejectsQueryTokenByDefault(t *testing.T) {
+	auth := newBareTestMCPAuth(t)
+	token := "token-a"
+	if _, _, err := auth.createToken(context.Background(), testDashboardAccountID, "token-a", &token); err != nil {
+		t.Fatalf("seed token: %v", err)
+	}
+	router := gin.New()
+	router.GET("/api/v1/tasks/task-a", auth.RequireToken(), func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks/task-a?token=token-a", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestMCPAuthRequireTokenAllowsJITTokenAndCreatesAccount(t *testing.T) {
 	auth := newBareTestMCPAuth(t)
 	jitToken := makeTestJITToken(t, "Acme Platform", "User 42")
