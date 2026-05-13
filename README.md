@@ -55,7 +55,7 @@ Available options:
 
 | Flag | Default | Description |
 | --- | --- | --- |
-| `--tag` | `0.2.0-beta-4` | Optional release version override |
+| `--tag` | `0.5.0` | Optional release version override |
 | `--workdir` | `$PWD/onlyboxes` | Working directory |
 | `--yes` / `-y` | `false` | Non-interactive mode, skip confirmations |
 | `--console-http-port` | `8089` | Console HTTP port (host side) |
@@ -142,7 +142,7 @@ Default endpoints:
 ### 6) Verify readiness
 
 - Confirm the worker is `online` on the dashboard Workers page.
-- For REST API request examples, see `API.md`.
+- For REST API request examples, see `README/API.md`.
 - If no tokens are configured, `/mcp` and execution APIs return `401` by design.
 - Add the MCP endpoint `http://127.0.0.1:8089/mcp` in any LLM Chat Client, set the token, and verify it works correctly.
 ![claude-code-demo](static/claude-code-demo.jpg)
@@ -224,7 +224,7 @@ Web dev URL defaults to `http://127.0.0.1:5178` and proxies `/api/*` to `http://
 
 ### Useful docs
 
-- Unified API reference: `API.md`
+- Unified API reference: `README/API.md`
 - Console internals: `console/README/overview.md`
 - Worker internals: `worker/worker-docker/README/overview.md`
 - API/proto guide: `api/README/proto.md`

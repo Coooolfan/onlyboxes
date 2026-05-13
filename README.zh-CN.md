@@ -55,7 +55,7 @@ curl -fsSL https://onlybox.es/install.sh | bash
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
-| `--tag` | `0.2.0-beta-4` | 可选的 Release 版本覆盖参数 |
+| `--tag` | `0.5.0` | 可选的 Release 版本覆盖参数 |
 | `--workdir` | `$PWD/onlyboxes` | 工作目录 |
 | `--yes` / `-y` | `false` | 非交互模式，跳过确认 |
 | `--console-http-port` | `8089` | Console HTTP 端口（宿主机侧） |
@@ -142,7 +142,7 @@ curl -fsSL https://onlybox.es/install.sh | bash
 ### 6）验证运行状态
 
 - 在控制台 Workers 页面确认 worker 状态为 `online`。
-- REST API 调用示例请参考 `API.zh-CN.md`。
+- REST API 调用示例请参考 `README/API.zh-CN.md`。
 - 若系统中没有任何 token，`/mcp` 与执行类 API 会按预期返回 `401`。
 - 在任意 LLM Chat Client 中添加 MCP 端点 `http://127.0.0.1:8089/mcp`，并设置 token，确认可以正常工作。
 ![claude-code-demo](static/claude-code-demo.jpg)
@@ -224,7 +224,7 @@ yarn --cwd web dev
 
 ### 延伸文档
 
-- 统一 API 文档：`API.zh-CN.md`
+- 统一 API 文档：`README/API.zh-CN.md`
 - Console 细节：`console/README/overview.md`
 - Worker 细节：`worker/worker-docker/README/overview.md`
 - API/proto 说明：`api/README/proto.md`

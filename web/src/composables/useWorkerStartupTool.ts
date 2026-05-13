@@ -32,7 +32,7 @@ const defaultBoxliteCpus = 1
 const defaultBoxliteMaxProcesses = 128
 const defaultTerminalExportMaxBytes = 0
 const defaultTemporaryProbeNodeName = 'Temporary Probe'
-const defaultTemporaryProbeInstallerTag = '0.4.0'
+const defaultTemporaryProbeInstallerTag = '0.5.0'
 
 type BuildState = {
   envEntries: Array<[string, string]>
