@@ -8,6 +8,7 @@ import type {
   WorkerSysStartupConfig,
   WorkerSysWhitelistMode,
 } from '@/types/worker-startup-tool'
+import { defaultConsoleVersion } from '@/constants/console'
 
 const defaultConsoleGRPCTarget = '127.0.0.1:50051'
 const defaultHeartbeatIntervalSec = 5
@@ -32,7 +33,7 @@ const defaultBoxliteCpus = 1
 const defaultBoxliteMaxProcesses = 128
 const defaultTerminalExportMaxBytes = 0
 const defaultTemporaryProbeNodeName = 'Temporary Probe'
-const defaultTemporaryProbeInstallerTag = '0.5.0'
+const defaultTemporaryProbeInstallerTag = defaultConsoleVersion === 'dev' ? '0.5.1' : defaultConsoleVersion
 
 type BuildState = {
   envEntries: Array<[string, string]>

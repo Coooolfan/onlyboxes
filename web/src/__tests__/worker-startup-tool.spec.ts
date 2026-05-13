@@ -86,12 +86,12 @@ describe('worker startup tool command builder', () => {
     config.workerID = 'node-sys-1'
     config.workerSecret = 'secret-sys-1'
     config.consoleGRPCTarget = 'console.example.test:50051'
-    config.temporaryProbeTag = 'v0.5.0'
+    config.temporaryProbeTag = 'v0.5.1'
 
     const result = buildWorkerSysStartupCommand(config)
 
     expect(result.errors).toEqual([])
-    expect(result.command).toContain(" --tag 'v0.5.0'")
+    expect(result.command).toContain(" --tag 'v0.5.1'")
   })
 
   it('builds worker-boxlite command with runtime-specific env vars', () => {
