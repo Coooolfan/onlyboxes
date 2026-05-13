@@ -83,7 +83,7 @@ export function TagSelector({
 
   return (
     <div className="mt-6">
-      <div className="mb-2 flex items-center gap-2 text-xs text-[var(--ob-muted)]">
+      <div className="mb-2 flex items-center gap-2 text-xs text-(--ob-muted)">
         <label htmlFor="tag-selector-version" className="font-medium">
           {t.label}
         </label>
@@ -91,7 +91,7 @@ export function TagSelector({
           id="tag-selector-version"
           value={selected}
           onChange={(event) => setSelected(event.target.value)}
-          className="rounded border border-[var(--ob-line)] bg-[var(--ob-bg)] px-2 py-1 font-mono text-xs text-[var(--ob-ink)] focus:outline-none focus:ring-1 focus:ring-[var(--ob-ink)]"
+          className="rounded border border-(--ob-line) bg-(--ob-bg) px-2 py-1 font-mono text-xs text-(--ob-ink) focus:outline-none focus:ring-1 focus:ring-(--ob-ink)"
         >
           {options.map((name) => (
             <option key={name} value={name}>
@@ -99,14 +99,14 @@ export function TagSelector({
             </option>
           ))}
         </select>
-        <span className="text-[var(--ob-muted)]">
+        <span className="text-(--ob-muted)">
           {tags === null && !loadFailed ? t.loading : null}
           {loadFailed ? (
             <a
               href={releasesUrl}
               target="_blank"
               rel="noreferrer"
-              className="underline decoration-[var(--ob-line)] underline-offset-4 hover:decoration-[var(--ob-ink)]"
+              className="underline decoration-(--ob-line) underline-offset-4 hover:decoration-(--ob-ink)"
             >
               {t.failed} — {t.releases}
             </a>
@@ -114,14 +114,14 @@ export function TagSelector({
         </span>
       </div>
       <div className="group relative">
-        <pre className="overflow-x-auto rounded border border-[var(--ob-line)] bg-[var(--ob-pre-bg)] px-5 py-4 text-sm leading-7 text-[var(--ob-pre-text)]">
+        <pre className="overflow-x-auto rounded border border-(--ob-line) bg-(--ob-pre-bg) px-5 py-4 text-sm leading-7 text-(--ob-pre-text)">
           <code>{buildCommand(selected)}</code>
         </pre>
         <button
           type="button"
           onClick={handleCopy}
           aria-label={t.copy}
-          className="absolute top-2.5 right-2.5 rounded bg-[var(--ob-pre-bg)] p-1.5 text-[var(--ob-pre-text)] opacity-0 transition-opacity group-hover:opacity-70"
+          className="absolute top-2.5 right-2.5 rounded bg-(--ob-pre-bg) p-1.5 text-(--ob-pre-text) opacity-0 transition-opacity group-hover:opacity-70"
         >
           {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
         </button>

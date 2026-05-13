@@ -17,7 +17,7 @@ function Heading({
 }: HTMLAttributes<HTMLHeadingElement> & { children?: ReactNode }) {
   return (
     <h2
-      className={mergeClassName('mt-10 scroll-mt-28 text-2xl font-semibold tracking-tight text-[var(--ob-ink)]', className)}
+      className={mergeClassName('mt-10 scroll-mt-28 text-2xl font-semibold tracking-tight text-(--ob-ink)', className)}
       {...props}
     >
       {children}
@@ -29,7 +29,7 @@ export const mdxComponents = {
   h1: ({ className, ...props }: HTMLAttributes<HTMLHeadingElement>) => (
     <h1
       className={mergeClassName(
-        'mb-4 scroll-mt-28 text-4xl font-semibold tracking-tight text-[var(--ob-ink)] sm:text-5xl',
+        'mb-4 scroll-mt-28 text-4xl font-semibold tracking-tight text-(--ob-ink) sm:text-5xl',
         className,
       )}
       {...props}
@@ -38,18 +38,18 @@ export const mdxComponents = {
   h2: Heading,
   h3: ({ className, ...props }: HTMLAttributes<HTMLHeadingElement>) => (
     <h3
-      className={mergeClassName('mt-8 scroll-mt-28 text-xl font-semibold tracking-tight text-[var(--ob-ink)]', className)}
+      className={mergeClassName('mt-8 scroll-mt-28 text-xl font-semibold tracking-tight text-(--ob-ink)', className)}
       {...props}
     />
   ),
   p: ({ className, ...props }: HTMLAttributes<HTMLParagraphElement>) => (
-    <p className={mergeClassName('mt-5 text-base leading-8 text-[var(--ob-muted)]', className)} {...props} />
+    <p className={mergeClassName('mt-5 text-base leading-8 text-(--ob-muted)', className)} {...props} />
   ),
   ul: ({ className, ...props }: HTMLAttributes<HTMLUListElement>) => (
-    <ul className={mergeClassName('mt-5 list-disc space-y-3 pl-6 text-base leading-8 text-[var(--ob-muted)]', className)} {...props} />
+    <ul className={mergeClassName('mt-5 list-disc space-y-3 pl-6 text-base leading-8 text-(--ob-muted)', className)} {...props} />
   ),
   ol: ({ className, ...props }: HTMLAttributes<HTMLOListElement>) => (
-    <ol className={mergeClassName('mt-5 list-decimal space-y-3 pl-6 text-base leading-8 text-[var(--ob-muted)]', className)} {...props} />
+    <ol className={mergeClassName('mt-5 list-decimal space-y-3 pl-6 text-base leading-8 text-(--ob-muted)', className)} {...props} />
   ),
   li: ({ className, ...props }: HTMLAttributes<HTMLLIElement>) => (
     <li className={mergeClassName('pl-1', className)} {...props} />
@@ -57,14 +57,14 @@ export const mdxComponents = {
   blockquote: ({ className, ...props }: HTMLAttributes<HTMLQuoteElement>) => (
     <blockquote
       className={mergeClassName(
-        'mt-6 rounded border border-[var(--ob-blockquote-border)] bg-[var(--ob-blockquote-bg)] px-5 py-4 text-sm leading-7 text-[var(--ob-blockquote-text)]',
+        'mt-6 rounded border border-(--ob-blockquote-border) bg-(--ob-blockquote-bg) px-5 py-4 text-sm leading-7 text-(--ob-blockquote-text)',
         className,
       )}
       {...props}
     />
   ),
   hr: ({ className, ...props }: HTMLAttributes<HTMLHRElement>) => (
-    <hr className={mergeClassName('my-10 border-[var(--ob-line)]', className)} {...props} />
+    <hr className={mergeClassName('my-10 border-(--ob-line)', className)} {...props} />
   ),
   a: ({
     className,
@@ -72,7 +72,7 @@ export const mdxComponents = {
     ...props
   }: ComponentPropsWithoutRef<'a'>) => {
     const mergedClassName = mergeClassName(
-      'font-medium text-[var(--ob-ink)] underline decoration-[var(--ob-line)] underline-offset-4 transition hover:decoration-[var(--ob-ink)]',
+      'font-medium text-(--ob-ink) underline decoration-(--ob-line) underline-offset-4 transition hover:decoration-(--ob-ink)',
       className,
     )
 
@@ -89,7 +89,7 @@ export const mdxComponents = {
   code: ({ className, ...props }: ComponentPropsWithoutRef<'code'>) => (
     <code
       className={mergeClassName(
-        'rounded-sm bg-[var(--ob-code-bg)] px-1.5 py-0.5 font-mono text-[0.92em] text-[var(--ob-code-text)]',
+        'rounded-sm bg-(--ob-code-bg) px-1.5 py-0.5 font-mono text-[0.92em] text-(--ob-code-text)',
         className,
       )}
       {...props}
@@ -111,7 +111,7 @@ export const mdxComponents = {
         <pre
           ref={ref}
           className={mergeClassName(
-            'overflow-x-auto rounded border border-[var(--ob-line)] bg-[var(--ob-pre-bg)] px-5 py-4 text-sm leading-7 text-[var(--ob-pre-text)] [&_code]:bg-transparent [&_code]:p-0 [&_code]:text-inherit [&_code]:text-[length:inherit]',
+            'overflow-x-auto rounded border border-(--ob-line) bg-(--ob-pre-bg) px-5 py-4 text-sm leading-7 text-(--ob-pre-text) [&_code]:bg-transparent [&_code]:p-0 [&_code]:text-inherit [&_code]:text-[length:inherit]',
             className,
           )}
           {...props}
@@ -121,7 +121,7 @@ export const mdxComponents = {
         <button
           type="button"
           onClick={handleCopy}
-          className="absolute top-2.5 right-2.5 rounded bg-[var(--ob-pre-bg)] p-1.5 text-[var(--ob-pre-text)] opacity-0 transition-opacity group-hover:opacity-70"
+          className="absolute top-2.5 right-2.5 rounded bg-(--ob-pre-bg) p-1.5 text-(--ob-pre-text) opacity-0 transition-opacity group-hover:opacity-70"
           aria-label="Copy code"
         >
           {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
@@ -130,18 +130,18 @@ export const mdxComponents = {
     )
   },
   table: ({ className, ...props }: ComponentPropsWithoutRef<'table'>) => (
-    <div className="mt-6 overflow-x-auto rounded border border-[var(--ob-table-border)]">
-      <table className={mergeClassName('min-w-full border-collapse text-left text-sm text-[var(--ob-table-text)]', className)} {...props} />
+    <div className="mt-6 overflow-x-auto rounded border border-(--ob-table-border)">
+      <table className={mergeClassName('min-w-full border-collapse text-left text-sm text-(--ob-table-text)', className)} {...props} />
     </div>
   ),
   thead: ({ className, ...props }: ComponentPropsWithoutRef<'thead'>) => (
-    <thead className={mergeClassName('bg-[var(--ob-table-header-bg)] text-[var(--ob-ink)]', className)} {...props} />
+    <thead className={mergeClassName('bg-(--ob-table-header-bg) text-(--ob-ink)', className)} {...props} />
   ),
   th: ({ className, ...props }: ComponentPropsWithoutRef<'th'>) => (
-    <th className={mergeClassName('border-b border-[var(--ob-table-border)] px-4 py-3 font-semibold', className)} {...props} />
+    <th className={mergeClassName('border-b border-(--ob-table-border) px-4 py-3 font-semibold', className)} {...props} />
   ),
   td: ({ className, ...props }: ComponentPropsWithoutRef<'td'>) => (
-    <td className={mergeClassName('border-b border-[var(--ob-table-border)] px-4 py-3 align-top', className)} {...props} />
+    <td className={mergeClassName('border-b border-(--ob-table-border) px-4 py-3 align-top', className)} {...props} />
   ),
   img: ({ className, alt = '', ...props }: ComponentPropsWithoutRef<'img'>) => (
     <img
