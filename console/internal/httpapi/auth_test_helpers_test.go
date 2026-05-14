@@ -25,6 +25,7 @@ const (
 	testMCPToken          = "mcp-token-test"
 	testMCPTokenB         = "mcp-token-test-b"
 	testJITSigningKey     = "test-jit-signing-key"
+	testDashboardJITKey   = "test-dashboard-jit-signing-key"
 )
 
 const testDashboardAccountID = "acc-test-dashboard"
@@ -125,6 +126,8 @@ func newTestAuthBundle(t testing.TB, registrationEnabled bool) *testAuthBundle {
 	if err != nil {
 		t.Fatalf("new console auth bundle: %v", err)
 	}
+	consoleAuth.SetPersistenceDB(db)
+	consoleAuth.SetDashboardJITSigningKey(testDashboardJITKey)
 	mcpAuth, err := NewMCPAuthWithPersistence(db)
 	if err != nil {
 		t.Fatalf("new mcp auth bundle: %v", err)
@@ -201,15 +204,32 @@ func makeTestJITToken(t testing.TB, issuer string, subject string) string {
 func makeTestJITTokenWithClaims(t testing.TB, claims jitTokenClaims) string {
 	t.Helper()
 
+	return makeTestJITTokenWithPrefixAndKey(t, jitTokenPrefix, testJITSigningKey, claims)
+}
+
+func makeTestDashboardJITToken(t testing.TB, issuer string, subject string) string {
+	t.Helper()
+
+	return makeTestJITTokenWithPrefixAndKey(t, dashboardJitTokenPrefix, testDashboardJITKey, jitTokenClaims{
+		Issuer:          issuer,
+		Subject:         subject,
+		Scope:           dashboardJitScope,
+		ExpiresAtUnixMs: time.Now().Add(time.Hour).UnixMilli(),
+	})
+}
+
+func makeTestJITTokenWithPrefixAndKey(t testing.TB, prefix string, key string, claims jitTokenClaims) string {
+	t.Helper()
+
 	payloadJSON, err := json.Marshal(claims)
 	if err != nil {
 		t.Fatalf("marshal jit token payload: %v", err)
 	}
 	payloadEncoded := base64.RawURLEncoding.EncodeToString(payloadJSON)
-	mac := hmac.New(sha256.New, []byte(testJITSigningKey))
-	_, _ = mac.Write([]byte(jitTokenPrefix + payloadEncoded))
+	mac := hmac.New(sha256.New, []byte(key))
+	_, _ = mac.Write([]byte(prefix + payloadEncoded))
 	signatureEncoded := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-	return jitTokenPrefix + payloadEncoded + "." + signatureEncoded
+	return prefix + payloadEncoded + "." + signatureEncoded
 }
 
 func loginSessionCookie(t *testing.T, router http.Handler) *http.Cookie {

@@ -561,6 +561,64 @@ func TestListTrustedTokensRequiresAuthentication(t *testing.T) {
 	}
 }
 
+func TestTrustedTokenEndpointsRejectDashboardJIT(t *testing.T) {
+	bundle := newTestAuthBundle(t, false)
+	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, nil, nil, ":50051")
+	router := mustNewRouter(t, handler, bundle.ConsoleAuth, bundle.MCPAuth, bundle.APIKeyAuth)
+	token := makeTestDashboardJITToken(t, "issuer-dashboard", "subject-dashboard")
+
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{
+			name:   "list",
+			method: http.MethodGet,
+			path:   "/api/v1/console/tokens",
+		},
+		{
+			name:   "create",
+			method: http.MethodPost,
+			path:   "/api/v1/console/tokens",
+			body:   `{"name":"blocked"}`,
+		},
+		{
+			name:   "delete",
+			method: http.MethodDelete,
+			path:   "/api/v1/console/tokens/tok_blocked",
+		},
+		{
+			name:   "value",
+			method: http.MethodGet,
+			path:   "/api/v1/console/tokens/tok_blocked/value",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var body *strings.Reader
+			if tt.body != "" {
+				body = strings.NewReader(tt.body)
+			} else {
+				body = strings.NewReader("")
+			}
+			req := httptest.NewRequest(tt.method, tt.path, body)
+			req.Header.Set(trustedTokenHeader, "Bearer "+token)
+			if tt.body != "" {
+				req.Header.Set("Content-Type", "application/json")
+			}
+			res := httptest.NewRecorder()
+			router.ServeHTTP(res, req)
+
+			if res.Code != http.StatusUnauthorized {
+				t.Fatalf("expected 401, got %d body=%s", res.Code, res.Body.String())
+			}
+		})
+	}
+}
+
 func TestNewRouterReturnsErrorWhenMCPAuthIsNil(t *testing.T) {
 	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, nil, nil, ":50051")
 	router, err := NewRouter(handler, newTestConsoleAuth(t), nil, nil, nil, nil)
