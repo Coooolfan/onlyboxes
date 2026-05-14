@@ -10,10 +10,11 @@ This document is the unified reference for all public APIs exposed by Onlyboxes.
 
 ## 1. Authentication Model
 
-Onlyboxes has two auth paths:
+Onlyboxes has these auth paths:
 
 1. Dashboard session (cookie): for web/admin APIs
-2. Access token (Bearer): for execution APIs and MCP
+2. Dashboard bearer credentials: for selected dashboard automation APIs
+3. Access token (Bearer): for execution APIs and MCP
 
 ### 1.1 Dashboard Session (Cookie)
 
@@ -36,7 +37,24 @@ Onlyboxes has two auth paths:
   - `/api/v1/commands/*`
   - `/api/v1/tasks*`
   - `/mcp`
-- If no token exists in console, token-protected APIs return `401`.
+- Accepted token types:
+  - trusted token managed by cookie-authenticated dashboard token APIs
+  - MCP JIT token (`obx_jit_v1.<payload>.<signature>`) when `CONSOLE_JIT_SIGNING_KEY` is configured
+- If no trusted token exists in console, trusted-token auth returns `401`; valid MCP JIT tokens can still authenticate when configured.
+
+### 1.3 Dashboard Bearer Credentials
+
+- Header format: `Authorization: Bearer <credential>`
+- Console API keys can authenticate dashboard APIs, except endpoints that require a cookie session.
+- Dashboard JIT tokens can authenticate selected dashboard APIs for server-to-server worker-sys provisioning:
+  - Format: `obx_dashboard_jit_v1.<payload>.<signature>`
+  - Signature: HMAC-SHA256 over `obx_dashboard_jit_v1.<payload>` with `CONSOLE_DASHBOARD_JIT_SIGNING_KEY`
+  - Payload requires `iss`, `sub`, `scope:"dashboard"`, and optional `exp` in Unix milliseconds.
+  - `CONSOLE_DASHBOARD_JIT_SIGNING_KEY` must differ from `CONSOLE_JIT_SIGNING_KEY`.
+- Dashboard JIT uses the same `(iss, sub) -> account` derivation as MCP JIT, creates a non-admin account on first use, and cannot authenticate `/mcp`.
+- MCP JIT payloads also accept optional `exp` in Unix milliseconds.
+- MCP JIT tokens (`obx_jit_v1.*`) are rejected by dashboard auth.
+- Cookie-only endpoints reject dashboard bearer credentials.
 
 ## 2. Common REST Conventions
 
@@ -214,9 +232,11 @@ Responses:
 - `404` account not found
 - `500` internal failure
 
-## 4. Token Management APIs (Dashboard Auth)
+## 4. Token Management APIs (Dashboard Cookie Session Auth)
 
 Tokens are account-scoped. A user can manage only their own tokens.
+
+All endpoints in this section require a dashboard cookie session. Console API keys and dashboard JIT tokens are intentionally rejected so dashboard bearer credentials cannot mint or manage MCP trusted tokens.
 
 ### 4.1 List Tokens
 
@@ -861,6 +881,8 @@ Behavior:
 
 - Missing/invalid token: HTTP `401`
 - Invalid tool params: JSON-RPC error `-32602`
+- `computerUse` without a caller-owned `worker-sys`: JSON-RPC error `-32010` with `data.error_code="WORKER_SYS_REQUIRED"`
+- `computerUse` with a registered but offline caller-owned `worker-sys`: JSON-RPC error `-32011` with `data.error_code="WORKER_SYS_OFFLINE"`
 - Execution failures: returned as MCP tool error content (`isError=true`)
 
 ## 9. Worker gRPC API (`api/proto/registry/v1/registry.proto`)

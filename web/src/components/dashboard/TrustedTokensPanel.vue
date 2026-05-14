@@ -299,7 +299,7 @@ onBeforeUnmount(() => {
         v-if="tokens.length === 0"
         class="ui-empty-state m-0 text-sm px-4 py-3 rounded-default border border-dashed"
       >
-        No tokens configured. All MCP and protected HTTP endpoints are currently rejected.
+        No trusted tokens configured. MCP access can still use JIT auth when it is enabled.
       </p>
 
       <ul v-else class="list-none m-0 p-0 grid gap-3">

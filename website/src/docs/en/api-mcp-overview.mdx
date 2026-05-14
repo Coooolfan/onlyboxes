@@ -30,21 +30,21 @@ Unified error response format:
 
 ## Auth Model
 
-The Console exposes four credential types for different use cases:
+The Console exposes five credential types for different use cases:
 
-| Item | Cookie session | API Key (Bearer) | Execution Token (Bearer) | JIT Token (Bearer) |
-|------|---------------|-----------------|---------------------------|--------------------|
-| Credential type | Cookie `onlyboxes_console_session` | `Authorization: Bearer obxk_*` | `Authorization: Bearer obx_*` | `Authorization: Bearer obx_jit_v1.*` |
-| Origin | `POST /api/v1/console/login` | `POST /api/v1/console/api-keys` (cookie only) | `POST /api/v1/console/tokens` | Externally signed (HMAC-SHA256, `CONSOLE_JIT_SIGNING_KEY`) |
-| Lifetime | 12 hours (in-memory; invalidated on console restart) | Persistent until manually deleted | Persistent until manually deleted | Stateless; revoke by rotating the signing key |
-| Applicable endpoints | All management endpoints | Most management endpoints (read + selective write) | `/api/v1/commands/*`, `/api/v1/tasks*`, `/mcp` | `/api/v1/commands/*`, `/api/v1/tasks*`, `/mcp` |
-| Primary use | Web UI management | Programmatic management | Command execution and MCP | Third-party integrations without pre-created accounts |
+| Item | Cookie session | API Key (Bearer) | Dashboard JIT (Bearer) | Execution Token (Bearer) | MCP JIT (Bearer) |
+|------|---------------|-----------------|------------------------|---------------------------|------------------|
+| Credential type | Cookie `onlyboxes_console_session` | `Authorization: Bearer obxk_*` | `Authorization: Bearer obx_dashboard_jit_v1.*` | `Authorization: Bearer obx_*` | `Authorization: Bearer obx_jit_v1.*` |
+| Origin | `POST /api/v1/console/login` | `POST /api/v1/console/api-keys` (cookie only) | Externally signed (HMAC-SHA256, `CONSOLE_DASHBOARD_JIT_SIGNING_KEY`) | `POST /api/v1/console/tokens` (cookie only) | Externally signed (HMAC-SHA256, `CONSOLE_JIT_SIGNING_KEY`) |
+| Lifetime | 12 hours (in-memory; invalidated on console restart) | Persistent until manually deleted | Stateless; expires via payload `exp` or by rotating the signing key | Persistent until manually deleted | Stateless; revoke by rotating the signing key |
+| Applicable endpoints | All management endpoints | Most management endpoints (read + selective write) | Selected dashboard APIs for worker-sys provisioning | `/api/v1/commands/*`, `/api/v1/tasks*`, `/mcp` | `/api/v1/commands/*`, `/api/v1/tasks*`, `/mcp` |
+| Primary use | Web UI management | Programmatic management | Server-to-server dashboard automation without MCP access | Command execution and MCP | Third-party execution integrations without pre-created accounts |
 
-> The following endpoints accept **cookie session only** and reject API Key Bearer: `POST /console/password`, `POST /console/api-keys`, `DELETE /console/api-keys/:api_key_id`
+> The following endpoints accept **cookie session only** and reject API Key Bearer and Dashboard JIT: `POST /console/password`, `POST /console/api-keys`, `DELETE /console/api-keys/:api_key_id`, and all `/console/tokens*` endpoints.
 >
-> If no execution tokens exist in the system, all command execution endpoints and `/mcp` return `401` by design.
+> If no execution tokens exist in the system, trusted-token auth for command execution endpoints and `/mcp` returns `401`; valid MCP JIT tokens can still authenticate when `CONSOLE_JIT_SIGNING_KEY` is configured.
 >
-> JIT Tokens are explicitly **rejected** on all dashboard/management routes.
+> MCP JIT tokens (`obx_jit_v1.*`) are explicitly **rejected** on all dashboard/management routes. Dashboard JIT tokens (`obx_dashboard_jit_v1.*`) are explicitly **rejected** by `/mcp`.
 
 ---
 
@@ -264,6 +264,8 @@ Changes the current account's password. All active sessions for the account are 
 ### Token Management
 
 Tokens are scoped per account; each account can only manage its own tokens.
+
+All token management endpoints require a Cookie session. API keys and Dashboard JIT tokens are rejected so dashboard bearer credentials cannot mint or manage MCP trusted tokens.
 
 #### List Tokens
 
@@ -967,13 +969,35 @@ Tasks are suited for asynchronous execution or polling workflows. Ownership is s
 
 ## JIT Token Authentication
 
-JIT (Just-in-Time) Tokens allow external systems to authenticate on behalf of arbitrary users without pre-creating accounts. The console verifies the token signature and automatically provisions a non-admin, dashboard-login-disabled account on first use.
+JIT (Just-in-Time) tokens let a trusted upstream system authenticate requests on behalf of a user without pre-creating an Onlyboxes account. The Console verifies the HMAC signature, derives a deterministic account from `(iss, sub)`, and creates that account on first use with dashboard password login disabled.
 
-**Prerequisites:** Set `CONSOLE_JIT_SIGNING_KEY` on the console. If unset, all JIT tokens are rejected.
+Onlyboxes has two JIT channels with separate prefixes and signing keys:
 
-**Applicable endpoints:** Same as Execution Token — `/api/v1/commands/*`, `/api/v1/tasks*`, `/mcp`.
+| Channel | Prefix | Signing key | Required payload | Accepted by | Rejected by |
+|---------|--------|-------------|------------------|-------------|-------------|
+| MCP JIT | `obx_jit_v1.` | `CONSOLE_JIT_SIGNING_KEY` | `iss`, `sub`; optional `exp` | `/api/v1/commands/*`, `/api/v1/tasks*`, `/mcp` | Dashboard management APIs |
+| Dashboard JIT | `obx_dashboard_jit_v1.` | `CONSOLE_DASHBOARD_JIT_SIGNING_KEY` | `iss`, `sub`, `scope:"dashboard"`; optional `exp` | Selected dashboard APIs, such as worker-sys provisioning | `/mcp` and cookie-only endpoints |
 
-### Token Format
+The two signing keys must be different. This keeps MCP execution access and dashboard automation access isolated even though they share account derivation.
+
+### Shared Account Mapping
+
+Both channels map the same `(iss, sub)` pair to the same non-admin JIT account. That means an upstream identity can create a `worker-sys` through Dashboard JIT and later use MCP JIT under the same account ownership, without sharing signing material between the two channels.
+
+Rules:
+
+- `iss` and `sub` must be non-empty strings after normalization.
+- The derived account ID is deterministic, so repeated use of the same pair reuses the same account.
+- JIT-created accounts cannot log in with a dashboard password.
+- JIT-created accounts are not admins.
+
+### MCP JIT
+
+MCP JIT is for execution clients and MCP clients that should not require a stored trusted token.
+
+**Prerequisite:** set `CONSOLE_JIT_SIGNING_KEY`. If unset, MCP JIT tokens are rejected.
+
+**Token format:**
 
 ```
 obx_jit_v1.<base64url-payload>.<base64url-signature>
@@ -982,25 +1006,83 @@ obx_jit_v1.<base64url-payload>.<base64url-signature>
 | Part | Content |
 |------|---------|
 | Prefix | `obx_jit_v1.` — literal string, included in the signed message |
-| Payload | Base64url (no padding) of JSON `{"iss":"<issuer>","sub":"<subject>"}` |
+| Payload | Base64url (no padding) of JSON containing `iss`, `sub`, and optional `exp` |
 | Signature | Base64url (no padding) of HMAC-SHA256 over `obx_jit_v1.<payload>` |
 
-### Expected Flow
+**Use as:** `Authorization: Bearer obx_jit_v1.<payload>.<signature>`
 
-1. **Configure** — Set `CONSOLE_JIT_SIGNING_KEY` on the Console; distribute the same key to all systems that will issue JIT tokens.
-2. **Sign** — The caller encodes `{"iss":"...","sub":"..."}` as a Base64url payload and signs `obx_jit_v1.<payload>` with HMAC-SHA256.
-3. **Request** — Send `Authorization: Bearer obx_jit_v1.<payload>.<sig>` to any command execution endpoint.
-4. **Verify** — The Console checks the HMAC signature; returns `401` if the key is unset or the signature is invalid.
-5. **Provision (first use only)** — The Console derives a deterministic `acc_jit_*` account from `(iss, sub)` and creates it with disabled dashboard credentials if it does not yet exist. Subsequent calls with the same pair skip this step.
-6. **Execute** — The request proceeds under that account's ownership, subject to normal per-account resource rules.
+Example payload:
 
-> **Account isolation:** each `(issuer, subject)` pair maps to a separate account. Tokens with the same `iss` but different `sub` values are independent.
->
-> **Dashboard access:** JIT-created accounts own execution resources, but they cannot log in to the dashboard with a password.
->
-> **Revocation:** rotate `CONSOLE_JIT_SIGNING_KEY` to immediately invalidate all previously issued JIT tokens.
+```json
+{ "iss": "my-platform", "sub": "user-42", "exp": 1770000000000 }
+```
+
+**Accepted endpoints:** `/api/v1/commands/*`, `/api/v1/tasks*`, `/mcp`
+
+**Rejected endpoints:** dashboard management APIs, including worker and token management routes.
+
+### Dashboard JIT
+
+Dashboard JIT is for server-to-server dashboard automation, especially provisioning a user's `worker-sys`, without granting MCP execution access.
+
+**Prerequisite:** set `CONSOLE_DASHBOARD_JIT_SIGNING_KEY`. It must differ from `CONSOLE_JIT_SIGNING_KEY`.
+
+**Token format:**
+
+```
+obx_dashboard_jit_v1.<base64url-payload>.<base64url-signature>
+```
+
+| Part | Content |
+|------|---------|
+| Prefix | `obx_dashboard_jit_v1.` — literal string, included in the signed message |
+| Payload | Base64url (no padding) of JSON containing `iss`, `sub`, `scope:"dashboard"`, and optional `exp` |
+| Signature | Base64url (no padding) of HMAC-SHA256 over `obx_dashboard_jit_v1.<payload>` |
+
+Example payload:
+
+```json
+{
+  "iss": "my-platform",
+  "sub": "user-42",
+  "scope": "dashboard",
+  "exp": 1770000000000
+}
+```
+
+**Use as:** `Authorization: Bearer obx_dashboard_jit_v1.<payload>.<signature>`
+
+**Accepted endpoints:** selected dashboard APIs that are safe for non-admin account-scoped automation, such as worker-sys provisioning and listing under the derived account.
+
+**Rejected endpoints:**
+
+- `/mcp`
+- MCP/execution REST APIs
+- admin-only dashboard APIs
+- cookie-only dashboard APIs, including all `/api/v1/console/tokens*` endpoints
+
+### Signing Flow
+
+1. Pick the channel and signing key: MCP JIT or Dashboard JIT.
+2. Encode the channel-specific JSON payload as Base64url without padding.
+3. Sign `<prefix><payload>` with HMAC-SHA256 and the channel's key.
+4. Send the resulting token in the `Authorization: Bearer ...` header.
+5. The Console verifies the prefix, signature, required claims, and optional expiry.
+6. On first use, the Console derives and creates the non-admin JIT account, then handles the request under that account's ownership.
+
+### Revocation
+
+- Rotate `CONSOLE_JIT_SIGNING_KEY` to revoke all MCP JIT tokens.
+- Rotate `CONSOLE_DASHBOARD_JIT_SIGNING_KEY` to revoke all Dashboard JIT tokens.
+- Use short `exp` values on Dashboard JIT tokens when possible to reduce replay risk.
 
 ### Reference Implementations
+
+The examples below mint MCP JIT tokens without `exp`; add an `exp` Unix-milliseconds field to make them expire. To mint Dashboard JIT tokens, use the `obx_dashboard_jit_v1.` prefix, sign with `CONSOLE_DASHBOARD_JIT_SIGNING_KEY`, and include `scope:"dashboard"` plus optional `exp` in the payload:
+
+```json
+{ "iss": "my-platform", "sub": "user-42", "scope": "dashboard", "exp": 1770000000000 }
+```
 
 #### Python
 

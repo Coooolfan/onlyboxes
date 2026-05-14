@@ -30,21 +30,21 @@ Console 节点的 HTTP 服务监听在 `:8089`，所有 REST 端点以 `/api/v1`
 
 ## 鉴权模型
 
-Console 提供四种鉴权凭据，覆盖不同使用场景：
+Console 提供五种鉴权凭据，覆盖不同使用场景：
 
-| 项目 | Cookie 会话 | API Key（Bearer） | 执行 Token（Bearer） | JIT Token（Bearer） |
-|------|------------|------------------|---------------------|---------------------|
-| 凭据类型 | Cookie `onlyboxes_console_session` | `Authorization: Bearer obxk_*` | `Authorization: Bearer obx_*` | `Authorization: Bearer obx_jit_v1.*` |
-| 来源 | `POST /api/v1/console/login` | `POST /api/v1/console/api-keys`（仅 Cookie） | `POST /api/v1/console/tokens` | 外部签名（HMAC-SHA256，`CONSOLE_JIT_SIGNING_KEY`） |
-| 有效期 | 12 小时（内存态，console 重启后全部失效） | 持久，直到手动删除 | 持久，直到手动删除 | 无状态；轮换签名密钥即可吊销 |
-| 适用端点 | 所有管理端点 | 大多数管理端点（只读及部分写） | `/api/v1/commands/*`、`/api/v1/tasks*`、`/mcp` | `/api/v1/commands/*`、`/api/v1/tasks*`、`/mcp` |
-| 主要用途 | Web UI 管理操作 | 程序化管理操作 | 命令执行与 MCP | 无需预创建账户的第三方集成 |
+| 项目 | Cookie 会话 | API Key（Bearer） | Dashboard JIT（Bearer） | 执行 Token（Bearer） | MCP JIT（Bearer） |
+|------|------------|------------------|-------------------------|---------------------|------------------|
+| 凭据类型 | Cookie `onlyboxes_console_session` | `Authorization: Bearer obxk_*` | `Authorization: Bearer obx_dashboard_jit_v1.*` | `Authorization: Bearer obx_*` | `Authorization: Bearer obx_jit_v1.*` |
+| 来源 | `POST /api/v1/console/login` | `POST /api/v1/console/api-keys`（仅 Cookie） | 外部签名（HMAC-SHA256，`CONSOLE_DASHBOARD_JIT_SIGNING_KEY`） | `POST /api/v1/console/tokens`（仅 Cookie） | 外部签名（HMAC-SHA256，`CONSOLE_JIT_SIGNING_KEY`） |
+| 有效期 | 12 小时（内存态，console 重启后全部失效） | 持久，直到手动删除 | 无状态；通过 payload `exp` 过期或轮换签名密钥吊销 | 持久，直到手动删除 | 无状态；轮换签名密钥即可吊销 |
+| 适用端点 | 所有管理端点 | 大多数管理端点（只读及部分写） | 用于 worker-sys 配置的部分 Dashboard API | `/api/v1/commands/*`、`/api/v1/tasks*`、`/mcp` | `/api/v1/commands/*`、`/api/v1/tasks*`、`/mcp` |
+| 主要用途 | Web UI 管理操作 | 程序化管理操作 | 不授予 MCP 访问权的服务端 Dashboard 自动化 | 命令执行与 MCP | 无需预创建账户的第三方执行集成 |
 
-> 以下端点**仅接受 Cookie 会话**，拒绝 API Key Bearer：`POST /console/password`、`POST /console/api-keys`、`DELETE /console/api-keys/:api_key_id`
+> 以下端点**仅接受 Cookie 会话**，拒绝 API Key Bearer 与 Dashboard JIT：`POST /console/password`、`POST /console/api-keys`、`DELETE /console/api-keys/:api_key_id`，以及所有 `/console/tokens*` 端点。
 >
-> 如果系统中没有任何执行 Token，所有命令执行端点及 `/mcp` 将返回 `401`。
+> 如果系统中没有任何执行 Token，命令执行端点及 `/mcp` 的 trusted-token 鉴权会返回 `401`；配置 `CONSOLE_JIT_SIGNING_KEY` 后，有效 MCP JIT token 仍可鉴权。
 >
-> JIT Token 在所有 Dashboard/管理路由上会被明确**拒绝**。
+> MCP JIT token（`obx_jit_v1.*`）在所有 Dashboard/管理路由上会被明确**拒绝**。Dashboard JIT token（`obx_dashboard_jit_v1.*`）会被 `/mcp` 明确**拒绝**。
 
 ---
 
@@ -264,6 +264,8 @@ Console 提供四种鉴权凭据，覆盖不同使用场景：
 ### Token 管理
 
 Token 按账号隔离，每个账号只能管理自己的 token。
+
+所有 Token 管理端点都要求 Cookie 会话。API Key 与 Dashboard JIT token 会被拒绝，避免 Dashboard Bearer 凭据创建或管理 MCP trusted token。
 
 #### 查询 Token 列表
 
@@ -967,13 +969,35 @@ Task 适合需要异步执行或结果轮询的场景。所有权按 token 对�
 
 ## JIT Token 认证
 
-JIT（Just-in-Time）Token 允许外部系统以任意用户身份进行认证，无需提前创建账户。Console 验证签名后，首次使用时自动派生并创建禁用 Dashboard 登录的非管理员账户。
+JIT（Just-in-Time）Token 允许可信上游系统代表某个用户发起请求，无需提前在 Onlyboxes 中创建账户。Console 会校验 HMAC 签名，根据 `(iss, sub)` 确定性派生账号，并在首次使用时创建一个禁用 Dashboard 密码登录的账号。
 
-**前提条件：** 需在 Console 上配置 `CONSOLE_JIT_SIGNING_KEY`。未设置时所有 JIT Token 均被拒绝。
+Onlyboxes 有两条 JIT 通道，分别使用不同前缀和签名密钥：
 
-**适用端点：** 与执行 Token 相同——`/api/v1/commands/*`、`/api/v1/tasks*`、`/mcp`。
+| 通道 | 前缀 | 签名密钥 | 必需 Payload | 接受方 | 拒绝方 |
+|------|------|----------|--------------|--------|--------|
+| MCP JIT | `obx_jit_v1.` | `CONSOLE_JIT_SIGNING_KEY` | `iss`、`sub`；可选 `exp` | `/api/v1/commands/*`、`/api/v1/tasks*`、`/mcp` | Dashboard 管理 API |
+| Dashboard JIT | `obx_dashboard_jit_v1.` | `CONSOLE_DASHBOARD_JIT_SIGNING_KEY` | `iss`、`sub`、`scope:"dashboard"`；可选 `exp` | 部分 Dashboard API，例如 worker-sys 配置 | `/mcp` 与 cookie-only 接口 |
 
-### Token 格式
+两把签名密钥必须不同。这样即使两条通道共享账号派生逻辑，MCP 执行访问权与 Dashboard 自动化访问权仍然彼此隔离。
+
+### 共享账号映射
+
+两条通道会把相同的 `(iss, sub)` 映射到同一个非管理员 JIT 账号。这意味着上游身份可以先用 Dashboard JIT 创建 `worker-sys`，之后再用 MCP JIT 在同一个账号所有权下执行任务，同时两条通道不共享签名材料。
+
+规则：
+
+- `iss` 与 `sub` 归一化后必须是非空字符串。
+- 派生账号 ID 是确定性的，相同组合会复用同一个账号。
+- JIT 创建的账号不能通过 Dashboard 密码登录。
+- JIT 创建的账号不是管理员。
+
+### MCP JIT
+
+MCP JIT 适用于执行客户端和 MCP 客户端，不需要预先创建持久 trusted token。
+
+**前提条件：** 配置 `CONSOLE_JIT_SIGNING_KEY`。未设置时 MCP JIT token 会被拒绝。
+
+**Token 格式：**
 
 ```
 obx_jit_v1.<base64url-payload>.<base64url-signature>
@@ -982,25 +1006,83 @@ obx_jit_v1.<base64url-payload>.<base64url-signature>
 | 部分 | 内容 |
 |------|------|
 | 前缀 | `obx_jit_v1.` — 字面字符串，包含在被签名消息中 |
-| Payload | JSON `{"iss":"<issuer>","sub":"<subject>"}` 的 Base64url 编码（无填充） |
+| Payload | 包含 `iss`、`sub` 与可选 `exp` 的 JSON 的 Base64url 编码（无填充） |
 | Signature | 对 `obx_jit_v1.<payload>` 做 HMAC-SHA256 后 Base64url 编码（无填充） |
 
-### 预期流程
+**用法：** `Authorization: Bearer obx_jit_v1.<payload>.<signature>`
 
-1. **配置** — 在 Console 上设置 `CONSOLE_JIT_SIGNING_KEY`；将同一密钥分发给所有需要签发 JIT Token 的系统。
-2. **签名** — 调用方将 `{"iss":"...","sub":"..."}` Base64url 编码为 payload，再对 `obx_jit_v1.<payload>` 做 HMAC-SHA256 签名。
-3. **请求** — 以 `Authorization: Bearer obx_jit_v1.<payload>.<sig>` 调用任意命令执行端点。
-4. **验证** — Console 校验 HMAC 签名；密钥未配置或签名错误时返回 `401`。
-5. **账户创建（仅首次）** — Console 由 `(iss, sub)` 确定性推导出 `acc_jit_*` 账户 ID，若不存在则使用禁用的 Dashboard credential 自动创建。后续相同组合的调用跳过此步。
-6. **执行** — 请求在该账户的所有权下执行，受正常的账户级资源规则约束。
+Payload 示例：
 
-> **账户隔离：** 每个 `(issuer, subject)` 组合对应独立账户，相同 `iss` 不同 `sub` 的 Token 互不影响。
->
-> **Dashboard 访问：** JIT 创建的账户只用于执行资源归属，不能通过密码登录 Dashboard。
->
-> **吊销：** 轮换 `CONSOLE_JIT_SIGNING_KEY` 可立即使所有已签发的 JIT Token 失效。
+```json
+{ "iss": "my-platform", "sub": "user-42", "exp": 1770000000000 }
+```
+
+**接受端点：** `/api/v1/commands/*`、`/api/v1/tasks*`、`/mcp`
+
+**拒绝端点：** Dashboard 管理 API，包括 worker 与 token 管理路由。
+
+### Dashboard JIT
+
+Dashboard JIT 用于服务端到服务端的 Dashboard 自动化，典型场景是为用户配置 `worker-sys`，但不授予 MCP 执行访问权。
+
+**前提条件：** 配置 `CONSOLE_DASHBOARD_JIT_SIGNING_KEY`，且必须与 `CONSOLE_JIT_SIGNING_KEY` 不同。
+
+**Token 格式：**
+
+```
+obx_dashboard_jit_v1.<base64url-payload>.<base64url-signature>
+```
+
+| 部分 | 内容 |
+|------|------|
+| 前缀 | `obx_dashboard_jit_v1.` — 字面字符串，包含在被签名消息中 |
+| Payload | 包含 `iss`、`sub`、`scope:"dashboard"` 与可选 `exp` 的 JSON 的 Base64url 编码（无填充） |
+| Signature | 对 `obx_dashboard_jit_v1.<payload>` 做 HMAC-SHA256 后 Base64url 编码（无填充） |
+
+Payload 示例：
+
+```json
+{
+  "iss": "my-platform",
+  "sub": "user-42",
+  "scope": "dashboard",
+  "exp": 1770000000000
+}
+```
+
+**用法：** `Authorization: Bearer obx_dashboard_jit_v1.<payload>.<signature>`
+
+**接受端点：** 适合非管理员账号级自动化的部分 Dashboard API，例如在派生账号下创建与查询 `worker-sys`。
+
+**拒绝端点：**
+
+- `/mcp`
+- MCP/执行 REST API
+- admin-only Dashboard API
+- cookie-only Dashboard API，包括所有 `/api/v1/console/tokens*` 端点
+
+### 签名流程
+
+1. 选择通道和签名密钥：MCP JIT 或 Dashboard JIT。
+2. 将对应通道的 JSON payload 编码为无填充 Base64url。
+3. 使用该通道的密钥对 `<prefix><payload>` 做 HMAC-SHA256 签名。
+4. 将生成的 token 放入 `Authorization: Bearer ...` 请求头。
+5. Console 校验前缀、签名、必需 claim 与可选过期时间。
+6. 首次使用时，Console 派生并创建非管理员 JIT 账号，然后在该账号所有权下处理请求。
+
+### 吊销
+
+- 轮换 `CONSOLE_JIT_SIGNING_KEY` 可吊销所有 MCP JIT token。
+- 轮换 `CONSOLE_DASHBOARD_JIT_SIGNING_KEY` 可吊销所有 Dashboard JIT token。
+- 建议尽量为 Dashboard JIT token 设置较短的 `exp`，以降低重放风险。
 
 ### 参考实现
+
+以下示例生成不带 `exp` 的 MCP JIT token；加入 Unix 毫秒字段 `exp` 后即可让 token 过期。若要生成 Dashboard JIT token，请改用 `obx_dashboard_jit_v1.` 前缀、使用 `CONSOLE_DASHBOARD_JIT_SIGNING_KEY` 签名，并在 payload 中加入 `scope:"dashboard"` 和可选 `exp`：
+
+```json
+{ "iss": "my-platform", "sub": "user-42", "scope": "dashboard", "exp": 1770000000000 }
+```
 
 #### Python
 

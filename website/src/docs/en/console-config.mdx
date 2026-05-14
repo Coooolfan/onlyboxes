@@ -109,6 +109,7 @@ These variables enable the MCP `exportFile` tool. The tool is registered in `too
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
 | `CONSOLE_JIT_SIGNING_KEY` | No | | HMAC-SHA256 signing key for JIT tokens (`obx_jit_v1.*`). Unset disables JIT auth entirely. |
+| `CONSOLE_DASHBOARD_JIT_SIGNING_KEY` | No | | HMAC-SHA256 signing key for Dashboard JIT tokens (`obx_dashboard_jit_v1.*`). Must differ from `CONSOLE_JIT_SIGNING_KEY`. Unset disables Dashboard JIT auth. |
 
 ### Worker management
 

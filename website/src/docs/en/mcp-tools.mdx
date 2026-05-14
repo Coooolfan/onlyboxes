@@ -362,6 +362,8 @@ Output fields depend on the `CONSOLE_EXPORT_RETURN_SCHEMA` environment variable:
 | Unknown method | JSON-RPC error `-32601 method not found` |
 | Input contains undefined fields | JSON-RPC error `-32602 invalid params` |
 | Input validation failure | JSON-RPC error `-32602 invalid params` |
+| `computerUse` account has no `worker-sys` | JSON-RPC error `-32010` with `data.error_code="WORKER_SYS_REQUIRED"` |
+| `computerUse` account has a registered but offline `worker-sys` | JSON-RPC error `-32011` with `data.error_code="WORKER_SYS_OFFLINE"` |
 | Tool execution error (timeout, no_worker, etc.) | Returned as MCP tool error content (`isError: true`); not a protocol-level error |
 
 ---

@@ -10,10 +10,11 @@
 
 ## 1. 鉴权模型
 
-Onlyboxes 有两套鉴权路径：
+Onlyboxes 有以下鉴权路径：
 
 1. 控制台会话（Cookie）：用于管理类 API
-2. 访问令牌（Bearer Token）：用于执行类 API 与 MCP
+2. 控制台 Bearer 凭据：用于部分控制台自动化 API
+3. 访问令牌（Bearer Token）：用于执行类 API 与 MCP
 
 ### 1.1 控制台会话（Cookie）
 
@@ -36,7 +37,24 @@ Onlyboxes 有两套鉴权路径：
   - `/api/v1/commands/*`
   - `/api/v1/tasks*`
   - `/mcp`
-- 若系统中没有 token，所有 token 鉴权接口会返回 `401`。
+- 支持的 token 类型：
+  - 通过控制台 Cookie 会话管理的 trusted token
+  - 配置 `CONSOLE_JIT_SIGNING_KEY` 后可用的 MCP JIT token（`obx_jit_v1.<payload>.<signature>`）
+- 若系统中没有 trusted token，trusted-token 鉴权会返回 `401`；配置后，有效 MCP JIT token 仍可鉴权。
+
+### 1.3 控制台 Bearer 凭据
+
+- 请求头格式：`Authorization: Bearer <credential>`
+- Console API key 可用于控制台 API，但不能访问要求 Cookie 会话的接口。
+- Dashboard JIT token 可用于服务端到服务端的 worker-sys 配置场景：
+  - 格式：`obx_dashboard_jit_v1.<payload>.<signature>`
+  - 签名：使用 `CONSOLE_DASHBOARD_JIT_SIGNING_KEY` 对 `obx_dashboard_jit_v1.<payload>` 做 HMAC-SHA256
+  - Payload 要求 `iss`、`sub`、`scope:"dashboard"`，可选 `exp`（Unix 毫秒）
+  - `CONSOLE_DASHBOARD_JIT_SIGNING_KEY` 必须与 `CONSOLE_JIT_SIGNING_KEY` 不同。
+- Dashboard JIT 与 MCP JIT 使用相同的 `(iss, sub) -> account` 派生逻辑，首次使用会创建非管理员账号，但不能鉴权 `/mcp`。
+- MCP JIT payload 同样支持可选 `exp`（Unix 毫秒）。
+- MCP JIT token（`obx_jit_v1.*`）会被控制台鉴权拒绝。
+- Cookie-only 接口会拒绝控制台 Bearer 凭据。
 
 ## 2. REST 通用约定
 
@@ -214,9 +232,11 @@ Onlyboxes 有两套鉴权路径：
 - `404` 账号不存在
 - `500` 内部错误
 
-## 4. Token 管理 API（控制台会话鉴权）
+## 4. Token 管理 API（控制台 Cookie 会话鉴权）
 
 Token 按账号隔离；每个账号只能管理自己的 token。
+
+本节所有接口都要求控制台 Cookie 会话。Console API key 与 Dashboard JIT token 会被拒绝，避免控制台 Bearer 凭据创建或管理 MCP trusted token。
 
 ### 4.1 查询 Token 列表
 
@@ -863,6 +883,8 @@ Task 所有权按账号隔离（由 token 对应账号决定）。
 
 - Token 缺失或无效：HTTP `401`
 - 参数校验失败：JSON-RPC `-32602`
+- `computerUse` 调用账号未创建 `worker-sys`：JSON-RPC `-32010`，`data.error_code="WORKER_SYS_REQUIRED"`
+- `computerUse` 调用账号已注册 `worker-sys` 但不在线：JSON-RPC `-32011`，`data.error_code="WORKER_SYS_OFFLINE"`
 - 执行异常：作为 MCP tool error 内容返回（`isError=true`）
 
 ## 9. Worker gRPC API（`api/proto/registry/v1/registry.proto`）

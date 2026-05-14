@@ -362,6 +362,8 @@ unsupported mime type: <mime>; expected image/*
 | 未知方法 | JSON-RPC 错误 `-32601 method not found` |
 | 参数包含未定义字段 | JSON-RPC 错误 `-32602 invalid params` |
 | 参数校验失败 | JSON-RPC 错误 `-32602 invalid params` |
+| `computerUse` 调用账号没有 `worker-sys` | JSON-RPC 错误 `-32010`，`data.error_code="WORKER_SYS_REQUIRED"` |
+| `computerUse` 调用账号已注册 `worker-sys` 但不在线 | JSON-RPC 错误 `-32011`，`data.error_code="WORKER_SYS_OFFLINE"` |
 | 工具执行异常（超时、no_worker 等） | 作为 MCP 工具错误内容返回（`isError: true`），不是协议层错误 |
 
 ---
