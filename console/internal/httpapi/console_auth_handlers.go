@@ -308,8 +308,38 @@ func (a *ConsoleAuth) RequireAuth(apiKeyAuth *APIKeyAuth) gin.HandlerFunc {
 		token, hasBearer := parseBearerToken(authHeader)
 		if hasBearer {
 			if isJITToken(token) {
+				// MCP-channel JIT tokens are intentionally rejected here so they
+				// cannot reach dashboard endpoints. Dashboard JIT tokens use a
+				// separate prefix and are handled below.
 				c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or missing api key"})
 				c.Abort()
+				return
+			}
+			if isDashboardJITToken(token) {
+				if a.dashboardJITVerifier == nil || a.db == nil || a.queries == nil {
+					c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or missing api key"})
+					c.Abort()
+					return
+				}
+				identity, ok := a.dashboardJITVerifier.verify(token)
+				if !ok {
+					c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or missing api key"})
+					c.Abort()
+					return
+				}
+				account, ok := ensureJITAccount(c.Request.Context(), a.db, a.queries, a.nowFn, identity)
+				if !ok {
+					c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or missing api key"})
+					c.Abort()
+					return
+				}
+				setRequestSessionAccount(c, SessionAccount{
+					AccountID: strings.TrimSpace(account.AccountID),
+					Username:  strings.TrimSpace(account.Username),
+					IsAdmin:   false,
+				})
+				c.Set(requestAuthMethodGinKey, requestAuthMethodDashboardJIT)
+				c.Next()
 				return
 			}
 			if apiKeyAuth == nil {

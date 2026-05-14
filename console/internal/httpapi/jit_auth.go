@@ -12,11 +12,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onlyboxes/onlyboxes/console/internal/persistence"
 	"github.com/onlyboxes/onlyboxes/console/internal/persistence/sqlc"
 )
 
 const (
 	jitTokenPrefix            = "obx_jit_v1."
+	dashboardJitTokenPrefix   = "obx_dashboard_jit_v1."
+	dashboardJitScope         = "dashboard"
 	jitAccountIDPrefix        = "acc_jit_"
 	jitAccountIDIssuerMaxLen  = 20
 	jitAccountIDSubjectMaxLen = 20
@@ -28,8 +31,10 @@ const (
 )
 
 type jitTokenClaims struct {
-	Issuer  string `json:"iss"`
-	Subject string `json:"sub"`
+	Issuer          string `json:"iss"`
+	Subject         string `json:"sub"`
+	Scope           string `json:"scope,omitempty"`
+	ExpiresAtUnixMs int64  `json:"exp,omitempty"`
 }
 
 type jitAccountIdentity struct {
@@ -40,7 +45,10 @@ type jitAccountIdentity struct {
 }
 
 type jitTokenVerifier struct {
-	key []byte
+	key           []byte
+	tokenPrefix   string
+	requiredScope string
+	nowFn         func() time.Time
 }
 
 func newJITTokenVerifier(key string) *jitTokenVerifier {
@@ -48,11 +56,30 @@ func newJITTokenVerifier(key string) *jitTokenVerifier {
 	if trimmed == "" {
 		return nil
 	}
-	return &jitTokenVerifier{key: []byte(trimmed)}
+	return &jitTokenVerifier{
+		key:         []byte(trimmed),
+		tokenPrefix: jitTokenPrefix,
+	}
+}
+
+func newDashboardJITTokenVerifier(key string) *jitTokenVerifier {
+	trimmed := strings.TrimSpace(key)
+	if trimmed == "" {
+		return nil
+	}
+	return &jitTokenVerifier{
+		key:           []byte(trimmed),
+		tokenPrefix:   dashboardJitTokenPrefix,
+		requiredScope: dashboardJitScope,
+	}
 }
 
 func isJITToken(token string) bool {
 	return strings.HasPrefix(strings.TrimSpace(token), jitTokenPrefix)
+}
+
+func isDashboardJITToken(token string) bool {
+	return strings.HasPrefix(strings.TrimSpace(token), dashboardJitTokenPrefix)
 }
 
 func (v *jitTokenVerifier) verify(token string) (jitAccountIdentity, bool) {
@@ -60,11 +87,15 @@ func (v *jitTokenVerifier) verify(token string) (jitAccountIdentity, bool) {
 		return jitAccountIdentity{}, false
 	}
 	trimmedToken := strings.TrimSpace(token)
-	if !strings.HasPrefix(trimmedToken, jitTokenPrefix) {
+	prefix := v.tokenPrefix
+	if prefix == "" {
+		prefix = jitTokenPrefix
+	}
+	if !strings.HasPrefix(trimmedToken, prefix) {
 		return jitAccountIdentity{}, false
 	}
 
-	parts := strings.SplitN(strings.TrimPrefix(trimmedToken, jitTokenPrefix), ".", 2)
+	parts := strings.SplitN(strings.TrimPrefix(trimmedToken, prefix), ".", 2)
 	if len(parts) != 2 {
 		return jitAccountIdentity{}, false
 	}
@@ -79,7 +110,7 @@ func (v *jitTokenVerifier) verify(token string) (jitAccountIdentity, bool) {
 		return jitAccountIdentity{}, false
 	}
 	mac := hmac.New(sha256.New, v.key)
-	_, _ = mac.Write([]byte(jitTokenPrefix + payloadEncoded))
+	_, _ = mac.Write([]byte(prefix + payloadEncoded))
 	if !hmac.Equal(signature, mac.Sum(nil)) {
 		return jitAccountIdentity{}, false
 	}
@@ -92,6 +123,20 @@ func (v *jitTokenVerifier) verify(token string) (jitAccountIdentity, bool) {
 	if err := json.Unmarshal(payloadJSON, &claims); err != nil {
 		return jitAccountIdentity{}, false
 	}
+
+	if v.requiredScope != "" && strings.TrimSpace(claims.Scope) != v.requiredScope {
+		return jitAccountIdentity{}, false
+	}
+	if claims.ExpiresAtUnixMs > 0 {
+		now := time.Now()
+		if v.nowFn != nil {
+			now = v.nowFn()
+		}
+		if now.UnixMilli() >= claims.ExpiresAtUnixMs {
+			return jitAccountIdentity{}, false
+		}
+	}
+
 	return deriveJITAccountIdentity(claims)
 }
 
@@ -167,7 +212,7 @@ func (a *MCPAuth) verifyAndEnsureJITAccount(ctx context.Context, token string) (
 	}
 	// A valid JIT signature is sufficient to authenticate. We persist a
 	// deterministic non-admin account so request ownership stays account-scoped.
-	account, ok := a.ensureJITAccount(ctx, identity)
+	account, ok := ensureJITAccount(ctx, a.db, a.queries, a.nowFn, identity)
 	if !ok {
 		return jitAccountIdentity{}, false
 	}
@@ -176,8 +221,8 @@ func (a *MCPAuth) verifyAndEnsureJITAccount(ctx context.Context, token string) (
 	return identity, true
 }
 
-func (a *MCPAuth) ensureJITAccount(ctx context.Context, identity jitAccountIdentity) (sqlc.Account, bool) {
-	if a == nil || a.db == nil || a.queries == nil {
+func ensureJITAccount(ctx context.Context, db *persistence.DB, queries *sqlc.Queries, nowFn func() time.Time, identity jitAccountIdentity) (sqlc.Account, bool) {
+	if db == nil || queries == nil {
 		return sqlc.Account{}, false
 	}
 	if ctx == nil {
@@ -190,7 +235,7 @@ func (a *MCPAuth) ensureJITAccount(ctx context.Context, identity jitAccountIdent
 		return sqlc.Account{}, false
 	}
 
-	account, err := a.queries.GetAccountByID(ctx, accountID)
+	account, err := queries.GetAccountByID(ctx, accountID)
 	if err == nil {
 		return account, true
 	}
@@ -199,8 +244,8 @@ func (a *MCPAuth) ensureJITAccount(ctx context.Context, identity jitAccountIdent
 	}
 
 	now := time.Now()
-	if a.nowFn != nil {
-		now = a.nowFn()
+	if nowFn != nil {
+		now = nowFn()
 	}
 	nowMS := now.UnixMilli()
 
@@ -215,7 +260,7 @@ func (a *MCPAuth) ensureJITAccount(ctx context.Context, identity jitAccountIdent
 		UpdatedAtUnixMs: nowMS,
 	}
 
-	err = a.db.WithTx(ctx, func(q *sqlc.Queries) error {
+	err = db.WithTx(ctx, func(q *sqlc.Queries) error {
 		existing, getErr := q.GetAccountByID(ctx, accountID)
 		if getErr == nil {
 			created = existing

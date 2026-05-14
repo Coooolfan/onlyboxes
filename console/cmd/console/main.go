@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -121,6 +122,13 @@ func main() {
 	consoleAuth, err := httpapi.NewConsoleAuth(db.Queries, cfg.EnableRegistration)
 	if err != nil {
 		fatal("failed to initialize console auth", "error", err)
+	}
+	consoleAuth.SetPersistenceDB(db)
+	if trimmedDashboardKey := strings.TrimSpace(cfg.DashboardJITSigningKey); trimmedDashboardKey != "" {
+		if trimmedDashboardKey == strings.TrimSpace(cfg.JITSigningKey) {
+			fatal("CONSOLE_DASHBOARD_JIT_SIGNING_KEY must differ from CONSOLE_JIT_SIGNING_KEY")
+		}
+		consoleAuth.SetDashboardJITSigningKey(trimmedDashboardKey)
 	}
 	mcpAuth, err := httpapi.NewMCPAuthWithPersistence(db)
 	if err != nil {

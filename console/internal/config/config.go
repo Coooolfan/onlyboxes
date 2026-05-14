@@ -34,6 +34,7 @@ type Config struct {
 	DashboardPassword     string
 	InitialAdminAPIKey    string
 	JITSigningKey         string
+	DashboardJITSigningKey string
 	DBPath                string
 	DBBusyTimeoutMS       int
 	HashKey               string
@@ -94,6 +95,7 @@ func Load() Config {
 		DashboardPassword:     os.Getenv("CONSOLE_DASHBOARD_PASSWORD"),
 		InitialAdminAPIKey:    os.Getenv("CONSOLE_INITIAL_ADMIN_API_KEY"),
 		JITSigningKey:         os.Getenv("CONSOLE_JIT_SIGNING_KEY"),
+		DashboardJITSigningKey: os.Getenv("CONSOLE_DASHBOARD_JIT_SIGNING_KEY"),
 		DBPath:                getEnv("CONSOLE_DB_PATH", defaultDBPath),
 		DBBusyTimeoutMS:       dbBusyTimeoutMS,
 		HashKey:               os.Getenv("CONSOLE_HASH_KEY"),

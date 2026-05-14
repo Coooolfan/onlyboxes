@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 
@@ -10,6 +11,49 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+const (
+	// computerUse worker-sys readiness errors are JSON-RPC application-range codes
+	// (-32099..-32000 per JSON-RPC 2.0) so they never collide with the spec's
+	// reserved codes.
+	mcpErrorCodeWorkerSysRequired = -32010
+	mcpErrorCodeWorkerSysOffline  = -32011
+	// Stable machine-readable identifiers embedded in the JSON-RPC error's Data
+	// field so integrators can route on them without pattern-matching message
+	// strings. REQUIRED means the caller has never created a worker-sys; OFFLINE
+	// means one exists but no instance is currently connected.
+	errorCodeWorkerSysRequired = "WORKER_SYS_REQUIRED"
+	errorCodeWorkerSysOffline  = "WORKER_SYS_OFFLINE"
+)
+
+// WorkerSysCounter is the minimal capability handleMCPComputerUseTool needs to
+// distinguish "never provisioned" from "registered but offline". *registry.Store
+// satisfies it via CountWorkersByOwnerAndType.
+type WorkerSysCounter interface {
+	CountWorkersByOwnerAndType(ownerID string, workerType string) int
+}
+
+func workerSysRequiredError() error {
+	data, _ := json.Marshal(map[string]string{
+		"error_code": errorCodeWorkerSysRequired,
+	})
+	return &jsonrpc.Error{
+		Code:    mcpErrorCodeWorkerSysRequired,
+		Message: errorCodeWorkerSysRequired + ": no worker-sys exists for the current account. Provision one in the application's worker management page, then start it locally and retry.",
+		Data:    data,
+	}
+}
+
+func workerSysOfflineError() error {
+	data, _ := json.Marshal(map[string]string{
+		"error_code": errorCodeWorkerSysOffline,
+	})
+	return &jsonrpc.Error{
+		Code:    mcpErrorCodeWorkerSysOffline,
+		Message: errorCodeWorkerSysOffline + ": your worker-sys is registered but no instance is currently online. Start the worker-sys process locally and retry.",
+		Data:    data,
+	}
+}
 
 func invalidParamsError(message string) error {
 	trimmed := strings.TrimSpace(message)

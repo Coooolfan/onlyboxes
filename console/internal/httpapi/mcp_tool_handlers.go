@@ -10,6 +10,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/onlyboxes/onlyboxes/console/internal/grpcserver"
+	"github.com/onlyboxes/onlyboxes/console/internal/registry"
 )
 
 func handleMCPEchoTool(ctx context.Context, dispatcher CommandDispatcher, input mcpEchoToolInput) (*mcp.CallToolResult, mcpEchoToolOutput, error) {
@@ -159,7 +160,7 @@ func handleMCPTerminalExecTool(ctx context.Context, dispatcher CommandDispatcher
 	}
 }
 
-func handleMCPComputerUseTool(ctx context.Context, dispatcher CommandDispatcher, input mcpComputerUseToolInput) (*mcp.CallToolResult, mcpComputerUseToolOutput, error) {
+func handleMCPComputerUseTool(ctx context.Context, dispatcher CommandDispatcher, workerSysCounter WorkerSysCounter, input mcpComputerUseToolInput) (*mcp.CallToolResult, mcpComputerUseToolOutput, error) {
 	if strings.TrimSpace(input.Command) == "" {
 		return nil, mcpComputerUseToolOutput{}, invalidParamsError("command is required")
 	}
@@ -193,6 +194,15 @@ func handleMCPComputerUseTool(ctx context.Context, dispatcher CommandDispatcher,
 		OwnerID:    ownerID,
 	})
 	if err != nil {
+		if errors.Is(err, grpcserver.ErrNoCapabilityWorker) {
+			// Disambiguate "never provisioned" vs "registered but offline" so the
+			// caller can surface the correct next step. listOnlineNodeIDsByOwnerTypeAndCapability
+			// returns empty for both cases; the registered-count check separates them.
+			if workerSysCounter == nil || workerSysCounter.CountWorkersByOwnerAndType(ownerID, registry.WorkerTypeSys) == 0 {
+				return nil, mcpComputerUseToolOutput{}, workerSysRequiredError()
+			}
+			return nil, mcpComputerUseToolOutput{}, workerSysOfflineError()
+		}
 		return nil, mcpComputerUseToolOutput{}, mapMCPToolTaskSubmitError(err)
 	}
 	if !result.Completed {

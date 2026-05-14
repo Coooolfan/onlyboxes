@@ -13,6 +13,7 @@ import (
 
 func NewMCPHandler(
 	dispatcher CommandDispatcher,
+	workerSysCounter WorkerSysCounter,
 	hiddenTools map[string]bool,
 	exportStore ExportStore,
 	exportPrefix string,
@@ -159,7 +160,7 @@ func NewMCPHandler(
 		InputSchema:  applyInputSchemaOverride(mcpComputerUseInputSchema, cuOverride.ParamDescriptions, logger, "computerUse"),
 		OutputSchema: mcpComputerUseOutputSchema,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpComputerUseToolInput) (*mcp.CallToolResult, mcpComputerUseToolOutput, error) {
-		return handleMCPComputerUseTool(ctx, dispatcher, input)
+		return handleMCPComputerUseTool(ctx, dispatcher, workerSysCounter, input)
 	})
 
 	riOverride := resolveOverride("readImage")

@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/onlyboxes/onlyboxes/console/internal/persistence"
 	"github.com/onlyboxes/onlyboxes/console/internal/persistence/sqlc"
 )
 
@@ -24,9 +25,10 @@ const (
 	requestAccountIDGinKey       = "request_account_id"
 	requestAccountUsernameGinKey = "request_account_username"
 	requestAccountIsAdminGinKey  = "request_account_is_admin"
-	requestAuthMethodGinKey      = "request_auth_method"
-	requestAuthMethodCookie      = "cookie"
-	requestAuthMethodAPIKey      = "api_key"
+	requestAuthMethodGinKey       = "request_auth_method"
+	requestAuthMethodCookie       = "cookie"
+	requestAuthMethodAPIKey       = "api_key"
+	requestAuthMethodDashboardJIT = "dashboard_jit"
 )
 
 var (
@@ -84,6 +86,8 @@ type consoleAccountContext struct {
 
 type ConsoleAuth struct {
 	queries             *sqlc.Queries
+	db                  *persistence.DB
+	dashboardJITVerifier *jitTokenVerifier
 	registrationEnabled bool
 
 	sessionMu sync.Mutex
@@ -168,4 +172,29 @@ func NewConsoleAuth(queries *sqlc.Queries, registrationEnabled bool) (*ConsoleAu
 		sessions:            make(map[string]accountSessionState),
 		nowFn:               time.Now,
 	}, nil
+}
+
+// SetPersistenceDB wires a *persistence.DB into ConsoleAuth so it can ensure
+// JIT-derived accounts when authenticating dashboard JIT tokens.
+func (a *ConsoleAuth) SetPersistenceDB(db *persistence.DB) {
+	if a == nil {
+		return
+	}
+	a.db = db
+}
+
+// SetDashboardJITSigningKey enables dashboard JIT authentication.
+// The key MUST differ from the MCP JIT signing key — the two channels share
+// the (iss, sub) → account derivation, but each owns its own signing material
+// so that a leak of one key never lets an attacker forge tokens on the other.
+// Pass empty to disable.
+func (a *ConsoleAuth) SetDashboardJITSigningKey(key string) {
+	if a == nil {
+		return
+	}
+	verifier := newDashboardJITTokenVerifier(key)
+	if verifier != nil {
+		verifier.nowFn = a.nowFn
+	}
+	a.dashboardJITVerifier = verifier
 }
