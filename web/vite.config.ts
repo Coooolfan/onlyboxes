@@ -9,7 +9,7 @@ import vueDevTools from 'vite-plugin-vue-devtools'
 
 const apiTarget = process.env.VITE_API_TARGET || 'http://127.0.0.1:8089'
 const consoleVersion = process.env.VITE_CONSOLE_VERSION?.trim()
-const workerStartupDefaultTag = consoleVersion && consoleVersion !== 'dev' ? consoleVersion : '0.5.1'
+const workerStartupDefaultTag = consoleVersion && consoleVersion !== 'dev' ? consoleVersion : '0.6.0'
 
 // https://vite.dev/config/
 export default defineConfig({

@@ -39,7 +39,7 @@ export function TagSelector({
   locale = 'en',
   repo = 'Coooolfan/onlyboxes',
   limit = 20,
-  defaultTag = '0.5.1',
+  defaultTag = '0.6.0',
 }: TagSelectorProps) {
   const t = copy[locale]
   const [tags, setTags] = useState<string[] | null>(null)

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEFAULT_TAG="0.5.1"
+DEFAULT_TAG="0.6.0"
 REPO="Coooolfan/onlyboxes"
 
 node_id=""
@@ -17,7 +17,7 @@ Accepted options:
   --node-id         Node ID issued by the console.
   --worker-secret   One-time worker secret issued by the console.
   --grpc-target     Console gRPC target in host:port form.
-  --tag             GitHub release tag to download. Defaults to 0.5.1.
+  --tag             GitHub release tag to download. Defaults to 0.6.0.
 EOF
 }
 
