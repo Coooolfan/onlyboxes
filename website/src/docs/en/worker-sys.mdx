@@ -27,6 +27,15 @@ The current version of `worker-sys` is feature-complete in terms of capabilities
 2. Execution requests are spawned as native OS processes on the host.
 3. Process stdout/stderr is streamed back through the control plane.
 
+### Shell selection (cross-platform)
+
+`computerUse` runs commands through the host's system shell. The shell is selected per platform:
+
+- Linux / macOS: `/bin/sh -lc <command>`
+- Windows: `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command <command>`, with `[Console]::OutputEncoding` and `$OutputEncoding` forced to UTF-8 so output is not garbled on systems whose default code page is not UTF-8 (e.g. GBK on Chinese Windows).
+
+When deploying a Windows worker, entries in `WORKER_COMPUTER_USE_COMMAND_WHITELIST` must be in PowerShell form (e.g. `Get-ChildItem`, `Get-Process`) — Unix-style commands such as `ls` or `cat` will not match. The whitelist is matched as a literal prefix/exact string and must align with whatever shell the worker's platform uses.
+
 ## Prerequisites
 
 - Network access to the control node gRPC endpoint
@@ -44,6 +53,15 @@ WORKER_SECRET=<worker_secret> \
 ```
 
 Set `WORKER_CONSOLE_INSECURE=true` when connecting without TLS.
+
+Windows / PowerShell startup example:
+
+```powershell
+$env:WORKER_CONSOLE_GRPC_TARGET = "<console_grpc_target>"
+$env:WORKER_ID = "<worker_id>"
+$env:WORKER_SECRET = "<worker_secret>"
+.\onlyboxes-worker-sys.exe
+```
 
 ## Environment variables
 

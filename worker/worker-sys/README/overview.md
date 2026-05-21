@@ -5,7 +5,9 @@
 - `WORKER_CALL_TIMEOUT_SEC` default is dynamic: `ceil(2.5 * WORKER_HEARTBEAT_INTERVAL_SEC)`.
 
 Security warning (high risk):
-- `computerUse` runs shell directly on the worker host (`/bin/sh -lc`).
+- `computerUse` runs shell directly on the worker host. Shell selection is platform-dependent:
+  - Unix-like (Linux, macOS): `/bin/sh -lc <command>`
+  - Windows: `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command <command>`, with `[Console]::OutputEncoding` / `$OutputEncoding` forced to UTF-8 so stdout/stderr stay byte-compatible with the `WORKER_COMPUTER_USE_OUTPUT_LIMIT_BYTES` truncation logic.
 - this worker is **not container-sandboxed**; commands can read/modify host files and processes under the worker OS account.
 - run only on dedicated hosts with strict OS-level isolation and least-privilege service accounts.
 - do not deploy on shared machines.
@@ -27,7 +29,7 @@ Worker type and capability contract:
 
 `computerUse` behavior:
 - expected payload: `{"command":"..."}`
-- `command` is required and executed via `/bin/sh -lc`.
+- `command` is required and executed via the platform shell (`/bin/sh -lc` on Unix-like, `powershell.exe -Command` on Windows). The whitelist entries must match the shell form used on the worker's platform; an entry such as `ls` will not match a PowerShell-form command.
 - whitelist policy can block commands before execution:
   - mode env: `WORKER_COMPUTER_USE_COMMAND_WHITELIST_MODE`
   - whitelist env: `WORKER_COMPUTER_USE_COMMAND_WHITELIST` (JSON string array, e.g. `["echo","time"]`)
@@ -129,4 +131,15 @@ WORKER_ID=<worker_id> \
 WORKER_SECRET=<worker_secret> \
 WORKER_COMPUTER_USE_COMMAND_WHITELIST_MODE=allow_all \
 ./onlyboxes-worker-sys
+```
+
+```powershell
+# Example 4: Windows / PowerShell. Whitelist entries must be in PowerShell form.
+$env:WORKER_CONSOLE_INSECURE = "true"
+$env:WORKER_CONSOLE_GRPC_TARGET = "127.0.0.1:50051"
+$env:WORKER_ID = "<worker_id>"
+$env:WORKER_SECRET = "<worker_secret>"
+$env:WORKER_COMPUTER_USE_COMMAND_WHITELIST_MODE = "prefix"
+$env:WORKER_COMPUTER_USE_COMMAND_WHITELIST = '["Get-ChildItem","Get-Process"]'
+.\onlyboxes-worker-sys.exe
 ```

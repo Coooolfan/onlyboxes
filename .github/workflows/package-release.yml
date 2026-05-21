@@ -82,7 +82,7 @@ jobs:
 
   build-console:
     name: console (${{ matrix.os_name }}/${{ matrix.goarch }})
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-24.04
     needs:
       - resolve-version
       - build-web
@@ -93,23 +93,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-24.04
-            arch: x64
+          - arch: x64
             os_name: linux
             goos: linux
             goarch: amd64
-          - os: ubuntu-24.04-arm
-            arch: arm64
+          - arch: arm64
             os_name: linux
             goos: linux
             goarch: arm64
-          - os: macos-15-intel
-            arch: x64
+          - arch: x64
             os_name: macos
             goos: darwin
             goarch: amd64
-          - os: macos-15
-            arch: arm64
+          - arch: arm64
             os_name: macos
             goos: darwin
             goarch: arm64
@@ -162,10 +158,10 @@ jobs:
               grep -Eq "ELF 64-bit.*ARM aarch64" <<< "${console_info}"
               ;;
             darwin/amd64)
-              grep -Eq "Mach-O 64-bit executable x86_64" <<< "${console_info}"
+              grep -Eq "Mach-O 64-bit.*x86_64" <<< "${console_info}"
               ;;
             darwin/arm64)
-              grep -Eq "Mach-O 64-bit executable arm64" <<< "${console_info}"
+              grep -Eq "Mach-O 64-bit.*arm64" <<< "${console_info}"
               ;;
             *)
               echo "unsupported target: ${GOOS}/${GOARCH}" >&2
@@ -194,7 +190,7 @@ jobs:
 
   build-worker-docker:
     name: worker-docker (${{ matrix.os_name }}/${{ matrix.goarch }})
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-24.04
     needs: resolve-version
     defaults:
       run:
@@ -203,23 +199,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-24.04
-            arch: x64
+          - arch: x64
             os_name: linux
             goos: linux
             goarch: amd64
-          - os: ubuntu-24.04-arm
-            arch: arm64
+          - arch: arm64
             os_name: linux
             goos: linux
             goarch: arm64
-          - os: macos-15-intel
-            arch: x64
+          - arch: x64
             os_name: macos
             goos: darwin
             goarch: amd64
-          - os: macos-15
-            arch: arm64
+          - arch: arm64
             os_name: macos
             goos: darwin
             goarch: arm64
@@ -266,10 +258,10 @@ jobs:
               grep -Eq "ELF 64-bit.*ARM aarch64" <<< "${worker_info}"
               ;;
             darwin/amd64)
-              grep -Eq "Mach-O 64-bit executable x86_64" <<< "${worker_info}"
+              grep -Eq "Mach-O 64-bit.*x86_64" <<< "${worker_info}"
               ;;
             darwin/arm64)
-              grep -Eq "Mach-O 64-bit executable arm64" <<< "${worker_info}"
+              grep -Eq "Mach-O 64-bit.*arm64" <<< "${worker_info}"
               ;;
             *)
               echo "unsupported target: ${GOOS}/${GOARCH}" >&2
@@ -298,7 +290,7 @@ jobs:
 
   build-worker-sys:
     name: worker-sys (${{ matrix.os_name }}/${{ matrix.goarch }})
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-24.04
     needs: resolve-version
     defaults:
       run:
@@ -307,32 +299,42 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-24.04
-            arch: x64
+          - arch: x64
             os_name: linux
             goos: linux
             goarch: amd64
-          - os: ubuntu-24.04-arm
-            arch: arm64
+            ext: ""
+          - arch: arm64
             os_name: linux
             goos: linux
             goarch: arm64
-          - os: macos-15-intel
-            arch: x64
+            ext: ""
+          - arch: x64
             os_name: macos
             goos: darwin
             goarch: amd64
-          - os: macos-15
-            arch: arm64
+            ext: ""
+          - arch: arm64
             os_name: macos
             goos: darwin
             goarch: arm64
+            ext: ""
+          - arch: x64
+            os_name: windows
+            goos: windows
+            goarch: amd64
+            ext: ".exe"
+          - arch: arm64
+            os_name: windows
+            goos: windows
+            goarch: arm64
+            ext: ".exe"
     env:
       VERSION_RAW: ${{ needs.resolve-version.outputs.version_raw }}
       VERSION_SAFE: ${{ needs.resolve-version.outputs.version_safe }}
       GOOS: ${{ matrix.goos }}
       GOARCH: ${{ matrix.goarch }}
-      WORKER_BIN: onlyboxes-worker-sys_${{ needs.resolve-version.outputs.version_safe }}_${{ matrix.os_name }}_${{ matrix.goarch }}
+      WORKER_BIN: onlyboxes-worker-sys_${{ needs.resolve-version.outputs.version_safe }}_${{ matrix.os_name }}_${{ matrix.goarch }}${{ matrix.ext }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -370,10 +372,16 @@ jobs:
               grep -Eq "ELF 64-bit.*ARM aarch64" <<< "${worker_info}"
               ;;
             darwin/amd64)
-              grep -Eq "Mach-O 64-bit executable x86_64" <<< "${worker_info}"
+              grep -Eq "Mach-O 64-bit.*x86_64" <<< "${worker_info}"
               ;;
             darwin/arm64)
-              grep -Eq "Mach-O 64-bit executable arm64" <<< "${worker_info}"
+              grep -Eq "Mach-O 64-bit.*arm64" <<< "${worker_info}"
+              ;;
+            windows/amd64)
+              grep -Eq "PE32\+ executable.*x86-64" <<< "${worker_info}"
+              ;;
+            windows/arm64)
+              grep -Eq "PE32\+ executable.*Aarch64|PE32\+ executable.*ARM64" <<< "${worker_info}"
               ;;
             *)
               echo "unsupported target: ${GOOS}/${GOARCH}" >&2

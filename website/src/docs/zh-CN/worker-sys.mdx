@@ -27,6 +27,15 @@ export const meta = {
 2. 执行请求被作为原生 OS 进程在宿主机上启动。
 3. 进程的 stdout/stderr 通过控制面流式返回。
 
+### Shell 选择（跨平台）
+
+`computerUse` 通过宿主机的系统 shell 执行命令，shell 按平台自动选择：
+
+- Linux / macOS：`/bin/sh -lc <command>`
+- Windows：`powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command <command>`，并自动注入 `[Console]::OutputEncoding` 与 `$OutputEncoding` 为 UTF-8，避免在中文系统上被 GBK 代码页截断为乱码。
+
+部署 Windows worker 时，`WORKER_COMPUTER_USE_COMMAND_WHITELIST` 中的条目必须是 PowerShell 形态（如 `Get-ChildItem`、`Get-Process`），不能直接使用 `ls`、`cat` 等 Unix 命令——白名单是按字符串前缀/精确匹配的，与所在平台的 shell 必须一致。
+
 ## 前置条件
 
 - 能够访问控制节点 gRPC 端口
@@ -44,6 +53,15 @@ WORKER_SECRET=<worker_secret> \
 ```
 
 通过非 TLS 连接时请设置 `WORKER_CONSOLE_INSECURE=true`。
+
+Windows / PowerShell 启动示例：
+
+```powershell
+$env:WORKER_CONSOLE_GRPC_TARGET = "<console_grpc_target>"
+$env:WORKER_ID = "<worker_id>"
+$env:WORKER_SECRET = "<worker_secret>"
+.\onlyboxes-worker-sys.exe
+```
 
 ## 环境变量
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"runtime"
 	"strings"
 )
 
@@ -98,7 +99,7 @@ func (e *computerUseExecutor) Execute(ctx context.Context, req computerUseReques
 		return computerUseRunResult{}, newComputerUseError(computerUseCodeCommandNotAllowed, "command is blocked by whitelist policy")
 	}
 
-	execCmd := exec.CommandContext(ctx, "/bin/sh", "-lc", command)
+	execCmd := buildShellCommand(ctx, command)
 	var stdoutBuf bytes.Buffer
 	var stderrBuf bytes.Buffer
 	execCmd.Stdout = &stdoutBuf
@@ -130,6 +131,14 @@ func (e *computerUseExecutor) Execute(ctx context.Context, req computerUseReques
 		StdoutTruncated: stdoutTruncated,
 		StderrTruncated: stderrTruncated,
 	}, nil
+}
+
+func buildShellCommand(ctx context.Context, command string) *exec.Cmd {
+	if runtime.GOOS == "windows" {
+		wrapped := "[Console]::OutputEncoding=[Text.Encoding]::UTF8; $OutputEncoding=[Text.Encoding]::UTF8; " + command
+		return exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", wrapped)
+	}
+	return exec.CommandContext(ctx, "/bin/sh", "-lc", command)
 }
 
 func truncateByBytes(value string, maxBytes int) (string, bool) {
