@@ -55,7 +55,7 @@ curl -fsSL https://onlybox.es/install.sh | bash
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
-| `--tag` | `0.6.0` | 可选的 Release 版本覆盖参数 |
+| `--tag` | `0.6.1` | 可选的 Release 版本覆盖参数 |
 | `--workdir` | `$PWD/onlyboxes` | 工作目录 |
 | `--yes` / `-y` | `false` | 非交互模式，跳过确认 |
 | `--console-http-port` | `8089` | Console HTTP 端口（宿主机侧） |
