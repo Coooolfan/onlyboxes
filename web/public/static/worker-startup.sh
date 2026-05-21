@@ -7,17 +7,19 @@ REPO="Coooolfan/onlyboxes"
 node_id=""
 worker_secret=""
 grpc_target=""
+console_insecure=""
 tag="${DEFAULT_TAG}"
 
 usage() {
   cat >&2 <<'EOF'
-Usage: worker-startup.sh --node-id ID --worker-secret SECRET --grpc-target HOST:PORT [--tag TAG]
+Usage: worker-startup.sh --node-id ID --worker-secret SECRET --grpc-target HOST:PORT [--console-insecure true|false] [--tag TAG]
 
 Accepted options:
-  --node-id         Node ID issued by the console.
-  --worker-secret   One-time worker secret issued by the console.
-  --grpc-target     Console gRPC target in host:port form.
-  --tag             GitHub release tag to download. Defaults to 0.6.1.
+  --node-id           Node ID issued by the console.
+  --worker-secret     One-time worker secret issued by the console.
+  --grpc-target       Console gRPC target in host:port form.
+  --console-insecure  Set WORKER_CONSOLE_INSECURE. Pass "true" for plaintext gRPC; omit or "false" for TLS.
+  --tag               GitHub release tag to download. Defaults to 0.6.1.
 EOF
 }
 
@@ -36,6 +38,14 @@ while [[ $# -gt 0 ]]; do
     --grpc-target)
       [[ $# -ge 2 ]] || { echo "missing value for --grpc-target" >&2; usage; exit 2; }
       grpc_target="$2"
+      shift 2
+      ;;
+    --console-insecure)
+      [[ $# -ge 2 ]] || { echo "missing value for --console-insecure" >&2; usage; exit 2; }
+      case "$2" in
+        true|false) console_insecure="$2" ;;
+        *) echo "--console-insecure expects 'true' or 'false', got: $2" >&2; usage; exit 2 ;;
+      esac
       shift 2
       ;;
     --tag)
@@ -133,7 +143,9 @@ export WORKER_ID="${node_id}"
 export WORKER_SECRET="${worker_secret}"
 export WORKER_CONSOLE_GRPC_TARGET="${grpc_target}"
 export WORKER_NODE_NAME="Temporary Probe"
-export WORKER_CONSOLE_INSECURE="true"
+if [[ "${console_insecure}" == "true" ]]; then
+  export WORKER_CONSOLE_INSECURE="true"
+fi
 export WORKER_COMPUTER_USE_COMMAND_WHITELIST_MODE="allow_all"
 export WORKER_READ_IMAGE_ALLOWED_PATHS='["/"]'
 

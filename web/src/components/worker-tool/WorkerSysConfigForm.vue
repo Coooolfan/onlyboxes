@@ -157,7 +157,10 @@ function handleWhitelistModeUpdate(value: string): void {
         </div>
       </label>
 
-      <label class="grid gap-1.5">
+      <label
+        v-if="props.config.startupPreset !== 'temporary-probe'"
+        class="grid gap-1.5"
+      >
         <span class="text-sm text-secondary">WORKER_NODE_NAME</span>
         <span class="text-xs text-secondary">Optional display name reported to console.</span>
         <input
@@ -167,7 +170,10 @@ function handleWhitelistModeUpdate(value: string): void {
         />
       </label>
 
-      <div class="grid gap-1.5 md:col-span-2">
+      <div
+        v-if="props.config.startupPreset !== 'temporary-probe'"
+        class="grid gap-1.5 md:col-span-2"
+      >
         <span class="text-sm text-secondary">WORKER_CALL_TIMEOUT_SEC</span>
         <span class="text-xs text-secondary">
           Auto mode follows worker default formula; manual mode overrides it.
@@ -198,7 +204,10 @@ function handleWhitelistModeUpdate(value: string): void {
         </div>
       </div>
 
-      <label class="grid gap-1.5 md:col-span-2">
+      <label
+        v-if="props.config.startupPreset !== 'temporary-probe'"
+        class="grid gap-1.5 md:col-span-2"
+      >
         <span class="text-sm text-secondary">Worker Binary Path</span>
         <span class="text-xs text-secondary">Executable path used in the final command line.</span>
         <input
@@ -227,7 +236,11 @@ function handleWhitelistModeUpdate(value: string): void {
       </label>
     </div>
 
-    <details data-testid="sys-advanced-section" class="rounded-md border border-stroke bg-surface">
+    <details
+      v-if="props.config.startupPreset !== 'temporary-probe'"
+      data-testid="sys-advanced-section"
+      class="rounded-md border border-stroke bg-surface"
+    >
       <summary class="cursor-pointer px-3 py-2 text-sm font-medium text-primary">
         Advanced Configuration
       </summary>

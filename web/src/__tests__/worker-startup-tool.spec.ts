@@ -71,12 +71,28 @@ describe('worker startup tool command builder', () => {
 
     expect(result.errors).toEqual([])
     expect(result.command).toBe(
-      "curl -fsSL 'https://console.example.test/static/worker-startup.sh' | bash -s -- --node-id 'node-sys-1' --worker-secret 'secret-sys-1' --grpc-target 'console.example.test:50051'",
+      "curl -fsSL 'https://console.example.test/static/worker-startup.sh' | bash -s -- --node-id 'node-sys-1' --worker-secret 'secret-sys-1' --grpc-target 'console.example.test:50051' --console-insecure true",
     )
     expect(result.command).not.toContain('WORKER_NODE_NAME')
     expect(result.command).not.toContain('WORKER_CONSOLE_INSECURE')
     expect(result.command).not.toContain('WORKER_COMPUTER_USE_COMMAND_WHITELIST_MODE')
     expect(result.command).not.toContain('WORKER_READ_IMAGE_ALLOWED_PATHS')
+  })
+
+  it('passes --console-insecure false when Temporary Probe disables insecure mode', () => {
+    const config = createDefaultWorkerSysStartupConfig()
+    config.startupPreset = 'temporary-probe'
+    config.temporaryProbeInstallerOrigin = 'https://console.example.test'
+    config.workerID = 'node-sys-1'
+    config.workerSecret = 'secret-sys-1'
+    config.consoleGRPCTarget = 'console.example.test:50051'
+    config.consoleInsecure = false
+
+    const result = buildWorkerSysStartupCommand(config)
+
+    expect(result.errors).toEqual([])
+    expect(result.command).toContain(' --console-insecure false')
+    expect(result.command).not.toContain(' --console-insecure true')
   })
 
   it('adds an optional tag arg to Temporary Probe installer command when overridden', () => {

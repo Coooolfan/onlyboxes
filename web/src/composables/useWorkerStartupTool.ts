@@ -216,6 +216,8 @@ function formatTemporaryProbeCommand(config: WorkerSysStartupConfig): StartupCom
     shellQuote(workerSecret),
     '--grpc-target',
     shellQuote(consoleGRPCTarget),
+    '--console-insecure',
+    config.consoleInsecure ? 'true' : 'false',
   ]
   if (tag && tag !== defaultTemporaryProbeInstallerTag) {
     args.push('--tag', shellQuote(tag))

@@ -196,10 +196,17 @@ describe('Worker Startup Tool Page', () => {
     expect(previewText).toContain("bash -s -- --node-id 'prefilled-id'")
     expect(previewText).toContain("--worker-secret 'prefilled-secret'")
     expect(previewText).toContain(`--grpc-target '${expectedGRPCTarget}'`)
+    expect(previewText).toContain('--console-insecure true')
     expect(previewText).not.toContain('WORKER_NODE_NAME=')
     expect(previewText).not.toContain('WORKER_CONSOLE_INSECURE=')
     expect(previewText).not.toContain('WORKER_COMPUTER_USE_COMMAND_WHITELIST_MODE=')
     expect(previewText).not.toContain('WORKER_READ_IMAGE_ALLOWED_PATHS=')
+
+    expect(wrapper.find('[data-testid="sys-advanced-section"]').exists()).toBe(false)
+    const labelTexts = wrapper.findAll('label').map((node) => node.text())
+    expect(labelTexts.some((text) => text.includes('WORKER_NODE_NAME'))).toBe(false)
+    expect(labelTexts.some((text) => text.includes('Worker Binary Path'))).toBe(false)
+    expect(labelTexts.some((text) => text.includes('WORKER_CONSOLE_INSECURE'))).toBe(true)
 
     wrapper.unmount()
   })
