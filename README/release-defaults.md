@@ -18,6 +18,11 @@
   - 安装文档参数表中的 `--tag` 默认值
 - `website/src/features/docs/TagSelector.tsx`
   - `defaultTag`
+- `web/public/static/worker-startup.sh`
+  - `DEFAULT_TAG`
+  - Usage 文本中 `--tag` 的 `Defaults to ...` 描述
+- `web/vite.config.ts`
+  - `workerStartupDefaultTag` 的回退字符串
 
 ## Worker Sys Temporary Probe 默认值
 
