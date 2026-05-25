@@ -819,6 +819,61 @@ Worker 类型：`normal`（对应 `worker-docker`/`worker-boxlite`）、`worker-
 
 ---
 
+### Sandbox 元数据 API
+
+Sandbox 元数据按 Bearer token 对应账号隔离。执行 Token 与 MCP JIT token 均可调用。
+
+#### 获取 Sandbox 元数据
+
+`GET /api/v1/sandbox/metadata`
+
+**响应 `200`：**
+
+```json
+{
+  "provider": "onlyboxes",
+  "api_version": "2026-05-25",
+  "console": { "version": "0.6.1" },
+  "limits": {
+    "max_task_timeout_ms": 600000,
+    "max_task_wait_ms": 60000,
+    "max_terminal_timeout_ms": 600000,
+    "default_terminal_lease_sec": 60,
+    "max_terminal_lease_sec": 86400
+  },
+  "capabilities": [
+    {
+      "name": "terminalExec",
+      "available": true,
+      "online_nodes": 1,
+      "max_inflight": 4
+    }
+  ],
+  "workers": {
+    "total": 1,
+    "online": 1,
+    "offline": 0,
+    "stale": 0
+  }
+}
+```
+
+**能力范围：**
+
+| 能力 | 范围 |
+|------|------|
+| `computerUse`、`readImage` | 仅统计调用账号自有 `worker-sys` |
+| `terminalExec`、`terminalResource`、`pythonExec`、`echo` | 全局在线 worker 可用性 |
+
+**错误码：**
+
+| 状态码 | 说明 |
+|--------|------|
+| `401` | Bearer token 缺失或无效 |
+| `503` | worker registry 不可用 |
+
+---
+
 ### 任务 API
 
 Task 适合需要异步执行或结果轮询的场景。所有权按 token 对应账号严格隔离。

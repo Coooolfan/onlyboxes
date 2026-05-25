@@ -819,6 +819,61 @@ Executes a shell command on the calling account's own `worker-sys` (real host ma
 
 ---
 
+### Sandbox Metadata API
+
+Sandbox metadata is account-scoped by bearer token. Execution tokens and MCP JIT tokens can call this endpoint.
+
+#### Get Sandbox Metadata
+
+`GET /api/v1/sandbox/metadata`
+
+**Response `200`:**
+
+```json
+{
+  "provider": "onlyboxes",
+  "api_version": "2026-05-25",
+  "console": { "version": "0.6.1" },
+  "limits": {
+    "max_task_timeout_ms": 600000,
+    "max_task_wait_ms": 60000,
+    "max_terminal_timeout_ms": 600000,
+    "default_terminal_lease_sec": 60,
+    "max_terminal_lease_sec": 86400
+  },
+  "capabilities": [
+    {
+      "name": "terminalExec",
+      "available": true,
+      "online_nodes": 1,
+      "max_inflight": 4
+    }
+  ],
+  "workers": {
+    "total": 1,
+    "online": 1,
+    "offline": 0,
+    "stale": 0
+  }
+}
+```
+
+**Capability scope:**
+
+| Capability | Scope |
+|------------|-------|
+| `computerUse`, `readImage` | Caller-owned `worker-sys` only |
+| `terminalExec`, `terminalResource`, `pythonExec`, `echo` | Global online worker availability |
+
+**Error codes:**
+
+| Status | Description |
+|--------|-------------|
+| `401` | Missing or invalid bearer token |
+| `503` | Worker registry unavailable |
+
+---
+
 ### Task API
 
 Tasks are suited for asynchronous execution or polling workflows. Ownership is strictly scoped to the token's owning account.
