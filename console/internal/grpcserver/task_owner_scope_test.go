@@ -1,6 +1,9 @@
 package grpcserver
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestUnscopeTerminalSessionIDRejectsOwnerMismatch(t *testing.T) {
 	_, ok := unscopeTerminalSessionID("owner-a", "obx:owner-b:session-1")
@@ -33,5 +36,29 @@ func TestRestoreTaskResultOwnerScopeReturnsFalseOnOwnerMismatch(t *testing.T) {
 	)
 	if ok {
 		t.Fatalf("expected restore to fail for mismatched owner scope")
+	}
+}
+
+func TestScopeTaskInputByOwnerPreservesTerminalResourceHeaders(t *testing.T) {
+	svc := &RegistryService{}
+
+	scoped, err := svc.scopeTaskInputByOwner(
+		taskCapabilityTerminalResource,
+		"owner-a",
+		[]byte(`{"session_id":"session-1","file_path":"/tmp/report.zip","action":"export","signed_url":"https://uploads.example.com/put","headers":{"x-amz-acl":"public-read"}}`),
+	)
+	if err != nil {
+		t.Fatalf("scope task input: %v", err)
+	}
+
+	var payload terminalResourceScopedPayload
+	if err := json.Unmarshal(scoped, &payload); err != nil {
+		t.Fatalf("decode scoped payload: %v", err)
+	}
+	if payload.SessionID != "obx:owner-a:session-1" {
+		t.Fatalf("unexpected scoped session_id: %q", payload.SessionID)
+	}
+	if payload.Headers["x-amz-acl"] != "public-read" {
+		t.Fatalf("expected terminalResource headers to be preserved, got %#v", payload.Headers)
 	}
 }
