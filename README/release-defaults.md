@@ -34,6 +34,25 @@
   - Temporary Probe release tag 表单说明
   - Temporary Probe release tag 输入框 `placeholder`
 
+## Runtime 镜像默认值
+
+发版前应确认 terminal runtime 镜像的仓库名、稳定别名和版本化 tag 约定保持一致：
+
+- `.github/workflows/package-release.yml`
+  - `push-runtime-images` job 的 `coolfan1024/onlyboxes-runtime` 仓库名
+  - 版本化 tag：`<release>-default`、`<release>-default-cn`、`<release>-lobehub`
+  - 稳定别名：`default`、`default-cn`、`lobehub`、`latest`（指向 `default`）
+- `README.md` / `README.zh-CN.md`
+  - `WORKER_TERMINAL_EXEC_DOCKER_IMAGE`
+  - 发布与镜像章节中的 runtime 镜像说明
+- `website/src/docs/en/worker-docker.mdx` / `website/src/docs/zh-CN/worker-docker.mdx`
+  - `WORKER_TERMINAL_EXEC_DOCKER_IMAGE`
+- `website/src/docs/en/worker-boxlite.mdx` / `website/src/docs/zh-CN/worker-boxlite.mdx`
+  - `WORKER_TERMINAL_EXEC_BOXLITE_IMAGE`
+- `web/src/composables/useWorkerStartupTool.ts`
+  - `defaultTerminalExecDockerImage`
+  - `defaultTerminalExecBoxliteImage`
+
 ## 复查建议
 
 发版前至少检查旧版本号是否仍出现在上述文件中，避免安装脚本、根文档、官网文档和控制台生成命令的默认版本不一致。

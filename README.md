@@ -193,7 +193,7 @@ Default endpoints:
 | `WORKER_HEARTBEAT_INTERVAL_SEC` | `5` | Worker heartbeat interval |
 | `WORKER_HEARTBEAT_JITTER_PCT` | `20` | Heartbeat jitter percent |
 | `WORKER_PYTHON_EXEC_DOCKER_IMAGE` | `ghcr.io/astral-sh/uv:python3.12-bookworm-slim` | Runtime image for `pythonExec` |
-| `WORKER_TERMINAL_EXEC_DOCKER_IMAGE` | `coolfan1024/onlyboxes-default-worker:0.0.5` | Runtime image for `terminalExec` |
+| `WORKER_TERMINAL_EXEC_DOCKER_IMAGE` | `coolfan1024/onlyboxes-runtime:default` | Runtime image for `terminalExec` |
 | `WORKER_TERMINAL_OUTPUT_LIMIT_BYTES` | `1048576` | Per-stream output limit |
 
 ## API Surfaces
@@ -234,6 +234,7 @@ Web dev URL defaults to `http://127.0.0.1:5178` and proxies `/api/*` to `http://
 
 - GitHub workflow: `.github/workflows/package-release.yml`
 - Console Docker image: `coolfan1024/onlyboxes:<version>` and `coolfan1024/onlyboxes:latest`
+- Terminal runtime images: `coolfan1024/onlyboxes-runtime:<version>-default`, `<version>-default-cn`, and `<version>-lobehub`; stable aliases are `default`, `default-cn`, `lobehub`, and `latest` (same as `default`)
 - Console binary includes embedded web assets
 
 ## Security and Operational Notes

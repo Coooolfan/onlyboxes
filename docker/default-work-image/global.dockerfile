@@ -33,6 +33,12 @@ RUN set -eux; \
       Pillow
 
 RUN set -eux; \
+    curl -fsSL https://deb.nodesource.com/setup_24.x | bash -; \
+    apt-get install -y --no-install-recommends nodejs; \
+    corepack enable; \
+    rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
     arch="${TARGETARCH:-$(dpkg --print-architecture)}"; \
     case "${arch}" in \
       amd64) agent_browser_url="https://github.com/vercel-labs/agent-browser/releases/download/v0.24.1/agent-browser-linux-x64" ;; \

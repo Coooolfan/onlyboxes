@@ -66,10 +66,12 @@ WORKER_SECRET=<worker_secret> \
 | `WORKER_PYTHON_EXEC_MEMORY_MIB` | 否 | `256` | Python 虚拟机内存（MiB） |
 | `WORKER_PYTHON_EXEC_CPUS` | 否 | `1` | Python 虚拟机 CPU 数 |
 | `WORKER_PYTHON_EXEC_MAX_PROCESSES` | 否 | `128` | Python 最大进程数 |
-| `WORKER_TERMINAL_EXEC_BOXLITE_IMAGE` | 否 | `coolfan1024/onlyboxes-default-worker:0.0.5` | 终端执行镜像 |
+| `WORKER_TERMINAL_EXEC_BOXLITE_IMAGE` | 否 | `coolfan1024/onlyboxes-runtime:default` | 终端执行镜像 |
 | `WORKER_TERMINAL_EXEC_MEMORY_MIB` | 否 | `256` | 终端虚拟机内存（MiB） |
 | `WORKER_TERMINAL_EXEC_CPUS` | 否 | `1` | 终端虚拟机 CPU 数 |
 | `WORKER_TERMINAL_EXEC_MAX_PROCESSES` | 否 | `128` | 终端最大进程数 |
+
+默认终端镜像是通用执行镜像，包含 Python 3、Node.js 24、npm、Corepack、常用 shell/文件工具、轻量文档处理库，以及基于 Lightpanda 的 `agent-browser`。LobeHub 专用 sandbox 工具链请使用 `coolfan1024/onlyboxes-runtime:lobehub`。
 
 ### 并发上限
 
