@@ -25,10 +25,11 @@ const (
 )
 
 type terminalResourcePayload struct {
-	SessionID string `json:"session_id"`
-	FilePath  string `json:"file_path"`
-	Action    string `json:"action,omitempty"`
-	SignedURL string `json:"signed_url,omitempty"`
+	SessionID string            `json:"session_id"`
+	FilePath  string            `json:"file_path"`
+	Action    string            `json:"action,omitempty"`
+	SignedURL string            `json:"signed_url,omitempty"`
+	Headers   map[string]string `json:"headers,omitempty"`
 }
 
 type terminalResourceRequest struct {
@@ -36,6 +37,7 @@ type terminalResourceRequest struct {
 	FilePath  string
 	Action    string
 	SignedURL string
+	Headers   map[string]string
 }
 
 type terminalResourceRunResult struct {
@@ -149,7 +151,7 @@ func (m *terminalSessionManager) ResolveResource(ctx context.Context, req termin
 	containerName := session.containerName
 	m.mu.Unlock()
 
-	resourceResult, err := m.resolveResourceInSession(ctx, sessionID, containerName, filePath, action, signedURL)
+	resourceResult, err := m.resolveResourceInSession(ctx, sessionID, containerName, filePath, action, signedURL, req.Headers)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 			m.destroySession(sessionID)
@@ -177,6 +179,7 @@ func (m *terminalSessionManager) resolveResourceInSession(
 	filePath string,
 	action string,
 	signedURL string,
+	headers map[string]string,
 ) (terminalResourceRunResult, error) {
 	probeAction := action
 	if action == terminalResourceActionExport {
@@ -193,7 +196,7 @@ func (m *terminalSessionManager) resolveResourceInSession(
 		if m.exportMaxBytes > 0 && probe.Size > int64(m.exportMaxBytes) {
 			return terminalResourceRunResult{}, newTerminalExecError(terminalResourceCodeFileTooLarge, "file exceeds export limit")
 		}
-		if err := exportTerminalResource(ctx, containerName, filePath, signedURL); err != nil {
+		if err := exportTerminalResource(ctx, containerName, filePath, signedURL, headers); err != nil {
 			return terminalResourceRunResult{}, err
 		}
 		return result, nil
@@ -254,7 +257,7 @@ func probeTerminalResource(
 	return probe, nil
 }
 
-func exportTerminalResource(ctx context.Context, containerName string, filePath string, signedURL string) error {
+func exportTerminalResource(ctx context.Context, containerName string, filePath string, signedURL string, headers map[string]string) error {
 	tempFile, err := os.CreateTemp("", "onlyboxes-export-*")
 	if err != nil {
 		return fmt.Errorf("create temp file: %w", err)
@@ -279,13 +282,13 @@ func exportTerminalResource(ctx context.Context, containerName string, filePath 
 			dockerCommandFailureMessage("exit code", copyResult.ExitCode, copyResult.Stderr),
 		)
 	}
-	if err := httpPutFile(ctx, signedURL, tempPath); err != nil {
+	if err := putFileToSignedURL(ctx, signedURL, tempPath, headers); err != nil {
 		return err
 	}
 	return nil
 }
 
-func putFileToSignedURL(ctx context.Context, signedURL string, filePath string) error {
+func putFileToSignedURL(ctx context.Context, signedURL string, filePath string, headers map[string]string) error {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return fmt.Errorf("open export file: %w", err)
@@ -301,6 +304,13 @@ func putFileToSignedURL(ctx context.Context, signedURL string, filePath string) 
 		return fmt.Errorf("build upload request: %w", err)
 	}
 	request.ContentLength = stat.Size()
+	for key, value := range headers {
+		trimmedKey := strings.TrimSpace(key)
+		if trimmedKey == "" {
+			continue
+		}
+		request.Header.Set(trimmedKey, value)
+	}
 
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {

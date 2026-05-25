@@ -614,11 +614,56 @@ Errors:
 - `504` timeout
 - `502` unexpected execution failure
 
-## 7. Task APIs (Bearer Token)
+## 7. Sandbox Metadata API (Bearer Token)
+
+Sandbox metadata is account-scoped by token. Trusted tokens and MCP JIT tokens can call this endpoint.
+
+### 7.1 Get Sandbox Metadata
+
+`GET /api/v1/sandbox/metadata`
+
+Success `200`:
+
+```json
+{
+  "provider": "onlyboxes",
+  "api_version": "2026-05-25",
+  "console": { "version": "0.6.1" },
+  "limits": {
+    "max_task_timeout_ms": 600000,
+    "max_task_wait_ms": 60000,
+    "max_terminal_timeout_ms": 600000,
+    "default_terminal_lease_sec": 60,
+    "max_terminal_lease_sec": 86400
+  },
+  "capabilities": [
+    {
+      "name": "terminalExec",
+      "available": true,
+      "online_nodes": 1,
+      "max_inflight": 4
+    }
+  ],
+  "workers": {
+    "total": 1,
+    "online": 1,
+    "offline": 0,
+    "stale": 0
+  }
+}
+```
+
+Notes:
+
+- `computerUse` and `readImage` availability is scoped to caller-owned `worker-sys`.
+- `terminalExec`, `terminalResource`, `pythonExec`, and `echo` report global online worker availability.
+- Missing/invalid token returns `401`.
+
+## 8. Task APIs (Bearer Token)
 
 Task ownership is account-scoped by token.
 
-### 7.1 Submit Task
+### 8.1 Submit Task
 
 `POST /api/v1/tasks`
 
@@ -707,7 +752,7 @@ Submit-time errors:
 - `504` deadline exceeded
 - `502` submit failure
 
-### 7.2 Get Task
+### 8.2 Get Task
 
 `GET /api/v1/tasks/:task_id`
 
@@ -716,7 +761,7 @@ Responses:
 - `200` task snapshot
 - `404` task not found (including cross-account access)
 
-### 7.3 Cancel Task
+### 8.3 Cancel Task
 
 `POST /api/v1/tasks/:task_id/cancel`
 
@@ -727,7 +772,7 @@ Responses:
 - `409` task already terminal (returns task snapshot)
 - `500` cancel failure
 
-## 8. MCP API (Bearer Token)
+## 9. MCP API (Bearer Token)
 
 Endpoint: `POST /mcp`
 
@@ -739,7 +784,7 @@ Endpoint: `POST /mcp`
   - `Content-Type: application/json`
   - `Accept: application/json, text/event-stream`
 
-### 8.1 Core MCP Methods
+### 9.1 Core MCP Methods
 
 Supported MCP flow includes standard methods such as:
 
@@ -747,7 +792,7 @@ Supported MCP flow includes standard methods such as:
 - `tools/list`
 - `tools/call`
 
-### 8.2 Tool Definitions
+### 9.2 Tool Definitions
 
 Tool argument schemas use `additionalProperties=false`.
 Unknown arguments are rejected with JSON-RPC `-32602 invalid params`.
@@ -877,7 +922,7 @@ Behavior:
 - If non-image MIME: returns one text content item:
   - `unsupported mime type: <mime>; expected image/*`
 
-### 8.3 MCP Errors
+### 9.3 MCP Errors
 
 - Missing/invalid token: HTTP `401`
 - Invalid tool params: JSON-RPC error `-32602`
@@ -885,7 +930,7 @@ Behavior:
 - `computerUse` with a registered but offline caller-owned `worker-sys`: JSON-RPC error `-32011` with `data.error_code="WORKER_SYS_OFFLINE"`
 - Execution failures: returned as MCP tool error content (`isError=true`)
 
-## 9. Worker gRPC API (`api/proto/registry/v1/registry.proto`)
+## 10. Worker gRPC API (`api/proto/registry/v1/registry.proto`)
 
 Service:
 
@@ -895,7 +940,7 @@ service WorkerRegistryService {
 }
 ```
 
-### 9.1 Stream Flow
+### 10.1 Stream Flow
 
 Worker establishes a bidirectional stream and typically sends:
 
@@ -909,7 +954,7 @@ Console responds with:
 2. `ConnectResponse.heartbeat_ack` (`HeartbeatAck`)
 3. `ConnectResponse.command_dispatch` (`CommandDispatch`)
 
-### 9.2 Key Messages
+### 10.2 Key Messages
 
 - `ConnectHello` includes worker identity, capabilities, labels, version, and `worker_secret`.
 - `CommandDispatch` carries:
@@ -923,7 +968,7 @@ Console responds with:
   - `payload_json`
   - `completed_unix_ms`
 
-## 10. Security Notes
+## 11. Security Notes
 
 - Console gRPC has no built-in TLS/mTLS in this release.
 - `worker-docker` rejects insecure console endpoints by default, and allows plaintext only when `WORKER_CONSOLE_INSECURE=true`.

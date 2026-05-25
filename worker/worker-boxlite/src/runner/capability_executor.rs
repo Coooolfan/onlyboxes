@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
@@ -52,6 +54,8 @@ struct TerminalResourcePayload {
     action: String,
     #[serde(default)]
     signed_url: String,
+    #[serde(default)]
+    headers: HashMap<String, String>,
 }
 
 static DEFAULT_CAPABILITY_RUNTIME: DefaultCapabilityRuntime = DefaultCapabilityRuntime;
@@ -270,6 +274,7 @@ where
                 file_path: decoded.file_path,
                 action: decoded.action,
                 signed_url: decoded.signed_url,
+                headers: decoded.headers,
                 deadline_unix_ms,
             },
         )
@@ -613,6 +618,12 @@ mod tests {
             _cfg: &Config,
             req: TerminalResourceRequest,
         ) -> Result<TerminalResourceRunResult, TerminalOperationError> {
+            if req.file_path == "/with-headers" {
+                assert_eq!(
+                    req.headers.get("x-amz-acl").map(String::as_str),
+                    Some("public-read")
+                );
+            }
             Ok(TerminalResourceRunResult {
                 session_id: req.session_id,
                 file_path: req.file_path,
@@ -920,6 +931,24 @@ mod tests {
         assert_eq!(decoded.session_id, "sess-1");
         assert_eq!(decoded.file_path, "app/main.py");
         assert_eq!(decoded.blob, b"abc");
+    }
+
+    #[tokio::test]
+    async fn build_command_result_forwards_terminal_resource_headers() {
+        let request = build_command_result_with_runtime(
+            &test_config(),
+            CommandDispatch {
+                command_id: "cmd-term-res-headers".to_owned(),
+                capability: "terminalResource".to_owned(),
+                payload_json: br#"{"session_id":"sess-1","file_path":"/with-headers","action":"export","signed_url":"https://uploads.example.com/put","headers":{"x-amz-acl":"public-read"}}"#.to_vec(),
+                deadline_unix_ms: 0,
+            },
+            &FakeCapabilityRuntime,
+        )
+        .await;
+
+        let result = unwrap_command_result(request);
+        assert!(result.error.is_none());
     }
 
     #[test]

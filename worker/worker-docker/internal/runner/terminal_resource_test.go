@@ -26,6 +26,9 @@ func TestBuildCommandResultTerminalResourceSuccess(t *testing.T) {
 		if req.SessionID != "sess-1" || req.FilePath != "app/main.py" {
 			t.Fatalf("unexpected request: %#v", req)
 		}
+		if req.Headers["x-amz-acl"] != "public-read" {
+			t.Fatalf("expected export headers to be decoded, got %#v", req.Headers)
+		}
 		return terminalResourceRunResult{
 			SessionID: "sess-1",
 			FilePath:  "app/main.py",
@@ -38,7 +41,7 @@ func TestBuildCommandResultTerminalResourceSuccess(t *testing.T) {
 	req := buildCommandResult(&registryv1.CommandDispatch{
 		CommandId:   "cmd-term-res-1",
 		Capability:  terminalResourceCapabilityDeclared,
-		PayloadJson: []byte(`{"session_id":"sess-1","file_path":"app/main.py","action":"read"}`),
+		PayloadJson: []byte(`{"session_id":"sess-1","file_path":"app/main.py","action":"read","headers":{"x-amz-acl":"public-read"}}`),
 	})
 
 	result := req.GetCommandResult()
@@ -312,6 +315,7 @@ func TestTerminalSessionManagerResolveResourceExportSuccess(t *testing.T) {
 	})
 
 	var uploadedBody string
+	var uploadedACL string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPut {
 			t.Fatalf("expected PUT request, got %s", r.Method)
@@ -321,6 +325,7 @@ func TestTerminalSessionManagerResolveResourceExportSuccess(t *testing.T) {
 			t.Fatalf("read upload body: %v", err)
 		}
 		uploadedBody = string(body)
+		uploadedACL = r.Header.Get("x-amz-acl")
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -365,6 +370,7 @@ func TestTerminalSessionManagerResolveResourceExportSuccess(t *testing.T) {
 		FilePath:  "/tmp/hello.txt",
 		Action:    terminalResourceActionExport,
 		SignedURL: server.URL,
+		Headers:   map[string]string{"x-amz-acl": "public-read"},
 	})
 	if err != nil {
 		t.Fatalf("export failed: %v", err)
@@ -374,6 +380,9 @@ func TestTerminalSessionManagerResolveResourceExportSuccess(t *testing.T) {
 	}
 	if uploadedBody != "hello" {
 		t.Fatalf("unexpected uploaded body: %q", uploadedBody)
+	}
+	if uploadedACL != "public-read" {
+		t.Fatalf("expected x-amz-acl header to be forwarded, got %q", uploadedACL)
 	}
 	if copiedTempPath == "" {
 		t.Fatalf("expected docker cp temp path to be captured")
