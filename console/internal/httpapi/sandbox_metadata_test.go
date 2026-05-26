@@ -108,6 +108,51 @@ func TestSandboxMetadataScopesWorkerSysCapabilitiesByJITAccount(t *testing.T) {
 	}
 }
 
+func TestSandboxMetadataComputesCapabilityMaxInflightFromRequestSnapshot(t *testing.T) {
+	auth := newBareTestMCPAuth(t)
+	jitToken := makeTestJITToken(t, "issuer-metadata", "subject-metadata")
+	store := registrytest.NewStore(t)
+	now := time.Unix(1_700_000_000, 0)
+	offlineTTL := 15 * time.Second
+	seedWorkerForSandboxMetadata(t, store, "node-terminal", now, "", registry.WorkerTypeNormal, []registry.CapabilityDeclaration{
+		{Name: "terminalExec", MaxInflight: 4},
+	})
+	handler := NewWorkerHandler(store, offlineTTL, &fakeEchoDispatcher{
+		dispatch: func(ctx context.Context, message string, timeout time.Duration) (string, error) {
+			return message, nil
+		},
+	}, nil, nil, "")
+	nowCalls := 0
+	handler.nowFn = func() time.Time {
+		nowCalls++
+		if nowCalls == 1 {
+			return now
+		}
+		return now.Add(offlineTTL + time.Second)
+	}
+	router := mustNewRouter(t, handler, newTestConsoleAuth(t), auth, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sandbox/metadata", nil)
+	req.Header.Set(trustedTokenHeader, "Bearer "+jitToken)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var body sandboxMetadataResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got := metadataCapabilityOnlineNodes(body.Capabilities, "terminalExec"); got != 1 {
+		t.Fatalf("expected one terminalExec node, got %d", got)
+	}
+	if got := metadataCapabilityMaxInflight(body.Capabilities, "terminalExec"); got != 4 {
+		t.Fatalf("expected terminalExec max inflight from request snapshot, got %d", got)
+	}
+}
+
 func TestSandboxMetadataRequiresExecutionToken(t *testing.T) {
 	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, &fakeEchoDispatcher{
 		dispatch: func(ctx context.Context, message string, timeout time.Duration) (string, error) {
@@ -169,6 +214,15 @@ func metadataCapabilityOnlineNodes(capabilities []sandboxMetadataCapability, nam
 	for _, capability := range capabilities {
 		if capability.Name == name {
 			return capability.OnlineNodes
+		}
+	}
+	return 0
+}
+
+func metadataCapabilityMaxInflight(capabilities []sandboxMetadataCapability, name string) int {
+	for _, capability := range capabilities {
+		if capability.Name == name {
+			return capability.MaxInflight
 		}
 	}
 	return 0

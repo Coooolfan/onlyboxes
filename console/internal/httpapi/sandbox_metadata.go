@@ -105,7 +105,7 @@ func (h *WorkerHandler) sandboxCapabilityMetadata(ownerID string, now time.Time,
 			Name:        capability,
 			Available:   len(onlineNodes) > 0,
 			OnlineNodes: len(onlineNodes),
-			MaxInflight: h.maxInflightForCapability(onlineNodes, capability),
+			MaxInflight: h.maxInflightForCapability(onlineNodes, capability, now, offlineTTL),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -130,11 +130,11 @@ func (h *WorkerHandler) onlineNodeIDsForCapability(ownerID string, capability st
 	}
 }
 
-func (h *WorkerHandler) maxInflightForCapability(nodeIDs []string, capability string) int {
+func (h *WorkerHandler) maxInflightForCapability(nodeIDs []string, capability string, now time.Time, offlineTTL time.Duration) int {
 	maxInflight := 0
 	normalizedCapability := normalizeToolCapabilityKey(capability)
 	for _, nodeID := range nodeIDs {
-		worker, ok := h.store.GetByNodeID(nodeID, h.nowFn(), h.offlineTTL)
+		worker, ok := h.store.GetByNodeID(nodeID, now, offlineTTL)
 		if !ok {
 			continue
 		}
