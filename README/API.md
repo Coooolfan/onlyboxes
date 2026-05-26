@@ -688,6 +688,7 @@ Rules:
 - `wait_ms`: `1..60000`, default `1500`
 - `timeout_ms`: `1..600000`, default `60000`
 - `request_id`: optional dedupe key (scoped per account)
+- for `terminalResource` export payloads, `input.headers` is filtered before dispatch; only `x-amz-*`, `Content-Type`, and `Content-MD5` upload headers are forwarded to workers.
 
 Possible responses:
 

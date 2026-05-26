@@ -690,6 +690,7 @@ Task 所有权按账号隔离（由 token 对应账号决定）。
 - `wait_ms`：`1..60000`，默认 `1500`
 - `timeout_ms`：`1..600000`，默认 `60000`
 - `request_id`：可选幂等键（账号维度去重）
+- 对于 `terminalResource` export payload，`input.headers` 会在下发前过滤；只有 `x-amz-*`、`Content-Type`、`Content-MD5` 上传头会转发给 worker。
 
 可能响应：
 

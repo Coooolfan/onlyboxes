@@ -120,6 +120,7 @@ func (s *RegistryService) scopeTaskInputByOwner(capability string, ownerID strin
 			return inputJSON, nil
 		}
 		payload.SessionID = scopeTerminalSessionID(normalizedOwnerID, sessionID)
+		payload.Headers = filterTerminalResourceUploadHeaders(payload.Headers)
 		scopedPayload, err := json.Marshal(payload)
 		if err != nil {
 			return nil, status.Error(codes.Internal, "failed to encode terminalResource payload")
@@ -167,4 +168,41 @@ func (s *RegistryService) restoreTaskResultOwnerScope(ownerID string, capability
 		return nil, false
 	}
 	return restoredJSON, true
+}
+
+func filterTerminalResourceUploadHeaders(headers map[string]string) map[string]string {
+	if len(headers) == 0 {
+		return nil
+	}
+
+	filtered := make(map[string]string, len(headers))
+	for name, value := range headers {
+		normalizedName := strings.ToLower(strings.TrimSpace(name))
+		if normalizedName == "" {
+			continue
+		}
+		if !isAllowedTerminalResourceUploadHeader(normalizedName) {
+			continue
+		}
+		filtered[canonicalTerminalResourceUploadHeaderName(normalizedName)] = value
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return filtered
+}
+
+func isAllowedTerminalResourceUploadHeader(name string) bool {
+	return strings.HasPrefix(name, "x-amz-") || name == "content-type" || name == "content-md5"
+}
+
+func canonicalTerminalResourceUploadHeaderName(name string) string {
+	switch name {
+	case "content-type":
+		return "Content-Type"
+	case "content-md5":
+		return "Content-MD5"
+	default:
+		return name
+	}
 }
