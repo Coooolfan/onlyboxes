@@ -618,7 +618,7 @@ Worker 类型：
 
 ## 7. Sandbox 元数据 API（Bearer Token 鉴权）
 
-Sandbox 元数据按 token 对应账号隔离。Trusted token 与 MCP JIT token 均可调用。
+该接口需要执行 token 鉴权。Trusted token 与 MCP JIT token 均可调用。按账号隔离的字段仅限调用账号自有的 `worker-sys` 能力，例如 `computerUse` 与 `readImage`；共享 sandbox 能力与 worker 汇总来自全局 worker 池。
 
 ### 7.1 获取 Sandbox 元数据
 

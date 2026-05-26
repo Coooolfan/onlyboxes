@@ -616,7 +616,7 @@ Errors:
 
 ## 7. Sandbox Metadata API (Bearer Token)
 
-Sandbox metadata is account-scoped by token. Trusted tokens and MCP JIT tokens can call this endpoint.
+This endpoint requires an execution token. Trusted tokens and MCP JIT tokens can call it. Account-scoped fields are limited to caller-owned `worker-sys` capabilities such as `computerUse` and `readImage`; shared sandbox capabilities and the worker summary are reported from the global worker pool.
 
 ### 7.1 Get Sandbox Metadata
 
