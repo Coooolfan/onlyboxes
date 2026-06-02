@@ -119,6 +119,14 @@ func (e *computerUseExecutor) Execute(ctx context.Context, req computerUseReques
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 			return computerUseRunResult{}, err
 		}
+		if errors.Is(err, exec.ErrWaitDelay) {
+			// The process exited (or was canceled) but a child kept the
+			// captured stdout/stderr pipes open past Cmd.WaitDelay. From the
+			// caller's perspective this is a hard timeout on the command —
+			// surface it as a deadline so downstream callers map it to the
+			// same `deadline_exceeded` error code as a context timeout.
+			return computerUseRunResult{}, context.DeadlineExceeded
+		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			exitCode = exitErr.ExitCode()
