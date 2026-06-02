@@ -738,6 +738,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: "4"
           command: versions upload --tag ${{ needs.prepare-release.outputs.version_raw }} --message "Prerelease ${{ needs.prepare-release.outputs.version_raw }}"
 
       - name: Deploy to production (100% traffic)
@@ -746,6 +747,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: "4"
           command: deploy
 
   publish-release:
