@@ -34,7 +34,10 @@ if sys.version_info < MIN_PYTHON:
 # ---------------------------------------------------------------------------
 
 GITHUB_REPO = "Coooolfan/onlyboxes"
-DEFAULT_TAG = "0.6.1"
+LATEST_RELEASE_URL = "https://api.github.com/repos/{repo}/releases/latest"
+# Used only when the GitHub API call fails (rate limit, offline, etc).
+# Safe to be a bit stale; bump occasionally.
+FALLBACK_TAG = "0.6.1"
 COMPOSE_TEMPLATE_URL = (
     "https://raw.githubusercontent.com/{repo}/{tag}/scripts/docker-compose.install.yml"
 )
@@ -182,6 +185,21 @@ def generate_hash_key(length: int = 64) -> str:
 
 def sanitize_version(tag: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "-", tag)
+
+
+def resolve_latest_tag() -> str:
+    url = LATEST_RELEASE_URL.format(repo=GITHUB_REPO)
+    try:
+        req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode())
+        tag = data.get("tag_name")
+        if tag:
+            return tag
+        info(f"GitHub latest release response missing tag_name; falling back to {FALLBACK_TAG}")
+    except (urllib.error.HTTPError, urllib.error.URLError, OSError) as exc:
+        info(f"Failed to resolve latest release from GitHub ({exc}); falling back to {FALLBACK_TAG}")
+    return FALLBACK_TAG
 
 
 def run_cmd(args: List[str], cwd: Optional[str] = None, check: bool = True) -> subprocess.CompletedProcess:
@@ -748,8 +766,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--tag",
-        default=DEFAULT_TAG,
-        help=f"Override release version tag for advanced use cases (default: {DEFAULT_TAG})",
+        default=None,
+        help="Override release version tag for advanced use cases (default: latest published release)",
     )
     parser.add_argument("--workdir", default=None, help="Working directory (default: $PWD/onlyboxes)")
     parser.add_argument("--yes", "-y", action="store_true", help="Non-interactive mode, skip confirmations")
@@ -779,6 +797,10 @@ def main() -> None:
     workdir = workdir.resolve()
 
     tag = args.tag
+    if not tag:
+        info("Resolving latest release tag from GitHub...")
+        tag = resolve_latest_tag()
+        info(f"Latest release tag: {tag}")
     http_port = args.console_http_port
     grpc_port = args.console_grpc_port
 

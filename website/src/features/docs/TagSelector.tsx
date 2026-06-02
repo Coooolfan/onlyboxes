@@ -12,6 +12,11 @@ interface TagSelectorProps {
   defaultTag?: string
 }
 
+const buildDefaultTag =
+  typeof import.meta.env.VITE_DEFAULT_TAG === 'string'
+    ? import.meta.env.VITE_DEFAULT_TAG.trim()
+    : ''
+
 const copy = {
   en: {
     label: 'Version',
@@ -32,6 +37,9 @@ const copy = {
 } as const
 
 function buildCommand(tag: string) {
+  if (!tag || tag === 'latest') {
+    return `curl -fsSL https://onlybox.es/install.sh | bash`
+  }
   return `curl -fsSL https://onlybox.es/install.sh | bash -s -- --tag ${tag}`
 }
 
@@ -39,7 +47,7 @@ export function TagSelector({
   locale = 'en',
   repo = 'Coooolfan/onlyboxes',
   limit = 20,
-  defaultTag = '0.6.1',
+  defaultTag = buildDefaultTag || 'latest',
 }: TagSelectorProps) {
   const t = copy[locale]
   const [tags, setTags] = useState<string[] | null>(null)

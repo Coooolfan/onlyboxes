@@ -1,15 +1,10 @@
 name: package-release
+run-name: Release ${{ github.ref_name }}
 
 on:
-  workflow_dispatch:
-    inputs:
-      version:
-        description: Version string used in output filenames
-        required: true
-        type: string
-  release:
-    types:
-      - published
+  push:
+    tags:
+      - '*.*.*'
 
 permissions:
   contents: write
@@ -18,22 +13,23 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  resolve-version:
+  prepare-release:
+    name: Prepare release
     runs-on: ubuntu-latest
     outputs:
       version_raw: ${{ steps.version.outputs.version_raw }}
       version_safe: ${{ steps.version.outputs.version_safe }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Resolve version
         id: version
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            version_raw="${{ inputs.version }}"
-          else
-            version_raw="${{ github.event.release.tag_name }}"
-          fi
+          version_raw="${GITHUB_REF_NAME}"
           if [[ -z "${version_raw}" ]]; then
             echo "version is required" >&2
             exit 1
@@ -45,19 +41,54 @@ jobs:
             exit 1
           fi
 
+          if [[ "${version_raw}" =~ -rc-|-beta-|-alpha- ]]; then
+            prerelease=true
+          else
+            prerelease=false
+          fi
+
           echo "version_raw=${version_raw}" >> "${GITHUB_OUTPUT}"
           echo "version_safe=${version_safe}" >> "${GITHUB_OUTPUT}"
+          echo "prerelease=${prerelease}" >> "${GITHUB_OUTPUT}"
 
-  build-web:
+      - name: Verify release notes file
+        shell: bash
+        run: |
+          notes="docs/release_notes/${GITHUB_REF_NAME}.md"
+          if [[ ! -f "${notes}" ]]; then
+            echo "::error::Release notes file not found: ${notes}" >&2
+            exit 1
+          fi
+
+  create-draft-release:
+    name: Create draft release
+    needs: prepare-release
     runs-on: ubuntu-latest
-    needs: resolve-version
-    env:
-      VERSION_RAW: ${{ needs.resolve-version.outputs.version_raw }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
         with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
+          tag_name: ${{ needs.prepare-release.outputs.version_raw }}
+          name: ${{ needs.prepare-release.outputs.version_raw }}
+          body_path: docs/release_notes/${{ needs.prepare-release.outputs.version_raw }}.md
+          prerelease: ${{ needs.prepare-release.outputs.prerelease == 'true' }}
+          draft: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-web:
+    runs-on: ubuntu-latest
+    needs:
+      - prepare-release
+      - create-draft-release
+    env:
+      VERSION_RAW: ${{ needs.prepare-release.outputs.version_raw }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -80,11 +111,44 @@ jobs:
           path: web/dist
           if-no-files-found: error
 
+  build-website:
+    name: Build website
+    runs-on: ubuntu-latest
+    needs:
+      - prepare-release
+      - create-draft-release
+    env:
+      VERSION_RAW: ${{ needs.prepare-release.outputs.version_raw }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Build website
+        run: |
+          set -euo pipefail
+          yarn --cwd website install --immutable
+          VITE_DEFAULT_TAG="${VERSION_RAW}" yarn --cwd website build
+
+      - name: Upload website dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: website-dist
+          path: website/dist
+          if-no-files-found: error
+
   build-console:
     name: console (${{ matrix.os_name }}/${{ matrix.goarch }})
     runs-on: ubuntu-24.04
     needs:
-      - resolve-version
+      - prepare-release
       - build-web
     defaults:
       run:
@@ -110,16 +174,14 @@ jobs:
             goos: darwin
             goarch: arm64
     env:
-      VERSION_RAW: ${{ needs.resolve-version.outputs.version_raw }}
-      VERSION_SAFE: ${{ needs.resolve-version.outputs.version_safe }}
+      VERSION_RAW: ${{ needs.prepare-release.outputs.version_raw }}
+      VERSION_SAFE: ${{ needs.prepare-release.outputs.version_safe }}
       GOOS: ${{ matrix.goos }}
       GOARCH: ${{ matrix.goarch }}
-      CONSOLE_BIN: onlyboxes-console_${{ needs.resolve-version.outputs.version_safe }}_${{ matrix.os_name }}_${{ matrix.goarch }}
+      CONSOLE_BIN: onlyboxes-console_${{ needs.prepare-release.outputs.version_safe }}_${{ matrix.os_name }}_${{ matrix.goarch }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
 
       - name: Download web dist artifact
         uses: actions/download-artifact@v4
@@ -177,7 +239,6 @@ jobs:
           if-no-files-found: error
 
       - name: Upload console release asset
-        if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -191,7 +252,9 @@ jobs:
   build-worker-docker:
     name: worker-docker (${{ matrix.os_name }}/${{ matrix.goarch }})
     runs-on: ubuntu-24.04
-    needs: resolve-version
+    needs:
+      - prepare-release
+      - create-draft-release
     defaults:
       run:
         shell: bash
@@ -216,16 +279,14 @@ jobs:
             goos: darwin
             goarch: arm64
     env:
-      VERSION_RAW: ${{ needs.resolve-version.outputs.version_raw }}
-      VERSION_SAFE: ${{ needs.resolve-version.outputs.version_safe }}
+      VERSION_RAW: ${{ needs.prepare-release.outputs.version_raw }}
+      VERSION_SAFE: ${{ needs.prepare-release.outputs.version_safe }}
       GOOS: ${{ matrix.goos }}
       GOARCH: ${{ matrix.goarch }}
-      WORKER_BIN: onlyboxes-worker-docker_${{ needs.resolve-version.outputs.version_safe }}_${{ matrix.os_name }}_${{ matrix.goarch }}
+      WORKER_BIN: onlyboxes-worker-docker_${{ needs.prepare-release.outputs.version_safe }}_${{ matrix.os_name }}_${{ matrix.goarch }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -277,7 +338,6 @@ jobs:
           if-no-files-found: error
 
       - name: Upload worker release asset
-        if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -291,7 +351,9 @@ jobs:
   build-worker-sys:
     name: worker-sys (${{ matrix.os_name }}/${{ matrix.goarch }})
     runs-on: ubuntu-24.04
-    needs: resolve-version
+    needs:
+      - prepare-release
+      - create-draft-release
     defaults:
       run:
         shell: bash
@@ -330,16 +392,14 @@ jobs:
             goarch: arm64
             ext: ".exe"
     env:
-      VERSION_RAW: ${{ needs.resolve-version.outputs.version_raw }}
-      VERSION_SAFE: ${{ needs.resolve-version.outputs.version_safe }}
+      VERSION_RAW: ${{ needs.prepare-release.outputs.version_raw }}
+      VERSION_SAFE: ${{ needs.prepare-release.outputs.version_safe }}
       GOOS: ${{ matrix.goos }}
       GOARCH: ${{ matrix.goarch }}
-      WORKER_BIN: onlyboxes-worker-sys_${{ needs.resolve-version.outputs.version_safe }}_${{ matrix.os_name }}_${{ matrix.goarch }}${{ matrix.ext }}
+      WORKER_BIN: onlyboxes-worker-sys_${{ needs.prepare-release.outputs.version_safe }}_${{ matrix.os_name }}_${{ matrix.goarch }}${{ matrix.ext }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -397,7 +457,6 @@ jobs:
           if-no-files-found: error
 
       - name: Upload worker release asset
-        if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -411,7 +470,9 @@ jobs:
   build-worker-boxlite:
     name: worker-boxlite (${{ matrix.os_name }}/${{ matrix.arch_name }})
     runs-on: ${{ matrix.os }}
-    needs: resolve-version
+    needs:
+      - prepare-release
+      - create-draft-release
     defaults:
       run:
         shell: bash
@@ -435,14 +496,12 @@ jobs:
             arch_name: arm64
             target: aarch64-apple-darwin
     env:
-      VERSION_RAW: ${{ needs.resolve-version.outputs.version_raw }}
-      VERSION_SAFE: ${{ needs.resolve-version.outputs.version_safe }}
-      WORKER_BIN: onlyboxes-worker-boxlite_${{ needs.resolve-version.outputs.version_safe }}_${{ matrix.os_name }}_${{ matrix.arch_name }}
+      VERSION_RAW: ${{ needs.prepare-release.outputs.version_raw }}
+      VERSION_SAFE: ${{ needs.prepare-release.outputs.version_safe }}
+      WORKER_BIN: onlyboxes-worker-boxlite_${{ needs.prepare-release.outputs.version_safe }}_${{ matrix.os_name }}_${{ matrix.arch_name }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
 
       - name: Install protoc
         uses: arduino/setup-protoc@v3
@@ -503,7 +562,6 @@ jobs:
           if-no-files-found: error
 
       - name: Upload worker-boxlite release asset
-        if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -517,15 +575,13 @@ jobs:
   push-console-image:
     runs-on: ubuntu-latest
     needs:
-      - resolve-version
+      - prepare-release
       - build-console
     env:
-      VERSION_SAFE: ${{ needs.resolve-version.outputs.version_safe }}
+      VERSION_SAFE: ${{ needs.prepare-release.outputs.version_safe }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
 
       - name: Download console linux x64 binary artifact
         uses: actions/download-artifact@v4
@@ -554,13 +610,13 @@ jobs:
       - name: Resolve Docker tags
         id: docker_tags
         env:
-          VERSION_SAFE: ${{ needs.resolve-version.outputs.version_safe }}
+          IS_PRERELEASE: ${{ needs.prepare-release.outputs.prerelease }}
         run: |
           set -euo pipefail
           image_repo="coolfan1024/onlyboxes"
 
           console_tags="${image_repo}:${VERSION_SAFE}"
-          if [[ "${GITHUB_EVENT_NAME}" == "release" && "${{ github.event.release.prerelease }}" != "true" ]]; then
+          if [[ "${IS_PRERELEASE}" != "true" ]]; then
             console_tags+=$'\n'"${image_repo}:latest"
           fi
 
@@ -591,7 +647,8 @@ jobs:
     name: runtime image (${{ matrix.variant }})
     runs-on: ubuntu-latest
     needs:
-      - resolve-version
+      - prepare-release
+      - create-draft-release
     strategy:
       fail-fast: false
       matrix:
@@ -609,12 +666,10 @@ jobs:
             alias_tag: lobehub
             latest: false
     env:
-      VERSION_SAFE: ${{ needs.resolve-version.outputs.version_safe }}
+      VERSION_SAFE: ${{ needs.prepare-release.outputs.version_safe }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
 
       - name: Setup QEMU
         uses: docker/setup-qemu-action@v3
@@ -633,13 +688,13 @@ jobs:
         env:
           ALIAS_TAG: ${{ matrix.alias_tag }}
           IS_LATEST: ${{ matrix.latest }}
-          VERSION_SAFE: ${{ needs.resolve-version.outputs.version_safe }}
+          IS_PRERELEASE: ${{ needs.prepare-release.outputs.prerelease }}
         run: |
           set -euo pipefail
           image_repo="coolfan1024/onlyboxes-runtime"
 
           runtime_tags="${image_repo}:${VERSION_SAFE}-${ALIAS_TAG}"
-          if [[ "${GITHUB_EVENT_NAME}" == "release" && "${{ github.event.release.prerelease }}" != "true" ]]; then
+          if [[ "${IS_PRERELEASE}" != "true" ]]; then
             runtime_tags+=$'\n'"${image_repo}:${ALIAS_TAG}"
             if [[ "${IS_LATEST}" == "true" ]]; then
               runtime_tags+=$'\n'"${image_repo}:latest"
@@ -660,3 +715,61 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.docker_tags.outputs.runtime_tags }}
+
+  deploy-cloudflare:
+    name: Deploy website to Cloudflare
+    runs-on: ubuntu-latest
+    needs:
+      - prepare-release
+      - build-website
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download website dist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: website-dist
+          path: website/dist
+
+      - name: Upload preview version (prerelease, no traffic switch)
+        if: needs.prepare-release.outputs.prerelease == 'true'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: versions upload --tag ${{ needs.prepare-release.outputs.version_raw }} --message "Prerelease ${{ needs.prepare-release.outputs.version_raw }}"
+
+      - name: Deploy to production (100% traffic)
+        if: needs.prepare-release.outputs.prerelease != 'true'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy
+
+  publish-release:
+    name: Publish release
+    runs-on: ubuntu-latest
+    needs:
+      - prepare-release
+      - build-console
+      - build-worker-docker
+      - build-worker-sys
+      - build-worker-boxlite
+      - push-console-image
+      - push-runtime-images
+      - deploy-cloudflare
+    steps:
+      - name: Mark release as published
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION_RAW: ${{ needs.prepare-release.outputs.version_raw }}
+          IS_PRERELEASE: ${{ needs.prepare-release.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          if [[ "${IS_PRERELEASE}" == "true" ]]; then
+            gh release edit "${VERSION_RAW}" --draft=false --prerelease --repo "${GITHUB_REPOSITORY}"
+          else
+            gh release edit "${VERSION_RAW}" --draft=false --latest --repo "${GITHUB_REPOSITORY}"
+          fi

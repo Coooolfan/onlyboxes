@@ -224,14 +224,14 @@ function handleWhitelistModeUpdate(value: string): void {
       >
         <span class="text-sm text-secondary">Temporary Probe release tag</span>
         <span class="text-xs text-secondary">
-          Optional installer release tag override. Leave as 0.6.1 for the current default.
+          Optional installer release tag override. Leave empty to use the latest published release.
         </span>
         <input
           v-model.trim="props.config.temporaryProbeTag"
           data-testid="temporary-probe-tag-input"
           type="text"
           class="ui-input rounded-md border px-3 py-2 text-sm"
-          placeholder="0.6.1"
+          placeholder="latest"
         />
       </label>
     </div>

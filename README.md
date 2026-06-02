@@ -55,7 +55,7 @@ Available options:
 
 | Flag | Default | Description |
 | --- | --- | --- |
-| `--tag` | `0.6.1` | Optional release version override |
+| `--tag` | latest published release | Optional release version override |
 | `--workdir` | `$PWD/onlyboxes` | Working directory |
 | `--yes` / `-y` | `false` | Non-interactive mode, skip confirmations |
 | `--console-http-port` | `8089` | Console HTTP port (host side) |

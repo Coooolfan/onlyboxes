@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEFAULT_TAG="0.6.1"
 REPO="Coooolfan/onlyboxes"
+# Used only when the GitHub API call fails (rate limit, offline, etc).
+# Safe to be a bit stale; bump occasionally.
+FALLBACK_TAG="0.6.1"
 
 node_id=""
 worker_secret=""
 grpc_target=""
 console_insecure=""
-tag="${DEFAULT_TAG}"
+tag=""
 
 usage() {
   cat >&2 <<'EOF'
@@ -19,8 +21,30 @@ Accepted options:
   --worker-secret     One-time worker secret issued by the console.
   --grpc-target       Console gRPC target in host:port form.
   --console-insecure  Set WORKER_CONSOLE_INSECURE. Pass "true" for plaintext gRPC; omit or "false" for TLS.
-  --tag               GitHub release tag to download. Defaults to 0.6.1.
+  --tag               GitHub release tag to download. Defaults to the latest published release.
 EOF
+}
+
+resolve_latest_tag() {
+  local api_url="https://api.github.com/repos/${REPO}/releases/latest"
+  local body=""
+  if command -v curl >/dev/null 2>&1; then
+    body="$(curl -fsSL --retry 3 --connect-timeout 15 -H 'Accept: application/vnd.github+json' "${api_url}" 2>/dev/null || true)"
+  elif command -v wget >/dev/null 2>&1; then
+    body="$(wget -qO- --header='Accept: application/vnd.github+json' "${api_url}" 2>/dev/null || true)"
+  else
+    echo "curl or wget is required; falling back to ${FALLBACK_TAG}" >&2
+    printf '%s' "${FALLBACK_TAG}"
+    return
+  fi
+
+  local resolved=""
+  resolved="$(printf '%s' "${body}" | sed -nE 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -n 1)"
+  if [[ -z "${resolved}" ]]; then
+    echo "failed to resolve latest release tag from ${api_url}; falling back to ${FALLBACK_TAG}" >&2
+    resolved="${FALLBACK_TAG}"
+  fi
+  printf '%s' "${resolved}"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -69,6 +93,12 @@ if [[ -z "${node_id}" || -z "${worker_secret}" || -z "${grpc_target}" ]]; then
   echo "--node-id, --worker-secret, and --grpc-target are required" >&2
   usage
   exit 2
+fi
+
+if [[ -z "${tag}" ]]; then
+  echo "Resolving latest release tag from GitHub..." >&2
+  tag="$(resolve_latest_tag)"
+  echo "Latest release tag: ${tag}" >&2
 fi
 
 case "$(uname -s)" in
