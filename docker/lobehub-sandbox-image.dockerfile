@@ -68,7 +68,6 @@ RUN set -eux; \
       @anthropic-ai/claude-code \
       @lobehub/cli \
       @openai/codex \
-      pnpm \
       tsx \
       @marp-team/marp-cli; \
     rm -rf /var/lib/apt/lists/* /root/.npm
