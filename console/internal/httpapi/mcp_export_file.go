@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
@@ -77,6 +78,7 @@ func handleMCPExportFileTool(
 		FilePath:  filePath,
 		Action:    "export",
 		SignedURL: uploadURL,
+		Headers:   exportStoreUploadHeaders(uploadURL),
 	}, timeout)
 	if err != nil {
 		return nil, mcpExportFileToolOutput{}, err
@@ -110,6 +112,25 @@ func handleMCPExportFileTool(
 		ObjectKey: objectKey,
 		FileName:  fileName,
 	}, nil
+}
+
+func exportStoreUploadHeaders(uploadURL string) map[string]string {
+	parsed, err := url.Parse(strings.TrimSpace(uploadURL))
+	if err != nil {
+		return nil
+	}
+	signedHeaders := strings.Split(parsed.Query().Get("X-Amz-SignedHeaders"), ";")
+	headers := make(map[string]string, len(signedHeaders))
+	for _, header := range signedHeaders {
+		switch strings.ToLower(strings.TrimSpace(header)) {
+		case "x-amz-acl":
+			headers["x-amz-acl"] = "public-read"
+		}
+	}
+	if len(headers) == 0 {
+		return nil
+	}
+	return headers
 }
 
 func normalizeExportPresignTTL(value time.Duration, fallback time.Duration) time.Duration {

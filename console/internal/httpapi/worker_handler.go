@@ -123,6 +123,7 @@ func NewRouter(workerHandler *WorkerHandler, consoleAuth *ConsoleAuth, mcpAuth *
 	execAPI.POST("/commands/echo", workerHandler.EchoCommand)
 	execAPI.POST("/commands/terminal", workerHandler.TerminalCommand)
 	execAPI.POST("/commands/computer-use", workerHandler.ComputerUseCommand)
+	execAPI.GET("/sandbox/metadata", workerHandler.SandboxMetadata)
 	execAPI.POST("/tasks", workerHandler.SubmitTask)
 	execAPI.GET("/tasks/:task_id", workerHandler.GetTask)
 	execAPI.POST("/tasks/:task_id/cancel", workerHandler.CancelTask)

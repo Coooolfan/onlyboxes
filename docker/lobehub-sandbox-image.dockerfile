@@ -4,19 +4,16 @@ ARG TARGETARCH
 
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends ca-certificates; \
-    rm -rf /var/lib/apt/lists/*
-
-RUN set -eux; \
-    sed -i -E "s#https?://(archive|security)\\.ubuntu\\.com/ubuntu/?#https://mirrors.tuna.tsinghua.edu.cn/ubuntu/#g" /etc/apt/sources.list.d/ubuntu.sources; \
-    apt-get update; \
     apt-get install -y --no-install-recommends \
+      bash \
       python3 \
       python3-pip \
       python3-venv \
       curl \
       wget \
       git \
+      gh \
+      ca-certificates \
       jq \
       ripgrep \
       fd-find \
@@ -26,23 +23,60 @@ RUN set -eux; \
       unzip \
       zip \
       procps \
-      sqlite3; \
+      sqlite3 \
+      build-essential \
+      ffmpeg \
+      fonts-noto-cjk \
+      fonts-noto-color-emoji \
+      libreoffice \
+      pandoc \
+      poppler-utils; \
     rm -rf /var/lib/apt/lists/*
 
 RUN set -eux; \
-    printf '[global]\nindex-url = %s\n' 'https://pypi.tuna.tsinghua.edu.cn/simple' > /etc/pip.conf; \
     ln -sf /usr/bin/python3 /usr/local/bin/python; \
     python3 -m pip install --no-cache-dir --break-system-packages \
+      aiofiles \
+      anyio \
+      fastapi \
+      matplotlib \
+      numpy \
+      opencv-python-headless \
+      pandas \
+      plotly \
+      pydantic \
       python-docx \
+      python-dotenv \
+      PyPDF2 \
       pypdf \
+      pytest \
       openpyxl \
-      Pillow
+      Pillow \
+      reportlab \
+      scipy \
+      scikit-learn \
+      toml \
+      uvicorn \
+      xlrd \
+      pyyaml
 
 RUN set -eux; \
     curl -fsSL https://deb.nodesource.com/setup_24.x | bash -; \
     apt-get install -y --no-install-recommends nodejs; \
     corepack enable; \
-    rm -rf /var/lib/apt/lists/*
+    npm install -g \
+      @anthropic-ai/claude-code \
+      @lobehub/cli \
+      @openai/codex \
+      pnpm \
+      tsx \
+      @marp-team/marp-cli; \
+    rm -rf /var/lib/apt/lists/* /root/.npm
+
+RUN set -eux; \
+    BUN_INSTALL=/usr/local/bun bash -o pipefail -c 'curl -fsSL https://bun.sh/install | bash'; \
+    ln -sf /usr/local/bun/bin/bun /usr/local/bin/bun; \
+    ln -sf /usr/local/bun/bin/bunx /usr/local/bin/bunx
 
 RUN set -eux; \
     arch="${TARGETARCH:-$(dpkg --print-architecture)}"; \

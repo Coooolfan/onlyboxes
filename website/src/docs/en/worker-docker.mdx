@@ -67,9 +67,11 @@ Set `WORKER_CONSOLE_INSECURE=true` when connecting without TLS.
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
 | `WORKER_PYTHON_EXEC_DOCKER_IMAGE` | No | `ghcr.io/astral-sh/uv:python3.12-bookworm-slim` | Image for Python execution |
-| `WORKER_TERMINAL_EXEC_DOCKER_IMAGE` | No | `coolfan1024/onlyboxes-default-worker:0.0.5` | Image for terminal execution |
+| `WORKER_TERMINAL_EXEC_DOCKER_IMAGE` | No | `coolfan1024/onlyboxes-runtime:default` | Image for terminal execution |
 
 > `terminalExec` and `terminalResource` both rely on the terminal execution image. If that image does not include `python3`, file probe operations will fail before metadata can be validated or exported.
+
+The default terminal image is a general execution image with Python 3, Node.js 24, npm, Corepack, common shell/file utilities, lightweight document helpers, and `agent-browser` with Lightpanda. Use `coolfan1024/onlyboxes-runtime:lobehub` for LobeHub-specific sandbox tooling.
 
 ### Execution resources
 

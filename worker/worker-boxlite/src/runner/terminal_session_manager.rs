@@ -119,6 +119,7 @@ pub(crate) struct TerminalResourceRequest {
     pub file_path: String,
     pub action: String,
     pub signed_url: String,
+    pub headers: HashMap<String, String>,
     pub deadline_unix_ms: i64,
 }
 
@@ -526,7 +527,9 @@ impl TerminalSessionManager {
                             return Err(TerminalOperationError::ExecutionFailed(message));
                         }
                     }
-                    if let Err(err) = put_file_to_signed_url(&signed_url, &temp_path).await {
+                    if let Err(err) =
+                        put_file_to_signed_url(&signed_url, &temp_path, &req.headers).await
+                    {
                         self.mark_session_idle(&result.session_id).await;
                         return Err(TerminalOperationError::ExecutionFailed(err));
                     }
@@ -965,7 +968,11 @@ fn build_export_temp_path() -> PathBuf {
     std::env::temp_dir().join(format!("onlyboxes-export-{}", Uuid::new_v4()))
 }
 
-async fn put_file_to_signed_url(signed_url: &str, file_path: &Path) -> Result<(), String> {
+async fn put_file_to_signed_url(
+    signed_url: &str,
+    file_path: &Path,
+    headers: &HashMap<String, String>,
+) -> Result<(), String> {
     let upload_path = file_path.to_path_buf();
     let file = tokio::fs::File::open(&upload_path)
         .await
@@ -976,9 +983,17 @@ async fn put_file_to_signed_url(signed_url: &str, file_path: &Path) -> Result<()
         .map_err(|err| format!("stat export file: {err}"))?
         .len();
     let payload = reqwest::Body::wrap_stream(ReaderStream::new(file));
-    let response = reqwest::Client::new()
+    let mut request = reqwest::Client::new()
         .put(signed_url)
-        .header(reqwest::header::CONTENT_LENGTH, file_size.to_string())
+        .header(reqwest::header::CONTENT_LENGTH, file_size.to_string());
+    for (key, value) in headers {
+        let trimmed_key = key.trim();
+        if trimmed_key.is_empty() {
+            continue;
+        }
+        request = request.header(trimmed_key, value);
+    }
+    let response = request
         .body(payload)
         .send()
         .await
@@ -1680,6 +1695,7 @@ mod tests {
                 file_path: "/tmp/hello.txt".to_owned(),
                 action: TERMINAL_RESOURCE_ACTION_VALIDATE.to_owned(),
                 signed_url: String::new(),
+                headers: HashMap::new(),
                 deadline_unix_ms: 0,
             })
             .await
@@ -1693,6 +1709,7 @@ mod tests {
                 file_path: "/tmp/hello.txt".to_owned(),
                 action: TERMINAL_RESOURCE_ACTION_READ.to_owned(),
                 signed_url: String::new(),
+                headers: HashMap::new(),
                 deadline_unix_ms: 0,
             })
             .await
@@ -1722,6 +1739,7 @@ mod tests {
                 file_path: "/root/hello.txt".to_owned(),
                 action: TERMINAL_RESOURCE_ACTION_EXPORT.to_owned(),
                 signed_url: upload_url,
+                headers: HashMap::from([("x-amz-acl".to_owned(), "public-read".to_owned())]),
                 deadline_unix_ms: 0,
             })
             .await
@@ -1735,6 +1753,10 @@ mod tests {
             .headers
             .lines()
             .any(|line| line.eq_ignore_ascii_case("content-length: 5")));
+        assert!(uploaded_request
+            .headers
+            .lines()
+            .any(|line| line.eq_ignore_ascii_case("x-amz-acl: public-read")));
         assert_eq!(uploaded_request.body, b"hello");
 
         manager.close().await;
@@ -1759,6 +1781,7 @@ mod tests {
                 file_path: "/tmp/hello.txt".to_owned(),
                 action: TERMINAL_RESOURCE_ACTION_EXPORT.to_owned(),
                 signed_url: String::new(),
+                headers: HashMap::new(),
                 deadline_unix_ms: 0,
             })
             .await
@@ -1784,6 +1807,7 @@ mod tests {
                 file_path: "/tmp/hello.txt".to_owned(),
                 action: TERMINAL_RESOURCE_ACTION_EXPORT.to_owned(),
                 signed_url: "https://uploads.example.com/put".to_owned(),
+                headers: HashMap::new(),
                 deadline_unix_ms: 0,
             })
             .await
@@ -1827,6 +1851,7 @@ mod tests {
                 file_path: "/root/large.bin".to_owned(),
                 action: TERMINAL_RESOURCE_ACTION_EXPORT.to_owned(),
                 signed_url: "https://uploads.example.com/put".to_owned(),
+                headers: HashMap::new(),
                 deadline_unix_ms: 0,
             })
             .await
@@ -1885,6 +1910,7 @@ mod tests {
                     file_path: "/tmp/hello.txt".to_owned(),
                     action: TERMINAL_RESOURCE_ACTION_READ.to_owned(),
                     signed_url: String::new(),
+                    headers: HashMap::new(),
                     deadline_unix_ms: 0,
                 })
                 .await
@@ -1917,6 +1943,7 @@ mod tests {
                 file_path: "/tmp/hello.txt".to_owned(),
                 action: TERMINAL_RESOURCE_ACTION_VALIDATE.to_owned(),
                 signed_url: String::new(),
+                headers: HashMap::new(),
                 deadline_unix_ms: 0,
             })
             .await
@@ -1945,6 +1972,7 @@ mod tests {
                 file_path: "/tmp/hello.txt".to_owned(),
                 action: String::new(),
                 signed_url: String::new(),
+                headers: HashMap::new(),
                 deadline_unix_ms: 0,
             })
             .await
@@ -1970,6 +1998,7 @@ mod tests {
                 file_path: "/tmp/hello.txt".to_owned(),
                 action: String::new(),
                 signed_url: String::new(),
+                headers: HashMap::new(),
                 deadline_unix_ms: 0,
             })
             .await
@@ -1995,6 +2024,7 @@ mod tests {
                 file_path: "/tmp/hello.txt".to_owned(),
                 action: TERMINAL_RESOURCE_ACTION_READ.to_owned(),
                 signed_url: String::new(),
+                headers: HashMap::new(),
                 deadline_unix_ms: 0,
             })
             .await
@@ -2039,6 +2069,7 @@ mod tests {
                 file_path: "/tmp/hello.txt".to_owned(),
                 action: TERMINAL_RESOURCE_ACTION_VALIDATE.to_owned(),
                 signed_url: String::new(),
+                headers: HashMap::new(),
                 deadline_unix_ms: 0,
             })
             .await
@@ -2096,6 +2127,7 @@ mod tests {
                     file_path: "/tmp/hello.txt".to_owned(),
                     action: TERMINAL_RESOURCE_ACTION_VALIDATE.to_owned(),
                     signed_url: String::new(),
+                    headers: HashMap::new(),
                     deadline_unix_ms: 0,
                 })
                 .await

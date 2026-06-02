@@ -193,7 +193,7 @@ curl -fsSL https://onlybox.es/install.sh | bash
 | `WORKER_HEARTBEAT_INTERVAL_SEC` | `5` | 心跳周期 |
 | `WORKER_HEARTBEAT_JITTER_PCT` | `20` | 心跳抖动百分比 |
 | `WORKER_PYTHON_EXEC_DOCKER_IMAGE` | `ghcr.io/astral-sh/uv:python3.12-bookworm-slim` | `pythonExec` 运行镜像 |
-| `WORKER_TERMINAL_EXEC_DOCKER_IMAGE` | `coolfan1024/onlyboxes-default-worker:0.0.5` | `terminalExec` 运行镜像 |
+| `WORKER_TERMINAL_EXEC_DOCKER_IMAGE` | `coolfan1024/onlyboxes-runtime:default` | `terminalExec` 运行镜像 |
 | `WORKER_TERMINAL_OUTPUT_LIMIT_BYTES` | `1048576` | 单路输出流字节上限 |
 
 ## API 面
@@ -234,6 +234,7 @@ yarn --cwd web dev
 
 - GitHub 工作流：`.github/workflows/package-release.yml`
 - Console 镜像：`coolfan1024/onlyboxes:<version>` 与 `coolfan1024/onlyboxes:latest`
+- 终端运行时镜像：`coolfan1024/onlyboxes-runtime:<version>-default`、`<version>-default-cn` 与 `<version>-lobehub`；稳定别名为 `default`、`default-cn`、`lobehub` 和 `latest`（等同于 `default`）
 - Console 二进制已内置前端静态资源
 
 ## 安全与运维注意事项

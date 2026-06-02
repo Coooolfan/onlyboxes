@@ -616,11 +616,56 @@ Worker 类型：
 - `504` 超时
 - `502` 其他执行失败
 
-## 7. 任务 API（Bearer Token 鉴权）
+## 7. Sandbox 元数据 API（Bearer Token 鉴权）
+
+该接口需要执行 token 鉴权。Trusted token 与 MCP JIT token 均可调用。按账号隔离的字段仅限调用账号自有的 `worker-sys` 能力，例如 `computerUse` 与 `readImage`；共享 sandbox 能力与 worker 汇总来自全局 worker 池。
+
+### 7.1 获取 Sandbox 元数据
+
+`GET /api/v1/sandbox/metadata`
+
+成功 `200`：
+
+```json
+{
+  "provider": "onlyboxes",
+  "api_version": "2026-05-25",
+  "console": { "version": "0.6.1" },
+  "limits": {
+    "max_task_timeout_ms": 600000,
+    "max_task_wait_ms": 60000,
+    "max_terminal_timeout_ms": 600000,
+    "default_terminal_lease_sec": 60,
+    "max_terminal_lease_sec": 86400
+  },
+  "capabilities": [
+    {
+      "name": "terminalExec",
+      "available": true,
+      "online_nodes": 1,
+      "max_inflight": 4
+    }
+  ],
+  "workers": {
+    "total": 1,
+    "online": 1,
+    "offline": 0,
+    "stale": 0
+  }
+}
+```
+
+说明：
+
+- `computerUse` 与 `readImage` 可用性按调用账号自有 `worker-sys` 统计。
+- `terminalExec`、`terminalResource`、`pythonExec`、`echo` 返回全局在线 worker 可用性。
+- Token 缺失或无效返回 `401`。
+
+## 8. 任务 API（Bearer Token 鉴权）
 
 Task 所有权按账号隔离（由 token 对应账号决定）。
 
-### 7.1 提交任务
+### 8.1 提交任务
 
 `POST /api/v1/tasks`
 
@@ -645,6 +690,7 @@ Task 所有权按账号隔离（由 token 对应账号决定）。
 - `wait_ms`：`1..60000`，默认 `1500`
 - `timeout_ms`：`1..600000`，默认 `60000`
 - `request_id`：可选幂等键（账号维度去重）
+- 对于 `terminalResource` export payload，`input.headers` 会在下发前过滤；只有 `x-amz-*`、`Content-Type`、`Content-MD5` 上传头会转发给 worker。
 
 可能响应：
 
@@ -709,7 +755,7 @@ Task 所有权按账号隔离（由 token 对应账号决定）。
 - `504` 请求超时
 - `502` 提交失败
 
-### 7.2 查询任务
+### 8.2 查询任务
 
 `GET /api/v1/tasks/:task_id`
 
@@ -718,7 +764,7 @@ Task 所有权按账号隔离（由 token 对应账号决定）。
 - `200` 返回任务快照
 - `404` 任务不存在（包含跨账号访问）
 
-### 7.3 取消任务
+### 8.3 取消任务
 
 `POST /api/v1/tasks/:task_id/cancel`
 
@@ -729,7 +775,7 @@ Task 所有权按账号隔离（由 token 对应账号决定）。
 - `409` 任务已终态（返回任务快照）
 - `500` 取消失败
 
-## 8. MCP API（Bearer Token 鉴权）
+## 9. MCP API（Bearer Token 鉴权）
 
 端点：`POST /mcp`
 
@@ -741,7 +787,7 @@ Task 所有权按账号隔离（由 token 对应账号决定）。
   - `Content-Type: application/json`
   - `Accept: application/json, text/event-stream`
 
-### 8.1 MCP 基础方法
+### 9.1 MCP 基础方法
 
 支持标准 MCP 调用流程，包括：
 
@@ -749,7 +795,7 @@ Task 所有权按账号隔离（由 token 对应账号决定）。
 - `tools/list`
 - `tools/call`
 
-### 8.2 工具定义
+### 9.2 工具定义
 
 所有工具参数 schema 都是 `additionalProperties=false`。
 传入未定义参数会返回 JSON-RPC `-32602 invalid params`。
@@ -879,7 +925,7 @@ Task 所有权按账号隔离（由 token 对应账号决定）。
 - 若目标 MIME 非图片：返回一个文本内容项：
   - `unsupported mime type: <mime>; expected image/*`
 
-### 8.3 MCP 错误行为
+### 9.3 MCP 错误行为
 
 - Token 缺失或无效：HTTP `401`
 - 参数校验失败：JSON-RPC `-32602`
@@ -887,7 +933,7 @@ Task 所有权按账号隔离（由 token 对应账号决定）。
 - `computerUse` 调用账号已注册 `worker-sys` 但不在线：JSON-RPC `-32011`，`data.error_code="WORKER_SYS_OFFLINE"`
 - 执行异常：作为 MCP tool error 内容返回（`isError=true`）
 
-## 9. Worker gRPC API（`api/proto/registry/v1/registry.proto`）
+## 10. Worker gRPC API（`api/proto/registry/v1/registry.proto`）
 
 服务定义：
 
@@ -897,7 +943,7 @@ service WorkerRegistryService {
 }
 ```
 
-### 9.1 流程
+### 10.1 流程
 
 Worker 建立双向流后，通常会发送：
 
@@ -911,7 +957,7 @@ Console 回包：
 2. `ConnectResponse.heartbeat_ack`（`HeartbeatAck`）
 3. 下发执行任务 `ConnectResponse.command_dispatch`（`CommandDispatch`）
 
-### 9.2 核心消息
+### 10.2 核心消息
 
 - `ConnectHello` 包含 worker 标识、能力声明、labels、version、`worker_secret`。
 - `CommandDispatch` 包含：
@@ -925,7 +971,7 @@ Console 回包：
   - `payload_json`
   - `completed_unix_ms`
 
-## 10. 安全说明
+## 11. 安全说明
 
 - 当前版本 console gRPC 不提供内建 TLS/mTLS。
 - `worker-docker` 默认会拒绝不安全 console 端点，只有显式设置 `WORKER_CONSOLE_INSECURE=true` 才允许明文连接。
