@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 )
 
 const (
@@ -17,6 +18,13 @@ const (
 	computerUseWhitelistModePrefix   = "prefix"
 	computerUseWhitelistModeExact    = "exact"
 	computerUseWhitelistModeAllowAll = "allow_all"
+
+	// computerUseShellWaitDelay bounds how long exec.Cmd will block on stdout/stderr
+	// I/O after the command's process exits or the context is canceled. Without this
+	// guard, a grandchild process that inherited the pipes (e.g. via `setsid` or
+	// `cmd & wait`) can keep `Run()` blocked indefinitely, which would hold the
+	// session's single command slot and surface as `session_busy` to the registry.
+	computerUseShellWaitDelay = 5 * time.Second
 )
 
 type computerUsePayload struct {
@@ -111,6 +119,14 @@ func (e *computerUseExecutor) Execute(ctx context.Context, req computerUseReques
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 			return computerUseRunResult{}, err
 		}
+		if errors.Is(err, exec.ErrWaitDelay) {
+			// The process exited (or was canceled) but a child kept the
+			// captured stdout/stderr pipes open past Cmd.WaitDelay. From the
+			// caller's perspective this is a hard timeout on the command —
+			// surface it as a deadline so downstream callers map it to the
+			// same `deadline_exceeded` error code as a context timeout.
+			return computerUseRunResult{}, context.DeadlineExceeded
+		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			exitCode = exitErr.ExitCode()
@@ -134,11 +150,16 @@ func (e *computerUseExecutor) Execute(ctx context.Context, req computerUseReques
 }
 
 func buildShellCommand(ctx context.Context, command string) *exec.Cmd {
+	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
 		wrapped := "[Console]::OutputEncoding=[Text.Encoding]::UTF8; $OutputEncoding=[Text.Encoding]::UTF8; " + command
-		return exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", wrapped)
+		cmd = exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", wrapped)
+	} else {
+		cmd = exec.CommandContext(ctx, "/bin/sh", "-lc", command)
 	}
-	return exec.CommandContext(ctx, "/bin/sh", "-lc", command)
+	cmd.WaitDelay = computerUseShellWaitDelay
+	configureProcessIsolation(cmd)
+	return cmd
 }
 
 func truncateByBytes(value string, maxBytes int) (string, bool) {

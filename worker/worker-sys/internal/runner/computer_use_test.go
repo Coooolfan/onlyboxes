@@ -3,7 +3,9 @@ package runner
 import (
 	"context"
 	"errors"
+	"runtime"
 	"testing"
+	"time"
 
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
 )
@@ -113,6 +115,43 @@ func TestBuildCommandResultMapsCommandNotAllowedError(t *testing.T) {
 	}
 	if result.GetError().GetCode() != computerUseCodeCommandNotAllowed {
 		t.Fatalf("expected error code %q, got %q", computerUseCodeCommandNotAllowed, result.GetError().GetCode())
+	}
+}
+
+// TestComputerUseExecutorReleasesSlotWhenGrandchildOutlivesShell guards the
+// fix for worker-sys session-busy leaks: a shell that fork()s a long-running
+// grandchild used to block exec.Cmd.Run() until the grandchild finished
+// naturally, because the grandchild kept the stdout/stderr pipe open. With
+// Setpgid + pgid-kill plus Cmd.WaitDelay, Run() must return shortly after the
+// context deadline regardless of the grandchild's lifetime.
+func TestComputerUseExecutorReleasesSlotWhenGrandchildOutlivesShell(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test exercises POSIX shell fork semantics")
+	}
+
+	executor := newComputerUseExecutor(computerUseExecutorConfig{
+		OutputLimitBytes: 1024,
+		WhitelistMode:    computerUseWhitelistModeAllowAll,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	// `sleep 30 & wait` forces /bin/sh to fork sleep into the background and
+	// then block on the wait builtin. Without the fix, SIGKILL on sh leaves
+	// sleep alive and Run() blocks on the open pipe until sleep ends (~30s).
+	// With pgid kill or WaitDelay, Run() must return shortly after the
+	// context deadline — well under the 30s sleep budget. We only assert the
+	// time bound here; the surface error depends on whether the process exits
+	// with a signal status (ExitError) or via context cancellation, and both
+	// are acceptable outcomes as long as the slot would have been released.
+	maxAllowed := computerUseShellWaitDelay + 5*time.Second
+	start := time.Now()
+	_, _ = executor.Execute(ctx, computerUseRequest{Command: "sleep 30 & wait"})
+	elapsed := time.Since(start)
+
+	if elapsed > maxAllowed {
+		t.Fatalf("Execute did not release slot promptly: took %v (budget %v)", elapsed, maxAllowed)
 	}
 }
 
