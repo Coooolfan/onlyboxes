@@ -1,68 +1,85 @@
-name: package-release
+name: Onlyboxes CD
+run-name: CD ${{ inputs.version }}${{ inputs.latest && ' (latest)' || '' }}
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: Version string used in output filenames
+        description: Release version, for example 0.7.2 or 0.7.2-rc.1
         required: true
         type: string
-  release:
-    types:
-      - published
+      latest:
+        description: Publish Docker latest, mark GitHub Release latest, and deploy website to production
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: write
 
+concurrency:
+  group: cd-${{ inputs.version }}
+  cancel-in-progress: false
+
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  NODE_VERSION: "24"
 
 jobs:
-  resolve-version:
+  prepare-release:
     runs-on: ubuntu-latest
     outputs:
-      version_raw: ${{ steps.version.outputs.version_raw }}
-      version_safe: ${{ steps.version.outputs.version_safe }}
-    steps:
-      - name: Resolve version
-        id: version
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            version_raw="${{ inputs.version }}"
-          else
-            version_raw="${{ github.event.release.tag_name }}"
-          fi
-          if [[ -z "${version_raw}" ]]; then
-            echo "version is required" >&2
-            exit 1
-          fi
-
-          version_safe="$(printf '%s' "${version_raw}" | sed -E 's/[^A-Za-z0-9._-]+/-/g')"
-          if [[ -z "${version_safe}" ]]; then
-            echo "sanitized version is empty" >&2
-            exit 1
-          fi
-
-          echo "version_raw=${version_raw}" >> "${GITHUB_OUTPUT}"
-          echo "version_safe=${version_safe}" >> "${GITHUB_OUTPUT}"
-
-  build-web:
-    runs-on: ubuntu-latest
-    needs: resolve-version
-    env:
-      VERSION_RAW: ${{ needs.resolve-version.outputs.version_raw }}
+      version: ${{ steps.prepare.outputs.version }}
+      version_safe: ${{ steps.prepare.outputs.version_safe }}
+      target_sha: ${{ steps.prepare.outputs.target_sha }}
+      prerelease: ${{ steps.prepare.outputs.prerelease }}
+      publish_latest: ${{ steps.prepare.outputs.publish_latest }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
+          fetch-depth: 0
+
+      - name: Prepare release context
+        id: prepare
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_LATEST: ${{ inputs.latest }}
+          GH_TOKEN: ${{ github.token }}
+        run: bash ./.github/scripts/release/prepare-release.sh
+
+      - name: Check release defaults
+        env:
+          VERSION: ${{ steps.prepare.outputs.version }}
+        run: bash ./.github/scripts/release/check-release-defaults.sh
+
+      - name: Release summary
+        run: |
+          {
+            echo "## Onlyboxes Release"
+            echo
+            echo "- Version: \`${{ steps.prepare.outputs.version }}\`"
+            echo "- Workflow ref: \`${{ github.ref_name }}\`"
+            echo "- Target SHA: \`${{ steps.prepare.outputs.target_sha }}\`"
+            echo "- Prerelease: \`${{ steps.prepare.outputs.prerelease }}\`"
+            echo "- Latest: \`${{ steps.prepare.outputs.publish_latest }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build-web:
+    runs-on: ubuntu-latest
+    needs: prepare-release
+    env:
+      VERSION_RAW: ${{ needs.prepare-release.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.target_sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "24"
+          node-version: ${{ env.NODE_VERSION }}
 
       - name: Enable Corepack
         run: corepack enable
@@ -80,11 +97,44 @@ jobs:
           path: web/dist
           if-no-files-found: error
 
+  build-website:
+    runs-on: ubuntu-latest
+    needs: prepare-release
+    defaults:
+      run:
+        working-directory: ./website
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.target_sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Build website
+        run: |
+          set -euo pipefail
+          yarn install --immutable
+          yarn build
+
+      - name: Upload website dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: website-dist
+          path: website/dist
+          if-no-files-found: error
+
   build-console:
     name: console (${{ matrix.os_name }}/${{ matrix.goarch }})
     runs-on: ubuntu-24.04
     needs:
-      - resolve-version
+      - prepare-release
       - build-web
     defaults:
       run:
@@ -110,16 +160,16 @@ jobs:
             goos: darwin
             goarch: arm64
     env:
-      VERSION_RAW: ${{ needs.resolve-version.outputs.version_raw }}
-      VERSION_SAFE: ${{ needs.resolve-version.outputs.version_safe }}
+      VERSION_RAW: ${{ needs.prepare-release.outputs.version }}
+      VERSION_SAFE: ${{ needs.prepare-release.outputs.version_safe }}
       GOOS: ${{ matrix.goos }}
       GOARCH: ${{ matrix.goarch }}
-      CONSOLE_BIN: onlyboxes-console_${{ needs.resolve-version.outputs.version_safe }}_${{ matrix.os_name }}_${{ matrix.goarch }}
+      CONSOLE_BIN: onlyboxes-console_${{ needs.prepare-release.outputs.version_safe }}_${{ matrix.os_name }}_${{ matrix.goarch }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
+          ref: ${{ needs.prepare-release.outputs.target_sha }}
 
       - name: Download web dist artifact
         uses: actions/download-artifact@v4
@@ -169,29 +219,17 @@ jobs:
               ;;
           esac
 
-      - name: Upload console workflow artifact
+      - name: Upload console binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: onlyboxes-console-${{ matrix.os_name }}-${{ matrix.arch }}-${{ env.VERSION_SAFE }}.zip
+          name: onlyboxes-console-${{ matrix.os_name }}-${{ matrix.arch }}-${{ env.VERSION_SAFE }}
           path: build/${{ env.CONSOLE_BIN }}
           if-no-files-found: error
-
-      - name: Upload console release asset
-        if: github.event_name == 'release'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          (
-            cd build
-            zip -q -j "${CONSOLE_BIN}.zip" "${CONSOLE_BIN}"
-          )
-          gh release upload "${VERSION_RAW}" "build/${CONSOLE_BIN}.zip" --clobber
 
   build-worker-docker:
     name: worker-docker (${{ matrix.os_name }}/${{ matrix.goarch }})
     runs-on: ubuntu-24.04
-    needs: resolve-version
+    needs: prepare-release
     defaults:
       run:
         shell: bash
@@ -216,16 +254,16 @@ jobs:
             goos: darwin
             goarch: arm64
     env:
-      VERSION_RAW: ${{ needs.resolve-version.outputs.version_raw }}
-      VERSION_SAFE: ${{ needs.resolve-version.outputs.version_safe }}
+      VERSION_RAW: ${{ needs.prepare-release.outputs.version }}
+      VERSION_SAFE: ${{ needs.prepare-release.outputs.version_safe }}
       GOOS: ${{ matrix.goos }}
       GOARCH: ${{ matrix.goarch }}
-      WORKER_BIN: onlyboxes-worker-docker_${{ needs.resolve-version.outputs.version_safe }}_${{ matrix.os_name }}_${{ matrix.goarch }}
+      WORKER_BIN: onlyboxes-worker-docker_${{ needs.prepare-release.outputs.version_safe }}_${{ matrix.os_name }}_${{ matrix.goarch }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
+          ref: ${{ needs.prepare-release.outputs.target_sha }}
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -269,29 +307,17 @@ jobs:
               ;;
           esac
 
-      - name: Upload worker workflow artifact
+      - name: Upload worker binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: onlyboxes-worker-docker-${{ matrix.os_name }}-${{ matrix.arch }}-${{ env.VERSION_SAFE }}.zip
+          name: onlyboxes-worker-docker-${{ matrix.os_name }}-${{ matrix.arch }}-${{ env.VERSION_SAFE }}
           path: build/${{ env.WORKER_BIN }}
           if-no-files-found: error
-
-      - name: Upload worker release asset
-        if: github.event_name == 'release'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          (
-            cd build
-            zip -q -j "${WORKER_BIN}.zip" "${WORKER_BIN}"
-          )
-          gh release upload "${VERSION_RAW}" "build/${WORKER_BIN}.zip" --clobber
 
   build-worker-sys:
     name: worker-sys (${{ matrix.os_name }}/${{ matrix.goarch }})
     runs-on: ubuntu-24.04
-    needs: resolve-version
+    needs: prepare-release
     defaults:
       run:
         shell: bash
@@ -330,16 +356,16 @@ jobs:
             goarch: arm64
             ext: ".exe"
     env:
-      VERSION_RAW: ${{ needs.resolve-version.outputs.version_raw }}
-      VERSION_SAFE: ${{ needs.resolve-version.outputs.version_safe }}
+      VERSION_RAW: ${{ needs.prepare-release.outputs.version }}
+      VERSION_SAFE: ${{ needs.prepare-release.outputs.version_safe }}
       GOOS: ${{ matrix.goos }}
       GOARCH: ${{ matrix.goarch }}
-      WORKER_BIN: onlyboxes-worker-sys_${{ needs.resolve-version.outputs.version_safe }}_${{ matrix.os_name }}_${{ matrix.goarch }}${{ matrix.ext }}
+      WORKER_BIN: onlyboxes-worker-sys_${{ needs.prepare-release.outputs.version_safe }}_${{ matrix.os_name }}_${{ matrix.goarch }}${{ matrix.ext }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
+          ref: ${{ needs.prepare-release.outputs.target_sha }}
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -389,29 +415,17 @@ jobs:
               ;;
           esac
 
-      - name: Upload worker workflow artifact
+      - name: Upload worker binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: onlyboxes-worker-sys-${{ matrix.os_name }}-${{ matrix.arch }}-${{ env.VERSION_SAFE }}.zip
+          name: onlyboxes-worker-sys-${{ matrix.os_name }}-${{ matrix.arch }}-${{ env.VERSION_SAFE }}
           path: build/${{ env.WORKER_BIN }}
           if-no-files-found: error
-
-      - name: Upload worker release asset
-        if: github.event_name == 'release'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          (
-            cd build
-            zip -q -j "${WORKER_BIN}.zip" "${WORKER_BIN}"
-          )
-          gh release upload "${VERSION_RAW}" "build/${WORKER_BIN}.zip" --clobber
 
   build-worker-boxlite:
     name: worker-boxlite (${{ matrix.os_name }}/${{ matrix.arch_name }})
     runs-on: ${{ matrix.os }}
-    needs: resolve-version
+    needs: prepare-release
     defaults:
       run:
         shell: bash
@@ -435,14 +449,14 @@ jobs:
             arch_name: arm64
             target: aarch64-apple-darwin
     env:
-      VERSION_RAW: ${{ needs.resolve-version.outputs.version_raw }}
-      VERSION_SAFE: ${{ needs.resolve-version.outputs.version_safe }}
-      WORKER_BIN: onlyboxes-worker-boxlite_${{ needs.resolve-version.outputs.version_safe }}_${{ matrix.os_name }}_${{ matrix.arch_name }}
+      VERSION_RAW: ${{ needs.prepare-release.outputs.version }}
+      VERSION_SAFE: ${{ needs.prepare-release.outputs.version_safe }}
+      WORKER_BIN: onlyboxes-worker-boxlite_${{ needs.prepare-release.outputs.version_safe }}_${{ matrix.os_name }}_${{ matrix.arch_name }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
+          ref: ${{ needs.prepare-release.outputs.target_sha }}
 
       - name: Install protoc
         uses: arduino/setup-protoc@v3
@@ -495,48 +509,136 @@ jobs:
               ;;
           esac
 
-      - name: Upload worker-boxlite workflow artifact
+      - name: Upload worker-boxlite binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: onlyboxes-worker-boxlite-${{ matrix.os_name }}-${{ matrix.arch }}-${{ env.VERSION_SAFE }}.zip
+          name: onlyboxes-worker-boxlite-${{ matrix.os_name }}-${{ matrix.arch }}-${{ env.VERSION_SAFE }}
           path: build/${{ env.WORKER_BIN }}
           if-no-files-found: error
 
-      - name: Upload worker-boxlite release asset
-        if: github.event_name == 'release'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          (
-            cd build
-            zip -q -j "${WORKER_BIN}.zip" "${WORKER_BIN}"
-          )
-          gh release upload "${VERSION_RAW}" "build/${WORKER_BIN}.zip" --clobber
-
-  push-console-image:
+  create-draft-release:
     runs-on: ubuntu-latest
     needs:
-      - resolve-version
+      - prepare-release
       - build-console
-    env:
-      VERSION_SAFE: ${{ needs.resolve-version.outputs.version_safe }}
+      - build-worker-docker
+      - build-worker-sys
+      - build-worker-boxlite
+      - build-website
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
+          fetch-depth: 0
+          ref: ${{ needs.prepare-release.outputs.target_sha }}
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare-release.outputs.version }}
+          TARGET_SHA: ${{ needs.prepare-release.outputs.target_sha }}
+          PRERELEASE: ${{ needs.prepare-release.outputs.prerelease }}
+        run: bash ./.github/scripts/release/create-draft-release.sh
+
+  upload-release-assets:
+    runs-on: ubuntu-latest
+    needs:
+      - prepare-release
+      - create-draft-release
+      - build-console
+      - build-worker-docker
+      - build-worker-sys
+      - build-worker-boxlite
+    env:
+      VERSION_RAW: ${{ needs.prepare-release.outputs.version }}
+      VERSION_SAFE: ${{ needs.prepare-release.outputs.version_safe }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.target_sha }}
+
+      - name: Download binary artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: onlyboxes-*-${{ env.VERSION_SAFE }}
+          path: dist/artifacts
+
+      - name: Package release assets
+        run: |
+          set -euo pipefail
+          mkdir -p dist/release-assets
+          while IFS= read -r -d '' file; do
+            chmod 755 "$file"
+            asset="dist/release-assets/$(basename "$file").zip"
+            zip -q -j "$asset" "$file"
+          done < <(find dist/artifacts -type f -print0 | sort -z)
+          ls -al dist/release-assets
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${VERSION_RAW}" dist/release-assets/*.zip --clobber
+
+  deploy-website-cloudflare:
+    runs-on: ubuntu-latest
+    needs:
+      - prepare-release
+      - create-draft-release
+      - build-website
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.target_sha }}
+
+      - name: Download website dist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: website-dist
+          path: website/dist
+
+      - name: Upload website version without production traffic
+        if: needs.prepare-release.outputs.publish_latest != 'true'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: versions upload --tag ${{ needs.prepare-release.outputs.version }} --message "Release ${{ needs.prepare-release.outputs.version }}"
+
+      - name: Deploy website to production
+        if: needs.prepare-release.outputs.publish_latest == 'true'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy
+
+  push-console-image:
+    runs-on: ubuntu-latest
+    needs:
+      - prepare-release
+      - build-console
+      - create-draft-release
+    env:
+      VERSION_SAFE: ${{ needs.prepare-release.outputs.version_safe }}
+      PUBLISH_LATEST: ${{ needs.prepare-release.outputs.publish_latest }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.target_sha }}
 
       - name: Download console linux x64 binary artifact
         uses: actions/download-artifact@v4
         with:
-          name: onlyboxes-console-linux-x64-${{ env.VERSION_SAFE }}.zip
+          name: onlyboxes-console-linux-x64-${{ env.VERSION_SAFE }}
           path: build/console-linux-x64
 
       - name: Download console linux arm64 binary artifact
         uses: actions/download-artifact@v4
         with:
-          name: onlyboxes-console-linux-arm64-${{ env.VERSION_SAFE }}.zip
+          name: onlyboxes-console-linux-arm64-${{ env.VERSION_SAFE }}
           path: build/console-linux-arm64
 
       - name: Setup QEMU
@@ -553,14 +655,12 @@ jobs:
 
       - name: Resolve Docker tags
         id: docker_tags
-        env:
-          VERSION_SAFE: ${{ needs.resolve-version.outputs.version_safe }}
         run: |
           set -euo pipefail
           image_repo="coolfan1024/onlyboxes"
 
           console_tags="${image_repo}:${VERSION_SAFE}"
-          if [[ "${GITHUB_EVENT_NAME}" == "release" && "${{ github.event.release.prerelease }}" != "true" ]]; then
+          if [[ "${PUBLISH_LATEST}" == "true" ]]; then
             console_tags+=$'\n'"${image_repo}:latest"
           fi
 
@@ -586,3 +686,23 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.docker_tags.outputs.console_tags }}
+
+  publish-release:
+    runs-on: ubuntu-latest
+    needs:
+      - prepare-release
+      - upload-release-assets
+      - deploy-website-cloudflare
+      - push-console-image
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.target_sha }}
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare-release.outputs.version }}
+          PUBLISH_LATEST: ${{ needs.prepare-release.outputs.publish_latest }}
+        run: bash ./.github/scripts/release/publish-release.sh
