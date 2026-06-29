@@ -54,6 +54,7 @@ describe('docs routing', () => {
       'console-api',
       'mcp-tools',
       'security-faq',
+      'lobehub',
     ])
   })
 
