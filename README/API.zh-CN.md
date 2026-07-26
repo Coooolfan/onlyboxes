@@ -567,7 +567,10 @@ Worker 类型：
 - `400` 请求参数非法或 `invalid_payload`
 - `404` `session_not_found`
 - `409` `session_busy` 或任务被取消
+  - `session_busy` 表示请求超出了单 session 的并发上限。worker 默认每个 session 只允许一条命令，需由 worker 调大 `WORKER_TERMINAL_SESSION_MAX_INFLIGHT` 才能在同一 `session_id` 上并发执行。
+  - `terminalExec` 与 `terminalResource` 共用该单 session 上限。
 - `429` 无可用并发容量
+  - 与 `session_busy` 是不同层级的配额：`no_capacity` 表示 worker 级的该能力配额耗尽，而非单个 session 的上限。
 - `503` 无可用 worker
 - `504` 超时
 - `502` 其他执行失败
@@ -611,6 +614,7 @@ Worker 类型：
 
 - `400` 请求参数非法或 `invalid_payload`
 - `409` worker `session_busy` 或任务被取消
+  - `session_busy` 表示请求超出 worker 的单能力并发上限，默认为 `1`（`WORKER_COMPUTER_USE_MAX_INFLIGHT`）。
 - `429` 无可用并发容量（`no_capacity`）
 - `503` 当前账号无在线 `worker-sys`（`no_worker`）
 - `504` 超时

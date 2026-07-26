@@ -565,7 +565,10 @@ Errors:
 - `400` invalid body/params or `invalid_payload`
 - `404` `session_not_found`
 - `409` `session_busy` or canceled
+  - `session_busy` means the request exceeded the per-session concurrency limit. Workers default to one command per session; the worker must raise `WORKER_TERMINAL_SESSION_MAX_INFLIGHT` to allow concurrent commands on one `session_id`.
+  - `terminalExec` and `terminalResource` share that per-session limit.
 - `429` no worker capacity
+  - a different limit from `session_busy`: `no_capacity` means the worker-level quota for the capability is exhausted, not a single session's.
 - `503` no compatible worker
 - `504` timeout
 - `502` unexpected execution failure
@@ -609,6 +612,7 @@ Errors:
 
 - `400` invalid body/params or `invalid_payload`
 - `409` worker `session_busy` or task canceled
+  - `session_busy` means the request exceeded the worker's per-capability concurrency limit, which defaults to `1` (`WORKER_COMPUTER_USE_MAX_INFLIGHT`).
 - `429` no worker capacity (`no_capacity`)
 - `503` no caller-owned online `worker-sys` (`no_worker`)
 - `504` timeout
