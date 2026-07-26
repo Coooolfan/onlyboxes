@@ -144,6 +144,8 @@ func (s *RegistryService) resolveHelloByWorkerType(hello *registryv1.ConnectHell
 
 	hasComputerUse := false
 	hasReadImage := false
+	computerUseMaxInflight := 0
+	readImageMaxInflight := 0
 	for _, capability := range hello.GetCapabilities() {
 		if capability == nil {
 			continue
@@ -151,8 +153,10 @@ func (s *RegistryService) resolveHelloByWorkerType(hello *registryv1.ConnectHell
 		switch normalizeCapability(capability.GetName()) {
 		case computerUseCapabilityName:
 			hasComputerUse = true
+			computerUseMaxInflight = int(capability.GetMaxInflight())
 		case readImageCapabilityName:
 			hasReadImage = true
+			readImageMaxInflight = int(capability.GetMaxInflight())
 		default:
 			return nil, status.Error(codes.PermissionDenied, "worker-sys supports only computerUse and readImage capabilities")
 		}
@@ -172,14 +176,24 @@ func (s *RegistryService) resolveHelloByWorkerType(hello *registryv1.ConnectHell
 		Capabilities: []*registryv1.CapabilityDeclaration{
 			{
 				Name:        computerUseCapabilityDeclared,
-				MaxInflight: 1,
+				MaxInflight: int32(sysCapabilityMaxInflight(computerUseMaxInflight)),
 			},
 			{
 				Name:        readImageCapabilityDeclared,
-				MaxInflight: 1,
+				MaxInflight: int32(sysCapabilityMaxInflight(readImageMaxInflight)),
 			},
 		},
 	}, nil
+}
+
+// sysCapabilityMaxInflight keeps the worker's declared concurrency. worker-sys
+// pins the capability set, but the per-capability limit is the worker's own
+// configuration and must not be overridden here.
+func sysCapabilityMaxInflight(declared int) int {
+	if declared <= 0 {
+		return 1
+	}
+	return declared
 }
 
 func cloneLabels(labels map[string]string) map[string]string {
