@@ -1,0 +1,59 @@
+# worker-boxlite configuration file.
+# Place this file next to the worker binary as `config.toml`,
+# or point `WORKER_CONFIG_FILE` at it.
+# Environment variables always win over the values declared here.
+
+# Identity (required, returned by console when creating the worker).
+id = ""
+secret = ""
+
+# Console connection.
+console_grpc_target = "127.0.0.1:50051"
+console_insecure = false
+
+# Registration metadata.
+node_name = ""
+# version = "v0.7.1"
+
+# Heartbeat and call timeouts.
+heartbeat_interval_sec = 5
+heartbeat_jitter_pct = 20
+# call_timeout_sec defaults to ceil(2.5 * heartbeat_interval_sec).
+# call_timeout_sec = 13
+
+# boxlite runtime home, empty means boxlite default.
+boxlite_home = ""
+
+# pythonExec capability.
+python_exec_boxlite_image = "ghcr.io/astral-sh/uv:python3.12-bookworm-slim"
+python_exec_memory_mib = 256
+python_exec_cpus = 1
+python_exec_max_processes = 128
+
+# terminalExec capability.
+terminal_exec_boxlite_image = "coolfan1024/onlyboxes-default-worker:0.0.5"
+terminal_exec_memory_mib = 256
+terminal_exec_cpus = 1
+terminal_exec_max_processes = 128
+terminal_lease_min_sec = 60
+terminal_lease_max_sec = 1800
+terminal_lease_default_sec = 60
+terminal_output_limit_bytes = 1048576
+# 0 means no export size limit.
+terminal_export_max_bytes = 0
+
+# Capability concurrency.
+echo_max_inflight = 4
+python_exec_max_inflight = 4
+terminal_exec_max_inflight = 4
+terminal_resource_max_inflight = 4
+
+# Logging.
+log_level = "info"
+log_format = "json"
+log_add_source = false
+
+# Worker labels, equivalent to WORKER_LABELS="region=cn,owner=team-a".
+[labels]
+# region = "cn"
+# owner = "team-a"

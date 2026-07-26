@@ -12,6 +12,10 @@ Security warning (high risk):
 - run only inside trusted private networks or encrypted tunnels; never expose this channel directly on public internet.
 - full mitigation requires TLS/mTLS support (not implemented in this release).
 
+Configuration sources:
+- environment variables and `config.toml` (see `README/config-file.md`).
+- priority is environment variable > `config.toml` > default.
+
 Required identity:
 - `WORKER_ID`
 - `WORKER_SECRET`

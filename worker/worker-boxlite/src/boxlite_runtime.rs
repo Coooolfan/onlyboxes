@@ -544,6 +544,7 @@ mod tests {
     #[test]
     fn terminal_exec_box_options_override_entrypoint_to_idle_loop() {
         let cfg = Config {
+            config_file: None,
             console_grpc_target: String::new(),
             console_tls: false,
             worker_id: String::new(),
@@ -592,6 +593,7 @@ mod tests {
     #[test]
     fn python_exec_box_options_override_entrypoint_to_sleep_infinity() {
         let cfg = Config {
+            config_file: None,
             console_grpc_target: String::new(),
             console_tls: false,
             worker_id: String::new(),

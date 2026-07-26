@@ -664,6 +664,7 @@ mod tests {
 
     fn test_config() -> Config {
         Config {
+            config_file: None,
             console_grpc_target: "127.0.0.1:50051".to_owned(),
             console_tls: false,
             worker_id: "worker-12345678".to_owned(),

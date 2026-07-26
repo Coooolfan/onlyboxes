@@ -50,3 +50,6 @@ worker-credentials.json
 !.dev.vars.example
 .env*
 !.env.example
+
+# worker config files (may contain worker secrets)
+worker/*/config.toml

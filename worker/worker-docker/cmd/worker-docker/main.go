@@ -14,6 +14,9 @@ import (
 func main() {
 	cfg := config.Load()
 	logging.Configure(cfg.LogLevel, cfg.LogFormat, cfg.LogAddSource)
+	if cfg.ConfigFile != "" {
+		logging.Infof("config file loaded: %s", cfg.ConfigFile)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
