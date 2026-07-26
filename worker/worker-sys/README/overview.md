@@ -9,6 +9,7 @@ Security warning (high risk):
   - Unix-like (Linux, macOS): `/bin/sh -lc <command>`
   - Windows: `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command <command>`, with `[Console]::OutputEncoding` / `$OutputEncoding` forced to UTF-8 so stdout/stderr stay byte-compatible with the `WORKER_COMPUTER_USE_OUTPUT_LIMIT_BYTES` truncation logic.
 - this worker is **not container-sandboxed**; commands can read/modify host files and processes under the worker OS account.
+- there are no resource limits: process isolation is limited to `setpgid` for signal propagation, with no cgroup, memory, CPU, or process-count constraints. Raising `WORKER_COMPUTER_USE_MAX_INFLIGHT` or `WORKER_READ_IMAGE_MAX_INFLIGHT` above `1` therefore lets concurrent commands exhaust the entire host, including the worker process itself. Only do so on hosts that impose their own cgroup or ulimit constraints.
 - run only on dedicated hosts with strict OS-level isolation and least-privilege service accounts.
 - do not deploy on shared machines.
 - console gRPC has no built-in TLS/mTLS; plaintext transport can expose `worker_secret`.
@@ -24,8 +25,10 @@ These values are returned by `console` when calling `POST /api/v1/workers`.
 Worker type and capability contract:
 - worker type is `worker-sys`.
 - hello declares two capabilities: `computerUse` and `readImage`.
-- `computerUse.max_inflight` and `readImage.max_inflight` are fixed to `1`.
+- `computerUse.max_inflight` and `readImage.max_inflight` default to `1` and are configured by `WORKER_COMPUTER_USE_MAX_INFLIGHT` and `WORKER_READ_IMAGE_MAX_INFLIGHT`. Console keeps the declared values; it only pins the capability set.
+- the two capabilities have independent concurrency slots, so a `readImage` call does not block a `computerUse` call.
 - console enforces that `worker-sys` cannot register any other capability.
+- commands beyond a capability's limit are answered with `session_busy`.
 
 `computerUse` behavior:
 - expected payload: `{"command":"..."}`
@@ -97,6 +100,8 @@ Config env:
 - `WORKER_COMPUTER_USE_COMMAND_WHITELIST_MODE`
 - `WORKER_COMPUTER_USE_COMMAND_WHITELIST`
 - `WORKER_READ_IMAGE_ALLOWED_PATHS`
+- `WORKER_COMPUTER_USE_MAX_INFLIGHT`
+- `WORKER_READ_IMAGE_MAX_INFLIGHT`
 
 Startup examples:
 

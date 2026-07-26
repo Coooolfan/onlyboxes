@@ -14,7 +14,8 @@ Security warning (high risk):
 
 Build and runtime prerequisites:
 - supported host matrix follows current Boxlite support: `linux/amd64`, `linux/arm64`, `darwin/arm64`.
-- the crate depends on crates.io `boxlite 0.7.5` with `gvproxy` enabled.
+- the crate depends on crates.io `boxlite 0.9.7` with `gvproxy` enabled.
+- `protoc >= 3.12` must be on `PATH`: the `boxlite-shared` build script invokes `protoc` directly and does not honour the `PROTOC` environment variable, so the vendored `protoc-bin-vendored` used for this crate's own protobuf codegen does not satisfy it.
 - a local clone of Boxlite is optional and only useful for upstream source reading or local debugging; it is not required to build `worker-boxlite`.
 - terminal images must contain `/bin/sh` and `python`.
 
@@ -49,11 +50,17 @@ Capability behavior:
   - same `session_id` reuses the same box and keeps filesystem state.
   - missing `session_id` creates a new box/session automatically.
   - unknown `session_id` returns `session_not_found`, unless `create_if_missing=true`.
-  - concurrent execution on the same `session_id` returns `session_busy`.
+  - concurrent commands on the same `session_id` are capped by `WORKER_TERMINAL_SESSION_MAX_INFLIGHT` (default `1`); exceeding the cap returns `session_busy`.
   - lease extension is monotonic: shorter `lease_ttl_sec` does not reduce current expiry.
+- `terminalExec` session concurrency:
+  - `WORKER_TERMINAL_SESSION_MAX_INFLIGHT` counts `terminalExec` and `terminalResource` commands together, so both can run at once in one session once it is above `1`.
+  - concurrent commands share the box and therefore its filesystem, but each runs as an independent `sh -lc` process with its own boxlite `execution_id` and does not share shell state (cwd, environment, shell variables).
+  - concurrent commands share one microVM's resource budget (`WORKER_TERMINAL_EXEC_MEMORY_MIB`, `WORKER_TERMINAL_EXEC_CPUS`, `WORKER_TERMINAL_EXEC_MAX_PROCESSES`); raise those alongside the concurrency cap.
+  - the worker-level caps (`WORKER_TERMINAL_EXEC_MAX_INFLIGHT`, `WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT`) bound the per-session cap. Raise them too, or a single session can consume the worker's entire quota.
+  - a session whose box is still being created makes concurrent callers wait for it; if creation fails they all receive the same error.
 - `terminalExec` cleanup behavior:
-  - command timeout/cancel destroys the session box.
-  - idle sessions are reaped after lease expiry by an internal janitor loop.
+  - command timeout/cancel marks the session for destruction and stops it accepting new commands; the box is removed once in-flight commands drain, so one command's timeout does not kill its siblings.
+  - idle sessions are reaped after lease expiry by an internal janitor loop; a session with in-flight commands is never reaped.
   - worker shutdown force-removes all managed terminal boxes.
   - `SIGINT`/`SIGTERM` performs best-effort cleanup; `SIGKILL`/process crash does not guarantee cleanup.
 - `terminalExec` result uses JSON payload:
@@ -69,7 +76,7 @@ Capability behavior:
   - `read` action rejects files larger than `WORKER_TERMINAL_OUTPUT_LIMIT_BYTES` with `file_too_large`.
   - session concurrency follows terminal session rules:
     - unknown `session_id` returns `session_not_found`.
-    - concurrent operation on same `session_id` returns `session_busy`.
+    - commands beyond `WORKER_TERMINAL_SESSION_MAX_INFLIGHT` on the same `session_id` return `session_busy`; the cap is shared with `terminalExec`.
 - `terminalResource` result uses JSON payload:
   - validate: `{"session_id":"...","file_path":"...","mime_type":"...","size_bytes":123}`
   - read: `{"session_id":"...","file_path":"...","mime_type":"...","size_bytes":123,"blob":"...base64..."}`
@@ -120,6 +127,7 @@ Main environment variables:
 - `WORKER_PYTHON_EXEC_MAX_INFLIGHT`
 - `WORKER_TERMINAL_EXEC_MAX_INFLIGHT`
 - `WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT`
+- `WORKER_TERMINAL_SESSION_MAX_INFLIGHT`
 - `WORKER_LOG_LEVEL`
 - `WORKER_LOG_FORMAT`
 - `WORKER_LOG_ADD_SOURCE`
@@ -139,6 +147,7 @@ Capability concurrency:
 - `WORKER_PYTHON_EXEC_MAX_INFLIGHT`: maximum concurrent pythonExec commands (default `4`)
 - `WORKER_TERMINAL_EXEC_MAX_INFLIGHT`: maximum concurrent terminalExec commands (default `4`)
 - `WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT`: maximum concurrent terminalResource commands (default `4`)
+- `WORKER_TERMINAL_SESSION_MAX_INFLIGHT`: maximum concurrent commands per terminal session, counting `terminalExec` and `terminalResource` together (default `1`)
 - invalid values (non-positive integers) fall back to the default.
 
 Recommended setting:
@@ -153,3 +162,8 @@ Manual smoke checklist:
 - send `terminalExec` without `session_id`, write a file, then send another `terminalExec` with the returned `session_id` and verify the file is still present
 - send `terminalResource` validate/read against that file and verify MIME, size, and base64 blob
 - send `terminalResource` against a missing file, a directory, and an oversized file and verify `file_not_found`, `path_is_directory`, and `file_too_large`
+
+Backend smoke test:
+- `cargo run --example boxlite_smoke` exercises the boxlite API directly, without `console` or gRPC: runtime init, box create/start, exec, exit codes and stderr, filesystem state across executions, concurrent execution on a single box, `kill()` isolation between executions, `copy_out`, removal, and shutdown.
+- environment overrides: `BOXLITE_SMOKE_IMAGE` (default `alpine:latest`), `BOXLITE_SMOKE_HOME` (default a fresh temp dir), `BOXLITE_SMOKE_CONCURRENCY` (default `4`), `BOXLITE_SMOKE_KEEP_HOME`.
+- point `BOXLITE_SMOKE_HOME` at an existing boxlite home to exercise on-disk database migrations after a dependency upgrade.
