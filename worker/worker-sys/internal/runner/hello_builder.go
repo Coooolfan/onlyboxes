@@ -28,13 +28,20 @@ func buildHello(cfg config.Config) (*registryv1.ConnectHello, error) {
 		Capabilities: []*registryv1.CapabilityDeclaration{
 			{
 				Name:        computerUseCapabilityDeclared,
-				MaxInflight: computerUseCapabilityMaxInflight,
+				MaxInflight: int32(maxInflightOrDefault(cfg.ComputerUseMaxInflight)),
 			},
 			{
 				Name:        readImageCapabilityDeclared,
-				MaxInflight: readImageCapabilityMaxInflight,
+				MaxInflight: int32(maxInflightOrDefault(cfg.ReadImageMaxInflight)),
 			},
 		},
 	}
 	return hello, nil
+}
+
+func maxInflightOrDefault(value int) int {
+	if value <= 0 {
+		return 1
+	}
+	return value
 }
