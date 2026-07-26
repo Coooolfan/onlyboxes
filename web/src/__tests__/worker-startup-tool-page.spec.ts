@@ -119,6 +119,51 @@ describe('Worker Startup Tool Page', () => {
     wrapper.unmount()
   })
 
+  it('renders and downloads config.toml from the preview panel', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/v1/console/session') {
+        return jsonResponse(memberSessionPayload)
+      }
+      throw new Error(`unexpected url: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch)
+
+    const wrapper = await mountRoute('/tools/worker-startup')
+
+    await wrapper.get('[data-testid="preview-mode-config-file-btn"]').trigger('click')
+    await settleUI()
+
+    const previewText = wrapper.get('[data-testid="config-file-preview"]').text()
+    expect(previewText).toContain('console_grpc_target = "127.0.0.1:50051"')
+    expect(previewText).toContain('heartbeat_interval_sec = 5')
+    expect(wrapper.get('[data-testid="download-config-file"]').attributes('disabled')).toBeDefined()
+
+    await wrapper.get('[data-testid="worker-id-input"]').setValue('node-docker-1')
+    await wrapper.get('[data-testid="worker-secret-input"]').setValue('secret-docker-1')
+    await settleUI()
+
+    expect(
+      wrapper.get('[data-testid="download-config-file"]').attributes('disabled'),
+    ).toBeUndefined()
+
+    const createObjectURL = vi.fn(() => 'blob:config-toml')
+    const revokeObjectURL = vi.fn()
+    vi.stubGlobal('URL', { ...URL, createObjectURL, revokeObjectURL })
+    const clickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => undefined)
+
+    await wrapper.get('[data-testid="download-config-file"]').trigger('click')
+
+    expect(createObjectURL).toHaveBeenCalledTimes(1)
+    expect(clickSpy).toHaveBeenCalledTimes(1)
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:config-toml')
+
+    clickSpy.mockRestore()
+    wrapper.unmount()
+  })
+
   it('shows prefilled credential hints and blocks route leave when opened from goToStartupTool', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)

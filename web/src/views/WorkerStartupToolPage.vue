@@ -11,6 +11,7 @@ import WorkerSysConfigForm from '@/components/worker-tool/WorkerSysConfigForm.vu
 import { consumePrefill } from '@/composables/useWorkerStartupPrefill'
 import { useWorkerStartupTool } from '@/composables/useWorkerStartupTool'
 import { writeTextToClipboard } from '@/utils/clipboard'
+import { downloadTextFile } from '@/utils/download'
 
 const prefill = consumePrefill()
 const openedFromGoToStartupTool = prefill !== null
@@ -23,11 +24,15 @@ const {
   workerBoxliteConfig,
   workerSysConfig,
   commandText,
+  configTomlText,
   errorMessages,
   warningMessages,
   canCopyCommand,
+  canDownloadConfigFile,
   selectTemporaryProbePreset,
 } = useWorkerStartupTool(prefill ?? undefined)
+
+const previewMode = ref<'command' | 'config-file'>('command')
 
 const copyingCommand = ref(false)
 const copiedCommand = ref(false)
@@ -76,6 +81,8 @@ const copyButtonText = computed(() => {
 })
 
 const copyDisabled = computed(() => !canCopyCommand.value || copyingCommand.value)
+
+const downloadDisabled = computed(() => !canDownloadConfigFile.value)
 
 const whitelistModeDescription = computed(() => {
   if (workerSysConfig.computerUseCommandWhitelistMode === 'prefix') {
@@ -255,6 +262,13 @@ async function copyStartupCommand(): Promise<void> {
   }
 }
 
+function downloadConfigFile(): void {
+  if (!canDownloadConfigFile.value) {
+    return
+  }
+  downloadTextFile('config.toml', configTomlText.value, 'application/toml')
+}
+
 function handleBeforeUnload(event: BeforeUnloadEvent): void {
   if (!openedFromGoToStartupTool) {
     return
@@ -350,12 +364,16 @@ onBeforeUnmount(() => {
       </div>
 
       <WorkerCommandPreviewPanel
+        v-model:preview-mode="previewMode"
         :command-text="commandText"
+        :config-toml-text="configTomlText"
         :issue-items="issueItems"
         :has-errors="hasErrors"
         :copy-button-text="copyButtonText"
         :copy-disabled="copyDisabled"
+        :download-disabled="downloadDisabled"
         @copy="copyStartupCommand"
+        @download="downloadConfigFile"
       />
     </section>
   </main>

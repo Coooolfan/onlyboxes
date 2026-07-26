@@ -187,6 +187,94 @@ function formatMultilineCommand(envEntries: Array<[string, string]>, binaryPath:
   return lines.join('\n')
 }
 
+const numericEnvKeySuffixes = [
+  '_SEC',
+  '_PCT',
+  '_BYTES',
+  '_MIB',
+  '_CPUS',
+  '_MAX_PROCESSES',
+  '_MAX_INFLIGHT',
+]
+
+function tomlKey(envKey: string): string {
+  return envKey.replace(/^WORKER_/, '').toLowerCase()
+}
+
+function tomlString(value: string): string {
+  const escaped = value
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/\t/g, '\\t')
+  return `"${escaped}"`
+}
+
+function tomlValue(envKey: string, value: string): string {
+  if (value === 'true' || value === 'false') {
+    return value
+  }
+  if (
+    numericEnvKeySuffixes.some((suffix) => envKey.endsWith(suffix)) &&
+    /^\d+(\.\d+)?$/.test(value)
+  ) {
+    return value
+  }
+  if (value.startsWith('[')) {
+    try {
+      const parsed: unknown = JSON.parse(value)
+      if (Array.isArray(parsed)) {
+        return `[${parsed.map((item) => tomlString(String(item))).join(', ')}]`
+      }
+    } catch {
+      // fall through to the string form
+    }
+  }
+  return tomlString(value)
+}
+
+// formatConfigToml renders the same values as the shell command into the
+// `config.toml` form read by the worker: the env key without the WORKER_
+// prefix, lowercased, and WORKER_LABELS expanded into a [labels] table.
+function formatConfigToml(envEntries: Array<[string, string]>): string {
+  const lines: string[] = []
+  let labelsCSV = ''
+
+  for (const [key, value] of envEntries) {
+    if (key === 'WORKER_LABELS') {
+      labelsCSV = value
+      continue
+    }
+    lines.push(`${tomlKey(key)} = ${tomlValue(key, value)}`)
+  }
+
+  if (labelsCSV) {
+    lines.push('')
+    lines.push('[labels]')
+    for (const entry of labelsCSV.split(',')) {
+      const separatorIndex = entry.indexOf('=')
+      if (separatorIndex <= 0) {
+        continue
+      }
+      const key = entry.slice(0, separatorIndex)
+      const value = entry.slice(separatorIndex + 1)
+      lines.push(`${key} = ${tomlString(value)}`)
+    }
+  }
+
+  return lines.length > 0 ? `${lines.join('\n')}\n` : ''
+}
+
+function buildResult(state: BuildState, binaryPath: string): StartupCommandBuildResult {
+  return {
+    command: formatMultilineCommand(state.envEntries, binaryPath),
+    configToml: formatConfigToml(state.envEntries),
+    errors: state.errors,
+    warnings: state.warnings,
+  }
+}
+
 function formatTemporaryProbeCommand(config: WorkerSysStartupConfig): StartupCommandBuildResult {
   const errors: string[] = []
   const workerID = config.workerID.trim()
@@ -224,6 +312,7 @@ function formatTemporaryProbeCommand(config: WorkerSysStartupConfig): StartupCom
 
   return {
     command: `curl -fsSL ${shellQuote(`${installerOrigin}/static/worker-startup.sh`)} | bash -s -- ${args.join(' ')}`,
+    configToml: '',
     errors,
     warnings: [],
   }
@@ -518,11 +607,7 @@ export function buildWorkerDockerStartupCommand(
   ])
   state.envEntries.push(['WORKER_TERMINAL_EXPORT_MAX_BYTES', String(terminalExportMaxBytes.value)])
 
-  return {
-    command: formatMultilineCommand(state.envEntries, config.binaryPath.trim()),
-    errors: state.errors,
-    warnings: state.warnings,
-  }
+  return buildResult(state, config.binaryPath.trim())
 }
 
 export function buildWorkerBoxliteStartupCommand(
@@ -654,11 +739,7 @@ export function buildWorkerBoxliteStartupCommand(
   ])
   state.envEntries.push(['WORKER_TERMINAL_EXPORT_MAX_BYTES', String(terminalExportMaxBytes.value)])
 
-  return {
-    command: formatMultilineCommand(state.envEntries, config.binaryPath.trim()),
-    errors: state.errors,
-    warnings: state.warnings,
-  }
+  return buildResult(state, config.binaryPath.trim())
 }
 
 function normalizeWhitelistMode(mode: string): WorkerSysWhitelistMode {
@@ -721,11 +802,7 @@ export function buildWorkerSysStartupCommand(
     ])
   }
 
-  return {
-    command: formatMultilineCommand(state.envEntries, config.binaryPath.trim()),
-    errors: state.errors,
-    warnings: state.warnings,
-  }
+  return buildResult(state, config.binaryPath.trim())
 }
 
 export function getCurrentSiteTemporaryProbeValues(): { origin: string; grpcTarget: string } {
@@ -803,10 +880,14 @@ export function useWorkerStartupTool(initial?: WorkerStartupToolInitialValues) {
   })
 
   const commandText = computed(() => currentBuildResult.value.command)
+  const configTomlText = computed(() => currentBuildResult.value.configToml)
   const errorMessages = computed(() => currentBuildResult.value.errors)
   const warningMessages = computed(() => currentBuildResult.value.warnings)
   const canCopyCommand = computed(
     () => errorMessages.value.length === 0 && commandText.value.trim().length > 0,
+  )
+  const canDownloadConfigFile = computed(
+    () => errorMessages.value.length === 0 && configTomlText.value.trim().length > 0,
   )
 
   function selectWorkerKind(kind: WorkerStartupKind): void {
@@ -824,9 +905,11 @@ export function useWorkerStartupTool(initial?: WorkerStartupToolInitialValues) {
     workerBoxliteConfig,
     workerSysConfig,
     commandText,
+    configTomlText,
     errorMessages,
     warningMessages,
     canCopyCommand,
+    canDownloadConfigFile,
     selectWorkerKind,
     selectTemporaryProbePreset,
   }

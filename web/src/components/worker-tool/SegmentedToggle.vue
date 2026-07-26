@@ -2,6 +2,7 @@
 type ToggleOption = {
   value: string
   label: string
+  testId?: string
 }
 
 const props = defineProps<{
@@ -23,6 +24,7 @@ function handleSelect(value: string): void {
     <button
       v-for="option in props.options"
       :key="option.value"
+      :data-testid="option.testId"
       type="button"
       class="rounded px-3 py-1 text-sm transition-colors"
       :class="
