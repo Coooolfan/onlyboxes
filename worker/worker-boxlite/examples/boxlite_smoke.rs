@@ -162,8 +162,10 @@ async fn main() {
     let box_name = format!("smoke-{:08x}", rand::random::<u32>());
 
     // --- 1. runtime init (covers on-disk database creation / migration) ---
-    let mut options = BoxliteOptions::default();
-    options.home_dir = home_dir.clone();
+    let options = BoxliteOptions {
+        home_dir: home_dir.clone(),
+        ..Default::default()
+    };
     let runtime = match BoxliteRuntime::new(options) {
         Ok(runtime) => {
             report.pass("runtime init", "");
