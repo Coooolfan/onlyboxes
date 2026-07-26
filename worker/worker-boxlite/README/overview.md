@@ -167,3 +167,7 @@ Backend smoke test:
 - `cargo run --example boxlite_smoke` exercises the boxlite API directly, without `console` or gRPC: runtime init, box create/start, exec, exit codes and stderr, filesystem state across executions, concurrent execution on a single box, `kill()` isolation between executions, `copy_out`, removal, and shutdown.
 - environment overrides: `BOXLITE_SMOKE_IMAGE` (default `alpine:latest`), `BOXLITE_SMOKE_HOME` (default a fresh temp dir), `BOXLITE_SMOKE_CONCURRENCY` (default `4`), `BOXLITE_SMOKE_KEEP_HOME`.
 - point `BOXLITE_SMOKE_HOME` at an existing boxlite home to exercise on-disk database migrations after a dependency upgrade.
+
+Session concurrency end-to-end check:
+- `scripts/e2e-session-concurrency.sh boxlite` brings up console plus this worker and verifies the concurrency matrix, including that concurrent requests on one brand-new `session_id` create exactly one box rather than racing on an empty `box_id`.
+- the first run downloads the terminal image into the boxlite home, which can take several minutes; warm one box before timing anything.
