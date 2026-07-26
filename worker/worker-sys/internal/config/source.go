@@ -91,15 +91,27 @@ func fileKey(envKey string) string {
 }
 
 // flatten converts TOML values into the same string form accepted by the
-// environment variable parsers.
+// environment variable parsers. Nested tables are additionally exposed as
+// `parent_child` keys so that grouped sections map onto flat env names.
 func flatten(raw map[string]any) map[string]string {
 	values := make(map[string]string, len(raw))
-	for key, value := range raw {
+	flattenInto(values, "", raw)
+	return values
+}
+
+func flattenInto(values map[string]string, prefix string, table map[string]any) {
+	for key, value := range table {
+		fullKey := strings.ToLower(key)
+		if prefix != "" {
+			fullKey = prefix + "_" + fullKey
+		}
+		if nested, ok := value.(map[string]any); ok {
+			flattenInto(values, fullKey, nested)
+		}
 		if encoded, ok := encodeValue(value); ok {
-			values[strings.ToLower(key)] = encoded
+			values[fullKey] = encoded
 		}
 	}
-	return values
 }
 
 func encodeValue(value any) (string, bool) {

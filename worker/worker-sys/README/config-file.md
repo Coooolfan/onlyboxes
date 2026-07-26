@@ -20,6 +20,7 @@ Value mapping:
 - strings, integers, floats and booleans map to their environment variable form.
 - arrays map to the JSON array form used by the matching environment variable.
 - tables map to the `key=value,key=value` form; `[labels]` replaces `WORKER_LABELS`.
+- nested tables are joined with `_`, so `[a.b] c = 1` matches `WORKER_A_B_C`.
 
 Validation is identical to the environment variable path: an invalid or out-of-range value falls back to the default instead of aborting startup.
 

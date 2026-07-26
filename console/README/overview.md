@@ -1,5 +1,9 @@
 # Console Overview
 
+Configuration sources:
+- environment variables and `config.toml` (see `README/config-file.md`).
+- priority is environment variable > `config.toml` > default.
+
 The console service hosts:
 - a gRPC registry endpoint with bidirectional stream `Connect` for worker registration + heartbeat + command dispatch/result.
 - embedded web dashboard static hosting:

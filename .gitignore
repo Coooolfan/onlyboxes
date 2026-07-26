@@ -51,5 +51,6 @@ worker-credentials.json
 .env*
 !.env.example
 
-# worker config files (may contain worker secrets)
+# service config files (may contain secrets)
 worker/*/config.toml
+console/config.toml

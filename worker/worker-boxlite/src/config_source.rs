@@ -202,15 +202,29 @@ fn encode_value(value: &toml::Value) -> Option<String> {
     }
 }
 
-/// Flattens a TOML table into the string values used by the parsers.
+/// Flattens a TOML table into the string values used by the parsers. Nested
+/// tables are additionally exposed as `parent_child` keys so that grouped
+/// sections map onto flat env names.
 fn flatten(table: toml::value::Table) -> BTreeMap<String, String> {
     let mut values = BTreeMap::new();
+    flatten_into(&mut values, "", &table);
+    values
+}
+
+fn flatten_into(values: &mut BTreeMap<String, String>, prefix: &str, table: &toml::value::Table) {
     for (key, value) in table {
-        if let Some(encoded) = encode_value(&value) {
-            values.insert(key.to_ascii_lowercase(), encoded);
+        let full_key = if prefix.is_empty() {
+            key.to_ascii_lowercase()
+        } else {
+            format!("{prefix}_{}", key.to_ascii_lowercase())
+        };
+        if let toml::Value::Table(nested) = value {
+            flatten_into(values, &full_key, nested);
+        }
+        if let Some(encoded) = encode_value(value) {
+            values.insert(full_key, encoded);
         }
     }
-    values
 }
 
 #[cfg(test)]

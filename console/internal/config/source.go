@@ -15,8 +15,8 @@ import (
 
 const (
 	configFileName   = "config.toml"
-	configFileEnvKey = "WORKER_CONFIG_FILE"
-	envPrefix        = "WORKER_"
+	configFileEnvKey = "CONSOLE_CONFIG_FILE"
+	envPrefix        = "CONSOLE_"
 )
 
 // source resolves configuration values from environment variables first and
@@ -44,7 +44,7 @@ func newSource() source {
 }
 
 // configFilePath returns the config file to load and whether it was requested
-// explicitly through WORKER_CONFIG_FILE.
+// explicitly through CONSOLE_CONFIG_FILE.
 func configFilePath() (string, bool) {
 	if explicit := strings.TrimSpace(os.Getenv(configFileEnvKey)); explicit != "" {
 		return explicit, true
@@ -77,8 +77,18 @@ func (s source) Path() string {
 	return s.path
 }
 
+// lookup reports whether a key is declared in the environment or in the config
+// file, mirroring os.LookupEnv semantics (an explicit empty value counts as set).
+func (s source) lookup(envKey string) (string, bool) {
+	if value, ok := os.LookupEnv(envKey); ok {
+		return value, true
+	}
+	value, ok := s.values[fileKey(envKey)]
+	return value, ok
+}
+
 // get returns the value for an environment variable key, falling back to the
-// matching config file key (env key without the WORKER_ prefix, lowercased).
+// matching config file key (env key without the CONSOLE_ prefix, lowercased).
 func (s source) get(envKey string) string {
 	if value := os.Getenv(envKey); value != "" {
 		return value
