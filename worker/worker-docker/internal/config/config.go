@@ -26,6 +26,7 @@ const (
 	defaultTerminalLeaseMax         = 1800
 	defaultTerminalLeaseTTL         = 60
 	defaultTerminalOutputMax        = 1024 * 1024
+	defaultTerminalSessionInflight  = 1
 	defaultLogLevel                 = "info"
 	defaultLogFormat                = "json"
 	defaultLogAddSource             = false
@@ -57,6 +58,7 @@ type Config struct {
 	TerminalLeaseDefaultSec     int
 	TerminalOutputLimitBytes    int
 	TerminalExportMaxBytes      int
+	TerminalSessionMaxInflight  int
 	EchoMaxInflight             int
 	PythonExecMaxInflight       int
 	TerminalExecMaxInflight     int
@@ -111,6 +113,7 @@ func Load() Config {
 		TerminalLeaseDefaultSec:     terminalLeaseDefaultSec,
 		TerminalOutputLimitBytes:    terminalOutputLimitBytes,
 		TerminalExportMaxBytes:      terminalExportMaxBytes,
+		TerminalSessionMaxInflight:  parsePositiveIntEnv("WORKER_TERMINAL_SESSION_MAX_INFLIGHT", defaultTerminalSessionInflight),
 		EchoMaxInflight:             parsePositiveIntEnv("WORKER_ECHO_MAX_INFLIGHT", defaultMaxInflight),
 		PythonExecMaxInflight:       parsePositiveIntEnv("WORKER_PYTHON_EXEC_MAX_INFLIGHT", defaultMaxInflight),
 		TerminalExecMaxInflight:     parsePositiveIntEnv("WORKER_TERMINAL_EXEC_MAX_INFLIGHT", defaultMaxInflight),

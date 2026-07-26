@@ -24,6 +24,10 @@ const (
 	terminalExecNoSessionMessage   = "session not found"
 	terminalExecBusyMessage        = "session is busy"
 	terminalExecNotReadyMessage    = "terminal executor is unavailable"
+
+	// defaultTerminalSessionMaxInflight keeps one command per session, matching
+	// the behaviour before per-session concurrency became configurable.
+	defaultTerminalSessionMaxInflight = 1
 )
 
 const (
@@ -87,7 +91,18 @@ type terminalSession struct {
 	sessionID      string
 	containerName  string
 	leaseExpiresAt time.Time
-	busy           bool
+
+	// inflight counts commands currently executing against this session.
+	// A session is idle, and therefore reclaimable, only at zero.
+	inflight int
+	// destroying stops the session accepting new commands. The container is
+	// removed by whichever caller drops inflight to zero.
+	destroying bool
+	// ready is closed once container creation finished; initErr carries the
+	// outcome. Callers that did not create the session must wait on it before
+	// touching the container.
+	ready   chan struct{}
+	initErr error
 }
 
 type terminalSessionManagerConfig struct {
@@ -100,21 +115,25 @@ type terminalSessionManagerConfig struct {
 	MemoryLimit      string
 	CPULimit         string
 	PidsLimit        int
+	// SessionMaxInflight caps concurrent commands per session. Defaults to 1,
+	// which preserves the original strictly serial behaviour.
+	SessionMaxInflight int
 }
 
 type terminalSessionManager struct {
 	mu       sync.Mutex
 	sessions map[string]*terminalSession
 
-	leaseMinSec      int
-	leaseMaxSec      int
-	leaseDefaultSec  int
-	outputLimitBytes int
-	exportMaxBytes   int
-	dockerImage      string
-	memoryLimit      string
-	cpuLimit         string
-	pidsLimit        int
+	leaseMinSec        int
+	leaseMaxSec        int
+	leaseDefaultSec    int
+	outputLimitBytes   int
+	exportMaxBytes     int
+	dockerImage        string
+	memoryLimit        string
+	cpuLimit           string
+	pidsLimit          int
+	sessionMaxInflight int
 
 	stopCh    chan struct{}
 	doneCh    chan struct{}
@@ -129,7 +148,14 @@ func (m *terminalSessionManager) ActiveSessionCount() int32 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	return int32(len(m.sessions))
+	count := int32(0)
+	for _, session := range m.sessions {
+		if session == nil || session.destroying {
+			continue
+		}
+		count++
+	}
+	return count
 }
 
 func newTerminalSessionManager(cfg terminalSessionManagerConfig) *terminalSessionManager {
@@ -180,19 +206,25 @@ func newTerminalSessionManager(cfg terminalSessionManagerConfig) *terminalSessio
 		pidsLimit = defaultTerminalExecPidsLimit
 	}
 
+	sessionMaxInflight := cfg.SessionMaxInflight
+	if sessionMaxInflight <= 0 {
+		sessionMaxInflight = defaultTerminalSessionMaxInflight
+	}
+
 	manager := &terminalSessionManager{
-		sessions:         make(map[string]*terminalSession),
-		leaseMinSec:      leaseMinSec,
-		leaseMaxSec:      leaseMaxSec,
-		leaseDefaultSec:  leaseDefaultSec,
-		outputLimitBytes: outputLimitBytes,
-		exportMaxBytes:   cfg.ExportMaxBytes,
-		dockerImage:      dockerImage,
-		memoryLimit:      memoryLimit,
-		cpuLimit:         cpuLimit,
-		pidsLimit:        pidsLimit,
-		stopCh:           make(chan struct{}),
-		doneCh:           make(chan struct{}),
+		sessions:           make(map[string]*terminalSession),
+		leaseMinSec:        leaseMinSec,
+		leaseMaxSec:        leaseMaxSec,
+		leaseDefaultSec:    leaseDefaultSec,
+		outputLimitBytes:   outputLimitBytes,
+		exportMaxBytes:     cfg.ExportMaxBytes,
+		dockerImage:        dockerImage,
+		memoryLimit:        memoryLimit,
+		cpuLimit:           cpuLimit,
+		pidsLimit:          pidsLimit,
+		sessionMaxInflight: sessionMaxInflight,
+		stopCh:             make(chan struct{}),
+		doneCh:             make(chan struct{}),
 	}
 	go manager.janitorLoop()
 	return manager
@@ -239,93 +271,35 @@ func (m *terminalSessionManager) Execute(ctx context.Context, req terminalExecRe
 		return terminalExecRunResult{}, err
 	}
 
-	now := time.Now()
-	leaseTarget := now.Add(leaseDuration)
-	sessionID := strings.TrimSpace(req.SessionID)
+	leaseTarget := time.Now().Add(leaseDuration)
 
-	var (
-		created bool
-		session *terminalSession
-	)
-
-	if sessionID == "" {
-		sessionID = uuid.NewString()
-		containerName, allocErr := newTerminalExecContainerName()
-		if allocErr != nil {
-			return terminalExecRunResult{}, fmt.Errorf("allocate terminal container name: %w", allocErr)
-		}
-		session = &terminalSession{
-			sessionID:      sessionID,
-			containerName:  containerName,
-			leaseExpiresAt: leaseTarget,
-			busy:           true,
-		}
-		created = true
-
-		m.mu.Lock()
-		m.sessions[sessionID] = session
-		m.mu.Unlock()
-	} else {
-		m.mu.Lock()
-		existing, ok := m.sessions[sessionID]
-		if !ok {
-			if !req.CreateIfMissing {
-				m.mu.Unlock()
-				return terminalExecRunResult{}, newTerminalExecError(terminalExecCodeSessionNotFound, terminalExecNoSessionMessage)
-			}
-
-			containerName, allocErr := newTerminalExecContainerName()
-			if allocErr != nil {
-				m.mu.Unlock()
-				return terminalExecRunResult{}, fmt.Errorf("allocate terminal container name: %w", allocErr)
-			}
-			existing = &terminalSession{
-				sessionID:      sessionID,
-				containerName:  containerName,
-				leaseExpiresAt: leaseTarget,
-				busy:           true,
-			}
-			m.sessions[sessionID] = existing
-			created = true
-		} else {
-			if existing.busy {
-				m.mu.Unlock()
-				return terminalExecRunResult{}, newTerminalExecError(terminalExecCodeSessionBusy, terminalExecBusyMessage)
-			}
-			existing.busy = true
-			if existing.leaseExpiresAt.Before(leaseTarget) {
-				existing.leaseExpiresAt = leaseTarget
-			}
-		}
-		session = existing
-		m.mu.Unlock()
+	session, created, err := m.claimSession(strings.TrimSpace(req.SessionID), leaseTarget, req.CreateIfMissing)
+	if err != nil {
+		return terminalExecRunResult{}, err
 	}
 
-	if created {
-		if err := m.createAndStartContainer(ctx, session.containerName); err != nil {
-			m.dropSession(session.sessionID)
-			return terminalExecRunResult{}, err
-		}
+	if err := m.awaitSessionReady(ctx, session, created); err != nil {
+		return terminalExecRunResult{}, err
 	}
 
 	execResult := runDockerCommand(ctx, terminalExecDockerExecArgs(session.containerName, command)...)
 	if execResult.Err != nil {
 		if errors.Is(execResult.Err, context.DeadlineExceeded) || errors.Is(execResult.Err, context.Canceled) {
-			m.destroySession(session.sessionID)
+			m.releaseAndDestroySession(session.sessionID)
 			return terminalExecRunResult{}, execResult.Err
 		}
-		m.markSessionIdle(session.sessionID)
+		m.releaseSession(session.sessionID)
 		return terminalExecRunResult{}, fmt.Errorf("docker exec failed: %w", execResult.Err)
 	}
 
 	if isNoSuchContainerMessage(execResult.Stderr) {
-		m.destroySession(session.sessionID)
+		m.releaseAndDestroySession(session.sessionID)
 		return terminalExecRunResult{}, newTerminalExecError(terminalExecCodeSessionNotFound, terminalExecNoSessionMessage)
 	}
 
 	stdout, stdoutTruncated := truncateByBytes(execResult.Stdout, m.outputLimitBytes)
 	stderr, stderrTruncated := truncateByBytes(execResult.Stderr, m.outputLimitBytes)
-	leaseExpiresAt, ok := m.markSessionIdle(session.sessionID)
+	leaseExpiresAt, ok := m.releaseSession(session.sessionID)
 	if !ok {
 		return terminalExecRunResult{}, newTerminalExecError(terminalExecCodeSessionNotFound, terminalExecNoSessionMessage)
 	}
@@ -405,7 +379,7 @@ func (m *terminalSessionManager) cleanupExpiredSessions() {
 
 	m.mu.Lock()
 	for sessionID, session := range m.sessions {
-		if session == nil || session.busy {
+		if session == nil || session.destroying || session.inflight > 0 {
 			continue
 		}
 		if session.leaseExpiresAt.After(now) {
@@ -421,35 +395,127 @@ func (m *terminalSessionManager) cleanupExpiredSessions() {
 	}
 }
 
-func (m *terminalSessionManager) markSessionIdle(sessionID string) (time.Time, bool) {
-	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" {
-		return time.Time{}, false
-	}
-
+// claimSession reserves one inflight slot, creating the session when needed.
+// An empty sessionID always allocates a new session.
+func (m *terminalSessionManager) claimSession(
+	sessionID string,
+	leaseTarget time.Time,
+	createIfMissing bool,
+) (*terminalSession, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	session, ok := m.sessions[sessionID]
-	if !ok || session == nil {
+	if sessionID == "" {
+		session, err := m.newSessionLocked(uuid.NewString(), leaseTarget)
+		return session, true, err
+	}
+
+	existing, ok := m.sessions[sessionID]
+	if ok && existing != nil && !existing.destroying {
+		if existing.inflight >= m.sessionMaxInflight {
+			return nil, false, newTerminalExecError(terminalExecCodeSessionBusy, terminalExecBusyMessage)
+		}
+		existing.inflight++
+		if existing.leaseExpiresAt.Before(leaseTarget) {
+			existing.leaseExpiresAt = leaseTarget
+		}
+		return existing, false, nil
+	}
+
+	// Sessions pending destruction still own their id, so they are reported as
+	// missing rather than being silently replaced.
+	if !createIfMissing || (ok && existing != nil && existing.destroying) {
+		return nil, false, newTerminalExecError(terminalExecCodeSessionNotFound, terminalExecNoSessionMessage)
+	}
+
+	session, err := m.newSessionLocked(sessionID, leaseTarget)
+	return session, true, err
+}
+
+func (m *terminalSessionManager) newSessionLocked(sessionID string, leaseTarget time.Time) (*terminalSession, error) {
+	containerName, err := newTerminalExecContainerName()
+	if err != nil {
+		return nil, fmt.Errorf("allocate terminal container name: %w", err)
+	}
+
+	session := &terminalSession{
+		sessionID:      sessionID,
+		containerName:  containerName,
+		leaseExpiresAt: leaseTarget,
+		inflight:       1,
+		ready:          make(chan struct{}),
+	}
+	m.sessions[sessionID] = session
+	return session, nil
+}
+
+// awaitSessionReady gates command execution on container creation. The creating
+// caller performs the work and publishes the outcome; everyone else blocks until
+// the container exists, so no command runs against a half-built session.
+func (m *terminalSessionManager) awaitSessionReady(ctx context.Context, session *terminalSession, created bool) error {
+	if created {
+		err := m.createAndStartContainer(ctx, session.containerName)
+		session.initErr = err
+		close(session.ready)
+		if err != nil {
+			m.releaseAndDestroySession(session.sessionID)
+			return err
+		}
+		return nil
+	}
+
+	select {
+	case <-session.ready:
+	case <-ctx.Done():
+		m.releaseSession(session.sessionID)
+		return ctx.Err()
+	}
+
+	// Safe without the lock: initErr is written before ready is closed.
+	if session.initErr != nil {
+		m.releaseSession(session.sessionID)
+		return session.initErr
+	}
+	return nil
+}
+
+// releaseSession gives back one inflight slot and reports the current lease.
+// It removes the container when it retires the last slot of a dying session.
+// A command that already produced a result still reports success here, even if
+// the session is being torn down: the work completed and its output is valid.
+func (m *terminalSessionManager) releaseSession(sessionID string) (time.Time, bool) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
 		return time.Time{}, false
 	}
-	session.busy = false
-	return session.leaseExpiresAt, true
-}
-
-func (m *terminalSessionManager) dropSession(sessionID string) {
-	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" {
-		return
-	}
 
 	m.mu.Lock()
-	delete(m.sessions, sessionID)
+	session, ok := m.sessions[sessionID]
+	if !ok || session == nil {
+		m.mu.Unlock()
+		return time.Time{}, false
+	}
+	if session.inflight > 0 {
+		session.inflight--
+	}
+	leaseExpiresAt := session.leaseExpiresAt
+	containerName := ""
+	if session.destroying && session.inflight == 0 {
+		delete(m.sessions, sessionID)
+		containerName = session.containerName
+	}
 	m.mu.Unlock()
+
+	if containerName != "" {
+		m.forceRemoveContainer(containerName)
+	}
+	return leaseExpiresAt, true
 }
 
-func (m *terminalSessionManager) destroySession(sessionID string) {
+// releaseAndDestroySession retires the caller's slot and marks the session for
+// destruction. The container survives until the last concurrent command drains,
+// so one command's timeout cannot kill its siblings.
+func (m *terminalSessionManager) releaseAndDestroySession(sessionID string) {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		return
@@ -457,14 +523,24 @@ func (m *terminalSessionManager) destroySession(sessionID string) {
 
 	m.mu.Lock()
 	session, ok := m.sessions[sessionID]
-	if ok {
-		delete(m.sessions, sessionID)
-	}
-	m.mu.Unlock()
 	if !ok || session == nil {
+		m.mu.Unlock()
 		return
 	}
-	m.forceRemoveContainer(session.containerName)
+	session.destroying = true
+	if session.inflight > 0 {
+		session.inflight--
+	}
+	containerName := ""
+	if session.inflight == 0 {
+		delete(m.sessions, sessionID)
+		containerName = session.containerName
+	}
+	m.mu.Unlock()
+
+	if containerName != "" {
+		m.forceRemoveContainer(containerName)
+	}
 }
 
 func (m *terminalSessionManager) forceRemoveContainer(containerName string) {

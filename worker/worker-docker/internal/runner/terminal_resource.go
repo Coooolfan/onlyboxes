@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -137,36 +138,31 @@ func (m *terminalSessionManager) ResolveResource(ctx context.Context, req termin
 		return terminalResourceRunResult{}, newTerminalExecError(terminalExecCodeInvalidPayload, "signed_url is required for export")
 	}
 
-	m.mu.Lock()
-	session, ok := m.sessions[sessionID]
-	if !ok || session == nil {
-		m.mu.Unlock()
-		return terminalResourceRunResult{}, newTerminalExecError(terminalExecCodeSessionNotFound, terminalExecNoSessionMessage)
+	session, _, err := m.claimSession(sessionID, time.Time{}, false)
+	if err != nil {
+		return terminalResourceRunResult{}, err
 	}
-	if session.busy {
-		m.mu.Unlock()
-		return terminalResourceRunResult{}, newTerminalExecError(terminalExecCodeSessionBusy, terminalExecBusyMessage)
+	if err := m.awaitSessionReady(ctx, session, false); err != nil {
+		return terminalResourceRunResult{}, err
 	}
-	session.busy = true
 	containerName := session.containerName
-	m.mu.Unlock()
 
 	resourceResult, err := m.resolveResourceInSession(ctx, sessionID, containerName, filePath, action, signedURL, req.Headers)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-			m.destroySession(sessionID)
+			m.releaseAndDestroySession(sessionID)
 			return terminalResourceRunResult{}, err
 		}
 		var terminalErr *terminalExecError
 		if errors.As(err, &terminalErr) && terminalErr.Code() == terminalExecCodeSessionNotFound {
-			m.destroySession(sessionID)
+			m.releaseAndDestroySession(sessionID)
 			return terminalResourceRunResult{}, err
 		}
-		m.markSessionIdle(sessionID)
+		m.releaseSession(sessionID)
 		return terminalResourceRunResult{}, err
 	}
 
-	if _, ok := m.markSessionIdle(sessionID); !ok {
+	if _, ok := m.releaseSession(sessionID); !ok {
 		return terminalResourceRunResult{}, newTerminalExecError(terminalExecCodeSessionNotFound, terminalExecNoSessionMessage)
 	}
 	return resourceResult, nil
