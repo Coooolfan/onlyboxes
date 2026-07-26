@@ -54,15 +54,16 @@ func Run(ctx context.Context, cfg config.Config) error {
 	}
 
 	terminalManager := newTerminalSessionManager(terminalSessionManagerConfig{
-		LeaseMinSec:      cfg.TerminalLeaseMinSec,
-		LeaseMaxSec:      cfg.TerminalLeaseMaxSec,
-		LeaseDefaultSec:  cfg.TerminalLeaseDefaultSec,
-		OutputLimitBytes: cfg.TerminalOutputLimitBytes,
-		ExportMaxBytes:   cfg.TerminalExportMaxBytes,
-		DockerImage:      cfg.TerminalExecDockerImage,
-		MemoryLimit:      cfg.TerminalExecMemoryLimit,
-		CPULimit:         cfg.TerminalExecCPULimit,
-		PidsLimit:        cfg.TerminalExecPidsLimit,
+		LeaseMinSec:        cfg.TerminalLeaseMinSec,
+		LeaseMaxSec:        cfg.TerminalLeaseMaxSec,
+		LeaseDefaultSec:    cfg.TerminalLeaseDefaultSec,
+		OutputLimitBytes:   cfg.TerminalOutputLimitBytes,
+		ExportMaxBytes:     cfg.TerminalExportMaxBytes,
+		DockerImage:        cfg.TerminalExecDockerImage,
+		MemoryLimit:        cfg.TerminalExecMemoryLimit,
+		CPULimit:           cfg.TerminalExecCPULimit,
+		PidsLimit:          cfg.TerminalExecPidsLimit,
+		SessionMaxInflight: cfg.TerminalSessionMaxInflight,
 	})
 	pythonRunner := newPythonExecRunner(
 		cfg.PythonExecDockerImage,

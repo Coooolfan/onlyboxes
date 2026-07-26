@@ -13,6 +13,20 @@ import (
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
 )
 
+// readyTerminalSession builds a session that has already finished container
+// creation, so tests can seed the manager without going through Execute.
+func readyTerminalSession(sessionID string, containerName string, leaseExpiresAt time.Time, inflight int) *terminalSession {
+	ready := make(chan struct{})
+	close(ready)
+	return &terminalSession{
+		sessionID:      sessionID,
+		containerName:  containerName,
+		leaseExpiresAt: leaseExpiresAt,
+		inflight:       inflight,
+		ready:          ready,
+	}
+}
+
 func TestBuildCommandResultTerminalExecSuccess(t *testing.T) {
 	originalRunTerminalExec := runTerminalExec
 	t.Cleanup(func() {
