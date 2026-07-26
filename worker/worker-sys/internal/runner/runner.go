@@ -13,15 +13,13 @@ import (
 )
 
 const (
-	minHeartbeatInterval             = 1 * time.Second
-	initialReconnectDelay            = 1 * time.Second
-	maxReconnectDelay                = 15 * time.Second
-	computerUseCapabilityName        = "computeruse"
-	computerUseCapabilityDeclared    = "computerUse"
-	readImageCapabilityName          = "readimage"
-	readImageCapabilityDeclared      = "readImage"
-	computerUseCapabilityMaxInflight = 1
-	readImageCapabilityMaxInflight   = 1
+	minHeartbeatInterval          = 1 * time.Second
+	initialReconnectDelay         = 1 * time.Second
+	maxReconnectDelay             = 15 * time.Second
+	computerUseCapabilityName     = "computeruse"
+	computerUseCapabilityDeclared = "computerUse"
+	readImageCapabilityName       = "readimage"
+	readImageCapabilityDeclared   = "readImage"
 )
 
 var waitReconnect = waitReconnectDelay
