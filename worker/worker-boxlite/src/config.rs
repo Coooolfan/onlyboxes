@@ -19,6 +19,9 @@ const DEFAULT_TERMINAL_LEASE_MAX_SEC: u32 = 1800;
 const DEFAULT_TERMINAL_LEASE_DEFAULT_SEC: u32 = 60;
 const DEFAULT_TERMINAL_OUTPUT_LIMIT_BYTES: usize = 1024 * 1024;
 const DEFAULT_MAX_INFLIGHT: u32 = 4;
+/// One command per session, matching the behaviour before per-session
+/// concurrency became configurable.
+const DEFAULT_TERMINAL_SESSION_MAX_INFLIGHT: u32 = 1;
 const DEFAULT_LOG_LEVEL: &str = "info";
 const DEFAULT_LOG_FORMAT: &str = "json";
 const DEFAULT_LOG_ADD_SOURCE: bool = false;
@@ -50,6 +53,8 @@ pub struct Config {
     pub terminal_lease_default_sec: u32,
     pub terminal_output_limit_bytes: usize,
     pub terminal_export_max_bytes: usize,
+    /// Caps concurrent commands per terminal session.
+    pub terminal_session_max_inflight: u32,
     pub echo_max_inflight: i32,
     pub python_exec_max_inflight: i32,
     pub terminal_exec_max_inflight: i32,
@@ -152,6 +157,10 @@ impl Config {
             terminal_export_max_bytes: parse_positive_usize_env(
                 "WORKER_TERMINAL_EXPORT_MAX_BYTES",
                 0,
+            ),
+            terminal_session_max_inflight: parse_positive_u32_env(
+                "WORKER_TERMINAL_SESSION_MAX_INFLIGHT",
+                DEFAULT_TERMINAL_SESSION_MAX_INFLIGHT,
             ),
             echo_max_inflight: parse_positive_u32_env(
                 "WORKER_ECHO_MAX_INFLIGHT",
