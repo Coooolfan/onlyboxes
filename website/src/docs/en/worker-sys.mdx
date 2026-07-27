@@ -91,6 +91,15 @@ $env:WORKER_SECRET = "<worker_secret>"
 | `WORKER_COMPUTER_USE_COMMAND_WHITELIST` | No | `[]` | JSON array of allowed commands, e.g. `'["echo","time"]'` |
 | `WORKER_READ_IMAGE_ALLOWED_PATHS` | No | `[]` | JSON array of allowed paths for reading images |
 
+### Concurrency
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `WORKER_COMPUTER_USE_MAX_INFLIGHT` | No | `1` | Max concurrent computerUse commands |
+| `WORKER_READ_IMAGE_MAX_INFLIGHT` | No | `1` | Max concurrent readImage commands |
+
+computerUse and readImage use independent concurrency quotas, so an in-flight readImage does not consume a computerUse slot. Exceeding a capability's limit returns `409 session_busy`.
+
 ### Heartbeat
 
 | Variable | Required | Default | Description |
