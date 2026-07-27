@@ -41,7 +41,7 @@ jobs:
             exit 1
           fi
 
-          if [[ "${version_raw}" =~ -rc-|-beta-|-alpha- ]]; then
+          if [[ "${version_raw}" =~ -(rc|beta|alpha)[.-] ]]; then
             prerelease=true
           else
             prerelease=false
