@@ -1,11 +1,24 @@
 <!DOCTYPE html>
-<html lang="">
+<html lang="en">
   <head>
-    <meta charset="UTF-8">
-    <link rel="icon" href="/favicon.ico">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Onlyboxes console: execution node registry and access control." />
+    <meta name="theme-color" content="#f3f5f8" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0b1016" media="(prefers-color-scheme: dark)" />
+    <title>Onlyboxes Console</title>
+
+    <link rel="icon" type="image/avif" href="/onlyboxes.avif" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    />
+
     <script>
-      (() => {
+      // Applied before first paint so the initial render matches the system theme.
+      ;(() => {
         const root = document.documentElement
         const mediaQuery =
           typeof window.matchMedia === 'function'
@@ -16,9 +29,6 @@
         root.style.colorScheme = mode
       })()
     </script>
-    <link href="/src/style/main.css" rel="stylesheet" />
-    <link rel="icon" type="image/png" href="/onlyboxes.avif" />
-    <title>Onlyboxes</title>
   </head>
   <body>
     <div id="app"></div>

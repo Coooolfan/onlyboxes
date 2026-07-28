@@ -1,18 +1,23 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import AppAlert from '@/components/ui/AppAlert.vue'
+import AppButton from '@/components/ui/AppButton.vue'
 import { isInvalidCredentialsError } from '@/services/auth.api'
 import { useAuthStore } from '@/stores/auth'
+import { toErrorMessage } from '@/utils/async'
 
 const authStore = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 
-const loginUsername = ref('')
-const loginPassword = ref('')
-const loginErrorMessage = ref('')
-const loginSubmitting = ref(false)
+const username = ref('')
+const password = ref('')
+const errorMessage = ref('')
+const submitting = ref(false)
+
+const canSubmit = computed(() => username.value.trim() !== '' && password.value !== '')
 
 function resolveRedirect(): string {
   const redirect = route.query.redirect
@@ -23,86 +28,75 @@ function resolveRedirect(): string {
 }
 
 async function submitLogin(): Promise<void> {
-  if (loginSubmitting.value) {
+  if (submitting.value) {
     return
   }
 
-  loginErrorMessage.value = ''
-  if (loginUsername.value.trim() === '' || loginPassword.value === '') {
-    loginErrorMessage.value = 'Enter your username and password.'
+  errorMessage.value = ''
+  if (!canSubmit.value) {
+    errorMessage.value = 'Enter your username and password.'
     return
   }
 
-  loginSubmitting.value = true
+  submitting.value = true
   try {
-    await authStore.login(loginUsername.value, loginPassword.value)
+    await authStore.login(username.value, password.value)
     await router.replace(resolveRedirect())
   } catch (error) {
-    if (isInvalidCredentialsError(error)) {
-      loginErrorMessage.value = 'Invalid username or password.'
-    } else {
-      loginErrorMessage.value = error instanceof Error ? error.message : 'Sign in failed. Try again later.'
-    }
+    errorMessage.value = isInvalidCredentialsError(error)
+      ? 'Invalid username or password.'
+      : toErrorMessage(error, 'Sign in failed. Try again later.')
   } finally {
-    loginSubmitting.value = false
+    submitting.value = false
   }
 }
 </script>
 
 <template>
   <section
-    class="w-[min(440px,100%)] mx-auto mt-20 bg-surface border border-stroke rounded-lg p-8 shadow-card animate-rise-in"
+    class="ui-rise w-[min(440px,100%)] rounded-lg border border-stroke bg-surface p-8 shadow-card max-[620px]:p-6"
   >
-    <p class="m-0 font-mono text-xs tracking-[0.05em] uppercase text-secondary">
+    <p class="m-0 font-mono text-xs tracking-[0.05em] text-secondary uppercase">
       Onlyboxes / Console Login
     </p>
-    <h1 class="mt-3 mb-2 text-2xl font-semibold leading-[1.2] tracking-[-0.02em]">
+    <h1 class="mt-3 mb-2 text-2xl leading-[1.2] font-semibold tracking-[-0.02em]">
       Sign In to Control Panel
     </h1>
-    <p class="m-0 text-secondary text-sm leading-normal">
+    <p class="m-0 text-sm leading-normal text-secondary">
       Use the dashboard username and password printed in the console startup logs.
     </p>
 
     <form class="login-form mt-6 grid gap-4" @submit.prevent="submitLogin">
-      <label class="text-sm font-medium text-primary mb-1.5 block" for="dashboard-username"
-        >Username</label
-      >
-      <input
-        id="dashboard-username"
-        v-model="loginUsername"
-        class="ui-input w-full border rounded-md px-3 py-2 text-sm font-[inherit] h-10"
-        type="text"
-        name="username"
-        autocomplete="username"
-        spellcheck="false"
-      />
+      <div class="grid gap-1.5">
+        <label class="text-sm font-medium text-primary" for="dashboard-username">Username</label>
+        <input
+          id="dashboard-username"
+          v-model="username"
+          class="ui-input h-10 w-full rounded-md border px-3 text-sm"
+          type="text"
+          name="username"
+          autocomplete="username"
+          spellcheck="false"
+        />
+      </div>
 
-      <label class="text-sm font-medium text-primary mb-1.5 block" for="dashboard-password"
-        >Password</label
-      >
-      <input
-        id="dashboard-password"
-        v-model="loginPassword"
-        class="ui-input w-full border rounded-md px-3 py-2 text-sm font-[inherit] h-10"
-        type="password"
-        name="password"
-        autocomplete="current-password"
-      />
+      <div class="grid gap-1.5">
+        <label class="text-sm font-medium text-primary" for="dashboard-password">Password</label>
+        <input
+          id="dashboard-password"
+          v-model="password"
+          class="ui-input h-10 w-full rounded-md border px-3 text-sm"
+          type="password"
+          name="password"
+          autocomplete="current-password"
+        />
+      </div>
 
-      <p
-        v-if="loginErrorMessage"
-        class="ui-alert ui-alert-error m-0 rounded-default px-3 py-2.5 text-sm"
-      >
-        {{ loginErrorMessage }}
-      </p>
+      <AppAlert v-if="errorMessage" tone="error" with-icon>{{ errorMessage }}</AppAlert>
 
-      <button
-        class="ui-btn-primary rounded-md px-3.5 py-2 text-sm font-medium h-9 inline-flex items-center justify-center border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
-        type="submit"
-        :disabled="loginSubmitting"
-      >
-        {{ loginSubmitting ? 'Signing In...' : 'Sign In' }}
-      </button>
+      <AppButton variant="primary" type="submit" block :loading="submitting">
+        {{ submitting ? 'Signing In...' : 'Sign In' }}
+      </AppButton>
     </form>
   </section>
 </template>

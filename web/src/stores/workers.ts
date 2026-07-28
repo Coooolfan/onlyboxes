@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 
+import { requestConfirm } from '@/composables/useConfirm'
 import { isUnauthorizedError } from '@/services/http'
 import {
   createWorkerAPI,
@@ -11,10 +12,9 @@ import {
 } from '@/services/workers.api'
 import { redirectToLogin } from '@/stores/auth-redirect'
 import { useAuthStore } from '@/stores/auth'
-import { formatDateTime } from '@/utils/datetime'
+import { createRequestGuard, isAbortError, toErrorMessage } from '@/utils/async'
 import type {
   WorkerInflightResponse,
-  WorkerItem,
   WorkerListResponse,
   WorkerStartupCommandResponse,
   WorkerStatsResponse,
@@ -22,7 +22,8 @@ import type {
   WorkerType,
 } from '@/types/workers'
 
-const pageSize = 25
+export const workersPageSize = 25
+
 const staleAfterDefaultSec = 30
 const autoRefreshMs = 5000
 
@@ -45,13 +46,6 @@ function parseTimestamp(value: string): Date | null {
   return new Date(parsed)
 }
 
-function isAbortError(error: unknown): boolean {
-  if (typeof DOMException !== 'undefined' && error instanceof DOMException) {
-    return error.name === 'AbortError'
-  }
-  return error instanceof Error && error.name === 'AbortError'
-}
-
 export const useWorkersStore = defineStore('workers', () => {
   const statusFilter = ref<WorkerStatus>('all')
   const page = ref(1)
@@ -66,9 +60,8 @@ export const useWorkersStore = defineStore('workers', () => {
   const currentList = ref<WorkerListResponse | null>(null)
   const inflightData = ref<WorkerInflightResponse>({ workers: [], generated_at: '' })
 
+  const requests = createRequestGuard()
   let timer: ReturnType<typeof setInterval> | null = null
-  let loadRequestSerial = 0
-  let activeController: AbortController | null = null
 
   const totalWorkers = computed(() => dashboardStats.value.total)
   const onlineWorkers = computed(() => dashboardStats.value.online)
@@ -82,21 +75,9 @@ export const useWorkersStore = defineStore('workers', () => {
   )
   const staleWorkersLabel = computed(() => `Heartbeat > ${dashboardStats.value.stale_after_sec}s`)
 
-  const totalPages = computed(() => {
-    const total = currentList.value?.total ?? 0
-    return Math.max(1, Math.ceil(total / pageSize))
-  })
-
+  const total = computed(() => currentList.value?.total ?? 0)
+  const totalPages = computed(() => Math.max(1, Math.ceil(total.value / workersPageSize)))
   const workerRows = computed(() => currentList.value?.items ?? [])
-  const canPrev = computed(() => page.value > 1)
-  const canNext = computed(() => page.value < totalPages.value)
-
-  const footerText = computed(() => {
-    const total = currentList.value?.total ?? 0
-    const start = total === 0 ? 0 : (page.value - 1) * pageSize + 1
-    const end = Math.min(page.value * pageSize, total)
-    return `${start}-${end} / ${total}`
-  })
 
   function resetDashboard(): void {
     currentList.value = null
@@ -114,22 +95,19 @@ export const useWorkersStore = defineStore('workers', () => {
   }
 
   async function loadDashboard(): Promise<void> {
-    const requestSerial = ++loadRequestSerial
-    activeController?.abort()
-    const controller = new AbortController()
-    activeController = controller
+    const token = requests.begin()
 
     loading.value = true
     errorMessage.value = ''
 
     try {
       const [statsRes, listRes, inflightRes] = await Promise.all([
-        fetchWorkerStatsAPI(staleAfterDefaultSec, controller.signal),
-        fetchWorkersAPI(statusFilter.value, page.value, pageSize, controller.signal),
-        fetchWorkerInflightAPI(controller.signal),
+        fetchWorkerStatsAPI(staleAfterDefaultSec, token.signal),
+        fetchWorkersAPI(statusFilter.value, page.value, workersPageSize, token.signal),
+        fetchWorkerInflightAPI(token.signal),
       ])
 
-      if (requestSerial !== loadRequestSerial || controller.signal.aborted) {
+      if (token.isStale()) {
         return
       }
 
@@ -143,20 +121,17 @@ export const useWorkersStore = defineStore('workers', () => {
         await loadDashboard()
       }
     } catch (error) {
-      if (isAbortError(error) || requestSerial !== loadRequestSerial) {
+      if (isAbortError(error) || token.isStale()) {
         return
       }
       if (isUnauthorizedError(error)) {
         await handleUnauthorized()
         return
       }
-      errorMessage.value = error instanceof Error ? error.message : 'Failed to load workers.'
+      errorMessage.value = toErrorMessage(error, 'Failed to load workers.')
     } finally {
-      if (requestSerial === loadRequestSerial) {
+      if (token.release()) {
         loading.value = false
-      }
-      if (activeController === controller) {
-        activeController = null
       }
     }
   }
@@ -185,7 +160,7 @@ export const useWorkersStore = defineStore('workers', () => {
   }
 
   function previousPage(): void {
-    if (!canPrev.value) {
+    if (page.value <= 1) {
       return
     }
     page.value -= 1
@@ -193,51 +168,11 @@ export const useWorkersStore = defineStore('workers', () => {
   }
 
   function nextPage(): void {
-    if (!canNext.value) {
+    if (page.value >= totalPages.value) {
       return
     }
     page.value += 1
     void loadDashboard()
-  }
-
-  function deleteWorkerButtonText(nodeID: string): string {
-    if (deletingNodeID.value === nodeID) {
-      return 'Deleting...'
-    }
-    return 'Delete'
-  }
-
-  function ageSeconds(value: string): number {
-    const parsed = Date.parse(value)
-    if (Number.isNaN(parsed)) {
-      return Number.POSITIVE_INFINITY
-    }
-    return Math.max(0, Math.floor((Date.now() - parsed) / 1000))
-  }
-
-  function formatAge(value: string): string {
-    const seconds = ageSeconds(value)
-    if (!Number.isFinite(seconds)) {
-      return '--'
-    }
-    if (seconds < 60) {
-      return `${seconds}s ago`
-    }
-
-    const minutes = Math.floor(seconds / 60)
-    if (minutes < 60) {
-      return `${minutes}m ago`
-    }
-
-    const hours = Math.floor(minutes / 60)
-    return `${hours}h ago`
-  }
-
-  function formatCapabilities(worker: WorkerItem): string {
-    if (!worker.capabilities || worker.capabilities.length === 0) {
-      return '--'
-    }
-    return worker.capabilities.map((item) => item.name).join(', ')
   }
 
   async function createWorker(
@@ -251,7 +186,7 @@ export const useWorkersStore = defineStore('workers', () => {
     creatingWorker.value = true
 
     try {
-      const payload: WorkerStartupCommandResponse = await createWorkerAPI(workerType)
+      const payload = await createWorkerAPI(workerType)
       await loadDashboard()
       return payload
     } catch (error) {
@@ -259,22 +194,26 @@ export const useWorkersStore = defineStore('workers', () => {
         await handleUnauthorized()
         return null
       }
-      errorMessage.value = error instanceof Error ? error.message : 'Failed to create worker.'
+      errorMessage.value = toErrorMessage(error, 'Failed to create worker.')
       return null
     } finally {
       creatingWorker.value = false
     }
   }
 
-  function confirmDeleteWorker(nodeID: string): boolean {
-    if (typeof window === 'undefined' || typeof window.confirm !== 'function') {
-      return true
-    }
-    return window.confirm(`Delete worker ${nodeID}?`)
-  }
-
   async function deleteWorker(nodeID: string): Promise<void> {
-    if (!nodeID || deletingNodeID.value === nodeID || !confirmDeleteWorker(nodeID)) {
+    if (!nodeID || deletingNodeID.value === nodeID) {
+      return
+    }
+
+    const confirmed = await requestConfirm({
+      title: 'Delete Worker',
+      message: 'The execution node will be unregistered and must be started again to rejoin.',
+      detail: nodeID,
+      confirmLabel: 'Delete Worker',
+      destructive: true,
+    })
+    if (!confirmed) {
       return
     }
 
@@ -293,7 +232,7 @@ export const useWorkersStore = defineStore('workers', () => {
         await handleUnauthorized()
         return
       }
-      errorMessage.value = error instanceof Error ? error.message : 'Failed to delete worker.'
+      errorMessage.value = toErrorMessage(error, 'Failed to delete worker.')
     } finally {
       if (deletingNodeID.value === nodeID) {
         deletingNodeID.value = ''
@@ -301,21 +240,22 @@ export const useWorkersStore = defineStore('workers', () => {
     }
   }
 
+  function shouldAutoRefresh(): boolean {
+    if (loading.value) {
+      return false
+    }
+    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+      return false
+    }
+    return useAuthStore().isAuthenticated
+  }
+
   function startAutoRefresh(): void {
     stopAutoRefresh()
-
     timer = setInterval(() => {
-      if (loading.value) {
-        return
+      if (shouldAutoRefresh()) {
+        void loadDashboard()
       }
-      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
-        return
-      }
-      const authStore = useAuthStore()
-      if (!authStore.isAuthenticated) {
-        return
-      }
-      void loadDashboard()
     }, autoRefreshMs)
   }
 
@@ -328,18 +268,15 @@ export const useWorkersStore = defineStore('workers', () => {
   }
 
   function onPageVisibilityChange(): void {
-    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
-      return
+    if (shouldAutoRefresh()) {
+      void loadDashboard()
     }
-    if (loading.value) {
-      return
-    }
-    void loadDashboard()
   }
 
   function teardown(): void {
-    activeController?.abort()
+    requests.abort()
     stopAutoRefresh()
+    loading.value = false
   }
 
   function reset(): void {
@@ -353,7 +290,7 @@ export const useWorkersStore = defineStore('workers', () => {
   }
 
   return {
-    pageSize,
+    pageSize: workersPageSize,
     statusFilter,
     page,
     loading,
@@ -370,20 +307,14 @@ export const useWorkersStore = defineStore('workers', () => {
     staleWorkers,
     activeSessions,
     staleWorkersLabel,
+    total,
     totalPages,
     workerRows,
-    canPrev,
-    canNext,
-    footerText,
     loadDashboard,
     setFilter,
     setPage,
     previousPage,
     nextPage,
-    deleteWorkerButtonText,
-    formatDateTime,
-    formatAge,
-    formatCapabilities,
     createWorker,
     deleteWorker,
     startAutoRefresh,

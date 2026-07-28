@@ -1,20 +1,21 @@
 <script setup lang="ts">
-import SegmentedToggle from '@/components/worker-tool/SegmentedToggle.vue'
+import { computed } from 'vue'
 
-type IssueItem = {
-  level: 'error' | 'warning'
-  message: string
-}
+import AppButton from '@/components/ui/AppButton.vue'
+import AppSegmented from '@/components/ui/AppSegmented.vue'
+import CopyButton from '@/components/ui/CopyButton.vue'
+import WorkerIssueList from '@/components/worker-tool/WorkerIssueList.vue'
+import type { WorkerIssue } from '@/components/worker-tool/issues'
+import type { CopyStatus } from '@/composables/useCopyFeedback'
 
-type PreviewMode = 'command' | 'config-file'
+export type PreviewMode = 'command' | 'config-file'
 
 const props = defineProps<{
   commandText: string
   configTomlText: string
   previewMode: PreviewMode
-  issueItems: IssueItem[]
-  hasErrors: boolean
-  copyButtonText: string
+  issues: WorkerIssue[]
+  copyStatus: CopyStatus
   copyDisabled: boolean
   downloadDisabled: boolean
 }>()
@@ -28,7 +29,19 @@ const emit = defineEmits<{
 const previewModeOptions = [
   { value: 'command', label: 'Startup Command', testId: 'preview-mode-command-btn' },
   { value: 'config-file', label: 'config.toml', testId: 'preview-mode-config-file-btn' },
-]
+] as const satisfies ReadonlyArray<{ value: PreviewMode; label: string; testId: string }>
+
+const isCommandMode = computed(() => props.previewMode === 'command')
+
+const title = computed(() =>
+  isCommandMode.value ? 'Startup Command Preview' : 'config.toml Preview',
+)
+
+const description = computed(() =>
+  isCommandMode.value
+    ? 'Rendered in multiline shell format.'
+    : 'Place the file next to the worker binary. Environment variables override it.',
+)
 
 function handlePreviewModeUpdate(value: string): void {
   emit('update:previewMode', value === 'config-file' ? 'config-file' : 'command')
@@ -36,79 +49,58 @@ function handlePreviewModeUpdate(value: string): void {
 </script>
 
 <template>
-  <div class="rounded-lg border border-stroke bg-surface shadow-card flex flex-col">
-    <div class="px-4 py-3 border-b border-stroke flex items-center justify-between gap-3 flex-wrap">
+  <div class="flex flex-col rounded-lg border border-stroke bg-surface shadow-card">
+    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-stroke px-4 py-3">
       <div>
-        <p class="m-0 text-sm font-medium text-primary">
-          {{ props.previewMode === 'command' ? 'Startup Command Preview' : 'config.toml Preview' }}
-        </p>
-        <p class="m-0 text-xs text-secondary">
-          {{
-            props.previewMode === 'command'
-              ? 'Rendered in multiline shell format.'
-              : 'Place the file next to the worker binary. Environment variables override it.'
-          }}
-        </p>
+        <p class="m-0 text-sm font-medium text-primary">{{ title }}</p>
+        <p class="m-0 text-xs text-secondary">{{ description }}</p>
       </div>
       <div class="flex items-center gap-2">
-        <SegmentedToggle
-          :model-value="props.previewMode"
+        <AppSegmented
+          :model-value="previewMode"
           :options="previewModeOptions"
+          size="sm"
+          aria-label="Preview mode"
           @update:model-value="handlePreviewModeUpdate"
         />
-        <button
-          v-if="props.previewMode === 'command'"
+        <CopyButton
+          v-if="isCommandMode"
+          variant="primary"
+          label="Copy Startup Command"
           data-testid="copy-startup-command"
-          type="button"
-          class="ui-btn-primary rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
-          :disabled="props.copyDisabled"
-          @click="emit('copy')"
-        >
-          {{ props.copyButtonText }}
-        </button>
-        <button
+          :status="copyStatus"
+          :disabled="copyDisabled"
+          @copy="emit('copy')"
+        />
+        <AppButton
           v-else
+          variant="primary"
+          size="sm"
+          icon="download"
           data-testid="download-config-file"
-          type="button"
-          class="ui-btn-primary rounded-md px-3 py-1.5 text-[13px] font-medium h-8 inline-flex items-center justify-center border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
-          :disabled="props.downloadDisabled"
+          :disabled="downloadDisabled"
           @click="emit('download')"
         >
           Download config.toml
-        </button>
+        </AppButton>
       </div>
     </div>
 
-    <div class="p-4 grid gap-3">
+    <div class="grid gap-3 p-4">
       <code
-        v-if="props.previewMode === 'command'"
+        v-if="isCommandMode"
         data-testid="startup-command-preview"
-        class="ui-code-block block rounded-default border p-4 font-mono text-[13px] leading-[1.6] whitespace-pre-wrap break-all"
-        >{{ props.commandText }}</code
+        class="ui-code-block block rounded-default border p-4 font-mono text-[13px] leading-[1.6] break-all whitespace-pre-wrap"
+        >{{ commandText }}</code
       >
       <code
         v-else
         data-testid="config-file-preview"
-        class="ui-code-block block rounded-default border p-4 font-mono text-[13px] leading-[1.6] whitespace-pre-wrap break-all"
-        >{{ props.configTomlText || 'config.toml is not available for this startup preset.' }}</code
+        class="ui-code-block block rounded-default border p-4 font-mono text-[13px] leading-[1.6] break-all whitespace-pre-wrap"
+        >{{ configTomlText || 'config.toml is not available for this startup preset.' }}</code
       >
 
-      <div
-        v-if="props.issueItems.length > 0"
-        class="ui-alert rounded-md px-3 py-2 text-xs"
-        :class="props.hasErrors ? 'ui-alert-error' : 'ui-alert-warning'"
-      >
-        <p class="m-0 text-primary font-medium mb-1">Command Notice</p>
-        <ul class="m-0 pl-4 grid gap-1 text-secondary">
-          <li
-            v-for="item in props.issueItems"
-            :key="`preview-${item.level}-${item.message}`"
-            :class="item.level === 'error' ? 'text-offline' : 'text-stale'"
-          >
-            {{ item.message }}
-          </li>
-        </ul>
-      </div>
+      <WorkerIssueList :issues="issues" compact />
     </div>
   </div>
 </template>

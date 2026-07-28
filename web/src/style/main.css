@@ -1,5 +1,8 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 @import 'tailwindcss';
+
+/* ==========================================================================
+   Design tokens
+   ========================================================================== */
 
 @theme {
   --color-bg: #f3f5f8;
@@ -42,6 +45,7 @@
   --color-selection-code-fg: #ffffff;
   --color-overlay: rgba(9, 12, 16, 0.46);
   --color-focus-ring: rgba(21, 25, 34, 0.16);
+  --color-skeleton: rgba(21, 25, 34, 0.07);
 
   --shadow-card: 0 12px 32px rgba(15, 23, 42, 0.06);
   --shadow-card-hover: 0 18px 36px rgba(15, 23, 42, 0.1);
@@ -55,7 +59,15 @@
     'Open Sans', 'Helvetica Neue', sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
 
-  --animate-rise-in: rise-in 500ms ease-out;
+  /* Shared motion scale. Keep every transition on one of these steps. */
+  --ease-standard: cubic-bezier(0.2, 0, 0.2, 1);
+  /* Decelerates harder than standard; for elements travelling a visible distance. */
+  --ease-emphasized: cubic-bezier(0.2, 0, 0, 1);
+  --duration-fast: 150ms;
+  --duration-base: 200ms;
+  --duration-slow: 320ms;
+
+  --animate-rise-in: rise-in 420ms var(--ease-standard) both;
 }
 
 :root {
@@ -104,11 +116,16 @@
   --color-selection-code-fg: #0b1016;
   --color-overlay: rgba(4, 7, 11, 0.68);
   --color-focus-ring: rgba(238, 243, 248, 0.18);
+  --color-skeleton: rgba(238, 243, 248, 0.08);
 
   --shadow-card: 0 16px 42px rgba(2, 6, 12, 0.36);
   --shadow-card-hover: 0 20px 52px rgba(2, 6, 12, 0.46);
   --shadow-modal: 0 32px 72px rgba(2, 6, 12, 0.55);
 }
+
+/* ==========================================================================
+   Base elements
+   ========================================================================== */
 
 html {
   min-height: 100%;
@@ -121,8 +138,8 @@ body {
   color: var(--color-primary);
   font-family: var(--font-sans);
   transition:
-    background-color 180ms ease,
-    color 180ms ease;
+    background-color var(--duration-base) ease,
+    color var(--duration-base) ease;
 }
 
 #app {
@@ -154,9 +171,26 @@ textarea {
   resize: vertical;
 }
 
-summary::-webkit-details-marker {
-  color: var(--color-secondary);
+summary {
+  list-style: none;
 }
+
+summary::-webkit-details-marker {
+  display: none;
+}
+
+/* ==========================================================================
+   Focus handling
+   ========================================================================== */
+
+.ui-focusable:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--color-focus-ring);
+}
+
+/* ==========================================================================
+   Surfaces and controls
+   ========================================================================== */
 
 .ui-on-accent {
   color: var(--color-accent-contrast);
@@ -200,14 +234,19 @@ summary::-webkit-details-marker {
   color: var(--color-primary);
   border-color: var(--color-stroke);
   transition:
-    background-color 160ms ease,
-    border-color 160ms ease,
-    box-shadow 160ms ease,
-    color 160ms ease;
+    background-color var(--duration-fast) ease,
+    border-color var(--duration-fast) ease,
+    box-shadow var(--duration-fast) ease,
+    color var(--duration-fast) ease;
+}
+
+.ui-input:hover:not(:disabled):not(:focus) {
+  border-color: var(--color-stroke-hover);
 }
 
 .ui-input:focus,
-.ui-input:focus-visible {
+.ui-input:focus-visible,
+.ui-input:focus-within {
   border-color: var(--color-stroke-hover);
   box-shadow: 0 0 0 3px var(--color-focus-ring);
   outline: none;
@@ -347,6 +386,92 @@ summary::-webkit-details-marker {
   border-color: var(--color-stroke);
 }
 
+/* ==========================================================================
+   Data tables
+   ========================================================================== */
+
+.ui-th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 1rem 1.5rem;
+  text-align: left;
+  vertical-align: middle;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-secondary);
+  background: var(--color-surface-soft);
+  border-bottom: 1px solid var(--color-stroke);
+  white-space: nowrap;
+}
+
+.ui-td {
+  padding: 1rem 1.5rem;
+  text-align: left;
+  vertical-align: middle;
+  font-size: 0.875rem;
+  color: var(--color-primary);
+  border-bottom: 1px solid var(--color-stroke);
+}
+
+tbody tr:last-child .ui-td {
+  border-bottom: none;
+}
+
+/* ==========================================================================
+   Motion
+   ========================================================================== */
+
+.ui-rise {
+  animation: rise-in 420ms var(--ease-standard) both;
+  animation-delay: var(--ui-rise-delay, 0ms);
+}
+
+.ui-spinner {
+  animation: ui-spin 700ms linear infinite;
+}
+
+.ui-skeleton {
+  background: var(--color-skeleton);
+  animation: ui-pulse 1.4s ease-in-out infinite;
+}
+
+.modal-enter-active,
+.modal-leave-active {
+  transition: opacity var(--duration-base) var(--ease-standard);
+}
+
+.modal-enter-active .ui-modal-panel,
+.modal-leave-active .ui-modal-panel {
+  transition:
+    opacity var(--duration-base) var(--ease-standard),
+    transform var(--duration-base) var(--ease-standard);
+}
+
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+
+.modal-enter-from .ui-modal-panel,
+.modal-leave-to .ui-modal-panel {
+  opacity: 0;
+  transform: translateY(12px) scale(0.98);
+}
+
+.menu-enter-active,
+.menu-leave-active {
+  transition:
+    opacity var(--duration-fast) var(--ease-standard),
+    transform var(--duration-fast) var(--ease-standard);
+}
+
+.menu-enter-from,
+.menu-leave-to {
+  opacity: 0;
+  transform: translateY(-4px) scale(0.97);
+}
+
 @keyframes rise-in {
   from {
     opacity: 0;
@@ -356,5 +481,145 @@ summary::-webkit-details-marker {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes ui-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes ui-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/*
+ * View Transitions
+ *
+ * Two named elements are pulled out of the root snapshot so they animate on
+ * their own terms: the active sidebar item, which morphs from its old position
+ * to the new one, and the main content area, which cross-fades. Everything else
+ * (the header label) rides the default root transition.
+ */
+.nav-active {
+  view-transition-name: nav-active;
+}
+
+.page-content {
+  view-transition-name: page-content;
+  /*
+   * Reserve the scrollbar track. A long page (Workers) and a short one (Tokens)
+   * otherwise differ by the scrollbar's width, which shifts the centred content
+   * sideways — barely noticeable on an instant swap, obvious once the two states
+   * cross-fade on top of each other.
+   */
+  scrollbar-gutter: stable;
+}
+
+/*
+ * The sidebar is stable across navigations, so it opts out of the root
+ * cross-fade entirely. Without this, lifting the active item into its own
+ * snapshot leaves a hole at its old position in the outgoing root snapshot,
+ * and the item it just left appears to flash as the root fades in behind it.
+ */
+.console-sidebar {
+  view-transition-name: console-sidebar;
+}
+
+::view-transition-old(console-sidebar),
+::view-transition-new(console-sidebar) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+/*
+ * Once transitions take over, the per-card entrance is redundant: the browser
+ * already cross-fades the whole content area. Leaving it on would both blank
+ * the incoming snapshot (captured at the animation's first keyframe) and replay
+ * the rise once the transition ends.
+ */
+.vt-owns-entrance .ui-rise {
+  animation: none !important;
+}
+
+::view-transition-old(page-content),
+::view-transition-new(page-content) {
+  animation-duration: 260ms;
+  animation-timing-function: var(--ease-standard);
+}
+
+::view-transition-old(page-content) {
+  animation-name: page-fade-out;
+}
+
+::view-transition-new(page-content) {
+  animation-name: page-fade-in;
+}
+
+/*
+ * The highlight is a single element handed between nav items, so the browser
+ * interpolates its box rather than fading two copies. Only the group needs a
+ * duration — the old/new snapshots stay pinned on top of each other.
+ */
+::view-transition-group(nav-active) {
+  animation-duration: 320ms;
+  animation-timing-function: var(--ease-emphasized);
+}
+
+::view-transition-old(nav-active),
+::view-transition-new(nav-active) {
+  animation: none;
+  mix-blend-mode: normal;
+  height: 100%;
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 220ms;
+}
+
+@keyframes page-fade-out {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes page-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
   }
 }

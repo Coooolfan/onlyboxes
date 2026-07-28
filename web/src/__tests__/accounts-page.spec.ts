@@ -5,6 +5,7 @@ import { flushPromises } from '@vue/test-utils'
 import router from '../router'
 import {
   adminSessionPayload,
+  confirmDestructiveAction,
   defaultAccountsPayload,
   jsonResponse,
   mountApp,
@@ -23,11 +24,6 @@ describe('Accounts Page', () => {
   })
 
   it('loads accounts and deletes a member account', async () => {
-    vi.stubGlobal(
-      'confirm',
-      vi.fn(() => true),
-    )
-
     let accountItems = defaultAccountsPayload().items
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
@@ -59,8 +55,7 @@ describe('Accounts Page', () => {
       const accountDeleteBtn = wrapper.find('.account-panel .account-delete-btn')
       expect(accountDeleteBtn.exists()).toBe(true)
       await accountDeleteBtn.trigger('click')
-      await flushPromises()
-      await flushPromises()
+      await confirmDestructiveAction()
 
       const deleteCall = fetchMock.mock.calls.find(
         ([url, init]) =>

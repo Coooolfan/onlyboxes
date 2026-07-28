@@ -165,6 +165,25 @@ export async function mountApp(path: string) {
   return wrapper
 }
 
+/**
+ * Destructive actions now open the in-app confirmation dialog instead of
+ * `window.confirm`. Call this after triggering the action to accept it.
+ */
+export async function confirmDestructiveAction() {
+  for (let i = 0; i < 10; i += 1) {
+    const acceptBtn = document.body.querySelector<HTMLButtonElement>(
+      '[data-testid="confirm-dialog-accept"]',
+    )
+    if (acceptBtn) {
+      acceptBtn.click()
+      await settleUI()
+      return
+    }
+    await settleUI(1)
+  }
+  throw new Error('confirm dialog did not appear')
+}
+
 export async function waitForRoute(path: string, maxAttempts = 30) {
   for (let i = 0; i < maxAttempts; i += 1) {
     if (router.currentRoute.value.path === path) {

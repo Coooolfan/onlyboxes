@@ -1,24 +1,20 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted } from 'vue'
 
-import ErrorBanner from '@/components/common/ErrorBanner.vue'
-import ConsoleHeader from '@/components/dashboard/ConsoleHeader.vue'
-import TrustedTokensPanel from '@/components/dashboard/TrustedTokensPanel.vue'
+import PageHeader from '@/components/layout/PageHeader.vue'
+import TrustedTokensPanel from '@/components/tokens/TrustedTokensPanel.vue'
+import AppAlert from '@/components/ui/AppAlert.vue'
+import { useRefreshedAtText } from '@/composables/useRefreshedAtText'
 import { useAuthStore } from '@/stores/auth'
 import { useTokensStore } from '@/stores/tokens'
 
 const authStore = useAuthStore()
 const tokensStore = useTokensStore()
 
-const refreshedAtText = computed(() => {
-  if (!tokensStore.refreshedAt) {
-    return 'never'
-  }
-  return tokensStore.formatDateTime(tokensStore.refreshedAt.toISOString())
-})
+const refreshedAtText = useRefreshedAtText(computed(() => tokensStore.refreshedAt))
 
-onMounted(async () => {
-  await tokensStore.loadTokens()
+onMounted(() => {
+  void tokensStore.loadTokens()
 })
 
 onBeforeUnmount(() => {
@@ -27,8 +23,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="relative z-2 mx-auto w-[min(1240px,100%)] grid gap-6">
-    <ConsoleHeader
+  <div class="grid gap-6">
+    <PageHeader
       eyebrow="Onlyboxes / Token Console"
       title="Trusted Token Management"
       :loading="tokensStore.loading"
@@ -38,18 +34,16 @@ onBeforeUnmount(() => {
       <template #subtitle>
         Account: <strong>{{ authStore.currentAccount?.username ?? '--' }}</strong>
       </template>
-    </ConsoleHeader>
+    </PageHeader>
 
-    <ErrorBanner v-if="tokensStore.errorMessage" :message="tokensStore.errorMessage" />
+    <AppAlert v-if="tokensStore.errorMessage" tone="error" with-icon>
+      {{ tokensStore.errorMessage }}
+    </AppAlert>
 
     <TrustedTokensPanel
       :tokens="tokensStore.trustedTokens"
-      :creating-token="tokensStore.creatingTrustedToken"
       :deleting-token-id="tokensStore.deletingTrustedTokenID"
-      :delete-button-text="tokensStore.trustedTokenDeleteButtonText"
-      :create-token="tokensStore.createTrustedToken"
-      :format-date-time="tokensStore.formatDateTime"
       @delete-token="tokensStore.deleteTrustedToken"
     />
-  </main>
+  </div>
 </template>
