@@ -61,6 +61,8 @@
 
   /* Shared motion scale. Keep every transition on one of these steps. */
   --ease-standard: cubic-bezier(0.2, 0, 0.2, 1);
+  /* Decelerates harder than standard; for elements travelling a visible distance. */
+  --ease-emphasized: cubic-bezier(0.2, 0, 0, 1);
   --duration-fast: 150ms;
   --duration-base: 200ms;
   --duration-slow: 320ms;
@@ -499,6 +501,113 @@ tbody tr:last-child .ui-td {
   }
 }
 
+/*
+ * View Transitions
+ *
+ * Two named elements are pulled out of the root snapshot so they animate on
+ * their own terms: the active sidebar item, which morphs from its old position
+ * to the new one, and the main content area, which cross-fades. Everything else
+ * (the header label) rides the default root transition.
+ */
+.nav-active {
+  view-transition-name: nav-active;
+}
+
+.page-content {
+  view-transition-name: page-content;
+  /*
+   * Reserve the scrollbar track. A long page (Workers) and a short one (Tokens)
+   * otherwise differ by the scrollbar's width, which shifts the centred content
+   * sideways — barely noticeable on an instant swap, obvious once the two states
+   * cross-fade on top of each other.
+   */
+  scrollbar-gutter: stable;
+}
+
+/*
+ * The sidebar is stable across navigations, so it opts out of the root
+ * cross-fade entirely. Without this, lifting the active item into its own
+ * snapshot leaves a hole at its old position in the outgoing root snapshot,
+ * and the item it just left appears to flash as the root fades in behind it.
+ */
+.console-sidebar {
+  view-transition-name: console-sidebar;
+}
+
+::view-transition-old(console-sidebar),
+::view-transition-new(console-sidebar) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+/*
+ * Once transitions take over, the per-card entrance is redundant: the browser
+ * already cross-fades the whole content area. Leaving it on would both blank
+ * the incoming snapshot (captured at the animation's first keyframe) and replay
+ * the rise once the transition ends.
+ */
+.vt-owns-entrance .ui-rise {
+  animation: none !important;
+}
+
+::view-transition-old(page-content),
+::view-transition-new(page-content) {
+  animation-duration: 260ms;
+  animation-timing-function: var(--ease-standard);
+}
+
+::view-transition-old(page-content) {
+  animation-name: page-fade-out;
+}
+
+::view-transition-new(page-content) {
+  animation-name: page-fade-in;
+}
+
+/*
+ * The highlight is a single element handed between nav items, so the browser
+ * interpolates its box rather than fading two copies. Only the group needs a
+ * duration — the old/new snapshots stay pinned on top of each other.
+ */
+::view-transition-group(nav-active) {
+  animation-duration: 320ms;
+  animation-timing-function: var(--ease-emphasized);
+}
+
+::view-transition-old(nav-active),
+::view-transition-new(nav-active) {
+  animation: none;
+  mix-blend-mode: normal;
+  height: 100%;
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 220ms;
+}
+
+@keyframes page-fade-out {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes page-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -506,5 +615,11 @@ tbody tr:last-child .ui-td {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
   }
 }

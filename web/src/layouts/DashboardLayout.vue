@@ -46,7 +46,7 @@ async function handleLogout(): Promise<void> {
         />
       </header>
 
-      <main class="relative flex-1 overflow-y-auto p-8 max-[620px]:p-5">
+      <main class="page-content relative flex-1 overflow-y-auto p-8 max-[620px]:p-5">
         <div class="mx-auto grid w-[min(1240px,100%)] gap-6">
           <slot />
         </div>

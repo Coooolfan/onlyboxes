@@ -1,5 +1,6 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 
+import { useViewTransitions } from '@/composables/useViewTransitions'
 import { useAuthStore } from '@/stores/auth'
 
 const LandingRouteView = { render: () => null }
@@ -109,5 +110,7 @@ router.beforeEach(async (to) => {
 
   return true
 })
+
+useViewTransitions(router)
 
 export default router

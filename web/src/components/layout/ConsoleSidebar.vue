@@ -15,7 +15,9 @@ const navItems = computed(() =>
 </script>
 
 <template>
-  <aside class="flex w-64 shrink-0 flex-col border-r border-stroke bg-surface-soft/30">
+  <aside
+    class="console-sidebar flex w-64 shrink-0 flex-col border-r border-stroke bg-surface-soft/30"
+  >
     <div class="relative flex h-16 items-center gap-2 border-b border-stroke/50 px-4 pr-11">
       <img src="/onlyboxes.avif" alt="" class="h-8 w-8 shrink-0 rounded-md object-cover" />
       <span class="text-lg font-bold tracking-tight">Onlyboxes</span>
@@ -46,7 +48,7 @@ const navItems = computed(() =>
         class="ui-focusable flex h-10 items-center gap-2 rounded-md px-3 text-sm font-medium transition-[background-color,color] duration-200"
         :class="
           isNavItemActive(route.path, item.to)
-            ? 'bg-accent ui-on-accent'
+            ? 'nav-active bg-accent ui-on-accent'
             : 'text-secondary hover:bg-surface-soft hover:text-primary'
         "
         :aria-current="isNavItemActive(route.path, item.to) ? 'page' : undefined"
