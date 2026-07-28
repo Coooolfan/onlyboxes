@@ -92,6 +92,11 @@ The default terminal image is a general execution image with Python 3, Node.js 2
 | `WORKER_PYTHON_EXEC_MAX_INFLIGHT` | No | `4` | Max concurrent pythonExec commands |
 | `WORKER_TERMINAL_EXEC_MAX_INFLIGHT` | No | `4` | Max concurrent terminalExec commands |
 | `WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT` | No | `4` | Max concurrent terminalResource commands |
+| `WORKER_TERMINAL_SESSION_MAX_INFLIGHT` | No | `1` | Max concurrent operations in one terminal session; shared by terminalExec and terminalResource |
+
+`WORKER_TERMINAL_EXEC_MAX_INFLIGHT` and `WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT` independently limit their respective capabilities across the worker; there is no additional aggregate worker-wide limit. `WORKER_TERMINAL_SESSION_MAX_INFLIGHT` applies to one `session_id` and counts terminalExec and terminalResource together. A request must satisfy both its capability limit and the session limit.
+
+For example, with both capability limits set to `10` and the session limit set to `2`, the worker can process up to 10 terminalExec and 10 terminalResource operations at once, while any one session can run at most two operations in total. Exceeding the session limit returns `409 session_busy`; exhausting the worker-level capacity for a capability returns `429 no_capacity`.
 
 ### Terminal lease
 

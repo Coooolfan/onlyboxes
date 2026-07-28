@@ -544,6 +544,7 @@ mod tests {
     #[test]
     fn terminal_exec_box_options_override_entrypoint_to_idle_loop() {
         let cfg = Config {
+            config_file: None,
             console_grpc_target: String::new(),
             console_tls: false,
             worker_id: String::new(),
@@ -569,6 +570,7 @@ mod tests {
             terminal_lease_default_sec: 60,
             terminal_output_limit_bytes: 1024 * 1024,
             terminal_export_max_bytes: 0,
+            terminal_session_max_inflight: 1,
             echo_max_inflight: 4,
             python_exec_max_inflight: 4,
             terminal_exec_max_inflight: 4,
@@ -592,6 +594,7 @@ mod tests {
     #[test]
     fn python_exec_box_options_override_entrypoint_to_sleep_infinity() {
         let cfg = Config {
+            config_file: None,
             console_grpc_target: String::new(),
             console_tls: false,
             worker_id: String::new(),
@@ -617,6 +620,7 @@ mod tests {
             terminal_lease_default_sec: 60,
             terminal_output_limit_bytes: 1024 * 1024,
             terminal_export_max_bytes: 0,
+            terminal_session_max_inflight: 1,
             echo_max_inflight: 4,
             python_exec_max_inflight: 4,
             terminal_exec_max_inflight: 4,

@@ -1,7 +1,7 @@
 package config
 
 import (
-	"os"
+	"encoding/json"
 	"strconv"
 	"strings"
 	"time"
@@ -25,36 +25,37 @@ const (
 )
 
 type Config struct {
-	HTTPAddr              string
-	GRPCAddr              string
-	OfflineTTL            time.Duration
-	ReplayWindow          time.Duration
-	HeartbeatIntervalSec  int32
-	DashboardUsername     string
-	DashboardPassword     string
-	InitialAdminAPIKey    string
-	JITSigningKey         string
+	ConfigFile             string
+	HTTPAddr               string
+	GRPCAddr               string
+	OfflineTTL             time.Duration
+	ReplayWindow           time.Duration
+	HeartbeatIntervalSec   int32
+	DashboardUsername      string
+	DashboardPassword      string
+	InitialAdminAPIKey     string
+	JITSigningKey          string
 	DashboardJITSigningKey string
-	DBPath                string
-	DBBusyTimeoutMS       int
-	HashKey               string
-	TaskRetentionDays     int
-	ExportFileEndpoint    string
-	ExportFileRegion      string
-	ExportFileBucketName  string
-	ExportFilePrefix      string
-	ExportFileAK          string
-	ExportFileSK          string
-	ExportFileUploadTTL   time.Duration
-	ExportFileDownloadTTL time.Duration
-	ExportReturnSchema    string
-	EnableRegistration    bool
-	HiddenTools           map[string]bool
-	MCPTokenQueryParam    string
-	MCPToolOverrides      map[string]MCPToolOverride
-	LogLevel              string
-	LogFormat             string
-	LogAddSource          bool
+	DBPath                 string
+	DBBusyTimeoutMS        int
+	HashKey                string
+	TaskRetentionDays      int
+	ExportFileEndpoint     string
+	ExportFileRegion       string
+	ExportFileBucketName   string
+	ExportFilePrefix       string
+	ExportFileAK           string
+	ExportFileSK           string
+	ExportFileUploadTTL    time.Duration
+	ExportFileDownloadTTL  time.Duration
+	ExportReturnSchema     string
+	EnableRegistration     bool
+	HiddenTools            map[string]bool
+	MCPTokenQueryParam     string
+	MCPToolOverrides       map[string]MCPToolOverride
+	LogLevel               string
+	LogFormat              string
+	LogAddSource           bool
 }
 
 // MCPToolOverride holds optional env-driven overrides for a single MCP tool's
@@ -77,45 +78,48 @@ type MCPToolOverride struct {
 }
 
 func Load() Config {
-	offlineTTLSec := parsePositiveIntEnv("CONSOLE_OFFLINE_TTL_SEC", defaultOfflineTTLSec)
-	replayWindowSec := parsePositiveIntEnv("CONSOLE_REPLAY_WINDOW_SEC", defaultReplayWindowSec)
-	heartbeatIntervalSec := parsePositiveIntEnv("CONSOLE_HEARTBEAT_INTERVAL_SEC", defaultHeartbeatIntervalSec)
-	dbBusyTimeoutMS := parsePositiveIntEnv("CONSOLE_DB_BUSY_TIMEOUT_MS", defaultDBBusyTimeoutMS)
-	taskRetentionDays := parsePositiveIntEnv("CONSOLE_TASK_RETENTION_DAYS", defaultTaskRetentionDays)
-	exportUploadTTLSec := parsePositiveIntEnv("CONSOLE_EXPORT_FILE_UPLOAD_PRESIGN_TTL_SEC", defaultExportUploadTTLSec)
-	exportDownloadTTLSec := parsePositiveIntEnv("CONSOLE_EXPORT_FILE_DOWNLOAD_PRESIGN_TTL_SEC", defaultExportDownloadTTLSec)
+	src := newSource()
+
+	offlineTTLSec := src.positiveInt("CONSOLE_OFFLINE_TTL_SEC", defaultOfflineTTLSec)
+	replayWindowSec := src.positiveInt("CONSOLE_REPLAY_WINDOW_SEC", defaultReplayWindowSec)
+	heartbeatIntervalSec := src.positiveInt("CONSOLE_HEARTBEAT_INTERVAL_SEC", defaultHeartbeatIntervalSec)
+	dbBusyTimeoutMS := src.positiveInt("CONSOLE_DB_BUSY_TIMEOUT_MS", defaultDBBusyTimeoutMS)
+	taskRetentionDays := src.positiveInt("CONSOLE_TASK_RETENTION_DAYS", defaultTaskRetentionDays)
+	exportUploadTTLSec := src.positiveInt("CONSOLE_EXPORT_FILE_UPLOAD_PRESIGN_TTL_SEC", defaultExportUploadTTLSec)
+	exportDownloadTTLSec := src.positiveInt("CONSOLE_EXPORT_FILE_DOWNLOAD_PRESIGN_TTL_SEC", defaultExportDownloadTTLSec)
 
 	return Config{
-		HTTPAddr:              getEnv("CONSOLE_HTTP_ADDR", defaultHTTPAddr),
-		GRPCAddr:              getEnv("CONSOLE_GRPC_ADDR", defaultGRPCAddr),
-		OfflineTTL:            time.Duration(offlineTTLSec) * time.Second,
-		ReplayWindow:          time.Duration(replayWindowSec) * time.Second,
-		HeartbeatIntervalSec:  int32(heartbeatIntervalSec),
-		DashboardUsername:     os.Getenv("CONSOLE_DASHBOARD_USERNAME"),
-		DashboardPassword:     os.Getenv("CONSOLE_DASHBOARD_PASSWORD"),
-		InitialAdminAPIKey:    os.Getenv("CONSOLE_INITIAL_ADMIN_API_KEY"),
-		JITSigningKey:         os.Getenv("CONSOLE_JIT_SIGNING_KEY"),
-		DashboardJITSigningKey: os.Getenv("CONSOLE_DASHBOARD_JIT_SIGNING_KEY"),
-		DBPath:                getEnv("CONSOLE_DB_PATH", defaultDBPath),
-		DBBusyTimeoutMS:       dbBusyTimeoutMS,
-		HashKey:               os.Getenv("CONSOLE_HASH_KEY"),
-		TaskRetentionDays:     taskRetentionDays,
-		ExportFileEndpoint:    strings.TrimSpace(os.Getenv("CONSOLE_EXPORT_FILE_ENDPOINT")),
-		ExportFileRegion:      strings.TrimSpace(os.Getenv("CONSOLE_EXPORT_FILE_REGION")),
-		ExportFileBucketName:  strings.TrimSpace(os.Getenv("CONSOLE_EXPORT_FILE_BUCKET_NAME")),
-		ExportFilePrefix:      strings.TrimSpace(os.Getenv("CONSOLE_EXPORT_FILE_EXPORT_PREFIX")),
-		ExportFileAK:          strings.TrimSpace(os.Getenv("CONSOLE_EXPORT_FILE_AK")),
-		ExportFileSK:          strings.TrimSpace(os.Getenv("CONSOLE_EXPORT_FILE_SK")),
-		ExportFileUploadTTL:   time.Duration(exportUploadTTLSec) * time.Second,
-		ExportFileDownloadTTL: time.Duration(exportDownloadTTLSec) * time.Second,
-		ExportReturnSchema:    parseExportReturnSchemaEnv("CONSOLE_EXPORT_RETURN_SCHEMA"),
-		EnableRegistration:    parseBoolEnv("CONSOLE_ENABLE_REGISTRATION", false),
-		HiddenTools:           parseStringSetEnv("CONSOLE_HIDDEN_TOOLS"),
-		MCPTokenQueryParam:    getTrimmedEnv("CONSOLE_MCP_TOKEN_QUERY_PARAM", defaultMCPTokenQueryParam),
-		MCPToolOverrides:      loadMCPToolOverrides(),
-		LogLevel:              parseLogLevelEnv("CONSOLE_LOG_LEVEL", defaultLogLevel),
-		LogFormat:             parseLogFormatEnv("CONSOLE_LOG_FORMAT", defaultLogFormat),
-		LogAddSource:          parseBoolEnv("CONSOLE_LOG_ADD_SOURCE", defaultLogAddSource),
+		ConfigFile:             src.Path(),
+		HTTPAddr:               src.stringValue("CONSOLE_HTTP_ADDR", defaultHTTPAddr),
+		GRPCAddr:               src.stringValue("CONSOLE_GRPC_ADDR", defaultGRPCAddr),
+		OfflineTTL:             time.Duration(offlineTTLSec) * time.Second,
+		ReplayWindow:           time.Duration(replayWindowSec) * time.Second,
+		HeartbeatIntervalSec:   int32(heartbeatIntervalSec),
+		DashboardUsername:      src.get("CONSOLE_DASHBOARD_USERNAME"),
+		DashboardPassword:      src.get("CONSOLE_DASHBOARD_PASSWORD"),
+		InitialAdminAPIKey:     src.get("CONSOLE_INITIAL_ADMIN_API_KEY"),
+		JITSigningKey:          src.get("CONSOLE_JIT_SIGNING_KEY"),
+		DashboardJITSigningKey: src.get("CONSOLE_DASHBOARD_JIT_SIGNING_KEY"),
+		DBPath:                 src.stringValue("CONSOLE_DB_PATH", defaultDBPath),
+		DBBusyTimeoutMS:        dbBusyTimeoutMS,
+		HashKey:                src.get("CONSOLE_HASH_KEY"),
+		TaskRetentionDays:      taskRetentionDays,
+		ExportFileEndpoint:     strings.TrimSpace(src.get("CONSOLE_EXPORT_FILE_ENDPOINT")),
+		ExportFileRegion:       strings.TrimSpace(src.get("CONSOLE_EXPORT_FILE_REGION")),
+		ExportFileBucketName:   strings.TrimSpace(src.get("CONSOLE_EXPORT_FILE_BUCKET_NAME")),
+		ExportFilePrefix:       strings.TrimSpace(src.get("CONSOLE_EXPORT_FILE_EXPORT_PREFIX")),
+		ExportFileAK:           strings.TrimSpace(src.get("CONSOLE_EXPORT_FILE_AK")),
+		ExportFileSK:           strings.TrimSpace(src.get("CONSOLE_EXPORT_FILE_SK")),
+		ExportFileUploadTTL:    time.Duration(exportUploadTTLSec) * time.Second,
+		ExportFileDownloadTTL:  time.Duration(exportDownloadTTLSec) * time.Second,
+		ExportReturnSchema:     src.exportReturnSchema("CONSOLE_EXPORT_RETURN_SCHEMA"),
+		EnableRegistration:     src.boolValue("CONSOLE_ENABLE_REGISTRATION", false),
+		HiddenTools:            src.stringSet("CONSOLE_HIDDEN_TOOLS"),
+		MCPTokenQueryParam:     src.trimmedStringValue("CONSOLE_MCP_TOKEN_QUERY_PARAM", defaultMCPTokenQueryParam),
+		MCPToolOverrides:       src.mcpToolOverrides(),
+		LogLevel:               src.logLevel("CONSOLE_LOG_LEVEL", defaultLogLevel),
+		LogFormat:              src.logFormat("CONSOLE_LOG_FORMAT", defaultLogFormat),
+		LogAddSource:           src.boolValue("CONSOLE_LOG_ADD_SOURCE", defaultLogAddSource),
 	}
 }
 
@@ -128,24 +132,24 @@ func (c Config) ExportFileEnabled() bool {
 		c.ExportFileSK != ""
 }
 
-func getEnv(key string, defaultValue string) string {
-	value := os.Getenv(key)
+func (s source) stringValue(key string, defaultValue string) string {
+	value := s.get(key)
 	if value == "" {
 		return defaultValue
 	}
 	return value
 }
 
-func getTrimmedEnv(key string, defaultValue string) string {
-	value := strings.TrimSpace(os.Getenv(key))
+func (s source) trimmedStringValue(key string, defaultValue string) string {
+	value := strings.TrimSpace(s.get(key))
 	if value == "" {
 		return defaultValue
 	}
 	return value
 }
 
-func parsePositiveIntEnv(key string, defaultValue int) int {
-	value := os.Getenv(key)
+func (s source) positiveInt(key string, defaultValue int) int {
+	value := strings.TrimSpace(s.get(key))
 	if value == "" {
 		return defaultValue
 	}
@@ -156,9 +160,8 @@ func parsePositiveIntEnv(key string, defaultValue int) int {
 	return parsed
 }
 
-func parseBoolEnv(key string, defaultValue bool) bool {
-	value := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
-	switch value {
+func (s source) boolValue(key string, defaultValue bool) bool {
+	switch strings.TrimSpace(strings.ToLower(s.get(key))) {
 	case "1", "true", "yes", "on":
 		return true
 	case "0", "false", "no", "off":
@@ -168,13 +171,25 @@ func parseBoolEnv(key string, defaultValue bool) bool {
 	}
 }
 
-func parseStringSetEnv(key string) map[string]bool {
-	raw := strings.TrimSpace(os.Getenv(key))
+// stringSet accepts either the comma separated form used by environment
+// variables or the JSON array produced by a TOML array.
+func (s source) stringSet(key string) map[string]bool {
+	raw := strings.TrimSpace(s.get(key))
 	if raw == "" {
 		return nil
 	}
+
+	items := []string{}
+	if strings.HasPrefix(raw, "[") {
+		if err := json.Unmarshal([]byte(raw), &items); err != nil {
+			return nil
+		}
+	} else {
+		items = strings.Split(raw, ",")
+	}
+
 	result := make(map[string]bool)
-	for _, item := range strings.Split(raw, ",") {
+	for _, item := range items {
 		item = normalizeToolKey(item)
 		if item != "" {
 			result[item] = true
@@ -190,11 +205,8 @@ func normalizeToolKey(value string) string {
 	return strings.TrimSpace(strings.ToLower(value))
 }
 
-func parseLogLevelEnv(key string, defaultValue string) string {
-	value := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
-	if value == "" {
-		return defaultValue
-	}
+func (s source) logLevel(key string, defaultValue string) string {
+	value := strings.TrimSpace(strings.ToLower(s.get(key)))
 	switch value {
 	case "debug", "info", "warn", "error":
 		return value
@@ -203,8 +215,8 @@ func parseLogLevelEnv(key string, defaultValue string) string {
 	}
 }
 
-func parseExportReturnSchemaEnv(key string) string {
-	value := strings.TrimSpace(strings.ToUpper(os.Getenv(key)))
+func (s source) exportReturnSchema(key string) string {
+	value := strings.TrimSpace(strings.ToUpper(s.get(key)))
 	switch value {
 	case "ALL", "SIGNED_URL", "OBJECTKEY":
 		return value
@@ -213,11 +225,8 @@ func parseExportReturnSchemaEnv(key string) string {
 	}
 }
 
-func parseLogFormatEnv(key string, defaultValue string) string {
-	value := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
-	if value == "" {
-		return defaultValue
-	}
+func (s source) logFormat(key string, defaultValue string) string {
+	value := strings.TrimSpace(strings.ToLower(s.get(key)))
 	switch value {
 	case "json", "text":
 		return value
@@ -255,29 +264,32 @@ var mcpToolParamCatalog = []struct {
 // pythonExec → PYTHON_EXEC) and <PARAM> is the snake_case param name uppercased
 // (e.g. session_id → SESSION_ID).
 //
-// It uses os.LookupEnv so that an explicitly empty string is distinguishable
-// from an unset variable.
-func loadMCPToolOverrides() map[string]MCPToolOverride {
+// The equivalent config file keys are the same names without the CONSOLE_
+// prefix and lowercased, so nested tables such as
+// `[mcp_tool.python_exec] description = "..."` are supported as well.
+//
+// An explicitly empty string is distinguishable from an unset key.
+func (src source) mcpToolOverrides() map[string]MCPToolOverride {
 	result := make(map[string]MCPToolOverride)
 	for _, entry := range mcpToolParamCatalog {
 		toolEnv := toolNameToEnvSegment(entry.ToolName)
 		override := MCPToolOverride{}
-		if v, ok := os.LookupEnv("CONSOLE_MCP_TOOL_" + toolEnv + "_NAME"); ok {
+		if v, ok := src.lookup("CONSOLE_MCP_TOOL_" + toolEnv + "_NAME"); ok {
 			s := v
 			override.Name = &s
 		}
-		if v, ok := os.LookupEnv("CONSOLE_MCP_TOOL_" + toolEnv + "_TITLE"); ok {
+		if v, ok := src.lookup("CONSOLE_MCP_TOOL_" + toolEnv + "_TITLE"); ok {
 			s := v
 			override.Title = &s
 		}
-		if v, ok := os.LookupEnv("CONSOLE_MCP_TOOL_" + toolEnv + "_DESCRIPTION"); ok {
+		if v, ok := src.lookup("CONSOLE_MCP_TOOL_" + toolEnv + "_DESCRIPTION"); ok {
 			s := v
 			override.Description = &s
 		}
 		params := make(map[string]*string)
 		for _, param := range entry.Params {
 			paramEnv := paramNameToEnvSegment(param)
-			if v, ok := os.LookupEnv("CONSOLE_MCP_TOOL_" + toolEnv + "_PARAM_" + paramEnv + "_DESCRIPTION"); ok {
+			if v, ok := src.lookup("CONSOLE_MCP_TOOL_" + toolEnv + "_PARAM_" + paramEnv + "_DESCRIPTION"); ok {
 				s := v
 				params[param] = &s
 			}

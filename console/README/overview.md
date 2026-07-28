@@ -1,5 +1,9 @@
 # Console Overview
 
+Configuration sources:
+- environment variables and `config.toml` (see `README/config-file.md`).
+- priority is environment variable > `config.toml` > default.
+
 The console service hosts:
 - a gRPC registry endpoint with bidirectional stream `Connect` for worker registration + heartbeat + command dispatch/result.
 - embedded web dashboard static hosting:
@@ -79,7 +83,7 @@ The console service hosts:
       - legacy `lease_ttl_sec` is ignored when provided.
       - payload excludes terminal session fields (`session_id`, `create_if_missing`, `created`).
       - routed only to caller-owned `worker-sys` and account-scoped capacity is single-flight.
-      - worker-side local single-flight guard is also enforced; concurrent dispatch while busy returns `session_busy` (HTTP `409` in command API).
+      - worker-side concurrency is also enforced per capability; dispatch beyond the worker's declared `computerUse` limit returns `session_busy` (HTTP `409` in command API). The limit defaults to `1`, so concurrent dispatch is rejected unless the worker raises `WORKER_COMPUTER_USE_MAX_INFLIGHT`.
       - MCP tool readiness failures use JSON-RPC application errors:
         - `-32010` with `data.error_code="WORKER_SYS_REQUIRED"` when the account has no `worker-sys`.
         - `-32011` with `data.error_code="WORKER_SYS_OFFLINE"` when a `worker-sys` is registered but offline.

@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 
 import PageHeader from '@/components/layout/PageHeader.vue'
 import AppAlert from '@/components/ui/AppAlert.vue'
 import WorkerBoxliteConfigForm from '@/components/worker-tool/WorkerBoxliteConfigForm.vue'
-import WorkerCommandPreviewPanel from '@/components/worker-tool/WorkerCommandPreviewPanel.vue'
+import WorkerCommandPreviewPanel, {
+  type PreviewMode,
+} from '@/components/worker-tool/WorkerCommandPreviewPanel.vue'
 import WorkerDockerConfigForm from '@/components/worker-tool/WorkerDockerConfigForm.vue'
 import WorkerProfileSelector from '@/components/worker-tool/WorkerProfileSelector.vue'
 import WorkerSysConfigForm from '@/components/worker-tool/WorkerSysConfigForm.vue'
@@ -17,6 +19,7 @@ import {
 } from '@/composables/useWorkerConfigConstraints'
 import { consumePrefill } from '@/composables/useWorkerStartupPrefill'
 import { useWorkerStartupTool } from '@/composables/useWorkerStartupTool'
+import { downloadTextFile } from '@/utils/download'
 
 const leavePromptMessage =
   'WORKER_ID and WORKER_SECRET are already filled in. This is the last time the key will be visible. Please confirm you have saved them before leaving this page.'
@@ -30,11 +33,15 @@ const {
   workerBoxliteConfig,
   workerSysConfig,
   commandText,
+  configTomlText,
   errorMessages,
   warningMessages,
   canCopyCommand,
+  canDownloadConfigFile,
   selectTemporaryProbePreset,
 } = useWorkerStartupTool(prefill ?? undefined)
+
+const previewMode = ref<PreviewMode>('command')
 
 const dockerAutoCallTimeoutSec = useCallTimeoutSync(workerDockerConfig)
 const boxliteAutoCallTimeoutSec = useCallTimeoutSync(workerBoxliteConfig)
@@ -47,6 +54,14 @@ const copyFeedback = useCopyFeedback({ fallbackErrorMessage: 'Failed to copy sta
 
 const issues = computed(() => toWorkerIssues(errorMessages.value, warningMessages.value))
 const copyDisabled = computed(() => !canCopyCommand.value || copyFeedback.busy.value)
+const downloadDisabled = computed(() => !canDownloadConfigFile.value)
+
+function downloadConfigFile(): void {
+  if (!canDownloadConfigFile.value) {
+    return
+  }
+  downloadTextFile('config.toml', configTomlText.value, 'application/toml')
+}
 
 function handleBeforeUnload(event: BeforeUnloadEvent): void {
   event.preventDefault()
@@ -119,11 +134,15 @@ onBeforeUnmount(() => {
       </div>
 
       <WorkerCommandPreviewPanel
+        v-model:preview-mode="previewMode"
         :command-text="commandText"
+        :config-toml-text="configTomlText"
         :issues="issues"
         :copy-status="copyFeedback.status.value"
         :copy-disabled="copyDisabled"
+        :download-disabled="downloadDisabled"
         @copy="copyFeedback.copy(commandText)"
+        @download="downloadConfigFile"
       />
     </section>
   </div>

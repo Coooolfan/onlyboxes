@@ -2,6 +2,7 @@
 export type SegmentedOption<T extends string> = {
   value: T
   label: string
+  testId?: string
 }
 
 type Size = 'sm' | 'md'
@@ -39,6 +40,7 @@ const sizeClass: Record<Size, string> = {
       type="button"
       role="tab"
       :aria-selected="modelValue === option.value"
+      :data-testid="option.testId"
       class="ui-focusable cursor-pointer rounded-[6px] font-medium transition-[background-color,color] duration-200"
       :class="[
         sizeClass[size],

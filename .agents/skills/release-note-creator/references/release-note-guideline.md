@@ -119,7 +119,12 @@ Full Changelog: https://github.com/Coooolfan/onlyboxes/compare/<prev>...<curr>
 
 ---
 
-## 🧮 六、辅助说明
+## 📂 六、输出位置
+
+- 发布说明正文写入 `docs/release_notes/<tag>.md`（`<tag>` 与目标 tag 名保持一致，例如 `0.7.1.md`、`0.8.0-beta.1.md`）。
+- 文件内容即为符合本规范的 Markdown 正文，不含一级标题（版本号由文件名和 GitHub Release 页面呈现）。
+
+## 🧮 七、辅助说明
 
 若已提供完整 commit 列表，按以下步骤处理：
 
@@ -131,7 +136,7 @@ Full Changelog: https://github.com/Coooolfan/onlyboxes/compare/<prev>...<curr>
 
 ---
 
-## ✅ 七、完整示例
+## ✅ 八、完整示例
 
 ```markdown
 > [!NOTE]
@@ -157,7 +162,7 @@ Full Changelog: https://github.com/Coooolfan/onlyboxes/compare/0.6.1...0.7.0
 
 ---
 
-## 🪄 八、总结
+## 🪄 九、总结
 
 | 项 | 规范 |
 | :-- | :-- |

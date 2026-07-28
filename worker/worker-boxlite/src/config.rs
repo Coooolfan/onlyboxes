@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
-use std::env;
 use std::time::Duration;
+
+use crate::config_source::Source;
 
 const DEFAULT_CONSOLE_TARGET: &str = "127.0.0.1:50051";
 const DEFAULT_HEARTBEAT_INTERVAL_SEC: u64 = 5;
@@ -19,12 +20,16 @@ const DEFAULT_TERMINAL_LEASE_MAX_SEC: u32 = 1800;
 const DEFAULT_TERMINAL_LEASE_DEFAULT_SEC: u32 = 60;
 const DEFAULT_TERMINAL_OUTPUT_LIMIT_BYTES: usize = 1024 * 1024;
 const DEFAULT_MAX_INFLIGHT: u32 = 4;
+/// One command per session, matching the behaviour before per-session
+/// concurrency became configurable.
+const DEFAULT_TERMINAL_SESSION_MAX_INFLIGHT: u32 = 1;
 const DEFAULT_LOG_LEVEL: &str = "info";
 const DEFAULT_LOG_FORMAT: &str = "json";
 const DEFAULT_LOG_ADD_SOURCE: bool = false;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
+    pub config_file: Option<String>,
     pub console_grpc_target: String,
     pub console_tls: bool,
     pub worker_id: String,
@@ -50,6 +55,8 @@ pub struct Config {
     pub terminal_lease_default_sec: u32,
     pub terminal_output_limit_bytes: usize,
     pub terminal_export_max_bytes: usize,
+    /// Caps concurrent commands per terminal session.
+    pub terminal_session_max_inflight: u32,
     pub echo_max_inflight: i32,
     pub python_exec_max_inflight: i32,
     pub terminal_exec_max_inflight: i32,
@@ -61,22 +68,24 @@ pub struct Config {
 
 impl Config {
     pub fn load() -> Self {
-        let heartbeat_interval_sec = parse_positive_u64_env(
+        let src = Source::load();
+
+        let heartbeat_interval_sec = src.positive_u64(
             "WORKER_HEARTBEAT_INTERVAL_SEC",
             DEFAULT_HEARTBEAT_INTERVAL_SEC,
         );
         let heartbeat_jitter_pct =
-            parse_percent_u8_env("WORKER_HEARTBEAT_JITTER_PCT", DEFAULT_HEARTBEAT_JITTER_PCT);
-        let call_timeout_sec = parse_positive_u64_env(
+            src.percent_u8("WORKER_HEARTBEAT_JITTER_PCT", DEFAULT_HEARTBEAT_JITTER_PCT);
+        let call_timeout_sec = src.positive_u64(
             "WORKER_CALL_TIMEOUT_SEC",
             default_call_timeout_sec(heartbeat_interval_sec),
         );
 
-        let terminal_lease_min_sec = parse_positive_u32_env(
+        let terminal_lease_min_sec = src.positive_u32(
             "WORKER_TERMINAL_LEASE_MIN_SEC",
             DEFAULT_TERMINAL_LEASE_MIN_SEC,
         );
-        let mut terminal_lease_max_sec = parse_positive_u32_env(
+        let mut terminal_lease_max_sec = src.positive_u32(
             "WORKER_TERMINAL_LEASE_MAX_SEC",
             DEFAULT_TERMINAL_LEASE_MAX_SEC,
         );
@@ -84,7 +93,7 @@ impl Config {
             terminal_lease_max_sec = terminal_lease_min_sec;
         }
         let terminal_lease_default_sec = clamp_u32(
-            parse_positive_u32_env(
+            src.positive_u32(
                 "WORKER_TERMINAL_LEASE_DEFAULT_SEC",
                 DEFAULT_TERMINAL_LEASE_DEFAULT_SEC,
             ),
@@ -95,83 +104,74 @@ impl Config {
         let default_version = build_default_version();
 
         Self {
-            console_grpc_target: get_env("WORKER_CONSOLE_GRPC_TARGET", DEFAULT_CONSOLE_TARGET),
-            console_tls: env::var("WORKER_CONSOLE_INSECURE").unwrap_or_default() != "true",
-            worker_id: env::var("WORKER_ID").unwrap_or_default().trim().to_owned(),
-            worker_secret: env::var("WORKER_SECRET")
-                .unwrap_or_default()
-                .trim()
-                .to_owned(),
+            config_file: src.path().map(str::to_owned),
+            console_grpc_target: src
+                .string_value("WORKER_CONSOLE_GRPC_TARGET", DEFAULT_CONSOLE_TARGET),
+            console_tls: src.get("WORKER_CONSOLE_INSECURE") != "true",
+            worker_id: src.get("WORKER_ID").trim().to_owned(),
+            worker_secret: src.get("WORKER_SECRET").trim().to_owned(),
             heartbeat_interval: Duration::from_secs(heartbeat_interval_sec),
             heartbeat_jitter_pct,
             call_timeout: Duration::from_secs(call_timeout_sec),
-            node_name: env::var("WORKER_NODE_NAME").unwrap_or_default(),
+            node_name: src.get("WORKER_NODE_NAME"),
             executor_kind: DEFAULT_EXECUTOR_KIND.to_owned(),
-            version: get_env("WORKER_VERSION", &default_version),
-            labels: parse_labels(&env::var("WORKER_LABELS").unwrap_or_default()),
-            boxlite_home: env::var("WORKER_BOXLITE_HOME").unwrap_or_default(),
-            python_exec_image: get_env(
+            version: src.string_value("WORKER_VERSION", &default_version),
+            labels: parse_labels(&src.get("WORKER_LABELS")),
+            boxlite_home: src.get("WORKER_BOXLITE_HOME"),
+            python_exec_image: src.string_value(
                 "WORKER_PYTHON_EXEC_BOXLITE_IMAGE",
                 DEFAULT_PYTHON_EXEC_IMAGE,
             ),
-            python_exec_memory_mib: parse_positive_u32_env(
+            python_exec_memory_mib: src.positive_u32(
                 "WORKER_PYTHON_EXEC_MEMORY_MIB",
                 DEFAULT_PYTHON_EXEC_MEMORY_MIB,
             ),
-            python_exec_cpus: parse_positive_u32_env(
-                "WORKER_PYTHON_EXEC_CPUS",
-                DEFAULT_PYTHON_EXEC_CPUS,
-            ),
-            python_exec_max_processes: parse_positive_u32_env(
+            python_exec_cpus: src.positive_u32("WORKER_PYTHON_EXEC_CPUS", DEFAULT_PYTHON_EXEC_CPUS),
+            python_exec_max_processes: src.positive_u32(
                 "WORKER_PYTHON_EXEC_MAX_PROCESSES",
                 DEFAULT_PYTHON_EXEC_MAX_PROCESSES,
             ),
-            terminal_exec_image: get_env(
+            terminal_exec_image: src.string_value(
                 "WORKER_TERMINAL_EXEC_BOXLITE_IMAGE",
                 DEFAULT_TERMINAL_EXEC_IMAGE,
             ),
-            terminal_exec_memory_mib: parse_positive_u32_env(
+            terminal_exec_memory_mib: src.positive_u32(
                 "WORKER_TERMINAL_EXEC_MEMORY_MIB",
                 DEFAULT_TERMINAL_EXEC_MEMORY_MIB,
             ),
-            terminal_exec_cpus: parse_positive_u32_env(
-                "WORKER_TERMINAL_EXEC_CPUS",
-                DEFAULT_TERMINAL_EXEC_CPUS,
-            ),
-            terminal_exec_max_processes: parse_positive_u32_env(
+            terminal_exec_cpus: src
+                .positive_u32("WORKER_TERMINAL_EXEC_CPUS", DEFAULT_TERMINAL_EXEC_CPUS),
+            terminal_exec_max_processes: src.positive_u32(
                 "WORKER_TERMINAL_EXEC_MAX_PROCESSES",
                 DEFAULT_TERMINAL_EXEC_MAX_PROCESSES,
             ),
             terminal_lease_min_sec,
             terminal_lease_max_sec,
             terminal_lease_default_sec,
-            terminal_output_limit_bytes: parse_positive_usize_env(
+            terminal_output_limit_bytes: src.positive_usize(
                 "WORKER_TERMINAL_OUTPUT_LIMIT_BYTES",
                 DEFAULT_TERMINAL_OUTPUT_LIMIT_BYTES,
             ),
-            terminal_export_max_bytes: parse_positive_usize_env(
-                "WORKER_TERMINAL_EXPORT_MAX_BYTES",
-                0,
+            terminal_export_max_bytes: src.positive_usize("WORKER_TERMINAL_EXPORT_MAX_BYTES", 0),
+            terminal_session_max_inflight: src.positive_u32(
+                "WORKER_TERMINAL_SESSION_MAX_INFLIGHT",
+                DEFAULT_TERMINAL_SESSION_MAX_INFLIGHT,
             ),
-            echo_max_inflight: parse_positive_u32_env(
-                "WORKER_ECHO_MAX_INFLIGHT",
-                DEFAULT_MAX_INFLIGHT,
-            ) as i32,
-            python_exec_max_inflight: parse_positive_u32_env(
-                "WORKER_PYTHON_EXEC_MAX_INFLIGHT",
-                DEFAULT_MAX_INFLIGHT,
-            ) as i32,
-            terminal_exec_max_inflight: parse_positive_u32_env(
-                "WORKER_TERMINAL_EXEC_MAX_INFLIGHT",
-                DEFAULT_MAX_INFLIGHT,
-            ) as i32,
-            terminal_resource_max_inflight: parse_positive_u32_env(
+            echo_max_inflight: src.positive_u32("WORKER_ECHO_MAX_INFLIGHT", DEFAULT_MAX_INFLIGHT)
+                as i32,
+            python_exec_max_inflight: src
+                .positive_u32("WORKER_PYTHON_EXEC_MAX_INFLIGHT", DEFAULT_MAX_INFLIGHT)
+                as i32,
+            terminal_exec_max_inflight: src
+                .positive_u32("WORKER_TERMINAL_EXEC_MAX_INFLIGHT", DEFAULT_MAX_INFLIGHT)
+                as i32,
+            terminal_resource_max_inflight: src.positive_u32(
                 "WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT",
                 DEFAULT_MAX_INFLIGHT,
             ) as i32,
-            log_level: parse_log_level_env("WORKER_LOG_LEVEL", DEFAULT_LOG_LEVEL),
-            log_format: parse_log_format_env("WORKER_LOG_FORMAT", DEFAULT_LOG_FORMAT),
-            log_add_source: parse_bool_env("WORKER_LOG_ADD_SOURCE", DEFAULT_LOG_ADD_SOURCE),
+            log_level: src.log_level("WORKER_LOG_LEVEL", DEFAULT_LOG_LEVEL),
+            log_format: src.log_format("WORKER_LOG_FORMAT", DEFAULT_LOG_FORMAT),
+            log_add_source: src.bool_value("WORKER_LOG_ADD_SOURCE", DEFAULT_LOG_ADD_SOURCE),
         }
     }
 }
@@ -185,83 +185,19 @@ fn build_default_version() -> String {
     }
 }
 
-fn get_env(key: &str, default_value: &str) -> String {
-    match env::var(key) {
-        Ok(value) if !value.is_empty() => value,
-        _ => default_value.to_owned(),
-    }
-}
-
-fn parse_positive_u64_env(key: &str, default_value: u64) -> u64 {
-    env::var(key)
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(default_value)
-}
-
-fn parse_positive_u32_env(key: &str, default_value: u32) -> u32 {
-    env::var(key)
-        .ok()
-        .and_then(|value| value.parse::<u32>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(default_value)
-}
-
-fn parse_positive_usize_env(key: &str, default_value: usize) -> usize {
-    env::var(key)
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(default_value)
-}
-
-fn parse_percent_u8_env(key: &str, default_value: u8) -> u8 {
-    env::var(key)
-        .ok()
-        .and_then(|value| value.parse::<u8>().ok())
-        .filter(|value| *value <= 100)
-        .unwrap_or(default_value)
-}
-
-fn parse_bool_env(key: &str, default_value: bool) -> bool {
-    match env::var(key)
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "1" | "true" | "yes" | "on" => true,
-        "0" | "false" | "no" | "off" => false,
-        _ => default_value,
-    }
-}
-
-fn parse_log_level_env(key: &str, default_value: &str) -> String {
-    let value = env::var(key)
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase();
-
-    match value.as_str() {
-        "debug" | "info" | "warn" | "error" => value,
-        _ => default_value.to_owned(),
-    }
-}
-
-fn parse_log_format_env(key: &str, default_value: &str) -> String {
-    let value = env::var(key)
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase();
-
-    match value.as_str() {
-        "json" | "text" => value,
-        _ => default_value.to_owned(),
-    }
-}
-
 fn parse_labels(raw: &str) -> BTreeMap<String, String> {
+    if raw.trim_start().starts_with('{') {
+        if let Ok(decoded) = serde_json::from_str::<BTreeMap<String, String>>(raw) {
+            return decoded
+                .into_iter()
+                .filter_map(|(key, value)| {
+                    let key = key.trim();
+                    (!key.is_empty()).then(|| (key.to_owned(), value.trim().to_owned()))
+                })
+                .collect();
+        }
+    }
+
     let mut labels = BTreeMap::new();
     for part in raw.split(',') {
         let entry = part.trim();
@@ -325,5 +261,13 @@ mod tests {
         assert_eq!(cfg.terminal_exec_image, DEFAULT_TERMINAL_EXEC_IMAGE);
         assert_eq!(cfg.labels.get("region"), Some(&"cn".to_owned()));
         assert_eq!(cfg.labels.get("owner"), Some(&"team-a".to_owned()));
+    }
+
+    #[test]
+    fn parse_labels_preserves_commas_in_json_values() {
+        let labels = parse_labels(r#"{"description":"gpu,shared","region":"cn"}"#);
+
+        assert_eq!(labels.get("description"), Some(&"gpu,shared".to_owned()));
+        assert_eq!(labels.get("region"), Some(&"cn".to_owned()));
     }
 }

@@ -1,0 +1,44 @@
+# Console Config File
+
+`console` reads configuration from environment variables and from a `config.toml` file.
+
+Lookup order for the config file:
+
+1. `CONSOLE_CONFIG_FILE` — explicit path; the console exits when the file is missing or invalid.
+2. `config.toml` next to the console binary.
+3. `config.toml` in the current working directory.
+
+When no file is found, the console runs on environment variables and defaults only.
+
+Value priority: environment variable > `config.toml` > built-in default.
+
+Key mapping: a config file key is the environment variable name without the `CONSOLE_` prefix, lowercased.
+For example `CONSOLE_HTTP_ADDR` becomes `http_addr`, and `CONSOLE_DB_BUSY_TIMEOUT_MS` becomes `db_busy_timeout_ms`.
+
+Nested tables are joined with `_`, so grouped sections map onto the flat environment names:
+
+- `CONSOLE_MCP_TOOL_PYTHON_EXEC_DESCRIPTION` → `[mcp_tool.python_exec] description = "..."`
+- `CONSOLE_MCP_TOOL_TERMINAL_EXEC_PARAM_SESSION_ID_DESCRIPTION` → `[mcp_tool.terminal_exec.param.session_id] description = "..."`
+
+Value mapping:
+
+- strings, integers, floats and booleans map to their environment variable form.
+- arrays map to a list; `hidden_tools = ["echo"]` is equivalent to `CONSOLE_HIDDEN_TOOLS="echo"`.
+
+Validation is identical to the environment variable path: an invalid or out-of-range value falls back to the default instead of aborting startup. MCP tool overrides keep their `unset` vs `explicitly empty` distinction: a key declared in the config file counts as set, and an empty param description still hides the parameter.
+
+The loaded config file path is reported once at startup via the `config file loaded` log line.
+
+Secrets such as `dashboard_password`, `hash_key`, `jit_signing_key` and `export_file_sk` are better supplied through environment variables; keep the config file out of version control when they are inlined.
+
+See `config.example.toml` in the console root for a full annotated template.
+
+```toml
+http_addr = ":8089"
+grpc_addr = ":50051"
+db_path = "./db/onlyboxes-console.db"
+log_level = "info"
+
+[mcp_tool.python_exec]
+description = "Execute python code in a sandbox."
+```

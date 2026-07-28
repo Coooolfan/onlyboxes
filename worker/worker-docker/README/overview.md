@@ -12,6 +12,10 @@ Security warning (high risk):
 - run only inside trusted private networks or encrypted tunnels; never expose this channel directly on public internet.
 - full mitigation requires TLS/mTLS support (not implemented in this release).
 
+Configuration sources:
+- environment variables and `config.toml` (see `README/config-file.md`).
+- priority is environment variable > `config.toml` > default.
+
 Required identity:
 - `WORKER_ID`
 - `WORKER_SECRET`
@@ -52,11 +56,17 @@ Capability behavior:
   - same `session_id` reuses the same container and keeps filesystem state.
   - missing `session_id` creates a new container/session automatically.
   - unknown `session_id` returns `session_not_found`, unless `create_if_missing=true`.
-  - concurrent execution on the same `session_id` returns `session_busy`.
+  - concurrent commands on the same `session_id` are capped by `WORKER_TERMINAL_SESSION_MAX_INFLIGHT` (default `1`); exceeding the cap returns `session_busy`.
   - lease extension is monotonic: shorter `lease_ttl_sec` does not reduce current expiry.
+- `terminalExec` session concurrency:
+  - `WORKER_TERMINAL_SESSION_MAX_INFLIGHT` counts `terminalExec` and `terminalResource` commands together, so both can run at once in one session once it is above `1`.
+  - concurrent commands share the container and therefore its filesystem, but each runs as an independent `sh -lc` process and does not share shell state (cwd, environment, shell variables).
+  - concurrent commands share one container's resource budget (`WORKER_TERMINAL_EXEC_MEMORY_MIB`, `WORKER_TERMINAL_EXEC_CPUS`, `WORKER_TERMINAL_EXEC_MAX_PROCESSES`); raise those alongside the concurrency cap.
+  - the worker-level caps (`WORKER_TERMINAL_EXEC_MAX_INFLIGHT`, `WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT`) bound the per-session cap. Raise them too, or a single session can consume the worker's entire quota.
+  - a session that has not finished creating its container makes concurrent callers wait; if creation fails they all receive the same error.
 - `terminalExec` cleanup behavior:
-  - command timeout/cancel triggers forced `docker rm -f` and drops the session.
-  - idle sessions are reaped after lease expiry by an internal janitor loop.
+  - command timeout/cancel marks the session for destruction and stops it accepting new commands; the container is removed once in-flight commands drain, so one command's timeout does not kill its siblings.
+  - idle sessions are reaped after lease expiry by an internal janitor loop; a session with in-flight commands is never reaped.
   - worker shutdown force-removes all managed terminal containers.
   - `SIGINT`/`SIGTERM` (for example Ctrl+C) performs best-effort cleanup; `SIGKILL`/process crash does not guarantee cleanup.
 - `terminalExec` result uses JSON payload:
@@ -76,7 +86,7 @@ Capability behavior:
   - non-JSON probe failures (for example `docker exec` / OCI startup errors) are surfaced as docker exec errors with exit code and output summary; they are not rewritten as JSON parse errors.
   - session concurrency follows terminal session rules:
     - unknown `session_id` returns `session_not_found`.
-    - concurrent operation on same `session_id` returns `session_busy`.
+    - commands beyond `WORKER_TERMINAL_SESSION_MAX_INFLIGHT` on the same `session_id` return `session_busy`; the cap is shared with `terminalExec`.
 - `terminalResource` result uses JSON payload:
   - validate: `{"session_id":"...","file_path":"...","mime_type":"...","size_bytes":123}`
   - read: `{"session_id":"...","file_path":"...","mime_type":"...","size_bytes":123,"blob":"...base64..."}`
@@ -112,7 +122,11 @@ Capability concurrency:
 - `WORKER_PYTHON_EXEC_MAX_INFLIGHT`: maximum concurrent pythonExec commands (default `4`)
 - `WORKER_TERMINAL_EXEC_MAX_INFLIGHT`: maximum concurrent terminalExec commands (default `4`)
 - `WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT`: maximum concurrent terminalResource commands (default `4`)
+- `WORKER_TERMINAL_SESSION_MAX_INFLIGHT`: maximum concurrent commands per terminal session, counting `terminalExec` and `terminalResource` together (default `1`)
 - invalid values (non-positive integers) fall back to the default.
 
 Recommended setting:
 - `WORKER_CALL_TIMEOUT_SEC >= 2 * WORKER_HEARTBEAT_INTERVAL_SEC`
+
+Session concurrency end-to-end check:
+- `scripts/e2e-session-concurrency.sh docker` brings up console plus this worker and verifies the concurrency matrix: default serial behaviour with `409 session_busy`, parallel execution at a raised limit, single-container creation under a concurrent session race, shared filesystem, sibling survival across a command timeout, `409` versus `429` quota levels, and janitor reclamation after in-flight commands drain.

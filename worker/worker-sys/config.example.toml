@@ -1,0 +1,43 @@
+# worker-sys configuration file.
+# Place this file next to the worker binary as `config.toml`,
+# or point `WORKER_CONFIG_FILE` at it.
+# Environment variables always win over the values declared here.
+
+# Identity (required, returned by console when creating the worker).
+id = ""
+secret = ""
+
+# Console connection.
+console_grpc_target = "127.0.0.1:50051"
+console_insecure = false
+
+# Registration metadata.
+node_name = ""
+# version = "v0.7.1"
+
+# Heartbeat and call timeouts.
+heartbeat_interval_sec = 5
+heartbeat_jitter_pct = 20
+# call_timeout_sec defaults to ceil(2.5 * heartbeat_interval_sec).
+# call_timeout_sec = 13
+
+# computerUse capability.
+computer_use_output_limit_bytes = 1048576
+# prefix | exact | allow_all
+computer_use_command_whitelist_mode = "exact"
+computer_use_command_whitelist = []
+computer_use_max_inflight = 1
+
+# readImage capability, empty means every path is rejected.
+read_image_allowed_paths = []
+read_image_max_inflight = 1
+
+# Logging.
+log_level = "info"
+log_format = "json"
+log_add_source = false
+
+# Worker labels, equivalent to WORKER_LABELS="region=cn,owner=team-a".
+[labels]
+# region = "cn"
+# owner = "team-a"

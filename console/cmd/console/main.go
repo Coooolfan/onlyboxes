@@ -24,6 +24,9 @@ import (
 func main() {
 	cfg := config.Load()
 	slog.SetDefault(newLogger(cfg))
+	if cfg.ConfigFile != "" {
+		slog.Info("config file loaded", "path", cfg.ConfigFile)
+	}
 
 	dbCtx, dbCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer dbCancel()

@@ -21,10 +21,68 @@ import (
 )
 
 const (
-	commandExecSlotCapacity = 1
 	sessionBusyErrorCode    = "session_busy"
 	sessionBusyErrorMessage = "session busy"
 )
+
+// commandSlots bounds concurrent command execution per capability. The slots are
+// kept separate so a readImage call cannot block a computerUse call.
+type commandSlots struct {
+	slots map[string]chan struct{}
+}
+
+func newCommandSlots(cfg config.Config) *commandSlots {
+	return &commandSlots{
+		slots: map[string]chan struct{}{
+			computerUseCapabilityName: newSlotChannel(cfg.ComputerUseMaxInflight),
+			readImageCapabilityName:   newSlotChannel(cfg.ReadImageMaxInflight),
+		},
+	}
+}
+
+func newSlotChannel(capacity int) chan struct{} {
+	if capacity <= 0 {
+		capacity = 1
+	}
+	slots := make(chan struct{}, capacity)
+	for i := 0; i < capacity; i++ {
+		slots <- struct{}{}
+	}
+	return slots
+}
+
+// tryAcquire reserves a slot for the capability. Unknown capabilities are let
+// through so the executor can report unsupported_capability rather than
+// session_busy.
+func (s *commandSlots) tryAcquire(capability string) bool {
+	if s == nil {
+		return false
+	}
+	slots, ok := s.slots[capability]
+	if !ok {
+		return true
+	}
+	select {
+	case <-slots:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *commandSlots) release(capability string) {
+	if s == nil {
+		return
+	}
+	slots, ok := s.slots[capability]
+	if !ok {
+		return
+	}
+	select {
+	case slots <- struct{}{}:
+	default:
+	}
+}
 
 func runSession(ctx context.Context, cfg config.Config) error {
 	conn, err := dial(ctx, cfg)
@@ -73,8 +131,7 @@ func runSession(ctx context.Context, cfg config.Config) error {
 	outbound := make(chan *registryv1.ConnectRequest, 64)
 	heartbeatAckCh := make(chan *registryv1.HeartbeatAck, 16)
 	sessionErrCh := make(chan error, 4)
-	commandExecSlots := make(chan struct{}, commandExecSlotCapacity)
-	commandExecSlots <- struct{}{}
+	commandExecSlots := newCommandSlots(cfg)
 
 	go senderLoop(sessionCtx, stream, outbound, sessionErrCh)
 	go receiverLoop(sessionCtx, stream, outbound, heartbeatAckCh, sessionErrCh, commandExecSlots)
@@ -123,7 +180,7 @@ func receiverLoop(
 	outbound chan<- *registryv1.ConnectRequest,
 	heartbeatAckCh chan<- *registryv1.HeartbeatAck,
 	errCh chan<- error,
-	commandExecSlots chan struct{},
+	commandExecSlots *commandSlots,
 ) {
 	for {
 		resp, err := stream.Recv()
@@ -203,7 +260,7 @@ func handleCommandDispatch(
 	ctx context.Context,
 	outbound chan<- *registryv1.ConnectRequest,
 	errCh chan<- error,
-	commandExecSlots chan struct{},
+	commandExecSlots *commandSlots,
 	dispatch *registryv1.CommandDispatch,
 	executeFn func(context.Context, *registryv1.CommandDispatch) *registryv1.ConnectRequest,
 ) bool {
@@ -215,7 +272,8 @@ func handleCommandDispatch(
 		executeFn = buildCommandResultWithContext
 	}
 
-	if !tryAcquireCommandSlot(commandExecSlots) {
+	capability := strings.TrimSpace(strings.ToLower(dispatch.GetCapability()))
+	if !tryAcquireCommandSlot(commandExecSlots, capability) {
 		busyResultReq := buildSessionBusyCommandResult(dispatch)
 		if tryEnqueueRequest(ctx, outbound, busyResultReq) {
 			return true
@@ -228,7 +286,7 @@ func handleCommandDispatch(
 	}
 
 	go func(dispatch *registryv1.CommandDispatch) {
-		defer releaseCommandSlot(commandExecSlots)
+		defer releaseCommandSlot(commandExecSlots, capability)
 		resultReq := executeFn(ctx, dispatch)
 		if sendErr := enqueueRequest(ctx, outbound, resultReq); sendErr != nil {
 			if errors.Is(sendErr, context.Canceled) || errors.Is(sendErr, context.DeadlineExceeded) {
@@ -323,26 +381,12 @@ func tryEnqueueRequest(ctx context.Context, outbound chan<- *registryv1.ConnectR
 	}
 }
 
-func tryAcquireCommandSlot(commandExecSlots chan struct{}) bool {
-	if commandExecSlots == nil {
-		return false
-	}
-	select {
-	case <-commandExecSlots:
-		return true
-	default:
-		return false
-	}
+func tryAcquireCommandSlot(commandExecSlots *commandSlots, capability string) bool {
+	return commandExecSlots.tryAcquire(capability)
 }
 
-func releaseCommandSlot(commandExecSlots chan struct{}) {
-	if commandExecSlots == nil {
-		return
-	}
-	select {
-	case commandExecSlots <- struct{}{}:
-	default:
-	}
+func releaseCommandSlot(commandExecSlots *commandSlots, capability string) {
+	commandExecSlots.release(capability)
 }
 
 func buildSessionBusyCommandResult(dispatch *registryv1.CommandDispatch) *registryv1.ConnectRequest {

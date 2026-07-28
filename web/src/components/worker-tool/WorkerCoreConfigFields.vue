@@ -43,7 +43,7 @@ function handleCallTimeoutModeUpdate(value: string): void {
           Already Filled
         </AppBadge>
       </template>
-      <AppInput v-model="config.workerID" trim placeholder="worker-id" />
+      <AppInput v-model="config.workerID" trim placeholder="worker-id" data-testid="worker-id-input" />
     </AppField>
 
     <AppField hint="One-time credential returned during worker creation.">
@@ -64,6 +64,7 @@ function handleCallTimeoutModeUpdate(value: string): void {
         revealable
         trim
         placeholder="worker-secret"
+        data-testid="worker-secret-input"
       />
     </AppField>
 

@@ -92,6 +92,11 @@ WORKER_SECRET=<worker_secret> \
 | `WORKER_PYTHON_EXEC_MAX_INFLIGHT` | 否 | `4` | pythonExec 最大并发数 |
 | `WORKER_TERMINAL_EXEC_MAX_INFLIGHT` | 否 | `4` | terminalExec 最大并发数 |
 | `WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT` | 否 | `4` | terminalResource 最大并发数 |
+| `WORKER_TERMINAL_SESSION_MAX_INFLIGHT` | 否 | `1` | 单个 terminal session 的最大并发数；terminalExec 与 terminalResource 共享 |
+
+`WORKER_TERMINAL_EXEC_MAX_INFLIGHT` 和 `WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT` 分别限制整个 worker 上对应能力的并发数，二者相互独立，没有额外的 worker 全局合计上限。`WORKER_TERMINAL_SESSION_MAX_INFLIGHT` 则限制单个 `session_id`，并将 terminalExec 与 terminalResource 合并计数。请求必须同时满足对应能力上限和 session 上限。
+
+例如将 terminalExec 和 terminalResource 上限都设为 `10`、session 上限设为 `2` 时，整个 worker 最多可同时处理 10 个 terminalExec 和 10 个 terminalResource，但任一 session 内两类操作合计不能超过 2。超出 session 上限返回 `409 session_busy`，对应能力的 worker 级容量耗尽则返回 `429 no_capacity`。
 
 ### 终端租约
 

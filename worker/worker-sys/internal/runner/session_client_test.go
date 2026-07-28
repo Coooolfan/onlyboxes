@@ -11,29 +11,27 @@ import (
 )
 
 func TestCommandExecSlotAcquireRelease(t *testing.T) {
-	commandExecSlots := make(chan struct{}, commandExecSlotCapacity)
-	commandExecSlots <- struct{}{}
+	commandExecSlots := newCommandSlots(config.Config{})
 
-	if !tryAcquireCommandSlot(commandExecSlots) {
+	if !tryAcquireCommandSlot(commandExecSlots, computerUseCapabilityName) {
 		t.Fatalf("expected first slot acquire to succeed")
 	}
-	if tryAcquireCommandSlot(commandExecSlots) {
+	if tryAcquireCommandSlot(commandExecSlots, computerUseCapabilityName) {
 		t.Fatalf("expected second slot acquire to fail while slot is held")
 	}
 
-	releaseCommandSlot(commandExecSlots)
-	if !tryAcquireCommandSlot(commandExecSlots) {
+	releaseCommandSlot(commandExecSlots, computerUseCapabilityName)
+	if !tryAcquireCommandSlot(commandExecSlots, computerUseCapabilityName) {
 		t.Fatalf("expected slot acquire to succeed after release")
 	}
 }
 
 func TestHandleCommandDispatchBusyReturnsSessionBusyWithoutExecution(t *testing.T) {
-	commandExecSlots := make(chan struct{}, commandExecSlotCapacity)
-	commandExecSlots <- struct{}{}
-	if !tryAcquireCommandSlot(commandExecSlots) {
+	commandExecSlots := newCommandSlots(config.Config{})
+	if !tryAcquireCommandSlot(commandExecSlots, computerUseCapabilityName) {
 		t.Fatalf("expected to acquire slot for busy-state setup")
 	}
-	defer releaseCommandSlot(commandExecSlots)
+	defer releaseCommandSlot(commandExecSlots, computerUseCapabilityName)
 
 	outbound := make(chan *registryv1.ConnectRequest, 1)
 	errCh := make(chan error, 1)
@@ -94,8 +92,7 @@ func TestHandleCommandDispatchBusyReturnsSessionBusyWithoutExecution(t *testing.
 }
 
 func TestHandleCommandDispatchRunsExecutionAndReleasesSlot(t *testing.T) {
-	commandExecSlots := make(chan struct{}, commandExecSlotCapacity)
-	commandExecSlots <- struct{}{}
+	commandExecSlots := newCommandSlots(config.Config{})
 
 	outbound := make(chan *registryv1.ConnectRequest, 1)
 	errCh := make(chan error, 1)
@@ -145,7 +142,7 @@ func TestHandleCommandDispatchRunsExecutionAndReleasesSlot(t *testing.T) {
 	default:
 	}
 
-	if !tryAcquireCommandSlot(commandExecSlots) {
+	if !tryAcquireCommandSlot(commandExecSlots, computerUseCapabilityName) {
 		t.Fatalf("expected slot to be released after execution")
 	}
 }

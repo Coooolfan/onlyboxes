@@ -1,0 +1,63 @@
+# console configuration file.
+# Place this file next to the console binary as `config.toml`,
+# or point `CONSOLE_CONFIG_FILE` at it.
+# Environment variables always win over the values declared here.
+
+# Listeners.
+http_addr = ":8089"
+grpc_addr = ":50051"
+
+# Persistence.
+db_path = "./db/onlyboxes-console.db"
+db_busy_timeout_ms = 5000
+task_retention_days = 30
+
+# Secrets (leave empty to keep them out of the file and use env vars instead).
+dashboard_username = ""
+dashboard_password = ""
+initial_admin_api_key = ""
+jit_signing_key = ""
+dashboard_jit_signing_key = ""
+hash_key = ""
+
+# Worker session policy.
+offline_ttl_sec = 15
+replay_window_sec = 60
+heartbeat_interval_sec = 5
+
+# Dashboard registration.
+enable_registration = false
+
+# Export file object storage. Export is enabled only when every field is set.
+export_file_endpoint = ""
+export_file_region = ""
+export_file_bucket_name = ""
+export_file_export_prefix = ""
+export_file_ak = ""
+export_file_sk = ""
+export_file_upload_presign_ttl_sec = 900
+export_file_download_presign_ttl_sec = 3600
+# ALL | SIGNED_URL | OBJECTKEY
+export_return_schema = "ALL"
+
+# MCP.
+mcp_token_query_param = "token"
+# Hidden tools, equivalent to CONSOLE_HIDDEN_TOOLS="echo,pythonExec".
+hidden_tools = []
+
+# MCP tool overrides. Section keys mirror the environment variable names:
+# [mcp_tool.python_exec] name/title/description
+# [mcp_tool.python_exec.param.<param>] description
+# An empty param description hides the parameter from tools/list.
+# [mcp_tool.python_exec]
+# name = "runPython"
+# title = "Run Python"
+# description = "Execute python code in a sandbox."
+#
+# [mcp_tool.python_exec.param.code]
+# description = "Python source to execute."
+
+# Logging.
+log_level = "info"
+log_format = "json"
+log_add_source = false

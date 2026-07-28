@@ -23,6 +23,8 @@ Onlyboxes worker registry dashboard (Vue 3 + Vite + TypeScript).
 - 普通用户在 `/workers` 固定创建 `worker-sys`，且每账号最多一个（重复创建后端返回冲突）
 - 后端 Dashboard JIT token 可用于服务端到服务端的 worker-sys 配置，但不能通过 `/tokens` 创建或管理 MCP trusted token
 - 创建 worker 后自动展示创建响应中的启动命令（明文 `WORKER_SECRET` 仅创建时返回一次）
+- `/tools/worker-startup` 的 worker 配置工具支持两种预览：多行 shell 启动命令，或与之等价的 `config.toml`（可直接下载，放在 worker 二进制同目录即可生效；环境变量优先级高于该文件）
+- `config.toml` 预览不适用于 Temporary Probe 安装脚本预设
 - `GET /api/v1/workers/:node_id/startup-command` 固定返回 `410 Gone`
 - 节点能力列展示 `capabilities[].name` 能力声明
 - 支持 `all / online / offline` 筛选、分页、手动刷新和自动刷新
