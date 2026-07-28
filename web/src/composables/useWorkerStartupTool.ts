@@ -211,6 +211,10 @@ function tomlString(value: string): string {
   return `"${escaped}"`
 }
 
+function tomlTableKey(value: string): string {
+  return /^[A-Za-z0-9_-]+$/.test(value) ? value : tomlString(value)
+}
+
 function tomlValue(envKey: string, value: string): string {
   if (value === 'true' || value === 'false') {
     return value
@@ -259,7 +263,7 @@ function formatConfigToml(envEntries: Array<[string, string]>): string {
       }
       const key = entry.slice(0, separatorIndex)
       const value = entry.slice(separatorIndex + 1)
-      lines.push(`${key} = ${tomlString(value)}`)
+      lines.push(`${tomlTableKey(key)} = ${tomlString(value)}`)
     }
   }
 

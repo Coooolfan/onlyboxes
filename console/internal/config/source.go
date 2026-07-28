@@ -90,10 +90,8 @@ func (s source) lookup(envKey string) (string, bool) {
 // get returns the value for an environment variable key, falling back to the
 // matching config file key (env key without the CONSOLE_ prefix, lowercased).
 func (s source) get(envKey string) string {
-	if value := os.Getenv(envKey); value != "" {
-		return value
-	}
-	return s.values[fileKey(envKey)]
+	value, _ := s.lookup(envKey)
+	return value
 }
 
 func fileKey(envKey string) string {

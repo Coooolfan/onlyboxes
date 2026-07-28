@@ -59,8 +59,8 @@ impl Source {
     /// matching config file key (env key without the `WORKER_` prefix, lowercased).
     pub fn get(&self, env_key: &str) -> String {
         match env::var(env_key) {
-            Ok(value) if !value.is_empty() => value,
-            _ => self
+            Ok(value) => value,
+            Err(_) => self
                 .values
                 .get(&file_key(env_key))
                 .cloned()
@@ -297,5 +297,17 @@ region = "cn"
         assert_eq!(src.log_level("WORKER_LOG_LEVEL", "info"), "info");
         assert_eq!(src.log_format("WORKER_LOG_FORMAT", "json"), "json");
         assert_eq!(src.percent_u8("WORKER_HEARTBEAT_JITTER_PCT", 20), 20);
+    }
+
+    #[test]
+    fn empty_env_overrides_config_file_value() {
+        let key = "WORKER_CONFIG_SOURCE_EMPTY_OVERRIDE_TEST";
+        let mut src = Source::default();
+        src.values.insert(file_key(key), "from-file".to_owned());
+        env::set_var(key, "");
+
+        assert_eq!(src.get(key), "");
+
+        env::remove_var(key);
     }
 }

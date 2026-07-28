@@ -45,7 +45,7 @@ describe('worker startup tool command builder', () => {
     config.workerSecret = 'secret-docker-1'
     config.consoleInsecure = true
     config.nodeName = 'edge-1'
-    config.labelsText = 'region=cn\nowner=team-a'
+    config.labelsText = 'region=cn\nowner=team-a\napp.kubernetes.io/name=demo'
     config.pythonExecMemoryMib = 512
 
     const result = buildWorkerDockerStartupCommand(config)
@@ -61,6 +61,8 @@ describe('worker startup tool command builder', () => {
     expect(result.configToml).toContain('[labels]')
     expect(result.configToml).toContain('region = "cn"')
     expect(result.configToml).toContain('owner = "team-a"')
+    expect(result.configToml).toContain('"app.kubernetes.io/name" = "demo"')
+    expect(result.configToml).not.toContain('app.kubernetes.io/name = "demo"')
     expect(result.configToml).not.toContain('labels = ')
   })
 

@@ -89,3 +89,27 @@ log_level = "debug"
 		t.Fatalf("expected env override, got %q", cfg.LogLevel)
 	}
 }
+
+func TestEmptyEnvOverridesConfigFile(t *testing.T) {
+	writeConfigFile(t, `
+console_grpc_target = "10.0.0.1:50051"
+secret = "from-file"
+
+[labels]
+region = "cn"
+`)
+	t.Setenv("WORKER_CONSOLE_GRPC_TARGET", "")
+	t.Setenv("WORKER_SECRET", "")
+	t.Setenv("WORKER_LABELS", "")
+
+	cfg := Load()
+	if cfg.ConsoleGRPCTarget != defaultConsoleTarget {
+		t.Fatalf("expected empty env to select the default target, got %q", cfg.ConsoleGRPCTarget)
+	}
+	if cfg.WorkerSecret != "" {
+		t.Fatalf("expected empty env to clear worker secret, got %q", cfg.WorkerSecret)
+	}
+	if len(cfg.Labels) != 0 {
+		t.Fatalf("expected empty env to clear labels, got %v", cfg.Labels)
+	}
+}

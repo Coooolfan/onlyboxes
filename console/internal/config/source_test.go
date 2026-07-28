@@ -92,6 +92,28 @@ log_level = "debug"
 	}
 }
 
+func TestEmptyEnvOverridesConfigFile(t *testing.T) {
+	writeConfigFile(t, `
+http_addr = ":9000"
+dashboard_password = "from-file"
+hidden_tools = ["echo"]
+`)
+	t.Setenv("CONSOLE_HTTP_ADDR", "")
+	t.Setenv("CONSOLE_DASHBOARD_PASSWORD", "")
+	t.Setenv("CONSOLE_HIDDEN_TOOLS", "")
+
+	cfg := Load()
+	if cfg.HTTPAddr != defaultHTTPAddr {
+		t.Fatalf("expected empty env to select the default address, got %q", cfg.HTTPAddr)
+	}
+	if cfg.DashboardPassword != "" {
+		t.Fatalf("expected empty env to clear dashboard password, got %q", cfg.DashboardPassword)
+	}
+	if cfg.HiddenTools != nil {
+		t.Fatalf("expected empty env to clear hidden tools, got %v", cfg.HiddenTools)
+	}
+}
+
 func TestLoadKeepsDefaultsWithoutConfigFile(t *testing.T) {
 	t.Setenv(configFileEnvKey, filepath.Join(t.TempDir(), "empty.toml"))
 	if err := os.WriteFile(os.Getenv(configFileEnvKey), []byte(""), 0o600); err != nil {

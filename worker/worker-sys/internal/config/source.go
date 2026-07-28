@@ -80,7 +80,7 @@ func (s source) Path() string {
 // get returns the value for an environment variable key, falling back to the
 // matching config file key (env key without the WORKER_ prefix, lowercased).
 func (s source) get(envKey string) string {
-	if value := os.Getenv(envKey); value != "" {
+	if value, ok := os.LookupEnv(envKey); ok {
 		return value
 	}
 	return s.values[fileKey(envKey)]
