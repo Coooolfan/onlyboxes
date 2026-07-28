@@ -38,7 +38,7 @@ const emit = defineEmits<{ copy: [] }>()
         >{{ commandText }}</code
       >
 
-      <WorkerIssueList :issues="issues" title="Command Notice" compact />
+      <WorkerIssueList :issues="issues" compact />
     </div>
   </div>
 </template>

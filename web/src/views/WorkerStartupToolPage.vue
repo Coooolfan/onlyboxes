@@ -7,7 +7,6 @@ import AppAlert from '@/components/ui/AppAlert.vue'
 import WorkerBoxliteConfigForm from '@/components/worker-tool/WorkerBoxliteConfigForm.vue'
 import WorkerCommandPreviewPanel from '@/components/worker-tool/WorkerCommandPreviewPanel.vue'
 import WorkerDockerConfigForm from '@/components/worker-tool/WorkerDockerConfigForm.vue'
-import WorkerIssueList from '@/components/worker-tool/WorkerIssueList.vue'
 import WorkerProfileSelector from '@/components/worker-tool/WorkerProfileSelector.vue'
 import WorkerSysConfigForm from '@/components/worker-tool/WorkerSysConfigForm.vue'
 import { toWorkerIssues } from '@/components/worker-tool/issues'
@@ -117,8 +116,6 @@ onBeforeUnmount(() => {
           :show-prefilled-credential-hint="hasPrefilledCredentials"
           @apply-temporary-probe="selectTemporaryProbePreset"
         />
-
-        <WorkerIssueList :issues="issues" />
       </div>
 
       <WorkerCommandPreviewPanel
