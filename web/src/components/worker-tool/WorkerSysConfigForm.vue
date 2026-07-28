@@ -128,7 +128,9 @@ function handleWhitelistModeUpdate(value: string): void {
       <AppField
         label="WORKER_COMPUTER_USE_COMMAND_WHITELIST (one entry per line)"
         hint="Serialized as JSON array. In exact/prefix mode, empty list blocks all commands."
-        :note="allowAllMode ? 'Disabled because allow_all mode ignores whitelist entries.' : undefined"
+        :note="
+          allowAllMode ? 'Disabled because allow_all mode ignores whitelist entries.' : undefined
+        "
         span
       >
         <AppTextarea

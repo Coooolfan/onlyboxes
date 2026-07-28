@@ -23,7 +23,9 @@ function resolveMCPURL(): string {
  * Ready-to-paste MCP client configuration snippets for a freshly created
  * trusted token.
  */
-export function useMCPSnippets(token: Ref<string> | ComputedRef<string>): ComputedRef<MCPSnippet[]> {
+export function useMCPSnippets(
+  token: Ref<string> | ComputedRef<string>,
+): ComputedRef<MCPSnippet[]> {
   return computed(() => {
     const tokenValue = token.value.trim()
     if (!tokenValue) {

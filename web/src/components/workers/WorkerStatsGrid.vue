@@ -33,7 +33,12 @@ const cards = computed<Array<{ key: string; label: string; value: string; tone: 
     value: String(props.activeSessions),
     tone: 'neutral',
   },
-  { key: 'stale', label: props.staleWorkersLabel, value: String(props.staleWorkers), tone: 'stale' },
+  {
+    key: 'stale',
+    label: props.staleWorkersLabel,
+    value: String(props.staleWorkers),
+    tone: 'stale',
+  },
 ])
 </script>
 

@@ -32,7 +32,10 @@ const columns = computed(() => [
 ])
 
 const inflightByNode = computed(() => {
-  const out = new Map<string, { worker: WorkerInflightItem; capabilities: Map<string, InflightCapability> }>()
+  const out = new Map<
+    string,
+    { worker: WorkerInflightItem; capabilities: Map<string, InflightCapability> }
+  >()
   for (const worker of props.inflightWorkers) {
     const capabilities = new Map<string, InflightCapability>()
     for (const capability of worker.capabilities) {

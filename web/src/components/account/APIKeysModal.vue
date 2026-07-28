@@ -92,16 +92,14 @@ onBeforeUnmount(() => {
     panel-class="api-keys-modal"
     @close="emit('close')"
   >
-    <AppAlert
-      v-if="apiKeysStore.errorMessage && stage !== 'create-form'"
-      tone="error"
-      with-icon
-    >
+    <AppAlert v-if="apiKeysStore.errorMessage && stage !== 'create-form'" tone="error" with-icon>
       {{ apiKeysStore.errorMessage }}
     </AppAlert>
 
     <template v-if="stage === 'list'">
-      <div class="flex items-center justify-between gap-4 max-[700px]:flex-col max-[700px]:items-start">
+      <div
+        class="flex items-center justify-between gap-4 max-[700px]:flex-col max-[700px]:items-start"
+      >
         <p class="m-0 text-sm text-secondary">Total: {{ apiKeysStore.apiKeys.length }}</p>
         <AppButton
           variant="primary"
@@ -183,12 +181,7 @@ onBeforeUnmount(() => {
       </p>
 
       <div class="grid gap-3 rounded-default border border-stroke bg-surface-soft/40 px-4 py-4">
-        <DefinitionRow
-          label="Name"
-          :value="createdAPIKey?.name"
-          label-width="64px"
-          :code="false"
-        />
+        <DefinitionRow label="Name" :value="createdAPIKey?.name" label-width="64px" :code="false" />
         <code
           class="ui-code-block api-key-value block rounded-default border p-3 font-mono text-xs leading-relaxed break-all whitespace-pre-wrap"
           >{{ createdAPIKey?.key }}</code

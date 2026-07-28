@@ -13,10 +13,7 @@ import WorkerProfileSelector from '@/components/worker-tool/WorkerProfileSelecto
 import WorkerSysConfigForm from '@/components/worker-tool/WorkerSysConfigForm.vue'
 import { toWorkerIssues } from '@/components/worker-tool/issues'
 import { useCopyFeedback } from '@/composables/useCopyFeedback'
-import {
-  useCallTimeoutSync,
-  useTerminalLeaseClamp,
-} from '@/composables/useWorkerConfigConstraints'
+import { useCallTimeoutSync, useTerminalLeaseClamp } from '@/composables/useWorkerConfigConstraints'
 import { consumePrefill } from '@/composables/useWorkerStartupPrefill'
 import { useWorkerStartupTool } from '@/composables/useWorkerStartupTool'
 import { downloadTextFile } from '@/utils/download'

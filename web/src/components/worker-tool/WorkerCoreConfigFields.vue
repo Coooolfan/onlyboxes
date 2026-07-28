@@ -43,7 +43,12 @@ function handleCallTimeoutModeUpdate(value: string): void {
           Already Filled
         </AppBadge>
       </template>
-      <AppInput v-model="config.workerID" trim placeholder="worker-id" data-testid="worker-id-input" />
+      <AppInput
+        v-model="config.workerID"
+        trim
+        placeholder="worker-id"
+        data-testid="worker-id-input"
+      />
     </AppField>
 
     <AppField hint="One-time credential returned during worker creation.">
@@ -68,10 +73,7 @@ function handleCallTimeoutModeUpdate(value: string): void {
       />
     </AppField>
 
-    <AppField
-      label="WORKER_CONSOLE_GRPC_TARGET"
-      hint="Console gRPC endpoint in host:port format."
-    >
+    <AppField label="WORKER_CONSOLE_GRPC_TARGET" hint="Console gRPC endpoint in host:port format.">
       <AppInput v-model="config.consoleGRPCTarget" trim placeholder="127.0.0.1:50051" />
     </AppField>
 
@@ -81,7 +83,11 @@ function handleCallTimeoutModeUpdate(value: string): void {
     >
       <span class="ui-input flex items-center justify-between rounded-md border px-3 py-2">
         <span class="text-sm text-primary">Set to true</span>
-        <input v-model="config.consoleInsecure" type="checkbox" class="ui-checkbox h-4 w-4 rounded" />
+        <input
+          v-model="config.consoleInsecure"
+          type="checkbox"
+          class="ui-checkbox h-4 w-4 rounded"
+        />
       </span>
     </AppField>
 

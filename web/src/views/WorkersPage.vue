@@ -155,9 +155,6 @@ onBeforeUnmount(() => {
       @select="handleCreateWorker"
     />
 
-    <WorkerCreateResultModal
-      :payload="createdWorkerPayload"
-      @close="createdWorkerPayload = null"
-    />
+    <WorkerCreateResultModal :payload="createdWorkerPayload" @close="createdWorkerPayload = null" />
   </div>
 </template>

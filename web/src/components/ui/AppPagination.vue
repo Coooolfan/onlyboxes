@@ -34,9 +34,7 @@ const canNext = computed(() => props.page < props.totalPages && !props.loading)
     class="flex items-center justify-between gap-4 px-6 py-4 max-[700px]:flex-col max-[700px]:items-stretch"
     aria-label="Pagination"
   >
-    <p class="m-0 text-[13px] text-secondary">
-      Showing {{ rangeText }}
-    </p>
+    <p class="m-0 text-[13px] text-secondary">Showing {{ rangeText }}</p>
     <div class="inline-flex items-center justify-end gap-3">
       <AppButton size="sm" icon="chevron-left" :disabled="!canPrev" @click="emit('prev')">
         Prev

@@ -50,9 +50,7 @@ function handlePreviewModeUpdate(value: string): void {
 
 <template>
   <div class="flex flex-col rounded-lg border border-stroke bg-surface shadow-card">
-    <div
-      class="flex flex-wrap items-center justify-between gap-3 border-b border-stroke px-4 py-3"
-    >
+    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-stroke px-4 py-3">
       <div>
         <p class="m-0 text-sm font-medium text-primary">{{ title }}</p>
         <p class="m-0 text-xs text-secondary">{{ description }}</p>

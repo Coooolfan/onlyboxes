@@ -29,7 +29,11 @@ const props = defineProps<{
         hint="Optional home directory for local Boxlite state."
         span
       >
-        <AppInput v-model="props.config.boxliteHome" trim placeholder="/var/lib/onlyboxes/boxlite" />
+        <AppInput
+          v-model="props.config.boxliteHome"
+          trim
+          placeholder="/var/lib/onlyboxes/boxlite"
+        />
       </AppField>
     </WorkerCoreConfigFields>
 

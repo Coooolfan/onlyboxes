@@ -8,7 +8,12 @@ import { useWorkersStore } from '@/stores/workers'
  * Called on logout so a different account never sees the previous session state.
  */
 export function clearFeatureStores(): void {
-  for (const store of [useAccountsStore(), useAPIKeysStore(), useWorkersStore(), useTokensStore()]) {
+  for (const store of [
+    useAccountsStore(),
+    useAPIKeysStore(),
+    useWorkersStore(),
+    useTokensStore(),
+  ]) {
     store.teardown()
     store.reset()
   }

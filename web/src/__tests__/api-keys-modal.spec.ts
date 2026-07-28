@@ -48,7 +48,9 @@ describe('API Keys Modal', () => {
         return authenticated ? jsonResponse(defaultTokensPayload()) : unauthorizedResponse()
       }
       if (url === '/api/v1/console/api-keys' && method === 'GET') {
-        return authenticated ? jsonResponse({ items: apiKeys, total: apiKeys.length }) : unauthorizedResponse()
+        return authenticated
+          ? jsonResponse({ items: apiKeys, total: apiKeys.length })
+          : unauthorizedResponse()
       }
       if (url === '/api/v1/console/api-keys' && method === 'POST') {
         apiKeys = [
@@ -137,7 +139,9 @@ describe('API Keys Modal', () => {
 
       await wrapper.get('header.h-16 .relative > button').trigger('click')
       await flushPromises()
-      const apiKeysButtonAgain = wrapper.findAll('button').find((button) => button.text() === 'API Keys')
+      const apiKeysButtonAgain = wrapper
+        .findAll('button')
+        .find((button) => button.text() === 'API Keys')
       await apiKeysButtonAgain?.trigger('click')
       await flushPromises()
       await flushPromises()
@@ -212,7 +216,9 @@ describe('API Keys Modal', () => {
       forceUnauthorized = true
       await wrapper.get('header.h-16 .relative > button').trigger('click')
       await flushPromises()
-      const apiKeysButtonAgain = wrapper.findAll('button').find((button) => button.text() === 'API Keys')
+      const apiKeysButtonAgain = wrapper
+        .findAll('button')
+        .find((button) => button.text() === 'API Keys')
       await apiKeysButtonAgain?.trigger('click')
       await flushPromises()
       await flushPromises()
