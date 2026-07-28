@@ -726,6 +726,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Enable Corepack
+        run: corepack enable
+
       - name: Download website dist artifact
         uses: actions/download-artifact@v4
         with:
