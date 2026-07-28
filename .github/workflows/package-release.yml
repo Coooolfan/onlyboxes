@@ -9,9 +9,6 @@ on:
 permissions:
   contents: write
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   prepare-release:
     name: Prepare release
@@ -22,7 +19,7 @@ jobs:
       prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Resolve version
         id: version
@@ -41,15 +38,17 @@ jobs:
             exit 1
           fi
 
-          if [[ "${version_raw}" =~ -rc-|-beta-|-alpha- ]]; then
+          if [[ "${version_raw}" =~ -(rc|beta|alpha)[.-] ]]; then
             prerelease=true
           else
             prerelease=false
           fi
 
-          echo "version_raw=${version_raw}" >> "${GITHUB_OUTPUT}"
-          echo "version_safe=${version_safe}" >> "${GITHUB_OUTPUT}"
-          echo "prerelease=${prerelease}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "version_raw=${version_raw}"
+            echo "version_safe=${version_safe}"
+            echo "prerelease=${prerelease}"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Verify release notes file
         shell: bash
@@ -66,10 +65,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Create draft release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.prepare-release.outputs.version_raw }}
           name: ${{ needs.prepare-release.outputs.version_raw }}
@@ -88,10 +87,10 @@ jobs:
       VERSION_RAW: ${{ needs.prepare-release.outputs.version_raw }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "24"
 
@@ -105,7 +104,7 @@ jobs:
           VITE_CONSOLE_VERSION="${VERSION_RAW}" yarn --cwd web build
 
       - name: Upload web dist artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: web-dist
           path: web/dist
@@ -121,10 +120,10 @@ jobs:
       VERSION_RAW: ${{ needs.prepare-release.outputs.version_raw }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "24"
 
@@ -138,7 +137,7 @@ jobs:
           VITE_DEFAULT_TAG="${VERSION_RAW}" yarn --cwd website build
 
       - name: Upload website dist artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: website-dist
           path: website/dist
@@ -181,16 +180,16 @@ jobs:
       CONSOLE_BIN: onlyboxes-console_${{ needs.prepare-release.outputs.version_safe }}_${{ matrix.os_name }}_${{ matrix.goarch }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download web dist artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: web-dist
           path: console/internal/httpapi/web_dist
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: "1.24.x"
           cache-dependency-path: console/go.sum
@@ -232,7 +231,7 @@ jobs:
           esac
 
       - name: Upload console workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: onlyboxes-console-${{ matrix.os_name }}-${{ matrix.arch }}-${{ env.VERSION_SAFE }}.zip
           path: build/${{ env.CONSOLE_BIN }}
@@ -286,10 +285,10 @@ jobs:
       WORKER_BIN: onlyboxes-worker-docker_${{ needs.prepare-release.outputs.version_safe }}_${{ matrix.os_name }}_${{ matrix.goarch }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: "1.24.x"
           cache-dependency-path: worker/worker-docker/go.sum
@@ -331,7 +330,7 @@ jobs:
           esac
 
       - name: Upload worker workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: onlyboxes-worker-docker-${{ matrix.os_name }}-${{ matrix.arch }}-${{ env.VERSION_SAFE }}.zip
           path: build/${{ env.WORKER_BIN }}
@@ -399,10 +398,10 @@ jobs:
       WORKER_BIN: onlyboxes-worker-sys_${{ needs.prepare-release.outputs.version_safe }}_${{ matrix.os_name }}_${{ matrix.goarch }}${{ matrix.ext }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: "1.24.x"
           cache-dependency-path: worker/worker-sys/go.sum
@@ -450,7 +449,7 @@ jobs:
           esac
 
       - name: Upload worker workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: onlyboxes-worker-sys-${{ matrix.os_name }}-${{ matrix.arch }}-${{ env.VERSION_SAFE }}.zip
           path: build/${{ env.WORKER_BIN }}
@@ -501,12 +500,25 @@ jobs:
       WORKER_BIN: onlyboxes-worker-boxlite_${{ needs.prepare-release.outputs.version_safe }}_${{ matrix.os_name }}_${{ matrix.arch_name }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          repo-token: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          case "${RUNNER_OS}" in
+            Linux)
+              sudo apt-get update
+              sudo apt-get install -y protobuf-compiler
+              ;;
+            macOS)
+              brew install protobuf
+              ;;
+            *)
+              echo "unsupported runner OS: ${RUNNER_OS}" >&2
+              exit 1
+              ;;
+          esac
+          protoc --version
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -514,7 +526,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Cache Cargo registry and build
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -555,7 +567,7 @@ jobs:
           esac
 
       - name: Upload worker-boxlite workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: onlyboxes-worker-boxlite-${{ matrix.os_name }}-${{ matrix.arch }}-${{ env.VERSION_SAFE }}.zip
           path: build/${{ env.WORKER_BIN }}
@@ -581,28 +593,28 @@ jobs:
       VERSION_SAFE: ${{ needs.prepare-release.outputs.version_safe }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download console linux x64 binary artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: onlyboxes-console-linux-x64-${{ env.VERSION_SAFE }}.zip
           path: build/console-linux-x64
 
       - name: Download console linux arm64 binary artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: onlyboxes-console-linux-arm64-${{ env.VERSION_SAFE }}.zip
           path: build/console-linux-arm64
 
       - name: Setup QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Login to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -635,7 +647,7 @@ jobs:
           cp docker/console.dockerfile "build/docker/console/Dockerfile"
 
       - name: Build and push console image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: build/docker/console
           file: build/docker/console/Dockerfile
@@ -669,16 +681,16 @@ jobs:
       VERSION_SAFE: ${{ needs.prepare-release.outputs.version_safe }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Login to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -708,7 +720,7 @@ jobs:
           } >> "${GITHUB_OUTPUT}"
 
       - name: Build and push runtime image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ${{ matrix.dockerfile }}
@@ -724,30 +736,35 @@ jobs:
       - build-website
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: Enable Corepack
+        run: corepack enable
 
       - name: Download website dist artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: website-dist
           path: website/dist
 
       - name: Upload preview version (prerelease, no traffic switch)
         if: needs.prepare-release.outputs.prerelease == 'true'
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           wranglerVersion: "4"
+          workingDirectory: website
           command: versions upload --tag ${{ needs.prepare-release.outputs.version_raw }} --message "Prerelease ${{ needs.prepare-release.outputs.version_raw }}"
 
       - name: Deploy to production (100% traffic)
         if: needs.prepare-release.outputs.prerelease != 'true'
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           wranglerVersion: "4"
+          workingDirectory: website
           command: deploy
 
   publish-release:

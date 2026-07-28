@@ -21,6 +21,9 @@ const (
 	defaultLogLevel                  = "info"
 	defaultLogFormat                 = "json"
 	defaultLogAddSource              = false
+	// worker-sys executes on the host without a container sandbox, so command
+	// concurrency stays at one unless the operator opts in.
+	defaultMaxInflight = 1
 )
 
 type Config struct {
@@ -40,6 +43,8 @@ type Config struct {
 	ComputerUseWhitelistMode   string
 	ComputerUseWhitelist       []string
 	ReadImageAllowedPaths      []string
+	ComputerUseMaxInflight     int
+	ReadImageMaxInflight       int
 	LogLevel                   string
 	LogFormat                  string
 	LogAddSource               bool
@@ -78,6 +83,8 @@ func Load() Config {
 		ComputerUseWhitelistMode:   whitelistMode,
 		ComputerUseWhitelist:       whitelist,
 		ReadImageAllowedPaths:      readImageAllowedPaths,
+		ComputerUseMaxInflight:     src.positiveInt("WORKER_COMPUTER_USE_MAX_INFLIGHT", defaultMaxInflight),
+		ReadImageMaxInflight:       src.positiveInt("WORKER_READ_IMAGE_MAX_INFLIGHT", defaultMaxInflight),
 		LogLevel:                   src.logLevel("WORKER_LOG_LEVEL", defaultLogLevel),
 		LogFormat:                  src.logFormat("WORKER_LOG_FORMAT", defaultLogFormat),
 		LogAddSource:               src.boolValue("WORKER_LOG_ADD_SOURCE", defaultLogAddSource),

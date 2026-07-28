@@ -152,11 +152,7 @@ func TestTerminalSessionManagerResolveResourceValidateAndRead(t *testing.T) {
 	defer manager.Close()
 
 	manager.mu.Lock()
-	manager.sessions["sess-1"] = &terminalSession{
-		sessionID:      "sess-1",
-		containerName:  "container-1",
-		leaseExpiresAt: time.Now().Add(time.Minute),
-	}
+	manager.sessions["sess-1"] = readyTerminalSession("sess-1", "container-1", time.Now().Add(time.Minute), 0)
 	manager.mu.Unlock()
 
 	validateResult, err := manager.ResolveResource(context.Background(), terminalResourceRequest{
@@ -237,11 +233,7 @@ func TestTerminalSessionManagerResolveResourceDomainErrors(t *testing.T) {
 			defer manager.Close()
 
 			manager.mu.Lock()
-			manager.sessions["sess-1"] = &terminalSession{
-				sessionID:      "sess-1",
-				containerName:  "container-1",
-				leaseExpiresAt: time.Now().Add(time.Minute),
-			}
+			manager.sessions["sess-1"] = readyTerminalSession("sess-1", "container-1", time.Now().Add(time.Minute), 0)
 			manager.mu.Unlock()
 
 			_, err := manager.ResolveResource(context.Background(), terminalResourceRequest{
@@ -285,11 +277,7 @@ func TestTerminalSessionManagerResolveResourceProbeExecFailureReportsDockerError
 	defer manager.Close()
 
 	manager.mu.Lock()
-	manager.sessions["sess-1"] = &terminalSession{
-		sessionID:      "sess-1",
-		containerName:  "container-1",
-		leaseExpiresAt: time.Now().Add(time.Minute),
-	}
+	manager.sessions["sess-1"] = readyTerminalSession("sess-1", "container-1", time.Now().Add(time.Minute), 0)
 	manager.mu.Unlock()
 
 	_, err := manager.ResolveResource(context.Background(), terminalResourceRequest{
@@ -358,11 +346,7 @@ func TestTerminalSessionManagerResolveResourceExportSuccess(t *testing.T) {
 	defer manager.Close()
 
 	manager.mu.Lock()
-	manager.sessions["sess-1"] = &terminalSession{
-		sessionID:      "sess-1",
-		containerName:  "container-1",
-		leaseExpiresAt: time.Now().Add(time.Minute),
-	}
+	manager.sessions["sess-1"] = readyTerminalSession("sess-1", "container-1", time.Now().Add(time.Minute), 0)
 	manager.mu.Unlock()
 
 	result, err := manager.ResolveResource(context.Background(), terminalResourceRequest{
@@ -429,11 +413,7 @@ func TestTerminalSessionManagerResolveResourceExportUploadFailure(t *testing.T) 
 	defer manager.Close()
 
 	manager.mu.Lock()
-	manager.sessions["sess-1"] = &terminalSession{
-		sessionID:      "sess-1",
-		containerName:  "container-1",
-		leaseExpiresAt: time.Now().Add(time.Minute),
-	}
+	manager.sessions["sess-1"] = readyTerminalSession("sess-1", "container-1", time.Now().Add(time.Minute), 0)
 	manager.mu.Unlock()
 
 	_, err := manager.ResolveResource(context.Background(), terminalResourceRequest{
@@ -478,11 +458,7 @@ func TestTerminalSessionManagerResolveResourceExportRejectsOversizedFile(t *test
 	defer manager.Close()
 
 	manager.mu.Lock()
-	manager.sessions["sess-export-limit"] = &terminalSession{
-		sessionID:      "sess-export-limit",
-		containerName:  "container-1",
-		leaseExpiresAt: time.Now().Add(time.Minute),
-	}
+	manager.sessions["sess-export-limit"] = readyTerminalSession("sess-export-limit", "container-1", time.Now().Add(time.Minute), 0)
 	manager.mu.Unlock()
 
 	_, err := manager.ResolveResource(context.Background(), terminalResourceRequest{
@@ -516,12 +492,7 @@ func TestTerminalSessionManagerResolveResourceSessionRules(t *testing.T) {
 	}
 
 	manager.mu.Lock()
-	manager.sessions["busy"] = &terminalSession{
-		sessionID:      "busy",
-		containerName:  "container-1",
-		leaseExpiresAt: time.Now().Add(time.Minute),
-		busy:           true,
-	}
+	manager.sessions["busy"] = readyTerminalSession("busy", "container-1", time.Now().Add(time.Minute), 1)
 	manager.mu.Unlock()
 
 	_, err = manager.ResolveResource(context.Background(), terminalResourceRequest{
@@ -557,11 +528,7 @@ func TestTerminalSessionManagerResolveResourceTimeoutDestroysSession(t *testing.
 	defer manager.Close()
 
 	manager.mu.Lock()
-	manager.sessions["sess-1"] = &terminalSession{
-		sessionID:      "sess-1",
-		containerName:  "container-1",
-		leaseExpiresAt: time.Now().Add(time.Minute),
-	}
+	manager.sessions["sess-1"] = readyTerminalSession("sess-1", "container-1", time.Now().Add(time.Minute), 0)
 	manager.mu.Unlock()
 
 	_, err := manager.ResolveResource(context.Background(), terminalResourceRequest{
