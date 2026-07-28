@@ -502,6 +502,24 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
+      - name: Install protoc
+        run: |
+          set -euo pipefail
+          case "${RUNNER_OS}" in
+            Linux)
+              sudo apt-get update
+              sudo apt-get install -y protobuf-compiler
+              ;;
+            macOS)
+              brew install protobuf
+              ;;
+            *)
+              echo "unsupported runner OS: ${RUNNER_OS}" >&2
+              exit 1
+              ;;
+          esac
+          protoc --version
+
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
