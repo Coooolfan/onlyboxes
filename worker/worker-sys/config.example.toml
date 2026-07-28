@@ -26,9 +26,11 @@ computer_use_output_limit_bytes = 1048576
 # prefix | exact | allow_all
 computer_use_command_whitelist_mode = "exact"
 computer_use_command_whitelist = []
+computer_use_max_inflight = 1
 
 # readImage capability, empty means every path is rejected.
 read_image_allowed_paths = []
+read_image_max_inflight = 1
 
 # Logging.
 log_level = "info"

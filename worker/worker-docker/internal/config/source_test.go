@@ -33,6 +33,7 @@ log_add_source = true
 [labels]
 region = "cn"
 owner = "team-a"
+description = "gpu,shared"
 `)
 
 	cfg := Load()
@@ -60,7 +61,7 @@ owner = "team-a"
 	if cfg.LogLevel != "debug" || !cfg.LogAddSource {
 		t.Fatalf("unexpected log config %q/%t", cfg.LogLevel, cfg.LogAddSource)
 	}
-	if cfg.Labels["region"] != "cn" || cfg.Labels["owner"] != "team-a" {
+	if cfg.Labels["region"] != "cn" || cfg.Labels["owner"] != "team-a" || cfg.Labels["description"] != "gpu,shared" {
 		t.Fatalf("unexpected labels %v", cfg.Labels)
 	}
 }

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 	"time"
@@ -219,6 +220,14 @@ func parseLabels(raw string) map[string]string {
 	if strings.TrimSpace(raw) == "" {
 		return map[string]string{}
 	}
+
+	if strings.HasPrefix(strings.TrimSpace(raw), "{") {
+		decoded := map[string]string{}
+		if err := json.Unmarshal([]byte(raw), &decoded); err == nil {
+			return normalizeLabels(decoded)
+		}
+	}
+
 	parts := strings.Split(raw, ",")
 	labels := make(map[string]string, len(parts))
 	for _, part := range parts {
@@ -236,6 +245,18 @@ func parseLabels(raw string) map[string]string {
 			continue
 		}
 		labels[key] = value
+	}
+	return labels
+}
+
+func normalizeLabels(raw map[string]string) map[string]string {
+	labels := make(map[string]string, len(raw))
+	for key, value := range raw {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		labels[key] = strings.TrimSpace(value)
 	}
 	return labels
 }

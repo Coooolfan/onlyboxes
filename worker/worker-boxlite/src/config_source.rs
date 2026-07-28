@@ -190,13 +190,11 @@ fn encode_value(value: &toml::Value) -> Option<String> {
             serde_json::to_string(&encoded).ok()
         }
         toml::Value::Table(table) => {
-            let entries = table
+            let encoded = table
                 .iter()
-                .filter_map(|(key, value)| {
-                    encode_value(value).map(|value| format!("{key}={value}"))
-                })
-                .collect::<Vec<String>>();
-            Some(entries.join(","))
+                .filter_map(|(key, value)| encode_value(value).map(|value| (key.clone(), value)))
+                .collect::<BTreeMap<String, String>>();
+            serde_json::to_string(&encoded).ok()
         }
         toml::Value::Datetime(_) => None,
     }
@@ -285,7 +283,7 @@ region = "cn"
         );
         assert_eq!(
             src.values.get("labels").map(String::as_str),
-            Some("owner=team-a,region=cn")
+            Some(r#"{"owner":"team-a","region":"cn"}"#)
         );
     }
 

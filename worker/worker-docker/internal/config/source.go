@@ -2,11 +2,9 @@ package config
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -150,21 +148,20 @@ func encodeArray(items []any) (string, bool) {
 	return string(payload), true
 }
 
-// encodeTable renders TOML tables as the `key=value,key=value` CSV form.
+// encodeTable renders TOML tables as JSON objects so delimiters in keys and
+// values remain unambiguous.
 func encodeTable(table map[string]any) string {
-	keys := make([]string, 0, len(table))
-	for key := range table {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-
-	entries := make([]string, 0, len(keys))
-	for _, key := range keys {
-		value, ok := encodeValue(table[key])
+	encoded := make(map[string]string, len(table))
+	for key, rawValue := range table {
+		value, ok := encodeValue(rawValue)
 		if !ok {
 			continue
 		}
-		entries = append(entries, fmt.Sprintf("%s=%s", key, value))
+		encoded[key] = value
 	}
-	return strings.Join(entries, ",")
+	payload, err := json.Marshal(encoded)
+	if err != nil {
+		return "{}"
+	}
+	return string(payload)
 }

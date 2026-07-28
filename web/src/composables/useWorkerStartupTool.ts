@@ -36,6 +36,7 @@ const defaultTemporaryProbeInstallerTag = ''
 
 type BuildState = {
   envEntries: Array<[string, string]>
+  labelEntries: Array<[string, string]>
   errors: string[]
   warnings: string[]
 }
@@ -43,6 +44,7 @@ type BuildState = {
 function emptyBuildState(): BuildState {
   return {
     envEntries: [],
+    labelEntries: [],
     errors: [],
     warnings: [],
   }
@@ -133,11 +135,13 @@ function parseUniqueLineValues(input: string): string[] {
 
 function parseLabelsCSV(input: string): {
   value: string
+  entries: Array<[string, string]>
   invalidCount: number
 } {
   if (input.trim() === '') {
     return {
       value: '',
+      entries: [],
       invalidCount: 0,
     }
   }
@@ -177,6 +181,7 @@ function parseLabelsCSV(input: string): {
 
   return {
     value: entries.map(([key, value]) => `${key}=${value}`).join(','),
+    entries,
     invalidCount,
   }
 }
@@ -240,29 +245,24 @@ function tomlValue(envKey: string, value: string): string {
 
 // formatConfigToml renders the same values as the shell command into the
 // `config.toml` form read by the worker: the env key without the WORKER_
-// prefix, lowercased, and WORKER_LABELS expanded into a [labels] table.
-function formatConfigToml(envEntries: Array<[string, string]>): string {
+// prefix, lowercased, and structured labels expanded into a [labels] table.
+function formatConfigToml(
+  envEntries: Array<[string, string]>,
+  labelEntries: Array<[string, string]>,
+): string {
   const lines: string[] = []
-  let labelsCSV = ''
 
   for (const [key, value] of envEntries) {
     if (key === 'WORKER_LABELS') {
-      labelsCSV = value
       continue
     }
     lines.push(`${tomlKey(key)} = ${tomlValue(key, value)}`)
   }
 
-  if (labelsCSV) {
+  if (labelEntries.length > 0) {
     lines.push('')
     lines.push('[labels]')
-    for (const entry of labelsCSV.split(',')) {
-      const separatorIndex = entry.indexOf('=')
-      if (separatorIndex <= 0) {
-        continue
-      }
-      const key = entry.slice(0, separatorIndex)
-      const value = entry.slice(separatorIndex + 1)
+    for (const [key, value] of labelEntries) {
       lines.push(`${tomlTableKey(key)} = ${tomlString(value)}`)
     }
   }
@@ -273,7 +273,7 @@ function formatConfigToml(envEntries: Array<[string, string]>): string {
 function buildResult(state: BuildState, binaryPath: string): StartupCommandBuildResult {
   return {
     command: formatMultilineCommand(state.envEntries, binaryPath),
-    configToml: formatConfigToml(state.envEntries),
+    configToml: formatConfigToml(state.envEntries, state.labelEntries),
     errors: state.errors,
     warnings: state.warnings,
   }
@@ -334,6 +334,7 @@ function appendCommonEnv(
   const nodeName = config.nodeName.trim()
   const version = config.version.trim()
   const labels = parseLabelsCSV(config.labelsText)
+  state.labelEntries = labels.entries
 
   if (!workerID) {
     state.errors.push('WORKER_ID is required.')

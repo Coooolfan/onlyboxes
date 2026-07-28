@@ -186,6 +186,18 @@ fn build_default_version() -> String {
 }
 
 fn parse_labels(raw: &str) -> BTreeMap<String, String> {
+    if raw.trim_start().starts_with('{') {
+        if let Ok(decoded) = serde_json::from_str::<BTreeMap<String, String>>(raw) {
+            return decoded
+                .into_iter()
+                .filter_map(|(key, value)| {
+                    let key = key.trim();
+                    (!key.is_empty()).then(|| (key.to_owned(), value.trim().to_owned()))
+                })
+                .collect();
+        }
+    }
+
     let mut labels = BTreeMap::new();
     for part in raw.split(',') {
         let entry = part.trim();
@@ -249,5 +261,13 @@ mod tests {
         assert_eq!(cfg.terminal_exec_image, DEFAULT_TERMINAL_EXEC_IMAGE);
         assert_eq!(cfg.labels.get("region"), Some(&"cn".to_owned()));
         assert_eq!(cfg.labels.get("owner"), Some(&"team-a".to_owned()));
+    }
+
+    #[test]
+    fn parse_labels_preserves_commas_in_json_values() {
+        let labels = parse_labels(r#"{"description":"gpu,shared","region":"cn"}"#);
+
+        assert_eq!(labels.get("description"), Some(&"gpu,shared".to_owned()));
+        assert_eq!(labels.get("region"), Some(&"cn".to_owned()));
     }
 }
