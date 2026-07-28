@@ -37,6 +37,7 @@ const workerOptions: ReadonlyArray<{
     title="Choose Worker Type"
     description="Select the execution profile to generate startup credentials."
     :persistent="loading"
+    panel-class="worker-type-modal"
     @close="emit('close')"
   >
     <div class="grid gap-3">

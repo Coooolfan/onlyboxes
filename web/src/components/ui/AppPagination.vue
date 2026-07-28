@@ -21,7 +21,8 @@ const emit = defineEmits<{
 const rangeText = computed(() => {
   const start = props.total === 0 ? 0 : (props.page - 1) * props.pageSize + 1
   const end = Math.min(props.page * props.pageSize, props.total)
-  return `${start}-${end} / ${props.total}`
+  const suffix = props.itemLabel ? ` ${props.itemLabel}` : ''
+  return `${start}-${end} / ${props.total}${suffix}`
 })
 
 const canPrev = computed(() => props.page > 1 && !props.loading)
@@ -34,7 +35,7 @@ const canNext = computed(() => props.page < props.totalPages && !props.loading)
     aria-label="Pagination"
   >
     <p class="m-0 text-[13px] text-secondary">
-      Showing {{ rangeText }}<span v-if="itemLabel"> {{ itemLabel }}</span>
+      Showing {{ rangeText }}
     </p>
     <div class="inline-flex items-center justify-end gap-3">
       <AppButton size="sm" icon="chevron-left" :disabled="!canPrev" @click="emit('prev')">

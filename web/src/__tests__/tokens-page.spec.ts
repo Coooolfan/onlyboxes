@@ -4,6 +4,7 @@ import { flushPromises } from '@vue/test-utils'
 
 import router from '../router'
 import {
+  confirmDestructiveAction,
   defaultTokensPayload,
   jsonResponse,
   memberSessionPayload,
@@ -153,7 +154,7 @@ describe('Tokens Page', () => {
       const deleteBtn = wrapper.find('.token-panel .token-actions button')
       expect(deleteBtn.exists()).toBe(true)
       await deleteBtn.trigger('click')
-      await flushPromises()
+      await confirmDestructiveAction()
 
       expect(wrapper.text()).not.toContain('ci-prod')
       expect(wrapper.text()).toContain('ci-staging')

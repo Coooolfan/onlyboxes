@@ -5,6 +5,7 @@ import { flushPromises } from '@vue/test-utils'
 import router from '../router'
 import {
   adminSessionPayload,
+  confirmDestructiveAction,
   inflightPayload,
   jsonResponse,
   memberSessionPayload,
@@ -264,11 +265,6 @@ describe('Workers Page', () => {
   })
 
   it('deletes worker and refreshes list', async () => {
-    vi.stubGlobal(
-      'confirm',
-      vi.fn(() => true),
-    )
-
     let deleted = false
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
@@ -301,7 +297,7 @@ describe('Workers Page', () => {
     const deleteBtn = workerRow.findAll('button').find((button) => button.text() === 'Delete')
     expect(deleteBtn).toBeTruthy()
     await deleteBtn?.trigger('click')
-    await flushPromises()
+    await confirmDestructiveAction()
 
     expect(wrapper.text()).toContain('No workers found in current filter.')
     const deleteCall = fetchMock.mock.calls.find(

@@ -27,6 +27,37 @@ Onlyboxes worker registry dashboard (Vue 3 + Vite + TypeScript).
 - 节点能力列展示 `capabilities[].name` 能力声明
 - 支持 `all / online / offline` 筛选、分页、手动刷新和自动刷新
 
+## 目录结构
+
+```
+src/
+├── components/
+│   ├── ui/            # 无业务语义的基础组件：AppButton / AppModal / AppCard /
+│   │                  # AppField / AppPagination / CopyButton / ConfirmDialogHost 等，
+│   │                  # 图标由 icons.ts 数据驱动，经 AppIcon 渲染
+│   ├── layout/        # ConsoleSidebar / PageHeader / UserMenu 等外壳组件
+│   ├── workers/       # worker 列表、创建流程相关组件
+│   ├── accounts/      # 账号管理相关组件
+│   ├── tokens/        # trusted token 相关组件
+│   ├── account/       # 当前账号自助操作（改密码、API Keys）
+│   └── worker-tool/   # Worker Startup Tool 的表单区块，字段由 workerFieldSpecs.ts 描述
+├── composables/       # 跨组件逻辑：useConfirm（替代 window.confirm）、useCopyFeedback、
+│                      # useBodyScrollLock、useWorkersRouteSync、useWorkerConfigConstraints 等
+├── stores/            # Pinia store，只负责数据与请求，不含格式化/确认等视图层职责
+├── services/          # API 调用封装
+├── utils/             # async（请求守卫、错误归一）、datetime、clipboard、secret
+├── views/             # 路由级页面
+├── layouts/           # 路由布局
+├── router/  config/  constants/  theme/  types/  style/
+└── __tests__/         # Vitest 组件级测试，testkit.ts 提供挂载与交互辅助
+```
+
+约定：
+
+- 新增交互控件优先复用 `components/ui/`，避免复制样式类字符串
+- 破坏性操作统一走 `useConfirm` 的 `requestConfirm()`，由 `App.vue` 挂载的 `ConfirmDialogHost` 渲染
+- store 内的并发/取消统一使用 `utils/async.ts` 的 `createRequestGuard`
+
 ## 开发
 
 ```bash

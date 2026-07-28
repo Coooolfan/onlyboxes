@@ -4,6 +4,7 @@ import { flushPromises } from '@vue/test-utils'
 
 import router from '../router'
 import {
+  confirmDestructiveAction,
   defaultAPIKeysPayload,
   defaultTokensPayload,
   jsonResponse,
@@ -147,8 +148,7 @@ describe('API Keys Modal', () => {
       const deleteButton = document.body.querySelector('.api-key-actions button')
       expect(deleteButton).toBeTruthy()
       deleteButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-      await flushPromises()
-      await flushPromises()
+      await confirmDestructiveAction()
 
       expect(document.body.textContent ?? '').not.toContain('ci-prod')
 
