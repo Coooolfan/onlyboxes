@@ -9,9 +9,27 @@ const emit = defineEmits<{
   'update:modelValue': [value: WorkerStartupKind]
 }>()
 
-function selectKind(kind: WorkerStartupKind): void {
-  emit('update:modelValue', kind)
-}
+const profiles: ReadonlyArray<{
+  kind: WorkerStartupKind
+  testId: string
+  description: string
+}> = [
+  {
+    kind: 'worker-docker',
+    testId: 'worker-kind-docker-btn',
+    description: 'Container-based execution runtime.',
+  },
+  {
+    kind: 'worker-boxlite',
+    testId: 'worker-kind-boxlite-btn',
+    description: 'Boxlite runtime with per-execution Linux kernels.',
+  },
+  {
+    kind: 'worker-sys',
+    testId: 'worker-kind-sys-btn',
+    description: 'Host-shell runtime for computerUse/readImage.',
+  },
+]
 </script>
 
 <template>
@@ -23,54 +41,22 @@ function selectKind(kind: WorkerStartupKind): void {
       class="grid grid-cols-1 gap-2 md:grid-cols-3"
     >
       <button
-        data-testid="worker-kind-docker-btn"
+        v-for="profile in profiles"
+        :key="profile.kind"
         type="button"
         role="tab"
-        :aria-selected="props.modelValue === 'worker-docker'"
-        class="rounded-md border px-3 py-2 text-left transition-colors grid gap-0.5"
+        :data-testid="profile.testId"
+        :aria-selected="props.modelValue === profile.kind"
+        class="ui-focusable grid cursor-pointer gap-0.5 rounded-md border px-3 py-2 text-left transition-[background-color,border-color,color] duration-200"
         :class="
-          props.modelValue === 'worker-docker'
+          props.modelValue === profile.kind
             ? 'border-accent bg-surface-soft text-primary'
             : 'border-stroke bg-surface text-secondary hover:border-stroke-hover hover:text-primary'
         "
-        @click="selectKind('worker-docker')"
+        @click="emit('update:modelValue', profile.kind)"
       >
-        <span class="text-sm font-medium">worker-docker</span>
-        <span class="text-xs opacity-80">Container-based execution runtime.</span>
-      </button>
-
-      <button
-        data-testid="worker-kind-boxlite-btn"
-        type="button"
-        role="tab"
-        :aria-selected="props.modelValue === 'worker-boxlite'"
-        class="rounded-md border px-3 py-2 text-left transition-colors grid gap-0.5"
-        :class="
-          props.modelValue === 'worker-boxlite'
-            ? 'border-accent bg-surface-soft text-primary'
-            : 'border-stroke bg-surface text-secondary hover:border-stroke-hover hover:text-primary'
-        "
-        @click="selectKind('worker-boxlite')"
-      >
-        <span class="text-sm font-medium">worker-boxlite</span>
-        <span class="text-xs opacity-80">Boxlite runtime with per-execution Linux kernels.</span>
-      </button>
-
-      <button
-        data-testid="worker-kind-sys-btn"
-        type="button"
-        role="tab"
-        :aria-selected="props.modelValue === 'worker-sys'"
-        class="rounded-md border px-3 py-2 text-left transition-colors grid gap-0.5"
-        :class="
-          props.modelValue === 'worker-sys'
-            ? 'border-accent bg-surface-soft text-primary'
-            : 'border-stroke bg-surface text-secondary hover:border-stroke-hover hover:text-primary'
-        "
-        @click="selectKind('worker-sys')"
-      >
-        <span class="text-sm font-medium">worker-sys</span>
-        <span class="text-xs opacity-80">Host-shell runtime for computerUse/readImage.</span>
+        <span class="text-sm font-medium">{{ profile.kind }}</span>
+        <span class="text-xs opacity-80">{{ profile.description }}</span>
       </button>
     </div>
   </div>

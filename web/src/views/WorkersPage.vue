@@ -1,99 +1,40 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
-import ErrorBanner from '@/components/common/ErrorBanner.vue'
-import ConsoleHeader from '@/components/dashboard/ConsoleHeader.vue'
-import PaginationBar from '@/components/dashboard/PaginationBar.vue'
-import StatsGrid from '@/components/dashboard/StatsGrid.vue'
-import WorkerCreateResultModal from '@/components/dashboard/WorkerCreateResultModal.vue'
-import WorkerTypeSelectModal from '@/components/dashboard/WorkerTypeSelectModal.vue'
-import WorkersTable from '@/components/dashboard/WorkersTable.vue'
-import WorkersToolbar from '@/components/dashboard/WorkersToolbar.vue'
+import PageHeader from '@/components/layout/PageHeader.vue'
+import AppAlert from '@/components/ui/AppAlert.vue'
+import AppButton from '@/components/ui/AppButton.vue'
+import AppPagination from '@/components/ui/AppPagination.vue'
+import WorkerCreateResultModal from '@/components/workers/WorkerCreateResultModal.vue'
+import WorkerStatsGrid from '@/components/workers/WorkerStatsGrid.vue'
+import WorkerTypeSelectModal from '@/components/workers/WorkerTypeSelectModal.vue'
+import WorkersTable from '@/components/workers/WorkersTable.vue'
+import WorkersToolbar from '@/components/workers/WorkersToolbar.vue'
+import { useRefreshedAtText } from '@/composables/useRefreshedAtText'
+import { useWorkersRouteSync } from '@/composables/useWorkersRouteSync'
 import { useAuthStore } from '@/stores/auth'
 import { useWorkersStore } from '@/stores/workers'
-import type { WorkerStartupCommandResponse, WorkerStatus, WorkerType } from '@/types/workers'
+import type { WorkerStartupCommandResponse, WorkerType } from '@/types/workers'
 
 const workersStore = useWorkersStore()
 const authStore = useAuthStore()
-const route = useRoute()
-const router = useRouter()
+const routeSync = useWorkersRouteSync()
+
 const createdWorkerPayload = ref<WorkerStartupCommandResponse | null>(null)
 const showWorkerTypeModal = ref(false)
 const showDetails = ref(false)
 
-function parseStatus(raw: unknown): WorkerStatus {
-  return raw === 'online' || raw === 'offline' || raw === 'all' ? raw : 'all'
-}
+const refreshedAtText = useRefreshedAtText(computed(() => workersStore.refreshedAt))
 
-function parsePage(raw: unknown): number {
-  if (typeof raw !== 'string') {
-    return 1
+const createButtonText = computed(() => {
+  if (workersStore.creatingWorker) {
+    return authStore.isAdmin ? 'Adding...' : 'Creating...'
   }
-  const parsed = Number.parseInt(raw, 10)
-  if (!Number.isFinite(parsed) || parsed < 1) {
-    return 1
-  }
-  return parsed
-}
-
-function syncStoreFromRoute(load: boolean): void {
-  const targetStatus = parseStatus(route.query.status)
-  const targetPage = parsePage(route.query.page)
-
-  const statusChanged = targetStatus !== workersStore.statusFilter
-  const pageChanged = targetPage !== workersStore.page
-  if (!statusChanged && !pageChanged) {
-    return
-  }
-
-  workersStore.setFilter(targetStatus, { load: false })
-  workersStore.setPage(targetPage, { load: false })
-
-  if (load) {
-    void workersStore.loadDashboard()
-  }
-}
-
-function syncRouteFromStore(): void {
-  const currentStatus = parseStatus(route.query.status)
-  const currentPage = parsePage(route.query.page)
-
-  if (currentStatus === workersStore.statusFilter && currentPage === workersStore.page) {
-    return
-  }
-
-  const query: Record<string, string> = {}
-  if (workersStore.statusFilter !== 'all') {
-    query.status = workersStore.statusFilter
-  }
-  if (workersStore.page > 1) {
-    query.page = String(workersStore.page)
-  }
-
-  void router.replace({
-    path: '/workers',
-    query,
-  })
-}
-
-const refreshedAtText = computed(() => {
-  if (!workersStore.refreshedAt) {
-    return 'never'
-  }
-  return workersStore.formatDateTime(workersStore.refreshedAt.toISOString())
+  return authStore.isAdmin ? 'Add Worker' : 'Create Worker-Sys'
 })
 
 function handleVisibilityChange(): void {
   workersStore.onPageVisibilityChange()
-}
-
-async function handleRefresh(): Promise<void> {
-  await workersStore.loadDashboard()
-}
-
-function handleShowDetailsChange(value: boolean): void {
-  showDetails.value = value
 }
 
 async function handleAddWorker(): Promise<void> {
@@ -101,7 +42,6 @@ async function handleAddWorker(): Promise<void> {
     showWorkerTypeModal.value = true
     return
   }
-
   await handleCreateWorker('worker-sys')
 }
 
@@ -121,36 +61,10 @@ function closeWorkerTypeModal(): void {
   showWorkerTypeModal.value = false
 }
 
-function closeWorkerCreateResultModal(): void {
-  createdWorkerPayload.value = null
-}
-
-const createButtonText = computed(() => {
-  if (workersStore.creatingWorker) {
-    return authStore.isAdmin ? 'Adding...' : 'Creating...'
-  }
-  if (!authStore.isAdmin) {
-    return 'Create Worker-Sys'
-  }
-  return 'Add Worker'
-})
-
-watch(
-  () => route.query,
-  () => {
-    syncStoreFromRoute(true)
-  },
-)
-
-watch(
-  () => [workersStore.statusFilter, workersStore.page],
-  () => {
-    syncRouteFromStore()
-  },
-)
+routeSync.start()
 
 onMounted(async () => {
-  syncStoreFromRoute(false)
+  routeSync.applyRouteToStore({ load: false })
   await workersStore.loadDashboard()
   workersStore.startAutoRefresh()
   document.addEventListener('visibilitychange', handleVisibilityChange)
@@ -159,36 +73,36 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   workersStore.teardown()
   document.removeEventListener('visibilitychange', handleVisibilityChange)
-  closeWorkerTypeModal()
+  showWorkerTypeModal.value = false
 })
 </script>
 
 <template>
-  <main class="relative z-2 mx-auto w-[min(1240px,100%)] grid gap-6">
-    <ConsoleHeader
+  <div class="grid gap-6">
+    <PageHeader
       eyebrow="Onlyboxes / Worker Registry"
       title="Execution Node Control Panel"
       :loading="workersStore.loading"
       :refreshed-at-text="refreshedAtText"
-      @refresh="handleRefresh"
+      @refresh="workersStore.loadDashboard"
     >
       <template #subtitle>
         Real-time monitoring for worker registration and heartbeat health.
       </template>
       <template #actions>
-        <button
+        <AppButton
+          variant="primary"
+          icon="plus"
           data-testid="create-worker-button"
-          class="ui-btn-primary rounded-md px-3.5 py-2 text-sm font-medium h-9 inline-flex items-center justify-center border transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
-          type="button"
-          :disabled="workersStore.creatingWorker"
+          :loading="workersStore.creatingWorker"
           @click="handleAddWorker"
         >
           {{ createButtonText }}
-        </button>
+        </AppButton>
       </template>
-    </ConsoleHeader>
+    </PageHeader>
 
-    <StatsGrid
+    <WorkerStatsGrid
       :total-workers="workersStore.totalWorkers"
       :online-workers="workersStore.onlineWorkers"
       :offline-workers="workersStore.offlineWorkers"
@@ -198,20 +112,18 @@ onBeforeUnmount(() => {
     />
 
     <section
-      class="border border-stroke rounded-lg bg-surface shadow-card overflow-hidden animate-[rise-in_620ms_ease-out] max-[620px]:rounded-default"
+      class="ui-rise overflow-hidden rounded-lg border border-stroke bg-surface shadow-card max-[620px]:rounded-default"
     >
       <WorkersToolbar
         :status-filter="workersStore.statusFilter"
         :show-details="showDetails"
         @set-status="workersStore.setFilter"
-        @update-show-details="handleShowDetailsChange"
+        @update:show-details="showDetails = $event"
       />
 
-      <ErrorBanner
-        v-if="workersStore.errorMessage"
-        :message="workersStore.errorMessage"
-        class="mx-6 mt-4"
-      />
+      <AppAlert v-if="workersStore.errorMessage" tone="error" with-icon class="mx-6 mt-4">
+        {{ workersStore.errorMessage }}
+      </AppAlert>
 
       <WorkersTable
         :worker-rows="workersStore.workerRows"
@@ -219,23 +131,21 @@ onBeforeUnmount(() => {
         :show-details="showDetails"
         :loading="workersStore.loading"
         :deleting-node-id="workersStore.deletingNodeID"
-        :format-capabilities="workersStore.formatCapabilities"
-        :format-date-time="workersStore.formatDateTime"
-        :format-age="workersStore.formatAge"
-        :delete-worker-button-text="workersStore.deleteWorkerButtonText"
         @delete-worker="workersStore.deleteWorker"
       />
 
-      <PaginationBar
-        :footer-text="workersStore.footerText"
-        :page="workersStore.page"
-        :total-pages="workersStore.totalPages"
-        :can-prev="workersStore.canPrev"
-        :can-next="workersStore.canNext"
-        :loading="workersStore.loading"
-        @prev="workersStore.previousPage"
-        @next="workersStore.nextPage"
-      />
+      <div class="border-t border-stroke bg-surface-soft">
+        <AppPagination
+          :page="workersStore.page"
+          :total-pages="workersStore.totalPages"
+          :total="workersStore.total"
+          :page-size="workersStore.pageSize"
+          :loading="workersStore.loading"
+          item-label="workers"
+          @prev="workersStore.previousPage"
+          @next="workersStore.nextPage"
+        />
+      </div>
     </section>
 
     <WorkerTypeSelectModal
@@ -247,7 +157,7 @@ onBeforeUnmount(() => {
 
     <WorkerCreateResultModal
       :payload="createdWorkerPayload"
-      @close="closeWorkerCreateResultModal"
+      @close="createdWorkerPayload = null"
     />
-  </main>
+  </div>
 </template>

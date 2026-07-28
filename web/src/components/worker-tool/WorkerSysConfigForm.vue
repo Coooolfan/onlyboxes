@@ -1,9 +1,15 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed } from 'vue'
 
-import SegmentedToggle from '@/components/worker-tool/SegmentedToggle.vue'
+import AppField from '@/components/ui/AppField.vue'
+import AppInput from '@/components/ui/AppInput.vue'
+import AppSegmented from '@/components/ui/AppSegmented.vue'
+import AppTextarea from '@/components/ui/AppTextarea.vue'
+import WorkerAdvancedSection from '@/components/worker-tool/WorkerAdvancedSection.vue'
+import WorkerCoreConfigFields from '@/components/worker-tool/WorkerCoreConfigFields.vue'
+import WorkerFieldGrid from '@/components/worker-tool/WorkerFieldGrid.vue'
+import { sysAdvancedNumberFields } from '@/components/worker-tool/workerFieldSpecs'
 import type {
-  WorkerCallTimeoutMode,
   WorkerSysStartupConfig,
   WorkerSysStartupPreset,
   WorkerSysWhitelistMode,
@@ -13,30 +19,36 @@ const props = defineProps<{
   config: WorkerSysStartupConfig
   autoCallTimeoutSec: number
   showPrefilledCredentialHint: boolean
-  whitelistModeDescription: string
 }>()
 
 const emit = defineEmits<{
   applyTemporaryProbe: []
 }>()
 
-const showSecret = ref(false)
-
-const presetOptions: Array<{ value: WorkerSysStartupPreset; label: string }> = [
+const presetOptions = [
   { value: 'custom', label: 'Custom' },
   { value: 'temporary-probe', label: 'Temporary Probe' },
-]
+] as const satisfies ReadonlyArray<{ value: WorkerSysStartupPreset; label: string }>
 
-const callTimeoutOptions: Array<{ value: WorkerCallTimeoutMode; label: string }> = [
-  { value: 'auto', label: 'Auto' },
-  { value: 'manual', label: 'Manual' },
-]
-
-const whitelistModeOptions: Array<{ value: WorkerSysWhitelistMode; label: string }> = [
+const whitelistModeOptions = [
   { value: 'exact', label: 'exact' },
   { value: 'prefix', label: 'prefix' },
   { value: 'allow_all', label: 'allow_all' },
-]
+] as const satisfies ReadonlyArray<{ value: WorkerSysWhitelistMode; label: string }>
+
+const isTemporaryProbe = computed(() => props.config.startupPreset === 'temporary-probe')
+const allowAllMode = computed(() => props.config.computerUseCommandWhitelistMode === 'allow_all')
+
+const whitelistModeDescription = computed(() => {
+  switch (props.config.computerUseCommandWhitelistMode) {
+    case 'prefix':
+      return 'Prefix mode: command must start with one whitelist entry.'
+    case 'allow_all':
+      return 'Allow-all mode: whitelist entries are ignored.'
+    default:
+      return 'Exact mode: command must exactly match one whitelist entry.'
+  }
+})
 
 function handlePresetUpdate(value: string): void {
   if (value === 'temporary-probe') {
@@ -45,12 +57,6 @@ function handlePresetUpdate(value: string): void {
   }
   if (value === 'custom') {
     props.config.startupPreset = 'custom'
-  }
-}
-
-function handleCallTimeoutModeUpdate(value: string): void {
-  if (value === 'auto' || value === 'manual') {
-    props.config.callTimeoutMode = value
   }
 }
 
@@ -70,272 +76,82 @@ function handleWhitelistModeUpdate(value: string): void {
           Temporary Probe prepares a short installer command for quick host checks.
         </p>
       </div>
-      <SegmentedToggle
+      <AppSegmented
         :model-value="props.config.startupPreset"
         :options="presetOptions"
+        size="sm"
+        aria-label="worker-sys startup preset"
         data-testid="sys-preset-toggle"
         @update:model-value="handlePresetUpdate"
       />
     </section>
 
-    <h2 class="text-base font-semibold m-0">Core Configuration</h2>
-    <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-      <label class="grid gap-1.5">
-        <span class="flex items-center gap-2 text-sm text-secondary">
-          <span>WORKER_ID</span>
-          <span
-            v-if="props.showPrefilledCredentialHint"
-            data-testid="worker-id-prefilled-hint"
-            class="ui-badge-warning inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium"
-          >
-            Already Filled
-          </span>
-        </span>
-        <span class="text-xs text-secondary">Worker identity issued by console.</span>
-        <input
-          v-model.trim="props.config.workerID"
-          type="text"
-          class="ui-input rounded-md border px-3 py-2 text-sm"
-          placeholder="worker-id"
-        />
-      </label>
+    <h2 class="m-0 text-base font-semibold">Core Configuration</h2>
 
-      <label class="grid gap-1.5">
-        <span class="flex items-center gap-2 text-sm text-secondary">
-          <span>WORKER_SECRET</span>
-          <span
-            v-if="props.showPrefilledCredentialHint"
-            data-testid="worker-secret-prefilled-hint"
-            class="ui-badge-warning inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium"
-          >
-            Already Filled
-          </span>
-        </span>
-        <span class="text-xs text-secondary"
-          >One-time credential returned during worker creation.</span
-        >
-        <div class="flex items-center gap-2">
-          <input
-            v-model.trim="props.config.workerSecret"
-            :type="showSecret ? 'text' : 'password'"
-            class="ui-input min-w-0 flex-1 rounded-md border px-3 py-2 text-sm"
-            placeholder="worker-secret"
-          />
-          <button
-            type="button"
-            class="ui-btn-secondary h-[36px] rounded-md border px-3 text-xs transition-colors"
-            @click="showSecret = !showSecret"
-          >
-            {{ showSecret ? 'Hide' : 'Show' }}
-          </button>
-        </div>
-      </label>
-
-      <label class="grid gap-1.5">
-        <span class="text-sm text-secondary">WORKER_CONSOLE_GRPC_TARGET</span>
-        <span class="text-xs text-secondary">Console gRPC endpoint in host:port format.</span>
-        <input
-          v-model.trim="props.config.consoleGRPCTarget"
-          type="text"
-          class="ui-input rounded-md border px-3 py-2 text-sm"
-          placeholder="127.0.0.1:50051"
-        />
-      </label>
-
-      <label class="grid gap-1.5">
-        <span class="text-sm text-secondary">WORKER_CONSOLE_INSECURE</span>
-        <span class="text-xs text-secondary">
-          Allow plaintext gRPC transport. Use only in trusted private networks.
-        </span>
-        <div class="ui-input flex items-center justify-between rounded-md border px-3 py-2">
-          <span class="text-sm text-primary">Set to true</span>
-          <input
-            v-model="props.config.consoleInsecure"
-            type="checkbox"
-            class="ui-checkbox h-4 w-4 rounded"
-          />
-        </div>
-      </label>
-
-      <label
-        v-if="props.config.startupPreset !== 'temporary-probe'"
-        class="grid gap-1.5"
+    <WorkerCoreConfigFields
+      :config="props.config"
+      :auto-call-timeout-sec="props.autoCallTimeoutSec"
+      :show-prefilled-credential-hint="props.showPrefilledCredentialHint"
+      :show-optional-fields="!isTemporaryProbe"
+      binary-path-placeholder="./onlyboxes-worker-sys"
+    >
+      <AppField
+        v-if="isTemporaryProbe"
+        label="Temporary Probe release tag"
+        hint="Optional installer release tag override. Leave empty to use the latest published release."
+        span
       >
-        <span class="text-sm text-secondary">WORKER_NODE_NAME</span>
-        <span class="text-xs text-secondary">Optional display name reported to console.</span>
-        <input
-          v-model.trim="props.config.nodeName"
-          type="text"
-          class="ui-input rounded-md border px-3 py-2 text-sm"
-        />
-      </label>
-
-      <div
-        v-if="props.config.startupPreset !== 'temporary-probe'"
-        class="grid gap-1.5 md:col-span-2"
-      >
-        <span class="text-sm text-secondary">WORKER_CALL_TIMEOUT_SEC</span>
-        <span class="text-xs text-secondary">
-          Auto mode follows worker default formula; manual mode overrides it.
-        </span>
-        <div class="grid gap-2">
-          <SegmentedToggle
-            :model-value="props.config.callTimeoutMode"
-            :options="callTimeoutOptions"
-            @update:model-value="handleCallTimeoutModeUpdate"
-          />
-
-          <p
-            v-if="props.config.callTimeoutMode === 'auto'"
-            class="ui-inset-surface m-0 text-sm text-primary rounded-md border px-3 py-2"
-          >
-            Derived timeout: <strong>{{ props.autoCallTimeoutSec }}s</strong> (ceil(2.5 x
-            heartbeat))
-          </p>
-          <label v-else class="grid gap-1.5">
-            <span class="text-xs text-secondary">Manual timeout in seconds.</span>
-            <input
-              v-model.number="props.config.callTimeoutSec"
-              type="number"
-              min="1"
-              class="ui-input w-[220px] rounded-md border px-3 py-2 text-sm"
-            />
-          </label>
-        </div>
-      </div>
-
-      <label
-        v-if="props.config.startupPreset !== 'temporary-probe'"
-        class="grid gap-1.5 md:col-span-2"
-      >
-        <span class="text-sm text-secondary">Worker Binary Path</span>
-        <span class="text-xs text-secondary">Executable path used in the final command line.</span>
-        <input
-          v-model.trim="props.config.binaryPath"
-          type="text"
-          class="ui-input rounded-md border px-3 py-2 text-sm"
-          placeholder="./onlyboxes-worker-sys"
-        />
-      </label>
-
-      <label
-        v-if="props.config.startupPreset === 'temporary-probe'"
-        class="grid gap-1.5 md:col-span-2"
-      >
-        <span class="text-sm text-secondary">Temporary Probe release tag</span>
-        <span class="text-xs text-secondary">
-          Optional installer release tag override. Leave empty to use the latest published release.
-        </span>
-        <input
-          v-model.trim="props.config.temporaryProbeTag"
+        <AppInput
+          v-model="props.config.temporaryProbeTag"
           data-testid="temporary-probe-tag-input"
-          type="text"
-          class="ui-input rounded-md border px-3 py-2 text-sm"
+          trim
           placeholder="latest"
         />
-      </label>
-    </div>
+      </AppField>
+    </WorkerCoreConfigFields>
 
-    <details
-      v-if="props.config.startupPreset !== 'temporary-probe'"
-      data-testid="sys-advanced-section"
-      class="rounded-md border border-stroke bg-surface"
-    >
-      <summary class="cursor-pointer px-3 py-2 text-sm font-medium text-primary">
-        Advanced Configuration
-      </summary>
-      <div class="grid grid-cols-1 gap-4 border-t border-stroke p-3 md:grid-cols-2">
-        <label class="grid gap-1.5">
-          <span class="text-sm text-secondary">WORKER_HEARTBEAT_INTERVAL_SEC</span>
-          <span class="text-xs text-secondary"
-            >Heartbeat interval in seconds; must be positive.</span
-          >
-          <input
-            v-model.number="props.config.heartbeatIntervalSec"
-            type="number"
-            min="1"
-            class="ui-input rounded-md border px-3 py-2 text-sm"
-          />
-        </label>
+    <WorkerAdvancedSection v-if="!isTemporaryProbe" test-id="sys-advanced-section">
+      <WorkerFieldGrid :config="props.config" :fields="sysAdvancedNumberFields" />
 
-        <label class="grid gap-1.5">
-          <span class="text-sm text-secondary">WORKER_HEARTBEAT_JITTER_PCT</span>
-          <span class="text-xs text-secondary"
-            >Random jitter percent applied to heartbeat scheduling.</span
-          >
-          <input
-            v-model.number="props.config.heartbeatJitterPct"
-            type="number"
-            min="0"
-            max="100"
-            class="ui-input rounded-md border px-3 py-2 text-sm"
-          />
-        </label>
-
-        <label class="grid gap-1.5">
-          <span class="text-sm text-secondary">WORKER_COMPUTER_USE_OUTPUT_LIMIT_BYTES</span>
-          <span class="text-xs text-secondary"
-            >Per-stream stdout/stderr truncation limit in bytes.</span
-          >
-          <input
-            v-model.number="props.config.computerUseOutputLimitBytes"
-            type="number"
-            min="1"
-            class="ui-input rounded-md border px-3 py-2 text-sm"
-          />
-        </label>
-
-        <div class="grid gap-1.5">
-          <span class="text-xs text-secondary">WORKER_COMPUTER_USE_COMMAND_WHITELIST_MODE</span>
-          <p class="m-0 text-xs text-secondary">
-            {{ props.whitelistModeDescription }}
-          </p>
-          <SegmentedToggle
-            :model-value="props.config.computerUseCommandWhitelistMode"
-            :options="whitelistModeOptions"
-            @update:model-value="handleWhitelistModeUpdate"
-          />
-        </div>
-
-        <label class="grid gap-1.5 md:col-span-2">
-          <span class="text-sm text-secondary">
-            WORKER_COMPUTER_USE_COMMAND_WHITELIST (one entry per line)
-          </span>
-          <span class="text-xs text-secondary">
-            Serialized as JSON array. In exact/prefix mode, empty list blocks all commands.
-          </span>
-          <textarea
-            v-model="props.config.computerUseCommandWhitelistText"
-            data-testid="sys-whitelist-textarea"
-            rows="3"
-            :disabled="props.config.computerUseCommandWhitelistMode === 'allow_all'"
-            class="ui-input rounded-md border px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
-            placeholder="echo&#10;time"
-          ></textarea>
-          <span
-            v-if="props.config.computerUseCommandWhitelistMode === 'allow_all'"
-            class="text-xs text-secondary"
-          >
-            Disabled because allow_all mode ignores whitelist entries.
-          </span>
-        </label>
-
-        <label class="grid gap-1.5 md:col-span-2">
-          <span class="text-sm text-secondary">
-            WORKER_READ_IMAGE_ALLOWED_PATHS (one path per line)
-          </span>
-          <span class="text-xs text-secondary">
-            Serialized as JSON array. Empty value means readImage is denied by default.
-          </span>
-          <textarea
-            v-model="props.config.readImageAllowedPathsText"
-            data-testid="sys-paths-textarea"
-            rows="3"
-            class="ui-input rounded-md border px-3 py-2 text-sm"
-            placeholder="/data/images&#10;/tmp/a.png"
-          ></textarea>
-        </label>
+      <div class="grid content-start gap-1.5">
+        <span class="text-sm text-secondary">WORKER_COMPUTER_USE_COMMAND_WHITELIST_MODE</span>
+        <span class="text-xs text-secondary">{{ whitelistModeDescription }}</span>
+        <AppSegmented
+          :model-value="props.config.computerUseCommandWhitelistMode"
+          :options="whitelistModeOptions"
+          size="sm"
+          aria-label="computerUse whitelist mode"
+          @update:model-value="handleWhitelistModeUpdate"
+        />
       </div>
-    </details>
+
+      <AppField
+        label="WORKER_COMPUTER_USE_COMMAND_WHITELIST (one entry per line)"
+        hint="Serialized as JSON array. In exact/prefix mode, empty list blocks all commands."
+        :note="allowAllMode ? 'Disabled because allow_all mode ignores whitelist entries.' : undefined"
+        span
+      >
+        <AppTextarea
+          v-model="props.config.computerUseCommandWhitelistText"
+          data-testid="sys-whitelist-textarea"
+          :rows="3"
+          :disabled="allowAllMode"
+          placeholder="echo&#10;time"
+        />
+      </AppField>
+
+      <AppField
+        label="WORKER_READ_IMAGE_ALLOWED_PATHS (one path per line)"
+        hint="Serialized as JSON array. Empty value means readImage is denied by default."
+        span
+      >
+        <AppTextarea
+          v-model="props.config.readImageAllowedPathsText"
+          data-testid="sys-paths-textarea"
+          :rows="3"
+          placeholder="/data/images&#10;/tmp/a.png"
+        />
+      </AppField>
+    </WorkerAdvancedSection>
   </div>
 </template>

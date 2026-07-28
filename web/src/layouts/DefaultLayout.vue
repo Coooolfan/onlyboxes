@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
+import AppIcon from '@/components/ui/AppIcon.vue'
 import { defaultConsoleRepoURL, defaultConsoleVersion } from '@/constants/console'
 import { useAuthStore } from '@/stores/auth'
 
@@ -11,23 +12,23 @@ const consoleRepoURL = computed(() => authStore.consoleRepoURL || defaultConsole
 </script>
 
 <template>
-  <div
-    class="relative min-h-screen px-6 pt-8 pb-5 flex flex-col gap-4 max-[620px]:px-4 max-[620px]:pt-6 max-[620px]:pb-4"
-  >
-    <div class="flex-1">
-      <slot></slot>
+  <div class="relative flex min-h-screen flex-col gap-4 px-6 pt-8 pb-5 max-[620px]:px-4">
+    <div class="flex flex-1 items-center justify-center">
+      <slot />
     </div>
+
     <footer
-      class="mx-auto w-[min(1240px,100%)] flex items-center justify-end gap-2 text-secondary text-xs leading-normal font-mono max-[620px]:justify-start"
+      class="mx-auto flex w-[min(1240px,100%)] items-center justify-end gap-2 font-mono text-xs leading-normal text-secondary max-[620px]:justify-start"
     >
       <span>Console {{ consoleVersionText }}</span>
-      <span>·</span>
+      <span aria-hidden="true">·</span>
       <a
-        class="console-footer-link text-secondary underline underline-offset-2 hover:text-primary"
+        class="console-footer-link ui-focusable inline-flex items-center gap-1.5 rounded-default px-1 py-0.5 text-secondary underline underline-offset-2 transition-colors hover:text-primary"
         :href="consoleRepoURL"
         target="_blank"
         rel="noopener noreferrer"
       >
+        <AppIcon name="github" :size="13" />
         GitHub
       </a>
     </footer>

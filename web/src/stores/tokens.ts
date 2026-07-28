@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
 
+import { requestConfirm } from '@/composables/useConfirm'
 import { isUnauthorizedError } from '@/services/http'
 import {
   createTrustedTokenAPI,
@@ -8,15 +9,8 @@ import {
   fetchTrustedTokensAPI,
 } from '@/services/workers.api'
 import { redirectToLogin } from '@/stores/auth-redirect'
-import { formatDateTime } from '@/utils/datetime'
+import { createRequestGuard, isAbortError, toErrorMessage } from '@/utils/async'
 import type { TrustedTokenCreateResponse, TrustedTokenItem } from '@/types/workers'
-
-function isAbortError(error: unknown): boolean {
-  if (typeof DOMException !== 'undefined' && error instanceof DOMException) {
-    return error.name === 'AbortError'
-  }
-  return error instanceof Error && error.name === 'AbortError'
-}
 
 export const useTokensStore = defineStore('tokens', () => {
   const loading = ref(false)
@@ -26,14 +20,7 @@ export const useTokensStore = defineStore('tokens', () => {
   const creatingTrustedToken = ref(false)
   const deletingTrustedTokenID = ref('')
 
-  let activeController: AbortController | null = null
-  let requestSerial = 0
-
-  async function handleUnauthorized(): Promise<void> {
-    await redirectToLogin(() => {
-      reset()
-    })
-  }
+  const requests = createRequestGuard()
 
   function reset(): void {
     trustedTokens.value = []
@@ -44,100 +31,85 @@ export const useTokensStore = defineStore('tokens', () => {
     creatingTrustedToken.value = false
   }
 
-  function trustedTokenDeleteButtonText(tokenID: string): string {
-    if (deletingTrustedTokenID.value === tokenID) {
-      return 'Deleting...'
-    }
-    return 'Delete'
+  async function handleUnauthorized(): Promise<void> {
+    await redirectToLogin(reset)
   }
 
   async function loadTokens(): Promise<void> {
-    const serial = ++requestSerial
-    activeController?.abort()
-    const controller = new AbortController()
-    activeController = controller
-
+    const token = requests.begin()
     loading.value = true
     errorMessage.value = ''
+
     try {
-      const payload = await fetchTrustedTokensAPI(controller.signal)
-      if (controller.signal.aborted || serial !== requestSerial) {
+      const payload = await fetchTrustedTokensAPI(token.signal)
+      if (token.isStale()) {
         return
       }
       trustedTokens.value = payload.items ?? []
       refreshedAt.value = new Date()
     } catch (error) {
-      if (isAbortError(error) || serial !== requestSerial) {
+      if (isAbortError(error) || token.isStale()) {
         return
       }
       if (isUnauthorizedError(error)) {
         await handleUnauthorized()
         return
       }
-      errorMessage.value = error instanceof Error ? error.message : 'Failed to load trusted tokens.'
+      errorMessage.value = toErrorMessage(error, 'Failed to load trusted tokens.')
     } finally {
-      if (serial === requestSerial) {
+      if (token.release()) {
         loading.value = false
-      }
-      if (activeController === controller) {
-        activeController = null
       }
     }
   }
 
-  async function createTrustedToken(payload: {
-    name: string
-  }): Promise<TrustedTokenCreateResponse> {
+  async function createTrustedToken(name: string): Promise<TrustedTokenCreateResponse> {
     if (creatingTrustedToken.value) {
       throw new Error('Trusted token creation already in progress.')
     }
 
-    const name = payload.name.trim()
-    if (!name) {
-      errorMessage.value = 'name is required'
+    const trimmedName = name.trim()
+    if (!trimmedName) {
       throw new Error('name is required')
     }
 
     creatingTrustedToken.value = true
     errorMessage.value = ''
     try {
-      const created = await createTrustedTokenAPI({ name })
+      const created = await createTrustedTokenAPI({ name: trimmedName })
       const tokenValue = created.token.trim()
       if (!tokenValue) {
         throw new Error('API returned empty token value.')
       }
       await loadTokens()
-      return {
-        ...created,
-        token: tokenValue,
-      }
+      return { ...created, token: tokenValue }
     } catch (error) {
       if (isUnauthorizedError(error)) {
         await handleUnauthorized()
       }
-      errorMessage.value =
-        error instanceof Error ? error.message : 'Failed to create trusted token.'
-      throw error
+      throw error instanceof Error ? error : new Error('Failed to create trusted token.')
     } finally {
       creatingTrustedToken.value = false
     }
   }
 
-  function confirmDeleteTrustedToken(tokenID: string): boolean {
-    if (typeof window === 'undefined' || typeof window.confirm !== 'function') {
-      return true
-    }
-    return window.confirm(`Delete token ${tokenID}?`)
-  }
-
   async function deleteTrustedToken(tokenID: string): Promise<void> {
-    if (
-      !tokenID ||
-      deletingTrustedTokenID.value === tokenID ||
-      !confirmDeleteTrustedToken(tokenID)
-    ) {
+    if (!tokenID || deletingTrustedTokenID.value === tokenID) {
       return
     }
+
+    const target = trustedTokens.value.find((item) => item.id === tokenID)
+    const confirmed = await requestConfirm({
+      title: 'Delete Trusted Token',
+      message: 'Clients still using this token lose MCP access immediately.',
+      detail: target ? `${target.name} (${tokenID})` : tokenID,
+      confirmLabel: 'Delete Token',
+      destructive: true,
+    })
+    if (!confirmed) {
+      return
+    }
+
     deletingTrustedTokenID.value = tokenID
     errorMessage.value = ''
     try {
@@ -148,8 +120,7 @@ export const useTokensStore = defineStore('tokens', () => {
         await handleUnauthorized()
         return
       }
-      errorMessage.value =
-        error instanceof Error ? error.message : 'Failed to delete trusted token.'
+      errorMessage.value = toErrorMessage(error, 'Failed to delete trusted token.')
     } finally {
       if (deletingTrustedTokenID.value === tokenID) {
         deletingTrustedTokenID.value = ''
@@ -158,9 +129,7 @@ export const useTokensStore = defineStore('tokens', () => {
   }
 
   function teardown(): void {
-    requestSerial += 1
-    activeController?.abort()
-    activeController = null
+    requests.abort()
     loading.value = false
   }
 
@@ -171,8 +140,6 @@ export const useTokensStore = defineStore('tokens', () => {
     refreshedAt,
     creatingTrustedToken,
     deletingTrustedTokenID,
-    trustedTokenDeleteButtonText,
-    formatDateTime,
     loadTokens,
     createTrustedToken,
     deleteTrustedToken,
