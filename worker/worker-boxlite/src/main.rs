@@ -1,6 +1,7 @@
 mod boxlite_runtime;
 mod buildinfo;
 mod config;
+mod config_source;
 mod logging;
 mod proto;
 mod runner;
@@ -11,6 +12,9 @@ use tokio_util::sync::CancellationToken;
 async fn main() {
     let cfg = config::Config::load();
     logging::configure(&cfg.log_level, &cfg.log_format, cfg.log_add_source);
+    if let Some(path) = cfg.config_file.as_deref() {
+        tracing::info!(config_file = %path, "config file loaded");
+    }
 
     let shutdown = CancellationToken::new();
     let shutdown_watcher = tokio::spawn(wait_for_shutdown_signal(shutdown.clone()));

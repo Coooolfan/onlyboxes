@@ -42,6 +42,7 @@ function handleCallTimeoutModeUpdate(value: string): void {
         <span class="text-xs text-secondary">Worker identity issued by console.</span>
         <input
           v-model.trim="props.config.workerID"
+          data-testid="worker-id-input"
           type="text"
           class="ui-input rounded-md border px-3 py-2 text-sm"
           placeholder="worker-id"
@@ -65,6 +66,7 @@ function handleCallTimeoutModeUpdate(value: string): void {
         <div class="flex items-center gap-2">
           <input
             v-model.trim="props.config.workerSecret"
+            data-testid="worker-secret-input"
             :type="showSecret ? 'text' : 'password'"
             class="ui-input min-w-0 flex-1 rounded-md border px-3 py-2 text-sm"
             placeholder="worker-secret"

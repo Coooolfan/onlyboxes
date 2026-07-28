@@ -66,6 +66,7 @@ export interface WorkerSysStartupConfig extends WorkerStartupBaseConfig {
 
 export interface StartupCommandBuildResult {
   command: string
+  configToml: string
   errors: string[]
   warnings: string[]
 }

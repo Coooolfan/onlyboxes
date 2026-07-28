@@ -39,6 +39,62 @@ describe('worker startup tool command builder', () => {
     expect(result.command).toContain("'./onlyboxes-worker-docker'")
   })
 
+  it('renders a config.toml with typed values and a labels table', () => {
+    const config = createDefaultWorkerDockerStartupConfig()
+    config.workerID = 'node-docker-1'
+    config.workerSecret = 'secret-docker-1'
+    config.consoleInsecure = true
+    config.nodeName = 'edge-1'
+    config.labelsText =
+      'region=cn\nowner=team-a\napp.kubernetes.io/name=demo\ndescription=gpu,shared'
+    config.pythonExecMemoryMib = 512
+
+    const result = buildWorkerDockerStartupCommand(config)
+
+    expect(result.errors).toEqual([])
+    expect(result.configToml).toContain('id = "node-docker-1"')
+    expect(result.configToml).toContain('secret = "secret-docker-1"')
+    expect(result.configToml).toContain('console_grpc_target = "127.0.0.1:50051"')
+    expect(result.configToml).toContain('console_insecure = true')
+    expect(result.configToml).toContain('heartbeat_interval_sec = 5')
+    expect(result.configToml).toContain('python_exec_memory_mib = 512')
+    expect(result.configToml).toContain('node_name = "edge-1"')
+    expect(result.configToml).toContain('[labels]')
+    expect(result.configToml).toContain('region = "cn"')
+    expect(result.configToml).toContain('owner = "team-a"')
+    expect(result.configToml).toContain('"app.kubernetes.io/name" = "demo"')
+    expect(result.configToml).toContain('description = "gpu,shared"')
+    expect(result.configToml).not.toContain('app.kubernetes.io/name = "demo"')
+    expect(result.configToml).not.toContain('labels = ')
+  })
+
+  it('renders worker-sys list values as config.toml arrays', () => {
+    const config = createDefaultWorkerSysStartupConfig()
+    config.workerID = 'node-sys-1'
+    config.workerSecret = 'secret-sys-1'
+    config.computerUseCommandWhitelistText = 'echo\ntime'
+    config.readImageAllowedPathsText = '/data/images'
+
+    const result = buildWorkerSysStartupCommand(config)
+
+    expect(result.errors).toEqual([])
+    expect(result.configToml).toContain('computer_use_command_whitelist_mode = "exact"')
+    expect(result.configToml).toContain('computer_use_command_whitelist = ["echo", "time"]')
+    expect(result.configToml).toContain('read_image_allowed_paths = ["/data/images"]')
+  })
+
+  it('does not render a config.toml for the Temporary Probe installer command', () => {
+    const config = createDefaultWorkerSysStartupConfig()
+    config.startupPreset = 'temporary-probe'
+    config.temporaryProbeInstallerOrigin = 'https://console.example.test'
+    config.workerID = 'node-sys-1'
+    config.workerSecret = 'secret-sys-1'
+
+    const result = buildWorkerSysStartupCommand(config)
+
+    expect(result.configToml).toBe('')
+  })
+
   it('serializes worker-sys whitelist and allowed paths as JSON strings', () => {
     const config = createDefaultWorkerSysStartupConfig()
     config.workerID = 'node-sys-1'

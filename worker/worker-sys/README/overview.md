@@ -15,6 +15,10 @@ Security warning (high risk):
 - console gRPC has no built-in TLS/mTLS; plaintext transport can expose `worker_secret`.
 - place console gRPC behind trusted private networking or encrypted tunnels.
 
+Configuration sources:
+- environment variables and `config.toml` (see `README/config-file.md`).
+- priority is environment variable > `config.toml` > default.
+
 Required identity:
 - `WORKER_ID`
 - `WORKER_SECRET`

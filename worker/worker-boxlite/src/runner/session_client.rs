@@ -549,6 +549,7 @@ mod tests {
 
     fn test_config(target: &str) -> Config {
         Config {
+            config_file: None,
             console_grpc_target: target.to_owned(),
             console_tls: false,
             worker_id: "worker-12345678".to_owned(),

@@ -19,6 +19,10 @@ Build and runtime prerequisites:
 - a local clone of Boxlite is optional and only useful for upstream source reading or local debugging; it is not required to build `worker-boxlite`.
 - terminal images must contain `/bin/sh` and `python`.
 
+Configuration sources:
+- environment variables and `config.toml` (see `README/config-file.md`).
+- priority is environment variable > `config.toml` > default.
+
 Required identity:
 - `WORKER_ID`
 - `WORKER_SECRET`

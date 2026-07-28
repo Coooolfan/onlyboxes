@@ -3,6 +3,7 @@ module github.com/onlyboxes/onlyboxes/worker/worker-sys
 go 1.24.0
 
 require (
+	github.com/BurntSushi/toml v1.5.0
 	github.com/onlyboxes/onlyboxes/api v0.0.0
 	google.golang.org/grpc v1.79.1
 	google.golang.org/protobuf v1.36.10
