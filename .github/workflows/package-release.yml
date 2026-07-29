@@ -1,10 +1,13 @@
 name: package-release
-run-name: Release ${{ github.ref_name }}
+run-name: Release ${{ inputs.version }}
 
 on:
-  push:
-    tags:
-      - '*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version, e.g. 0.7.2 or 0.8.0-rc.1 (tag is created from the selected branch)'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -24,11 +27,20 @@ jobs:
       - name: Resolve version
         id: version
         shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          version_raw="${GITHUB_REF_NAME}"
+          version_raw="$(printf '%s' "${INPUT_VERSION}" | tr -d '[:space:]')"
           if [[ -z "${version_raw}" ]]; then
-            echo "version is required" >&2
+            echo "::error::version is required" >&2
+            exit 1
+          fi
+
+          # The tag push trigger used to enforce the '*.*.*' shape; with manual
+          # dispatch nothing does, so validate the input here.
+          if [[ ! "${version_raw}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(rc|beta|alpha)[.-][0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::Invalid version '${version_raw}'. Expected 1.2.3, or a prerelease like 1.2.3-rc.1 (no leading 'v')." >&2
             exit 1
           fi
 
@@ -52,8 +64,10 @@ jobs:
 
       - name: Verify release notes file
         shell: bash
+        env:
+          VERSION_RAW: ${{ steps.version.outputs.version_raw }}
         run: |
-          notes="docs/release_notes/${GITHUB_REF_NAME}.md"
+          notes="docs/release_notes/${VERSION_RAW}.md"
           if [[ ! -f "${notes}" ]]; then
             echo "::error::Release notes file not found: ${notes}" >&2
             exit 1
