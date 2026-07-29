@@ -206,21 +206,22 @@ curl -fsSL https://onlybox.es/install.sh | bash
 
 ## 开发说明
 
-### 从源码运行后端
+### 本地开发编排
+
+`scripts/dev.sh` 用一个 tmux 会话托管 console / web / website，所有子命令立即返回，日志落到 `scripts/.dev/<svc>.log`。
 
 ```bash
-cd console
-CONSOLE_HASH_KEY=$(openssl rand -hex 32) go run ./cmd/console
+scripts/dev.sh start              # 三个全起
+scripts/dev.sh start console web  # 只起控制节点与前端
+scripts/dev.sh status             # 会话、端口监听与窗口状态
+scripts/dev.sh logs console       # 最近 200 行日志
+scripts/dev.sh creds              # console 管理员账号
+scripts/dev.sh stop               # 全部停止
 ```
 
-### 启动前端开发服务
+前端开发默认地址为 `http://127.0.0.1:5178`，并将 `/api/*` 与 `/mcp` 代理到 `http://127.0.0.1:8089`。
 
-```bash
-yarn --cwd web install
-yarn --cwd web dev
-```
-
-前端开发默认地址为 `http://127.0.0.1:5178`，并将 `/api/*` 代理到 `http://127.0.0.1:8089`。
+worker 不在编排范围内：各实现启动参数差异较大，需手动启动。完整用法见 `scripts/README.md`。
 
 ### 延伸文档
 

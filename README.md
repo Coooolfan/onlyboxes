@@ -206,21 +206,22 @@ Default endpoints:
 
 ## Development
 
-### Run backend from source
+### Local dev orchestration
+
+`scripts/dev.sh` runs console / web / website in a tmux session. Every subcommand returns immediately, and logs land in `scripts/.dev/<svc>.log`.
 
 ```bash
-cd console
-CONSOLE_HASH_KEY=$(openssl rand -hex 32) go run ./cmd/console
+scripts/dev.sh start              # start all three
+scripts/dev.sh start console web  # console + web only
+scripts/dev.sh status             # session, port listeners, window state
+scripts/dev.sh logs console       # last 200 log lines
+scripts/dev.sh creds              # console admin credentials
+scripts/dev.sh stop               # stop everything
 ```
 
-### Run web dev server
+Web dev URL defaults to `http://127.0.0.1:5178` and proxies `/api/*` and `/mcp` to `http://127.0.0.1:8089`.
 
-```bash
-yarn --cwd web install
-yarn --cwd web dev
-```
-
-Web dev URL defaults to `http://127.0.0.1:5178` and proxies `/api/*` to `http://127.0.0.1:8089`.
+Workers are not orchestrated — their startup arguments vary per implementation, so start them manually. Full usage: `scripts/README.md`.
 
 ### Useful docs
 
