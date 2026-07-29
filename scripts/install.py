@@ -19,7 +19,7 @@ import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, NoReturn, Optional, Tuple
 
 MIN_PYTHON = (3, 6)
 if sys.version_info < MIN_PYTHON:
@@ -35,9 +35,6 @@ if sys.version_info < MIN_PYTHON:
 
 GITHUB_REPO = "Coooolfan/onlyboxes"
 LATEST_RELEASE_URL = "https://api.github.com/repos/{repo}/releases/latest"
-# Used only when the GitHub API call fails (rate limit, offline, etc).
-# Safe to be a bit stale; bump occasionally.
-FALLBACK_TAG = "0.6.1"
 COMPOSE_TEMPLATE_URL = (
     "https://raw.githubusercontent.com/{repo}/{tag}/scripts/docker-compose.install.yml"
 )
@@ -161,7 +158,7 @@ def _c(code: str, text: str) -> str:
     return f"\033[{code}m{text}\033[0m" if USE_COLOR else text
 
 
-def fatal(stage: str, message: str) -> None:
+def fatal(stage: str, message: str) -> NoReturn:
     print(f"\n{_c('31', '✗')} [{stage}] {message}", file=sys.stderr)
     sys.exit(1)
 
@@ -196,10 +193,14 @@ def resolve_latest_tag() -> str:
         tag = data.get("tag_name")
         if tag:
             return tag
-        info(f"GitHub latest release response missing tag_name; falling back to {FALLBACK_TAG}")
+        reason = "the response carried no tag_name"
     except (urllib.error.HTTPError, urllib.error.URLError, OSError) as exc:
-        info(f"Failed to resolve latest release from GitHub ({exc}); falling back to {FALLBACK_TAG}")
-    return FALLBACK_TAG
+        reason = str(exc)
+    fatal(
+        "resolve-release",
+        f"Failed to resolve the latest release from GitHub ({reason}). "
+        "Pass --tag <version> to select a release explicitly.",
+    )
 
 
 def run_cmd(args: List[str], cwd: Optional[str] = None, check: bool = True) -> subprocess.CompletedProcess:
