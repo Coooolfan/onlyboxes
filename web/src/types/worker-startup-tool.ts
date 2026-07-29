@@ -17,7 +17,6 @@ export interface WorkerStartupBaseConfig {
   callTimeoutSec: number
   binaryPath: string
   nodeName: string
-  version: string
   labelsText: string
 }
 

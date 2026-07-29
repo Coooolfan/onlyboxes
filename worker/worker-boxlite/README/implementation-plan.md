@@ -637,7 +637,6 @@ impl CapabilityExecutor {
 | **身份认证** | | |
 | `WORKER_ID` | *(必填)* | Worker 唯一标识 |
 | `WORKER_SECRET` | *(必填)* | 认证密钥 |
-| `WORKER_VERSION` | `dev` | 版本号（可通过编译注入） |
 | `WORKER_NODE_NAME` | `worker-boxlite-<ID前8位>` | 节点名称 |
 | **控制台连接** | | |
 | `WORKER_CONSOLE_GRPC_TARGET` | `127.0.0.1:50051` | gRPC 地址 |

@@ -332,7 +332,6 @@ function appendCommonEnv(
   const workerSecret = config.workerSecret.trim()
   const consoleGRPCTarget = config.consoleGRPCTarget.trim()
   const nodeName = config.nodeName.trim()
-  const version = config.version.trim()
   const labels = parseLabelsCSV(config.labelsText)
   state.labelEntries = labels.entries
 
@@ -390,9 +389,6 @@ function appendCommonEnv(
   if (nodeName) {
     state.envEntries.push(['WORKER_NODE_NAME', nodeName])
   }
-  if (version) {
-    state.envEntries.push(['WORKER_VERSION', version])
-  }
   if (labels.value) {
     state.envEntries.push(['WORKER_LABELS', labels.value])
   }
@@ -414,7 +410,6 @@ export function createDefaultWorkerDockerStartupConfig(): WorkerDockerStartupCon
     callTimeoutSec: defaultCallTimeoutSec(defaultHeartbeatIntervalSec),
     binaryPath: defaultDockerBinaryPath,
     nodeName: '',
-    version: '',
     labelsText: '',
     pythonExecDockerImage: defaultPythonExecDockerImage,
     pythonExecMemoryMib: defaultDockerMemoryMib,
@@ -444,7 +439,6 @@ export function createDefaultWorkerSysStartupConfig(): WorkerSysStartupConfig {
     callTimeoutSec: defaultCallTimeoutSec(defaultHeartbeatIntervalSec),
     binaryPath: defaultSysBinaryPath,
     nodeName: '',
-    version: '',
     labelsText: '',
     startupPreset: 'custom',
     temporaryProbeInstallerOrigin: '',
@@ -468,7 +462,6 @@ export function createDefaultWorkerBoxliteStartupConfig(): WorkerBoxliteStartupC
     callTimeoutSec: defaultCallTimeoutSec(defaultHeartbeatIntervalSec),
     binaryPath: defaultBoxliteBinaryPath,
     nodeName: '',
-    version: '',
     labelsText: '',
     boxliteHome: '',
     pythonExecBoxliteImage: defaultPythonExecBoxliteImage,

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
+	"github.com/onlyboxes/onlyboxes/worker/worker-docker/internal/buildinfo"
 	"github.com/onlyboxes/onlyboxes/worker/worker-docker/internal/config"
 )
 
@@ -23,7 +24,7 @@ func buildHello(cfg config.Config) (*registryv1.ConnectHello, error) {
 		NodeName:     nodeName,
 		ExecutorKind: cfg.ExecutorKind,
 		Labels:       cfg.Labels,
-		Version:      cfg.Version,
+		Version:      buildinfo.Version,
 		WorkerSecret: cfg.WorkerSecret,
 		Capabilities: []*registryv1.CapabilityDeclaration{
 			{

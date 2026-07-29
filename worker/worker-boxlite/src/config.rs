@@ -39,7 +39,6 @@ pub struct Config {
     pub call_timeout: Duration,
     pub node_name: String,
     pub executor_kind: String,
-    pub version: String,
     pub labels: BTreeMap<String, String>,
     pub boxlite_home: String,
     pub python_exec_image: String,
@@ -101,8 +100,6 @@ impl Config {
             terminal_lease_max_sec,
         );
 
-        let default_version = build_default_version();
-
         Self {
             config_file: src.path().map(str::to_owned),
             console_grpc_target: src
@@ -115,7 +112,6 @@ impl Config {
             call_timeout: Duration::from_secs(call_timeout_sec),
             node_name: src.get("WORKER_NODE_NAME"),
             executor_kind: DEFAULT_EXECUTOR_KIND.to_owned(),
-            version: src.string_value("WORKER_VERSION", &default_version),
             labels: parse_labels(&src.get("WORKER_LABELS")),
             boxlite_home: src.get("WORKER_BOXLITE_HOME"),
             python_exec_image: src.string_value(
@@ -173,15 +169,6 @@ impl Config {
             log_format: src.log_format("WORKER_LOG_FORMAT", DEFAULT_LOG_FORMAT),
             log_add_source: src.bool_value("WORKER_LOG_ADD_SOURCE", DEFAULT_LOG_ADD_SOURCE),
         }
-    }
-}
-
-fn build_default_version() -> String {
-    let version = crate::buildinfo::version().trim();
-    if version.is_empty() {
-        "dev".to_owned()
-    } else {
-        version.to_owned()
     }
 }
 

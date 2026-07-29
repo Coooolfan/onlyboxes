@@ -25,8 +25,7 @@ These values are returned by `console` when calling `POST /api/v1/workers` (star
 
 Version report:
 - worker registers `version` in `ConnectHello`.
-- default source is binary embedded build version (`dev` when not injected).
-- can be overridden with `WORKER_VERSION`.
+- the only source is the binary embedded build version (`dev` when not injected); it cannot be overridden at runtime.
 
 Capability behavior:
 - `worker-docker` hardcodes capability declarations to `echo`, `pythonExec`, `terminalExec`, and `terminalResource`.

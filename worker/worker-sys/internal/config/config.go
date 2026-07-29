@@ -5,8 +5,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/onlyboxes/onlyboxes/worker/worker-sys/internal/buildinfo"
 )
 
 const (
@@ -37,7 +35,6 @@ type Config struct {
 	CallTimeout                time.Duration
 	NodeName                   string
 	ExecutorKind               string
-	Version                    string
 	Labels                     map[string]string
 	ComputerUseOutputLimitByte int
 	ComputerUseWhitelistMode   string
@@ -61,11 +58,6 @@ func Load() Config {
 	whitelist := parseComputerUseWhitelist(src.get("WORKER_COMPUTER_USE_COMMAND_WHITELIST"))
 	readImageAllowedPaths := parseReadImageAllowedPaths(src.get("WORKER_READ_IMAGE_ALLOWED_PATHS"))
 
-	defaultVersion := strings.TrimSpace(buildinfo.Version)
-	if defaultVersion == "" {
-		defaultVersion = "dev"
-	}
-
 	return Config{
 		ConfigFile:                 src.Path(),
 		ConsoleGRPCTarget:          src.stringValue("WORKER_CONSOLE_GRPC_TARGET", defaultConsoleTarget),
@@ -77,7 +69,6 @@ func Load() Config {
 		CallTimeout:                time.Duration(callTimeoutSec) * time.Second,
 		NodeName:                   src.get("WORKER_NODE_NAME"),
 		ExecutorKind:               defaultExecutorKind,
-		Version:                    src.stringValue("WORKER_VERSION", defaultVersion),
 		Labels:                     parseLabels(src.get("WORKER_LABELS")),
 		ComputerUseOutputLimitByte: outputLimit,
 		ComputerUseWhitelistMode:   whitelistMode,

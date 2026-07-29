@@ -4,27 +4,7 @@ import (
 	"reflect"
 	"testing"
 	"time"
-
-	"github.com/onlyboxes/onlyboxes/worker/worker-docker/internal/buildinfo"
 )
-
-func TestLoadUsesBuildVersionByDefault(t *testing.T) {
-	t.Setenv("WORKER_VERSION", "")
-
-	cfg := Load()
-	if cfg.Version != buildinfo.Version {
-		t.Fatalf("expected default worker version %q, got %q", buildinfo.Version, cfg.Version)
-	}
-}
-
-func TestLoadSupportsCustomVersion(t *testing.T) {
-	t.Setenv("WORKER_VERSION", "v1.2.3-custom")
-
-	cfg := Load()
-	if cfg.Version != "v1.2.3-custom" {
-		t.Fatalf("expected custom worker version, got %q", cfg.Version)
-	}
-}
 
 func TestLoadUsesDefaultDockerImages(t *testing.T) {
 	t.Setenv("WORKER_PYTHON_EXEC_DOCKER_IMAGE", "")

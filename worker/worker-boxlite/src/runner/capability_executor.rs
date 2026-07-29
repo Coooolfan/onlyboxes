@@ -674,7 +674,6 @@ mod tests {
             call_timeout: Duration::from_secs(13),
             node_name: String::new(),
             executor_kind: "boxlite".to_owned(),
-            version: "dev".to_owned(),
             labels: Default::default(),
             boxlite_home: String::new(),
             python_exec_image: "ghcr.io/astral-sh/uv:python3.12-bookworm-slim".to_owned(),

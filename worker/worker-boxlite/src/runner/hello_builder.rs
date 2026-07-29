@@ -26,7 +26,7 @@ pub(crate) fn build_hello(cfg: &Config) -> ConnectHello {
         node_name,
         executor_kind: cfg.executor_kind.clone(),
         labels,
-        version: cfg.version.clone(),
+        version: crate::buildinfo::version().to_owned(),
         capabilities: vec![
             CapabilityDeclaration {
                 name: ECHO_CAPABILITY_NAME.to_owned(),
@@ -67,7 +67,6 @@ mod tests {
             call_timeout: Duration::from_secs(13),
             node_name: String::new(),
             executor_kind: "boxlite".to_owned(),
-            version: "dev".to_owned(),
             labels: Default::default(),
             boxlite_home: String::new(),
             python_exec_image: "ghcr.io/astral-sh/uv:python3.12-bookworm-slim".to_owned(),

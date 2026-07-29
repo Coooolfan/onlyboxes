@@ -783,7 +783,6 @@ func testConfig() config.Config {
 		CallTimeout:                 50 * time.Millisecond,
 		NodeName:                    "node-test",
 		ExecutorKind:                "docker",
-		Version:                     "test",
 		EchoMaxInflight:             defaultMaxInflight,
 		PythonExecMaxInflight:       defaultMaxInflight,
 		TerminalExecMaxInflight:     defaultMaxInflight,

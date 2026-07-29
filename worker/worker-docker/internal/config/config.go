@@ -5,8 +5,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/onlyboxes/onlyboxes/worker/worker-docker/internal/buildinfo"
 )
 
 const (
@@ -44,7 +42,6 @@ type Config struct {
 	CallTimeout                 time.Duration
 	NodeName                    string
 	ExecutorKind                string
-	Version                     string
 	PythonExecDockerImage       string
 	PythonExecMemoryLimit       string
 	PythonExecCPULimit          string
@@ -86,10 +83,6 @@ func Load() Config {
 	terminalExportMaxBytes := src.positiveInt("WORKER_TERMINAL_EXPORT_MAX_BYTES", 0)
 
 	labelsCSV := src.get("WORKER_LABELS")
-	defaultVersion := strings.TrimSpace(buildinfo.Version)
-	if defaultVersion == "" {
-		defaultVersion = "dev"
-	}
 
 	return Config{
 		ConfigFile:                  src.Path(),
@@ -102,7 +95,6 @@ func Load() Config {
 		CallTimeout:                 time.Duration(callTimeoutSec) * time.Second,
 		NodeName:                    src.get("WORKER_NODE_NAME"),
 		ExecutorKind:                defaultExecutorKind,
-		Version:                     src.stringValue("WORKER_VERSION", defaultVersion),
 		PythonExecDockerImage:       src.stringValue("WORKER_PYTHON_EXEC_DOCKER_IMAGE", defaultPythonExecImage),
 		PythonExecMemoryLimit:       src.dockerMemoryLimitMiB("WORKER_PYTHON_EXEC_MEMORY_MIB", defaultPythonExecMemoryMiB),
 		PythonExecCPULimit:          src.dockerCPULimit("WORKER_PYTHON_EXEC_CPUS", defaultPythonExecCPULimit),
