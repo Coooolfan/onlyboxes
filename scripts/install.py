@@ -35,9 +35,25 @@ if sys.version_info < MIN_PYTHON:
 
 GITHUB_REPO = "Coooolfan/onlyboxes"
 LATEST_RELEASE_URL = "https://api.github.com/repos/{repo}/releases/latest"
-COMPOSE_TEMPLATE_URL = (
-    "https://raw.githubusercontent.com/{repo}/{tag}/scripts/docker-compose.install.yml"
-)
+# Rendered into the workdir as docker-compose.yml. Kept inline so the template
+# and the code that fills it always ship together.
+COMPOSE_TEMPLATE = """services:
+  console:
+    image: coolfan1024/onlyboxes:{{IMAGE_TAG}}
+    container_name: onlyboxes-console
+    restart: unless-stopped
+    environment:
+      CONSOLE_HASH_KEY: "{{HASH_KEY}}"
+      CONSOLE_ENABLE_REGISTRATION: "true"
+      CONSOLE_DASHBOARD_USERNAME: "admin"     # only for first run
+      CONSOLE_DASHBOARD_PASSWORD: "{{ADMIN_PASSWORD}}" # only for first run
+      CONSOLE_INITIAL_ADMIN_API_KEY: "{{INITIAL_API_KEY}}" # explicit initial admin API key, only for first run
+    ports:
+      - "{{HTTP_PORT}}:8089"
+      - "{{GRPC_PORT}}:50051"
+    volumes:
+      - ./db:/app/db
+"""
 RELEASE_ASSET_URL = (
     "https://github.com/{repo}/releases/download/{tag}/{filename}"
 )
@@ -421,24 +437,16 @@ def download_and_extract_release(workdir: Path, tag: str, asset_template: str, b
     return bin_path
 
 
-def download_and_render_compose(
+def render_compose(
     workdir: Path, tag: str, hash_key: str, admin_password: str,
     initial_api_key: str, http_port: int, grpc_port: int,
 ) -> None:
-    url = COMPOSE_TEMPLATE_URL.format(repo=GITHUB_REPO, tag=tag)
-    info(f"Downloading {url}")
-    try:
-        req = urllib.request.Request(url)
-        with urllib.request.urlopen(req) as resp:
-            template = resp.read().decode()
-    except (urllib.error.HTTPError, urllib.error.URLError) as exc:
-        fatal("download", f"Failed to download compose template: {exc}")
-
+    # Guards against editing the template without updating the substitutions below.
     for ph in PLACEHOLDERS:
-        if ph not in template:
+        if ph not in COMPOSE_TEMPLATE:
             fatal("template", f"Placeholder {ph} not found in compose template.")
 
-    rendered = template
+    rendered = COMPOSE_TEMPLATE
     rendered = rendered.replace("{{IMAGE_TAG}}", tag)
     rendered = rendered.replace("{{HASH_KEY}}", hash_key)
     rendered = rendered.replace("{{ADMIN_PASSWORD}}", admin_password)
@@ -850,7 +858,7 @@ def main() -> None:
     # --- Step: Download releases ---
     if plan.console_start == "docker":
         sc.next("Download releases")
-        download_and_render_compose(workdir, tag, hash_key, admin_password, api_key, http_port, grpc_port)
+        render_compose(workdir, tag, hash_key, admin_password, api_key, http_port, grpc_port)
         download_and_extract_release(workdir, tag, plan.worker_asset_template, plan.worker_binary_name)
     else:
         sc.next("Download releases")
