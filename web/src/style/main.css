@@ -534,6 +534,20 @@ tbody tr:last-child .ui-td {
   view-transition-name: console-sidebar;
 }
 
+/*
+ * Both sidebar snapshots are static for the whole transition, so any tween
+ * running inside the sidebar gets frozen at whatever value it held when the
+ * snapshot was taken. The nav item leaving the active state is the visible
+ * case: its 200ms background tween has barely started by then, so the item
+ * would sit there dark until the live DOM takes over and drops it in one
+ * frame. Freeze those tweens instead — the highlight hand-off is the
+ * transition's job.
+ */
+.vt-running .console-sidebar,
+.vt-running .console-sidebar * {
+  transition: none;
+}
+
 ::view-transition-old(console-sidebar),
 ::view-transition-new(console-sidebar) {
   animation: none;
