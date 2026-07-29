@@ -38,6 +38,24 @@ WORKER_SECRET=<worker_secret> \
 ./onlyboxes-worker-boxlite
 ```
 
+## Configuration file
+
+The Worker Startup Tool in the dashboard can generate and download a ready-to-use `config.toml`. Set `WORKER_CONFIG_FILE` to use a specific file. If it is not set, the worker looks for `config.toml` next to the worker binary and then in the current working directory.
+
+Environment variables take precedence over `config.toml`, which takes precedence over built-in defaults. TOML keys use the environment variable name without the `WORKER_` prefix and in lowercase; for example, `WORKER_TERMINAL_EXEC_BOXLITE_IMAGE` becomes `terminal_exec_boxlite_image`. Use a `[labels]` table for worker labels.
+
+```toml
+id = "wk_..."
+secret = "..."
+console_grpc_target = "console.internal:50051"
+terminal_exec_boxlite_image = "coolfan1024/onlyboxes-runtime:default"
+
+[labels]
+region = "us"
+```
+
+See the [annotated configuration template](https://github.com/Coooolfan/onlyboxes/blob/main/worker/worker-boxlite/config.example.toml) for all available keys.
+
 ## Environment variables
 
 ### Connection

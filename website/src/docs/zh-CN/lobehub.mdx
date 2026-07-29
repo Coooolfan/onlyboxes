@@ -111,13 +111,16 @@ sudo systemctl status onlyboxes-console
 
 以下示例针对 `worker-docker` 运行时，即安装脚本默认部署的运行时。其他运行时（如 `worker-boxlite`）请参考对应文档调整等价变量。
 
-LobeHub 集成需要将终端镜像切换为 `coolfan1024/onlyboxes-runtime:lobehub`，并放宽单会话资源限制：
+LobeHub 集成需要将终端镜像切换为 `coolfan1024/onlyboxes-runtime:lobehub`，放宽单会话资源限制，并允许同一终端会话并发执行多个操作：
 
 ```bash
 WORKER_TERMINAL_EXEC_DOCKER_IMAGE=coolfan1024/onlyboxes-runtime:lobehub
 WORKER_TERMINAL_EXEC_MEMORY_MIB=2048
 WORKER_TERMINAL_EXEC_CPUS=2
 WORKER_TERMINAL_EXEC_MAX_PROCESSES=1024
+WORKER_TERMINAL_SESSION_MAX_INFLIGHT=8
+WORKER_TERMINAL_EXEC_MAX_INFLIGHT=16
+WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT=8
 ```
 
 | 变量 | 默认值 | 推荐值 | 说明 |
@@ -126,6 +129,11 @@ WORKER_TERMINAL_EXEC_MAX_PROCESSES=1024
 | `WORKER_TERMINAL_EXEC_MEMORY_MIB` | `256` | `2048` | 单个终端会话的内存上限，单位 MiB |
 | `WORKER_TERMINAL_EXEC_CPUS` | `1.0` | `2` | 单个终端会话的 CPU 上限 |
 | `WORKER_TERMINAL_EXEC_MAX_PROCESSES` | `128` | `1024` | 单个终端会话的最大进程 / 线程数。LobeHub Agent 会并发启动 Node、Python、pnpm 等子进程，默认值容易触顶 |
+| `WORKER_TERMINAL_SESSION_MAX_INFLIGHT` | `1` | `8` | 单个会话中 `terminalExec` 与 `terminalResource` 合计允许的并发操作数 |
+| `WORKER_TERMINAL_EXEC_MAX_INFLIGHT` | `4` | `16` | 整个 worker 同时执行的 `terminalExec` 操作数 |
+| `WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT` | `4` | `8` | 整个 worker 同时执行的 `terminalResource` 操作数 |
+
+LobeHub 会在同一会话中并发执行命令和文件操作，保持默认上限 `1` 可能触发 `409 session_busy`。请求必须同时满足单会话和 worker 级上限。
 
 启动 worker 前建议先手动拉取镜像，避免首个会话因拉取镜像耗时而超时：
 

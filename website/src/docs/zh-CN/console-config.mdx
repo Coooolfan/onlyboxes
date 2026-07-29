@@ -1,6 +1,6 @@
 export const meta = {
   title: '控制台配置',
-  description: '控制节点的所有环境变量。',
+  description: '使用 config.toml 或环境变量配置控制节点。',
   section: '快速开始',
   order: 35,
   slug: 'console-config',
@@ -8,7 +8,25 @@ export const meta = {
 
 # 控制台配置
 
-控制台（控制节点）允许通过环境变量进行配置，在 `docker-compose.yml` 或容器编排工具中设置即可。
+控制台（控制节点）同时支持 `config.toml` 配置文件和环境变量。
+
+## 配置文件
+
+设置 `CONSOLE_CONFIG_FILE` 可以显式指定配置文件。未设置时，控制台会依次查找程序文件同目录和当前工作目录下的 `config.toml`；未找到文件时，继续使用环境变量和内置默认值启动。
+
+配置优先级为：环境变量 > `config.toml` > 内置默认值。TOML 键名由环境变量名移除 `CONSOLE_` 前缀并转换为小写得到，例如 `CONSOLE_HTTP_ADDR` 对应 `http_addr`；嵌套表则对应以下划线连接的环境变量名。
+
+```toml
+http_addr = ":8089"
+grpc_addr = ":50051"
+db_path = "./db/onlyboxes-console.db"
+log_level = "info"
+
+[mcp_tool.python_exec]
+description = "在沙箱中执行 Python 代码。"
+```
+
+建议继续通过环境变量提供 `hash_key`、`dashboard_password`、`jit_signing_key`、`export_file_sk` 等密钥。全部可用配置请参考[带注释的配置模板](https://github.com/Coooolfan/onlyboxes/blob/main/console/config.example.toml)。
 
 ## 环境变量
 

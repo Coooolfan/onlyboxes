@@ -43,6 +43,24 @@ WORKER_SECRET=<worker_secret> \
 
 通过非 TLS 连接时请设置 `WORKER_CONSOLE_INSECURE=true`。
 
+## 配置文件
+
+Dashboard 中的 Worker 启动工具可以生成并下载可直接使用的 `config.toml`。设置 `WORKER_CONFIG_FILE` 可以显式指定配置文件；未设置时，worker 会依次查找程序文件同目录和当前工作目录下的 `config.toml`。
+
+配置优先级为：环境变量 > `config.toml` > 内置默认值。TOML 键名由环境变量名移除 `WORKER_` 前缀并转换为小写得到，例如 `WORKER_TERMINAL_EXEC_DOCKER_IMAGE` 对应 `terminal_exec_docker_image`。Worker 标签使用 `[labels]` 表配置。
+
+```toml
+id = "wk_..."
+secret = "..."
+console_grpc_target = "console.internal:50051"
+terminal_exec_docker_image = "coolfan1024/onlyboxes-runtime:default"
+
+[labels]
+region = "cn"
+```
+
+全部可用配置请参考[带注释的配置模板](https://github.com/Coooolfan/onlyboxes/blob/main/worker/worker-docker/config.example.toml)。
+
 ## 环境变量
 
 ### 连接

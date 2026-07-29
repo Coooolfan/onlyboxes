@@ -1,6 +1,6 @@
 export const meta = {
   title: 'Console Configuration',
-  description: 'All environment variables for the control node.',
+  description: 'Configure the control node with config.toml or environment variables.',
   section: 'Getting Started',
   order: 35,
   slug: 'console-config',
@@ -8,7 +8,25 @@ export const meta = {
 
 # Console Configuration
 
-The console (control node) can be configured through environment variables. Set them in `docker-compose.yml` or your container orchestration tool.
+The console (control node) supports both a `config.toml` file and environment variables.
+
+## Configuration file
+
+Set `CONSOLE_CONFIG_FILE` to use a specific file. If it is not set, the console looks for `config.toml` next to the console binary and then in the current working directory. When no file is found, it continues with environment variables and built-in defaults.
+
+Environment variables take precedence over `config.toml`, which takes precedence over built-in defaults. TOML keys use the environment variable name without the `CONSOLE_` prefix and in lowercase; for example, `CONSOLE_HTTP_ADDR` becomes `http_addr`. Nested tables map to underscore-separated names.
+
+```toml
+http_addr = ":8089"
+grpc_addr = ":50051"
+db_path = "./db/onlyboxes-console.db"
+log_level = "info"
+
+[mcp_tool.python_exec]
+description = "Execute Python code in a sandbox."
+```
+
+Keep secrets such as `hash_key`, `dashboard_password`, `jit_signing_key`, and `export_file_sk` in environment variables when possible. See the [annotated configuration template](https://github.com/Coooolfan/onlyboxes/blob/main/console/config.example.toml) for all available keys.
 
 ## Environment variables
 

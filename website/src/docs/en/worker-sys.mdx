@@ -63,6 +63,24 @@ $env:WORKER_SECRET = "<worker_secret>"
 .\onlyboxes-worker-sys.exe
 ```
 
+## Configuration file
+
+The Worker Startup Tool in the dashboard can generate and download a ready-to-use `config.toml`. Set `WORKER_CONFIG_FILE` to use a specific file. If it is not set, the worker looks for `config.toml` next to the worker binary and then in the current working directory.
+
+Environment variables take precedence over `config.toml`, which takes precedence over built-in defaults. TOML keys use the environment variable name without the `WORKER_` prefix and in lowercase; arrays use native TOML arrays, and worker labels use a `[labels]` table.
+
+```toml
+id = "wk_..."
+secret = "..."
+console_grpc_target = "console.internal:50051"
+computer_use_command_whitelist = ["echo", "time"]
+
+[labels]
+device = "lab-machine"
+```
+
+See the [annotated configuration template](https://github.com/Coooolfan/onlyboxes/blob/main/worker/worker-sys/config.example.toml) for all available keys.
+
 ## Environment variables
 
 ### Connection
