@@ -650,7 +650,7 @@ impl CapabilityExecutor {
 | `WORKER_PYTHON_EXEC_MEMORY_MIB` | `256` | pythonExec VM 内存（MiB） |
 | `WORKER_PYTHON_EXEC_CPUS` | `1` | pythonExec VM CPU 数 |
 | `WORKER_PYTHON_EXEC_MAX_PROCESSES` | `128` | pythonExec VM 最大进程数 |
-| `WORKER_TERMINAL_EXEC_BOXLITE_IMAGE` | `coolfan1024/onlyboxes-default-worker:0.0.5` | terminalExec 使用的 OCI 镜像 |
+| `WORKER_TERMINAL_EXEC_BOXLITE_IMAGE` | `coolfan1024/onlyboxes-runtime:default` | terminalExec 使用的 OCI 镜像 |
 | `WORKER_TERMINAL_EXEC_MEMORY_MIB` | `256` | terminalExec VM 内存（MiB） |
 | `WORKER_TERMINAL_EXEC_CPUS` | `1` | terminalExec VM CPU 数 |
 | `WORKER_TERMINAL_EXEC_MAX_PROCESSES` | `128` | terminalExec VM 最大进程数 |

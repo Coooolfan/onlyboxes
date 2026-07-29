@@ -16,7 +16,7 @@ const (
 	defaultPythonExecMemoryMiB      = 256
 	defaultPythonExecCPULimit       = "1.0"
 	defaultPythonExecMaxProcesses   = 128
-	defaultTerminalExecImage        = "coolfan1024/onlyboxes-default-worker:0.0.5"
+	defaultTerminalExecImage        = "coolfan1024/onlyboxes-runtime:default"
 	defaultTerminalExecMemoryMiB    = 256
 	defaultTerminalExecCPULimit     = "1.0"
 	defaultTerminalExecMaxProcesses = 128

@@ -31,7 +31,7 @@ python_exec_cpus = 1
 python_exec_max_processes = 128
 
 # terminalExec capability.
-terminal_exec_boxlite_image = "coolfan1024/onlyboxes-default-worker:0.0.5"
+terminal_exec_boxlite_image = "coolfan1024/onlyboxes-runtime:default"
 terminal_exec_memory_mib = 256
 terminal_exec_cpus = 1
 terminal_exec_max_processes = 128

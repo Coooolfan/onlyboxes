@@ -23,7 +23,7 @@ const (
 	defaultPythonExecMemoryLimit   = "256m"
 	defaultPythonExecCPULimit      = "1.0"
 	defaultPythonExecPidsLimit     = 128
-	defaultTerminalExecDockerImage = "coolfan1024/onlyboxes-default-worker:0.0.5"
+	defaultTerminalExecDockerImage = "coolfan1024/onlyboxes-runtime:default"
 	defaultTerminalExecMemoryLimit = "256m"
 	defaultTerminalExecCPULimit    = "1.0"
 	defaultTerminalExecPidsLimit   = 128

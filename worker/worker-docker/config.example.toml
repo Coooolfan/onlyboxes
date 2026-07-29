@@ -28,7 +28,7 @@ python_exec_cpus = "1.0"
 python_exec_max_processes = 128
 
 # terminalExec capability.
-terminal_exec_docker_image = "coolfan1024/onlyboxes-default-worker:0.0.5"
+terminal_exec_docker_image = "coolfan1024/onlyboxes-runtime:default"
 terminal_exec_memory_mib = 256
 terminal_exec_cpus = "1.0"
 terminal_exec_max_processes = 128

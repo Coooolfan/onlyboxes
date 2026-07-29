@@ -33,7 +33,7 @@ id = "wk_..."
 secret = "..."
 console_grpc_target = "console.internal:50051"
 heartbeat_interval_sec = 5
-terminal_exec_boxlite_image = "coolfan1024/onlyboxes-default-worker:0.0.5"
+terminal_exec_boxlite_image = "coolfan1024/onlyboxes-runtime:default"
 log_level = "info"
 
 [labels]
