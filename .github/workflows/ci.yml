@@ -145,6 +145,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
+      # our build.rs uses protoc-bin-vendored, but the boxlite-shared build
+      # script needs protoc on the system
+      - name: Install protoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+          protoc --version
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
