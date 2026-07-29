@@ -566,8 +566,7 @@ tbody tr:last-child .ui-td {
 
 /*
  * The highlight is a single element handed between nav items, so the browser
- * interpolates its box rather than fading two copies. Only the group needs a
- * duration — the old/new snapshots stay pinned on top of each other.
+ * interpolates its box rather than fading two copies.
  */
 ::view-transition-group(nav-active) {
   animation-duration: 320ms;
@@ -576,14 +575,43 @@ tbody tr:last-child .ui-td {
 
 ::view-transition-old(nav-active),
 ::view-transition-new(nav-active) {
-  animation: none;
   mix-blend-mode: normal;
   height: 100%;
+}
+
+/*
+ * The outgoing label stays fully opaque underneath: it is what the highlight
+ * shows at the start of the slide, where the box still sits on the item being
+ * left. Pinning both snapshots opaque instead would put the incoming label
+ * there from the first frame, so the item being left would appear to blink into
+ * a black box carrying another section's name.
+ *
+ * Keeping this layer solid also means the black fill never thins out mid-slide,
+ * which a plain cross-fade between two translucent copies would do.
+ */
+::view-transition-old(nav-active) {
+  animation: none;
+}
+
+::view-transition-new(nav-active) {
+  animation-name: nav-label-fade-in;
+  animation-duration: 320ms;
+  animation-timing-function: var(--ease-emphasized);
 }
 
 ::view-transition-old(root),
 ::view-transition-new(root) {
   animation-duration: 220ms;
+}
+
+@keyframes nav-label-fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 @keyframes page-fade-out {
