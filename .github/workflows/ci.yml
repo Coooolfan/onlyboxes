@@ -8,6 +8,8 @@ on:
 
 permissions:
   contents: read
+  # paths-filter falls back to the pull request API when it cannot diff locally
+  pull-requests: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

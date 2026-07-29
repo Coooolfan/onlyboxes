@@ -16,6 +16,8 @@ on:
 permissions:
   contents: read
 
+# shared with the deploy-cloudflare job in package-release.yml so a release
+# deploy and a website-only deploy never race for production traffic
 concurrency:
   group: deploy-onlyboxes-website
   cancel-in-progress: false

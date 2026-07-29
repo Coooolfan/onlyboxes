@@ -32,10 +32,35 @@ svc_cmd() {
     esac
 }
 
+# 读取 dev.env 中某个变量的值，不影响当前 shell 环境
+env_value() {
+    local key="$1"
+    [ -f "$ENV_FILE" ] || return 0
+    sed -n "s/^[[:space:]]*${key}=//p" "$ENV_FILE" |
+        tail -n 1 |
+        sed -e 's/^["'\'']//' -e 's/["'\'']$//'
+}
+
+# ":8089" / "127.0.0.1:8089" → 8089
+addr_port() {
+    printf '%s' "${1##*:}"
+}
+
+# 监听地址可被 dev.env 覆盖，端口必须跟着走，否则 status 与端口回收都会看错地方
+configured_port() {
+    local key="$1" fallback="$2" addr
+    addr="$(env_value "$key")"
+    if [ -n "$addr" ]; then
+        addr_port "$addr"
+    else
+        printf '%s' "$fallback"
+    fi
+}
+
 # 主端口：用于 status 展示与 stop 后的兜底清理
 svc_port() {
     case "$1" in
-        console) echo 8089 ;;
+        console) configured_port CONSOLE_HTTP_ADDR 8089 ;;
         web) echo 5178 ;;
         website) echo 5173 ;;
         *) echo "" ;;
@@ -45,15 +70,21 @@ svc_port() {
 # 需要一并回收的附加端口（console 还监听 gRPC）
 svc_extra_ports() {
     case "$1" in
-        console) echo 50051 ;;
+        console) configured_port CONSOLE_GRPC_ADDR 50051 ;;
         *) echo "" ;;
     esac
 }
 
 # 服务命令包一层 tee：面板显示与日志落盘同源。
 # 前置 source dev.env：tmux server 环境与调用方隔离，配置只能在窗口内加载。
+#
+# 显式走 bash：tmux 用 default-shell 执行窗口命令，若开发者用的是 fish 之类的
+# 非 POSIX shell，下面的 set -a / . file 会失效。内层只用双引号，整体才能安全地
+# 被单引号包住，交给任意 shell 解析都是同一个字面量。
 wrapped_cmd() {
-    echo "set -a; [ -f '$ENV_FILE' ] && . '$ENV_FILE'; set +a; $(svc_cmd "$1") 2>&1 | tee '$LOG_DIR/$1.log'"
+    local inner
+    inner="set -a; [ -f \"$ENV_FILE\" ] && . \"$ENV_FILE\"; set +a; $(svc_cmd "$1") 2>&1 | tee \"$LOG_DIR/$1.log\""
+    echo "bash -c '$inner'"
 }
 
 die() {
@@ -328,17 +359,26 @@ cmd_logs() {
     tail -n 200 "$log"
 }
 
-# 从扁平 JSON 日志行里取一个字符串字段
-json_field() {
-    printf '%s' "$1" | sed -n "s/.*\"$2\":\"\([^\"]*\)\".*/\1/p"
+# 从一行日志里取字段，兼容 CONSOLE_LOG_FORMAT 的两种取值：
+# json 的 "key":"value"，text 的 key=value 与 key="value"
+log_field() {
+    local line="$1" key="$2" value
+    value="$(printf '%s' "$line" | sed -n "s/.*\"$key\":\"\([^\"]*\)\".*/\1/p")"
+    if [ -z "$value" ]; then
+        value="$(printf '%s' "$line" | sed -n "s/.*[[:space:]]$key=\"\([^\"]*\)\".*/\1/p")"
+    fi
+    if [ -z "$value" ]; then
+        value="$(printf '%s' "$line" | sed -n "s/.*[[:space:]]$key=\([^[:space:]]*\).*/\1/p")"
+    fi
+    printf '%s' "$value"
 }
 
 print_creds() {
     local line="$1" username password api_key_name api_key
-    username="$(json_field "$line" username)"
-    password="$(json_field "$line" password)"
-    api_key_name="$(json_field "$line" api_key_name)"
-    api_key="$(json_field "$line" api_key)"
+    username="$(log_field "$line" username)"
+    password="$(log_field "$line" password)"
+    api_key_name="$(log_field "$line" api_key_name)"
+    api_key="$(log_field "$line" api_key)"
 
     echo "console 管理员账号（首次初始化时生成）"
     echo "  用户名：$username"
@@ -353,21 +393,32 @@ print_creds() {
 # console 只在首次初始化时把管理员密码打进日志，而 start 每次会清空日志，
 # 因此首次抓到后固化到 scripts/.dev/console-creds.json 长期保留。
 cmd_creds() {
+    local line=""
     if [ -f "$CREDS_FILE" ]; then
-        print_creds "$(cat "$CREDS_FILE")"
-        return
+        line="$(cat "$CREDS_FILE")"
+    else
+        local log="$LOG_DIR/console.log"
+        if [ -f "$log" ]; then
+            line="$(grep -F 'console admin account initialized' "$log" | tail -n 1 || true)"
+        fi
     fi
 
-    local log="$LOG_DIR/console.log" line
-    if [ -f "$log" ]; then
-        line="$(grep -F 'console admin account initialized' "$log" | tail -n 1 || true)"
-        if [ -n "$line" ]; then
-            mkdir -p "$LOG_DIR"
-            printf '%s\n' "$line" >"$CREDS_FILE"
-            chmod 600 "$CREDS_FILE"
+    if [ -n "$line" ]; then
+        # 只有真正解析出用户名和密码才落盘：密码仅打印一次，缓存了解析不了的行
+        # 就等于永久丢失
+        if [ -n "$(log_field "$line" username)" ] && [ -n "$(log_field "$line" password)" ]; then
+            if [ ! -f "$CREDS_FILE" ]; then
+                mkdir -p "$LOG_DIR"
+                printf '%s\n' "$line" >"$CREDS_FILE"
+                chmod 600 "$CREDS_FILE"
+            fi
             print_creds "$line"
             return
         fi
+
+        echo "无法从下面这行日志中解析出管理员凭据：" >&2
+        printf '%s\n' "$line" >&2
+        exit 1
     fi
 
     cat >&2 <<EOF

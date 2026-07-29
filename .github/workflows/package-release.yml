@@ -8,6 +8,11 @@ on:
         description: 'Release version, e.g. 0.7.2 or 0.8.0-rc.1 (tag is created from the selected branch)'
         required: true
         type: string
+      latest:
+        description: 'Mark as Latest. Turn off when patching an older line so the newest release keeps the label. Ignored for prereleases.'
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: write
@@ -85,6 +90,10 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.prepare-release.outputs.version_raw }}
+          # the tag does not exist yet and target_commitish otherwise defaults
+          # to the repository default branch, which would point the tag at code
+          # other than what this run built
+          target_commitish: ${{ github.sha }}
           name: ${{ needs.prepare-release.outputs.version_raw }}
           body_path: docs/release_notes/${{ needs.prepare-release.outputs.version_raw }}.md
           prerelease: ${{ needs.prepare-release.outputs.prerelease == 'true' }}
@@ -745,6 +754,11 @@ jobs:
   deploy-cloudflare:
     name: Deploy website to Cloudflare
     runs-on: ubuntu-latest
+    # shared with deploy-website.yml so a release deploy and a website-only
+    # deploy never race for production traffic
+    concurrency:
+      group: deploy-onlyboxes-website
+      cancel-in-progress: false
     needs:
       - prepare-release
       - build-website
@@ -799,10 +813,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION_RAW: ${{ needs.prepare-release.outputs.version_raw }}
           IS_PRERELEASE: ${{ needs.prepare-release.outputs.prerelease }}
+          MARK_LATEST: ${{ inputs.latest }}
         run: |
           set -euo pipefail
           if [[ "${IS_PRERELEASE}" == "true" ]]; then
-            gh release edit "${VERSION_RAW}" --draft=false --prerelease --repo "${GITHUB_REPOSITORY}"
-          else
+            gh release edit "${VERSION_RAW}" --draft=false --prerelease --latest=false --repo "${GITHUB_REPOSITORY}"
+          elif [[ "${MARK_LATEST}" == "true" ]]; then
             gh release edit "${VERSION_RAW}" --draft=false --latest --repo "${GITHUB_REPOSITORY}"
+          else
+            # patching an older line: publish without stealing the Latest label
+            gh release edit "${VERSION_RAW}" --draft=false --latest=false --repo "${GITHUB_REPOSITORY}"
           fi
