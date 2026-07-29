@@ -22,22 +22,25 @@ Accepted options:
 EOF
 }
 
+# /releases/latest redirects to /releases/tag/<tag>. Reading the redirect target
+# keeps this off api.github.com, which allows only 60 unauthenticated requests
+# per hour per IP and is routinely exhausted behind shared egress.
 resolve_latest_tag() {
-  local api_url="https://api.github.com/repos/${REPO}/releases/latest"
-  local body=""
+  local url="https://github.com/${REPO}/releases/latest"
+  local location=""
   if command -v curl >/dev/null 2>&1; then
-    body="$(curl -fsSL --retry 3 --connect-timeout 15 -H 'Accept: application/vnd.github+json' "${api_url}" 2>/dev/null || true)"
+    location="$(curl -fsS -o /dev/null -w '%{redirect_url}' --retry 3 --connect-timeout 15 "${url}" 2>/dev/null || true)"
   elif command -v wget >/dev/null 2>&1; then
-    body="$(wget -qO- --header='Accept: application/vnd.github+json' "${api_url}" 2>/dev/null || true)"
+    location="$(wget -q -S --spider --max-redirect=0 "${url}" 2>&1 \
+      | sed -nE 's|^[[:space:]]*[Ll]ocation:[[:space:]]*(.*)$|\1|p' | head -n 1 | tr -d '\r')"
   else
     echo "curl or wget is required to resolve the latest release tag" >&2
     return 1
   fi
 
-  local resolved=""
-  resolved="$(printf '%s' "${body}" | sed -nE 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -n 1)"
-  if [[ -z "${resolved}" ]]; then
-    echo "failed to resolve the latest release tag from ${api_url}" >&2
+  local resolved="${location##*/tag/}"
+  if [[ -z "${resolved}" || "${resolved}" == "${location}" ]]; then
+    echo "failed to resolve the latest release tag from ${url}" >&2
     echo "pass --tag TAG to select a release explicitly" >&2
     return 1
   fi

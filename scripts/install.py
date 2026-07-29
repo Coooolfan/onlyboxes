@@ -34,7 +34,7 @@ if sys.version_info < MIN_PYTHON:
 # ---------------------------------------------------------------------------
 
 GITHUB_REPO = "Coooolfan/onlyboxes"
-LATEST_RELEASE_URL = "https://api.github.com/repos/{repo}/releases/latest"
+LATEST_RELEASE_URL = "https://github.com/{repo}/releases/latest"
 # Rendered into the workdir as docker-compose.yml. Kept inline so the template
 # and the code that fills it always ship together.
 COMPOSE_TEMPLATE = """services:
@@ -200,17 +200,28 @@ def sanitize_version(tag: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "-", tag)
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ARG002
+        return None
+
+
 def resolve_latest_tag() -> str:
+    # /releases/latest redirects to /releases/tag/<tag>. Reading the redirect
+    # target keeps this off api.github.com, which allows only 60 unauthenticated
+    # requests per hour per IP and is routinely exhausted behind shared egress.
     url = LATEST_RELEASE_URL.format(repo=GITHUB_REPO)
+    reason = "the request was not redirected to a release tag"
     try:
-        req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json"})
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            data = json.loads(resp.read().decode())
-        tag = data.get("tag_name")
-        if tag:
-            return tag
-        reason = "the response carried no tag_name"
-    except (urllib.error.HTTPError, urllib.error.URLError, OSError) as exc:
+        opener = urllib.request.build_opener(_NoRedirect)
+        opener.open(urllib.request.Request(url, method="HEAD"), timeout=15)
+    except urllib.error.HTTPError as exc:
+        location = exc.headers.get("Location", "") if exc.headers else ""
+        if "/tag/" in location:
+            tag = location.rsplit("/tag/", 1)[-1].strip()
+            if tag:
+                return tag
+        reason = f"unexpected response {exc.code}" if not location else reason
+    except (urllib.error.URLError, OSError) as exc:
         reason = str(exc)
     fatal(
         "resolve-release",
