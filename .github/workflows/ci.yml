@@ -1,0 +1,291 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  # paths-filter falls back to the pull request API when it cannot diff locally
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "24"
+
+jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      console: ${{ steps.filter.outputs.console }}
+      worker-docker: ${{ steps.filter.outputs.worker-docker }}
+      worker-sys: ${{ steps.filter.outputs.worker-sys }}
+      worker-boxlite: ${{ steps.filter.outputs.worker-boxlite }}
+      web: ${{ steps.filter.outputs.web }}
+      website: ${{ steps.filter.outputs.website }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      # api/ holds the shared proto and its generated Go module: the three Go
+      # modules pull it in via a replace directive and worker-boxlite compiles
+      # api/proto in build.rs, so a change there has to rebuild every backend.
+      - name: Filter changed paths
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            shared: &shared
+              - 'api/**'
+              - '.github/workflows/ci.yml'
+            console:
+              - *shared
+              - 'console/**'
+            worker-docker:
+              - *shared
+              - 'worker/worker-docker/**'
+            worker-sys:
+              - *shared
+              - 'worker/worker-sys/**'
+            worker-boxlite:
+              - *shared
+              - 'worker/worker-boxlite/**'
+            web:
+              - '.github/workflows/ci.yml'
+              - 'web/**'
+            website:
+              - '.github/workflows/ci.yml'
+              - 'website/**'
+
+  console:
+    name: Check console
+    needs: changes
+    if: needs.changes.outputs.console == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./console
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: console/go.mod
+          cache-dependency-path: console/go.sum
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Unit tests
+        run: go test ./...
+
+  worker-docker:
+    name: Check worker-docker
+    needs: changes
+    if: needs.changes.outputs.worker-docker == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./worker/worker-docker
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: worker/worker-docker/go.mod
+          cache-dependency-path: worker/worker-docker/go.sum
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Unit tests
+        run: go test ./...
+
+  worker-sys:
+    name: Check worker-sys
+    needs: changes
+    if: needs.changes.outputs.worker-sys == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./worker/worker-sys
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: worker/worker-sys/go.mod
+          cache-dependency-path: worker/worker-sys/go.sum
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Unit tests
+        run: go test ./...
+
+  worker-boxlite:
+    name: Check worker-boxlite
+    needs: changes
+    if: needs.changes.outputs.worker-boxlite == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./worker/worker-boxlite
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      # our build.rs uses protoc-bin-vendored, but the boxlite-shared build
+      # script needs protoc on the system
+      - name: Install protoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+          protoc --version
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: worker/worker-boxlite
+
+      - name: Format check
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets
+
+      - name: Unit tests
+        run: cargo test
+
+  web:
+    name: Check web
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./web
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Resolve yarn cache folder
+        id: yarn-cache
+        run: echo "dir=$(yarn config get cacheFolder)" >> "${GITHUB_OUTPUT}"
+
+      - name: Cache yarn packages
+        uses: actions/cache@v6
+        with:
+          path: ${{ steps.yarn-cache.outputs.dir }}
+          key: ${{ runner.os }}-yarn-web-${{ hashFiles('web/yarn.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-yarn-web-
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Format check
+        run: yarn format:check
+
+      - name: Type check
+        run: yarn type-check
+
+      - name: Unit tests
+        run: yarn test:unit --run
+
+      - name: Build
+        run: yarn build-only
+
+  website:
+    name: Check website
+    needs: changes
+    if: needs.changes.outputs.website == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./website
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Resolve yarn cache folder
+        id: yarn-cache
+        run: echo "dir=$(yarn config get cacheFolder)" >> "${GITHUB_OUTPUT}"
+
+      - name: Cache yarn packages
+        uses: actions/cache@v6
+        with:
+          path: ${{ steps.yarn-cache.outputs.dir }}
+          key: ${{ runner.os }}-yarn-website-${{ hashFiles('website/yarn.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-yarn-website-
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Unit tests
+        run: yarn test
+
+      # build runs tsc -b, the SSR build and the prerender step
+      - name: Build
+        run: yarn build
+
+  # Single job to mark as required in branch protection: skipped checks count as
+  # success, so unrelated subprojects never block a PR.
+  ci-ok:
+    name: CI
+    if: always()
+    needs:
+      - changes
+      - console
+      - worker-docker
+      - worker-sys
+      - worker-boxlite
+      - web
+      - website
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify job results
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          echo "${NEEDS}" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          failed="$(echo "${NEEDS}" | jq -r '[to_entries[] | select(.value.result == "failure" or .value.result == "cancelled") | .key] | join(", ")')"
+          if [[ -n "${failed}" ]]; then
+            echo "::error::Failed or cancelled jobs: ${failed}" >&2
+            exit 1
+          fi

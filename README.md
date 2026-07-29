@@ -232,7 +232,8 @@ Web dev URL defaults to `http://127.0.0.1:5178` and proxies `/api/*` to `http://
 
 ## Release & Images
 
-- GitHub workflow: `.github/workflows/package-release.yml`
+- GitHub workflow: `.github/workflows/package-release.yml` — run it manually from the Actions tab, pick the branch and enter the version (e.g. `0.7.2`); the tag is created from that branch. Turn off `latest` when patching an older line so the newest release keeps the label
+- Website-only deploy: `.github/workflows/deploy-website.yml` — manual, independent of a release
 - Console Docker image: `coolfan1024/onlyboxes:<version>` and `coolfan1024/onlyboxes:latest`
 - Terminal runtime images: `coolfan1024/onlyboxes-runtime:<version>-default`, `<version>-default-cn`, and `<version>-lobehub`; stable aliases are `default`, `default-cn`, `lobehub`, and `latest` (same as `default`)
 - Console binary includes embedded web assets

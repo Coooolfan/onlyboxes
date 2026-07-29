@@ -127,6 +127,3 @@ Capability concurrency:
 
 Recommended setting:
 - `WORKER_CALL_TIMEOUT_SEC >= 2 * WORKER_HEARTBEAT_INTERVAL_SEC`
-
-Session concurrency end-to-end check:
-- `scripts/e2e-session-concurrency.sh docker` brings up console plus this worker and verifies the concurrency matrix: default serial behaviour with `409 session_busy`, parallel execution at a raised limit, single-container creation under a concurrent session race, shared filesystem, sibling survival across a command timeout, `409` versus `429` quota levels, and janitor reclamation after in-flight commands drain.

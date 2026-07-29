@@ -232,7 +232,8 @@ yarn --cwd web dev
 
 ## 发布与镜像
 
-- GitHub 工作流：`.github/workflows/package-release.yml`
+- GitHub 工作流：`.github/workflows/package-release.yml` —— 在 Actions 页面手动触发，选择分支并填写版本号（如 `0.7.2`），tag 会基于该分支创建。为旧版本线补发时关闭 `latest`，避免抢走最新版本的标记
+- 仅部署官网：`.github/workflows/deploy-website.yml` —— 手动触发，不依赖发版流程
 - Console 镜像：`coolfan1024/onlyboxes:<version>` 与 `coolfan1024/onlyboxes:latest`
 - 终端运行时镜像：`coolfan1024/onlyboxes-runtime:<version>-default`、`<version>-default-cn` 与 `<version>-lobehub`；稳定别名为 `default`、`default-cn`、`lobehub` 和 `latest`（等同于 `default`）
 - Console 二进制已内置前端静态资源

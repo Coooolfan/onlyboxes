@@ -1,0 +1,74 @@
+name: deploy-website
+run-name: Deploy website (${{ inputs.mode }}) from ${{ github.ref_name }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'production = deploy at 100% traffic; preview = upload a version without shifting traffic'
+        required: true
+        default: production
+        type: choice
+        options:
+          - production
+          - preview
+
+permissions:
+  contents: read
+
+# shared with the deploy-cloudflare job in package-release.yml so a release
+# deploy and a website-only deploy never race for production traffic
+concurrency:
+  group: deploy-onlyboxes-website
+  cancel-in-progress: false
+
+jobs:
+  deploy-website:
+    name: Build and deploy website
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./website
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Unit tests
+        run: yarn test
+
+      # build runs tsc -b, the SSR build and the prerender step
+      - name: Build website
+        run: yarn build
+
+      - name: Deploy to production (100% traffic)
+        if: inputs.mode == 'production'
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: "4"
+          workingDirectory: website
+          command: deploy
+
+      - name: Upload preview version (no traffic shift)
+        if: inputs.mode == 'preview'
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: "4"
+          workingDirectory: website
+          # version tag must stay short and free of '/', so the branch name goes in the message only
+          command: versions upload --tag preview-${{ github.run_number }} --message "Preview from ${{ github.ref_name }} (run ${{ github.run_number }})"

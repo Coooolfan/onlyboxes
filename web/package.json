@@ -10,7 +10,8 @@
     "test:unit": "vitest",
     "build-only": "vite build",
     "type-check": "vue-tsc --build",
-    "format": "oxfmt src/"
+    "format": "oxfmt src/",
+    "format:check": "oxfmt --check src/"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.2.2",

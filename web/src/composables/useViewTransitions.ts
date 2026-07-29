@@ -57,12 +57,24 @@ export function useViewTransitions(router: Router): void {
     // earns its keep.
     document.documentElement.classList.add('vt-owns-entrance')
 
+    // The sidebar item animates its own background over 200ms when it stops
+    // being active. That tween is still near its starting colour when the new
+    // snapshot is taken, which freezes a dark background into the item being
+    // left — it then reappears the moment the transition ends and the live DOM
+    // takes over. Freezing those tweens for the duration hands the hand-off
+    // entirely to the transition.
+    document.documentElement.classList.add('vt-running')
+
     return new Promise<void>((releaseNavigation) => {
-      ;(document as ViewTransitionDocument).startViewTransition!(() => {
+      const transition = (document as ViewTransitionDocument).startViewTransition!(() => {
         releaseNavigation()
         return new Promise<void>((done) => {
           finishTransition = done
         })
+      })
+
+      transition.finished.finally(() => {
+        document.documentElement.classList.remove('vt-running')
       })
     })
   })
@@ -81,5 +93,6 @@ export function useViewTransitions(router: Router): void {
   router.onError(() => {
     finishTransition?.()
     finishTransition = null
+    document.documentElement.classList.remove('vt-running')
   })
 }
