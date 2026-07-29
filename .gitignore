@@ -54,3 +54,7 @@ worker-credentials.json
 # service config files (may contain secrets)
 worker/*/config.toml
 console/config.toml
+
+# local dev orchestration (scripts/dev.sh)
+scripts/.dev/
+scripts/dev.env
