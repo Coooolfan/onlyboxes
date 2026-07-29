@@ -75,15 +75,31 @@ Requirements: Linux, systemd, Docker Engine, Docker Compose v2, Python 3.
 
 ### 2) Start the console service
 
-1. Download the `docker-compose.yml` file:
+1. Create a working directory and a `docker-compose.yml` file in it:
 
     ```bash
     mkdir -p onlyboxes-console && cd onlyboxes-console
-    wget https://raw.githubusercontent.com/Coooolfan/onlyboxes/refs/heads/main/docker/docker-compose.yml
-
     ```
 
-2. Edit `docker-compose.yml` and replace at least:
+    ```yaml
+    services:
+      console:
+        image: coolfan1024/onlyboxes:latest
+        container_name: onlyboxes-console
+        restart: unless-stopped
+        environment:
+          CONSOLE_HASH_KEY: "replace-with-long-random-key"
+          CONSOLE_ENABLE_REGISTRATION: "true"
+          CONSOLE_DASHBOARD_USERNAME: "admin"     # only for first run
+          CONSOLE_DASHBOARD_PASSWORD: "change-me" # only for first run
+        ports:
+          - "8089:8089"
+          - "50051:50051"
+        volumes:
+          - ./db:/app/db
+    ```
+
+2. Replace at least:
    - `CONSOLE_HASH_KEY`
    - `CONSOLE_DASHBOARD_PASSWORD`
 3. Start console:
