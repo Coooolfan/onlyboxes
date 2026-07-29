@@ -14,11 +14,12 @@ if [[ -f "$INSTALL_PY" ]]; then
   exec python3 "$INSTALL_PY" "$@"
 fi
 
-# Piped execution (e.g. curl | bash): download install.py from GitHub.
+# Piped execution (e.g. curl | bash): download install.py from the same origin
+# that served this script, so both halves come from one website deployment.
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR"' EXIT
 
-INSTALL_PY_URL="https://raw.githubusercontent.com/Coooolfan/onlyboxes/refs/heads/main/scripts/install.py"
+INSTALL_PY_URL="https://onlybox.es/install.py"
 echo "Downloading install.py ..."
 
 if command -v curl >/dev/null 2>&1; then
