@@ -423,6 +423,92 @@ func TestTerminalSessionJanitorAutomaticallyKillsExpiredSandbox(t *testing.T) {
 	}
 }
 
+func TestTerminalSessionRejectsExpiredIdleSessionBeforeJanitorCleanup(t *testing.T) {
+	t.Parallel()
+	backend := &fakeE2BBackend{}
+	manager := newTerminalSessionManager(terminalSessionManagerConfig{
+		Backend:            backend,
+		Template:           "terminal-template",
+		LeaseMinSec:        1,
+		LeaseMaxSec:        60,
+		LeaseDefaultSec:    10,
+		OutputLimitBytes:   1024,
+		SessionMaxInflight: 1,
+		JanitorInterval:    time.Hour,
+	})
+	defer manager.Close()
+
+	created, err := manager.Execute(context.Background(), terminalExecRequest{Command: "seed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.mu.Lock()
+	session := manager.sessions[created.SessionID]
+	session.desiredLeaseExpiresAt = time.Now().Add(-time.Second)
+	session.confirmedLeaseExpiresAt = session.desiredLeaseExpiresAt
+	manager.mu.Unlock()
+
+	if _, err := manager.Execute(context.Background(), terminalExecRequest{
+		Command:   "after-expiry",
+		SessionID: created.SessionID,
+	}); terminalErrorCode(err) != terminalExecCodeSessionNotFound {
+		t.Fatalf("expected session_not_found before janitor cleanup, got %v", err)
+	}
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	if backend.killed != 1 || len(backend.killedIDs) != 1 || backend.killedIDs[0] != "sandbox-1" {
+		t.Fatalf("expired sandbox was not cleaned up: killed=%d ids=%v", backend.killed, backend.killedIDs)
+	}
+}
+
+func TestTerminalSessionReplacesExpiredIdleSessionWhenRequested(t *testing.T) {
+	t.Parallel()
+	backend := &fakeE2BBackend{}
+	manager := newTerminalSessionManager(terminalSessionManagerConfig{
+		Backend:            backend,
+		Template:           "terminal-template",
+		LeaseMinSec:        1,
+		LeaseMaxSec:        60,
+		LeaseDefaultSec:    10,
+		OutputLimitBytes:   1024,
+		SessionMaxInflight: 1,
+		JanitorInterval:    time.Hour,
+	})
+	defer manager.Close()
+
+	created, err := manager.Execute(context.Background(), terminalExecRequest{Command: "seed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.mu.Lock()
+	session := manager.sessions[created.SessionID]
+	session.desiredLeaseExpiresAt = time.Now().Add(-time.Second)
+	session.confirmedLeaseExpiresAt = session.desiredLeaseExpiresAt
+	manager.mu.Unlock()
+
+	replacement, err := manager.Execute(context.Background(), terminalExecRequest{
+		Command:         "after-expiry",
+		SessionID:       created.SessionID,
+		CreateIfMissing: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !replacement.Created || replacement.SessionID != created.SessionID {
+		t.Fatalf("unexpected replacement result: %#v", replacement)
+	}
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	if backend.created != 2 || backend.killed != 1 || len(backend.killedIDs) != 1 || backend.killedIDs[0] != "sandbox-1" {
+		t.Fatalf(
+			"expired sandbox was not replaced: created=%d killed=%d ids=%v",
+			backend.created,
+			backend.killed,
+			backend.killedIDs,
+		)
+	}
+}
+
 func TestTerminalManagerCloseWaitsForSandboxCreation(t *testing.T) {
 	t.Parallel()
 	createStarted := make(chan struct{})

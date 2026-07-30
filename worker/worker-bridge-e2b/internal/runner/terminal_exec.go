@@ -281,28 +281,48 @@ func (m *terminalSessionManager) resolveLeaseDuration(value *int) (time.Duration
 
 func (m *terminalSessionManager) claimSession(sessionID string, leaseTarget time.Time, createIfMissing bool) (*terminalSession, bool, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if m.closed {
+		m.mu.Unlock()
 		return nil, false, newTerminalExecError("execution_failed", terminalExecNotReadyMessage)
 	}
 	if sessionID == "" {
-		return m.newSessionLocked(uuid.NewString(), leaseTarget), true, nil
+		session := m.newSessionLocked(uuid.NewString(), leaseTarget)
+		m.mu.Unlock()
+		return session, true, nil
 	}
 	if existing, ok := m.sessions[sessionID]; ok && existing != nil && !existing.destroying {
+		if existing.inflight == 0 && !existing.confirmedLeaseExpiresAt.After(time.Now()) {
+			delete(m.sessions, sessionID)
+			expiredSandbox := existing.sandbox
+			if !createIfMissing {
+				m.mu.Unlock()
+				m.killSandbox(expiredSandbox)
+				return nil, false, newTerminalExecError(terminalExecCodeSessionNotFound, terminalExecNoSessionMessage)
+			}
+			session := m.newSessionLocked(sessionID, leaseTarget)
+			m.mu.Unlock()
+			m.killSandbox(expiredSandbox)
+			return session, true, nil
+		}
 		if existing.inflight >= m.sessionMaxInflight {
+			m.mu.Unlock()
 			return nil, false, newTerminalExecError(terminalExecCodeSessionBusy, terminalExecBusyMessage)
 		}
 		existing.inflight++
 		if existing.desiredLeaseExpiresAt.Before(leaseTarget) {
 			existing.desiredLeaseExpiresAt = leaseTarget
 		}
+		m.mu.Unlock()
 		return existing, false, nil
 	}
 	existing, exists := m.sessions[sessionID]
 	if !createIfMissing || (exists && existing != nil && existing.destroying) {
+		m.mu.Unlock()
 		return nil, false, newTerminalExecError(terminalExecCodeSessionNotFound, terminalExecNoSessionMessage)
 	}
-	return m.newSessionLocked(sessionID, leaseTarget), true, nil
+	session := m.newSessionLocked(sessionID, leaseTarget)
+	m.mu.Unlock()
+	return session, true, nil
 }
 
 func (m *terminalSessionManager) newSessionLocked(sessionID string, leaseTarget time.Time) *terminalSession {
