@@ -104,6 +104,7 @@ func newTestTerminalManager(backend e2bBackend, maxInflight int) *terminalSessio
 		LeaseMaxSec:        60,
 		LeaseDefaultSec:    10,
 		OutputLimitBytes:   1024,
+		ExportMode:         terminalExportModeWorker,
 		SessionMaxInflight: maxInflight,
 	})
 }

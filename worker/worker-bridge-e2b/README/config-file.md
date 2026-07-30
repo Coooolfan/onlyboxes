@@ -73,11 +73,11 @@ owner = "team-a"
 | --- | --- | --- | --- |
 | `WORKER_TERMINAL_LEASE_MIN_SEC` | `terminal_lease_min_sec` | `60` | 正整数；请求可指定的最短 lease |
 | `WORKER_TERMINAL_LEASE_MAX_SEC` | `terminal_lease_max_sec` | `1800` | 正整数；小于最小值时自动提高到最小值 |
-| `WORKER_TERMINAL_LEASE_DEFAULT_SEC` | `terminal_lease_default_sec` | `60` | 正整数；自动限制在最小值与最大值之间 |
+| `WORKER_TERMINAL_LEASE_DEFAULT_SEC` | `terminal_lease_default_sec` | `300` | 正整数；自动限制在最小值与最大值之间 |
 | `WORKER_TERMINAL_OUTPUT_LIMIT_BYTES` | `terminal_output_limit_bytes` | `1048576` | 正整数；分别限制 stdout、stderr 和 `terminalResource.read` |
 | `WORKER_TERMINAL_EXPORT_MAX_BYTES` | `terminal_export_max_bytes` | `0` | 非负整数；`0` 表示不限制导出大小 |
-| `WORKER_TERMINAL_EXPORT_MODE` | `terminal_export_mode` | `worker` | `worker`：文件流经 worker；`sandbox`：E2B 沙箱使用 `python3` 直接上传 |
-| `WORKER_TERMINAL_SESSION_MAX_INFLIGHT` | `terminal_session_max_inflight` | `1` | 正整数；同一 session 内 `terminalExec` 与 `terminalResource` 共享的并发上限 |
+| `WORKER_TERMINAL_EXPORT_MODE` | `terminal_export_mode` | `sandbox` | `worker`：文件流经 worker；`sandbox`：E2B 沙箱使用 `python3` 直接上传 |
+| `WORKER_TERMINAL_SESSION_MAX_INFLIGHT` | `terminal_session_max_inflight` | `128` | 正整数；同一 session 内 `terminalExec` 与 `terminalResource` 共享的并发上限 |
 
 ## 能力并发
 
@@ -85,10 +85,10 @@ owner = "team-a"
 
 | 环境变量 | `config.toml` 键 | 默认值 | 约束 |
 | --- | --- | --- | --- |
-| `WORKER_ECHO_MAX_INFLIGHT` | `echo_max_inflight` | `4` | 正整数 |
-| `WORKER_PYTHON_EXEC_MAX_INFLIGHT` | `python_exec_max_inflight` | `4` | 正整数 |
-| `WORKER_TERMINAL_EXEC_MAX_INFLIGHT` | `terminal_exec_max_inflight` | `4` | 正整数 |
-| `WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT` | `terminal_resource_max_inflight` | `4` | 正整数 |
+| `WORKER_ECHO_MAX_INFLIGHT` | `echo_max_inflight` | `128` | 正整数 |
+| `WORKER_PYTHON_EXEC_MAX_INFLIGHT` | `python_exec_max_inflight` | `32` | 正整数 |
+| `WORKER_TERMINAL_EXEC_MAX_INFLIGHT` | `terminal_exec_max_inflight` | `64` | 正整数 |
+| `WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT` | `terminal_resource_max_inflight` | `128` | 正整数 |
 
 ## 日志
 
@@ -98,6 +98,6 @@ owner = "team-a"
 | `WORKER_LOG_FORMAT` | `log_format` | `json` | `json`、`text` |
 | `WORKER_LOG_ADD_SOURCE` | `log_add_source` | `false` | 是否记录源码位置；布尔值接受 `1/0`、`true/false`、`yes/no`、`on/off` |
 
-正整数、百分比、枚举或布尔值无效时使用该项默认值。`WORKER_TERMINAL_EXPORT_MAX_BYTES` 的负数也会回退为 `0`；无效的 `WORKER_TERMINAL_EXPORT_MODE` 回退为 `worker`。
+正整数、百分比、枚举或布尔值无效时使用该项默认值。`WORKER_TERMINAL_EXPORT_MAX_BYTES` 的负数也会回退为 `0`；无效的 `WORKER_TERMINAL_EXPORT_MODE` 回退为 `sandbox`。
 
 配置文件中包含 worker secret 或 E2B API Key 时，应设置为仅运行用户可读，并且不要提交到版本库。可复制根目录的 [`config.example.toml`](../config.example.toml) 作为起点。

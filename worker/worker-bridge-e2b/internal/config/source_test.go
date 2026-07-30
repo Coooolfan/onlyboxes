@@ -75,16 +75,42 @@ description = "gpu,shared"
 	}
 }
 
-func TestTerminalExportModeDefaultsToWorker(t *testing.T) {
+func TestCloudDefaultsAndTerminalExportMode(t *testing.T) {
 	writeConfigFile(t, `terminal_export_mode = "invalid"`)
 
-	if got := Load().TerminalExportMode; got != defaultTerminalExportMode {
+	cfg := Load()
+	if got := cfg.TerminalExportMode; got != defaultTerminalExportMode {
 		t.Fatalf("expected default terminal export mode %q, got %q", defaultTerminalExportMode, got)
 	}
+	if got := cfg.TerminalSessionMaxInflight; got != defaultTerminalSessionInflight {
+		t.Fatalf("expected default terminal session max inflight %d, got %d", defaultTerminalSessionInflight, got)
+	}
+	if cfg.TerminalLeaseMaxSec != defaultTerminalLeaseMax ||
+		cfg.TerminalLeaseDefaultSec != defaultTerminalLeaseTTL ||
+		cfg.TerminalOutputLimitBytes != defaultTerminalOutputMax {
+		t.Fatalf(
+			"unexpected terminal defaults: max_lease=%d default_lease=%d output_limit=%d",
+			cfg.TerminalLeaseMaxSec,
+			cfg.TerminalLeaseDefaultSec,
+			cfg.TerminalOutputLimitBytes,
+		)
+	}
+	if cfg.EchoMaxInflight != defaultEchoMaxInflight ||
+		cfg.PythonExecMaxInflight != defaultPythonExecMaxInflight ||
+		cfg.TerminalExecMaxInflight != defaultTerminalExecMaxInflight ||
+		cfg.TerminalResourceMaxInflight != defaultResourceMaxInflight {
+		t.Fatalf(
+			"unexpected capability defaults: echo=%d python=%d terminal=%d resource=%d",
+			cfg.EchoMaxInflight,
+			cfg.PythonExecMaxInflight,
+			cfg.TerminalExecMaxInflight,
+			cfg.TerminalResourceMaxInflight,
+		)
+	}
 
-	t.Setenv("WORKER_TERMINAL_EXPORT_MODE", "SANDBOX")
-	if got := Load().TerminalExportMode; got != "sandbox" {
-		t.Fatalf("expected case-insensitive sandbox mode, got %q", got)
+	t.Setenv("WORKER_TERMINAL_EXPORT_MODE", "WORKER")
+	if got := Load().TerminalExportMode; got != "worker" {
+		t.Fatalf("expected case-insensitive worker mode, got %q", got)
 	}
 }
 

@@ -18,13 +18,16 @@ const (
 	defaultE2BPythonTimeout        = 300
 	defaultTerminalLeaseMin        = 60
 	defaultTerminalLeaseMax        = 1800
-	defaultTerminalLeaseTTL        = 60
+	defaultTerminalLeaseTTL        = 300
 	defaultTerminalOutputMax       = 1024 * 1024
-	defaultTerminalExportMode      = "worker"
-	defaultTerminalSessionInflight = 1
+	defaultTerminalExportMode      = "sandbox"
+	defaultTerminalSessionInflight = 128
 	defaultLogLevel                = "info"
 	defaultLogFormat               = "json"
-	defaultMaxInflight             = 4
+	defaultEchoMaxInflight         = 128
+	defaultPythonExecMaxInflight   = 32
+	defaultTerminalExecMaxInflight = 64
+	defaultResourceMaxInflight     = 128
 )
 
 type Config struct {
@@ -118,10 +121,10 @@ func Load() Config {
 		TerminalExportMaxBytes:      src.nonNegativeInt("WORKER_TERMINAL_EXPORT_MAX_BYTES", 0),
 		TerminalExportMode:          src.terminalExportMode("WORKER_TERMINAL_EXPORT_MODE", defaultTerminalExportMode),
 		TerminalSessionMaxInflight:  src.positiveInt("WORKER_TERMINAL_SESSION_MAX_INFLIGHT", defaultTerminalSessionInflight),
-		EchoMaxInflight:             src.positiveInt("WORKER_ECHO_MAX_INFLIGHT", defaultMaxInflight),
-		PythonExecMaxInflight:       src.positiveInt("WORKER_PYTHON_EXEC_MAX_INFLIGHT", defaultMaxInflight),
-		TerminalExecMaxInflight:     src.positiveInt("WORKER_TERMINAL_EXEC_MAX_INFLIGHT", defaultMaxInflight),
-		TerminalResourceMaxInflight: src.positiveInt("WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT", defaultMaxInflight),
+		EchoMaxInflight:             src.positiveInt("WORKER_ECHO_MAX_INFLIGHT", defaultEchoMaxInflight),
+		PythonExecMaxInflight:       src.positiveInt("WORKER_PYTHON_EXEC_MAX_INFLIGHT", defaultPythonExecMaxInflight),
+		TerminalExecMaxInflight:     src.positiveInt("WORKER_TERMINAL_EXEC_MAX_INFLIGHT", defaultTerminalExecMaxInflight),
+		TerminalResourceMaxInflight: src.positiveInt("WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT", defaultResourceMaxInflight),
 		LogLevel:                    src.logLevel("WORKER_LOG_LEVEL", defaultLogLevel),
 		LogFormat:                   src.logFormat("WORKER_LOG_FORMAT", defaultLogFormat),
 		LogAddSource:                src.boolValue("WORKER_LOG_ADD_SOURCE", false),

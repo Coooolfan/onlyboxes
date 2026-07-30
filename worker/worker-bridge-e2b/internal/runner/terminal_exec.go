@@ -21,7 +21,11 @@ const (
 	terminalExecNoSessionMessage      = "session not found"
 	terminalExecBusyMessage           = "session is busy"
 	terminalExecNotReadyMessage       = "terminal executor is unavailable"
-	defaultTerminalSessionMaxInflight = 1
+	defaultTerminalLeaseMinSec        = 60
+	defaultTerminalLeaseMaxSec        = 1800
+	defaultTerminalLeaseSec           = 300
+	defaultTerminalOutputLimitBytes   = 1024 * 1024
+	defaultTerminalSessionMaxInflight = 128
 )
 
 const (
@@ -126,22 +130,23 @@ type terminalSessionManager struct {
 func newTerminalSessionManager(cfg terminalSessionManagerConfig) *terminalSessionManager {
 	leaseMin := cfg.LeaseMinSec
 	if leaseMin <= 0 {
-		leaseMin = 60
+		leaseMin = defaultTerminalLeaseMinSec
 	}
 	leaseMax := cfg.LeaseMaxSec
+	if leaseMax <= 0 {
+		leaseMax = defaultTerminalLeaseMaxSec
+	}
 	if leaseMax < leaseMin {
 		leaseMax = leaseMin
 	}
 	leaseDefault := cfg.LeaseDefaultSec
-	if leaseDefault < leaseMin {
-		leaseDefault = leaseMin
+	if leaseDefault <= 0 {
+		leaseDefault = defaultTerminalLeaseSec
 	}
-	if leaseDefault > leaseMax {
-		leaseDefault = leaseMax
-	}
+	leaseDefault = clampTerminalValue(leaseDefault, leaseMin, leaseMax)
 	outputLimit := cfg.OutputLimitBytes
 	if outputLimit <= 0 {
-		outputLimit = 1024 * 1024
+		outputLimit = defaultTerminalOutputLimitBytes
 	}
 	maxInflight := cfg.SessionMaxInflight
 	if maxInflight <= 0 {
@@ -168,6 +173,16 @@ func newTerminalSessionManager(cfg terminalSessionManagerConfig) *terminalSessio
 	}
 	go manager.janitorLoop()
 	return manager
+}
+
+func clampTerminalValue(value, minValue, maxValue int) int {
+	if value < minValue {
+		return minValue
+	}
+	if value > maxValue {
+		return maxValue
+	}
+	return value
 }
 
 func (m *terminalSessionManager) ActiveSessionCount() int32 {

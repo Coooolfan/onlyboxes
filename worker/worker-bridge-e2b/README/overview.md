@@ -139,8 +139,8 @@ worker 在 hello 中声明以下四项能力：
 - `read` 返回 `blob`；JSON 编码后表现为 base64。
 - `read` 大小上限为 `WORKER_TERMINAL_OUTPUT_LIMIT_BYTES`。
 - `export` 通过 HTTP `PUT` 上传到 console 提供的预签名 URL。
-- `WORKER_TERMINAL_EXPORT_MODE=worker` 时，worker 从 E2B 流式下载并转发文件；这是默认模式。
-- `WORKER_TERMINAL_EXPORT_MODE=sandbox` 时，终端模板中的 `python3` 直接从 E2B 沙箱上传，文件内容不经过 worker。
+- `WORKER_TERMINAL_EXPORT_MODE=sandbox` 时，终端模板中的 `python3` 直接从 E2B 沙箱上传，文件内容不经过 worker；这是默认模式。
+- `WORKER_TERMINAL_EXPORT_MODE=worker` 时，worker 从 E2B 流式下载并转发文件。
 - `WORKER_TERMINAL_EXPORT_MAX_BYTES=0` 表示不限制导出大小。
 - 终端模板必须提供 `python3`，用于安全地探测文件类型、大小和目录状态，并在 `sandbox` 导出模式下执行流式上传。
 

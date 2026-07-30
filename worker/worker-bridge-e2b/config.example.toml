@@ -29,18 +29,18 @@ e2b_python_timeout_sec = 300
 
 terminal_lease_min_sec = 60
 terminal_lease_max_sec = 1800
-terminal_lease_default_sec = 60
+terminal_lease_default_sec = 300
 terminal_output_limit_bytes = 1048576
 # 0 means no export size limit.
 terminal_export_max_bytes = 0
 # worker streams files through this process; sandbox uploads directly from E2B.
-terminal_export_mode = "worker"
-terminal_session_max_inflight = 1
+terminal_export_mode = "sandbox"
+terminal_session_max_inflight = 128
 
-echo_max_inflight = 4
-python_exec_max_inflight = 4
-terminal_exec_max_inflight = 4
-terminal_resource_max_inflight = 4
+echo_max_inflight = 128
+python_exec_max_inflight = 32
+terminal_exec_max_inflight = 64
+terminal_resource_max_inflight = 128
 
 log_level = "info"
 log_format = "json"

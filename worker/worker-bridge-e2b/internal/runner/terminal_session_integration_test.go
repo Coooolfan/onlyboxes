@@ -283,6 +283,7 @@ func newLiveTerminalManager(backend e2bBackend, template string, maxInflight int
 		LeaseDefaultSec:    60,
 		OutputLimitBytes:   1024 * 1024,
 		ExportMaxBytes:     1024 * 1024,
+		ExportMode:         terminalExportModeWorker,
 		SessionMaxInflight: maxInflight,
 	})
 }

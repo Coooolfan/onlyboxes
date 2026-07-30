@@ -311,10 +311,10 @@ func buildSandboxExportCommand(filePath, signedURL string, headers map[string]st
 }
 
 func normalizeTerminalExportMode(mode string) string {
-	if strings.EqualFold(strings.TrimSpace(mode), terminalExportModeSandbox) {
-		return terminalExportModeSandbox
+	if strings.EqualFold(strings.TrimSpace(mode), terminalExportModeWorker) {
+		return terminalExportModeWorker
 	}
-	return terminalExportModeWorker
+	return terminalExportModeSandbox
 }
 
 func normalizeTerminalResourceAction(action string) string {
