@@ -37,7 +37,7 @@ For admin users, OnlyBoxes additionally provides:
 | --- | --- |
 | Deployment | No external dependencies, control plane and execution plane can be deployed independently |
 | Scalability | Multiple heterogeneous workers can be added horizontally |
-| Runtime model | Docker, boxlite, and OS-process based execution backends |
+| Runtime model | Docker, boxlite, E2B, and OS-process based execution backends |
 | Interfaces | REST API, MCP endpoint |
 | Management | Dashboard, Open API |
 
@@ -47,6 +47,7 @@ For admin users, OnlyBoxes additionally provides:
 - `worker-*`: execution nodes, responsible for task execution.
   - `worker-docker`: a worker implementation backed by Docker containers.
   - `worker-boxlite`: a worker implementation backed by boxlite.
+  - `worker-bridge-e2b`: a worker implementation backed by remote E2B sandboxes.
   - `worker-sys`: a worker implementation backed by host OS processes for direct device control scenarios.
 
 ## Typical usage

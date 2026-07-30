@@ -38,6 +38,7 @@ worker 负责真正的执行环境。worker 会通过 gRPC 连接控制节点，
 | --- | --- | --- | --- |
 | `worker-docker` | runc | Docker 容器 | 通用代码沙箱执行 |
 | `worker-boxlite` | KVM | [boxlite](https://boxlite.ai/) | 特定运行时后端 |
+| `worker-bridge-e2b` | E2B | 远程 E2B 沙箱 | 托管式远程沙箱执行 |
 | `worker-sys` | - | 宿主机进程 | 真实设备或直接主机控制 |
 
 ## 推荐部署方式

@@ -50,6 +50,7 @@ describe('docs routing', () => {
       'quick-start',
       'worker-docker',
       'worker-boxlite',
+      'worker-bridge-e2b',
       'worker-sys',
       'console-api',
       'mcp-tools',

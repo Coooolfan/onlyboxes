@@ -37,7 +37,7 @@ OnlyBoxes 是一个面向个人与小型团队的自托管代码执行沙箱平�
 | --- | --- |
 | 部署形态 | 无外部依赖，控制面与执行面可独立部署 |
 | 扩展方式 | 支持横向增加多个异构 worker |
-| 运行时模型 | Docker、boxlite、操作系统进程 |
+| 运行时模型 | Docker、boxlite、E2B、操作系统进程 |
 | 接口形式 | REST API、MCP endpoint |
 | 管理能力 | Dashboard、Open API |
 
@@ -47,6 +47,7 @@ OnlyBoxes 是一个面向个人与小型团队的自托管代码执行沙箱平�
 - `worker-*`：执行节点，负责具体任务执行。
   - `worker-docker`：基于 Docker 容器的 worker 实现。
   - `worker-boxlite`：基于 boxlite 的 worker 实现。
+  - `worker-bridge-e2b`：基于远程 E2B 沙箱的 worker 实现。
   - `worker-sys`：基于宿主机进程的 worker 实现，适合真实设备或主机控制场景。
 
 ## 典型使用流程
