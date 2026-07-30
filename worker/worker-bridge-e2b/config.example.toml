@@ -1,0 +1,49 @@
+# worker-bridge-e2b configuration.
+# Copy to config.toml next to the binary, or set WORKER_CONFIG_FILE.
+# Environment variables override values in this file.
+
+# Identity returned by console when creating a worker.
+id = ""
+secret = ""
+
+# Console connection. Keep TLS enabled outside trusted local development.
+console_grpc_target = "127.0.0.1:50051"
+console_insecure = false
+node_name = ""
+
+heartbeat_interval_sec = 5
+heartbeat_jitter_pct = 20
+# Defaults to ceil(2.5 * heartbeat_interval_sec).
+# call_timeout_sec = 13
+
+# E2B credentials and templates. Both templates are required.
+e2b_api_key = ""
+e2b_api_url = "https://api.e2b.app"
+e2b_domain = "e2b.app"
+e2b_python_template = ""
+e2b_terminal_template = ""
+e2b_request_timeout_sec = 60
+e2b_python_timeout_sec = 300
+# Optional override for self-hosted E2B or integration tests.
+# e2b_sandbox_url = "https://sandbox.e2b.app"
+
+terminal_lease_min_sec = 60
+terminal_lease_max_sec = 1800
+terminal_lease_default_sec = 60
+terminal_output_limit_bytes = 1048576
+# 0 means no export size limit.
+terminal_export_max_bytes = 0
+terminal_session_max_inflight = 1
+
+echo_max_inflight = 4
+python_exec_max_inflight = 4
+terminal_exec_max_inflight = 4
+terminal_resource_max_inflight = 4
+
+log_level = "info"
+log_format = "json"
+log_add_source = false
+
+[labels]
+# region = "cn"
+# owner = "team-a"
