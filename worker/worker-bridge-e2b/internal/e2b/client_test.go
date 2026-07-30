@@ -21,7 +21,7 @@ type processTestHandler struct {
 	t *testing.T
 }
 
-func TestRequestTimeoutAppliesOnlyToControlAPI(t *testing.T) {
+func TestRequestTimeoutBoundsEnvdSetupWithoutBoundingStreams(t *testing.T) {
 	t.Parallel()
 	client, err := NewClient(Config{
 		APIKey:         "test-key",
@@ -35,6 +35,18 @@ func TestRequestTimeoutAppliesOnlyToControlAPI(t *testing.T) {
 	}
 	if client.sandboxHTTP.Timeout != 0 {
 		t.Fatalf("envd must use the command context deadline, got client timeout %s", client.sandboxHTTP.Timeout)
+	}
+	transport, ok := client.sandboxHTTP.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("unexpected envd transport %T", client.sandboxHTTP.Transport)
+	}
+	if transport.TLSHandshakeTimeout != 250*time.Millisecond ||
+		transport.ResponseHeaderTimeout != 250*time.Millisecond {
+		t.Fatalf(
+			"unexpected envd setup timeouts: tls=%s response_headers=%s",
+			transport.TLSHandshakeTimeout,
+			transport.ResponseHeaderTimeout,
+		)
 	}
 }
 
@@ -183,6 +195,63 @@ func TestReadFileUsesSandboxRoutingHeadersAndLimit(t *testing.T) {
 	_, err = client.ReadFile(context.Background(), sandbox, "/tmp/a b.txt", 4)
 	if err == nil || !strings.Contains(err.Error(), ErrFileTooLarge.Error()) {
 		t.Fatalf("expected file-too-large error, got %v", err)
+	}
+}
+
+func TestEnvdResponseHeaderTimeout(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(150 * time.Millisecond)
+		_, _ = io.WriteString(w, "late")
+	}))
+	defer server.Close()
+	client, err := NewClient(Config{
+		APIKey:         "test-key",
+		SandboxURL:     server.URL,
+		RequestTimeout: 30 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	startedAt := time.Now()
+	_, err = client.ReadFile(ctx, &Sandbox{ID: "slow-headers"}, "/tmp/file", 1024)
+	if err == nil {
+		t.Fatal("expected envd response-header timeout")
+	}
+	if elapsed := time.Since(startedAt); elapsed > 120*time.Millisecond {
+		t.Fatalf("envd response-header timeout took too long: %s", elapsed)
+	}
+}
+
+func TestEnvdStreamCanOutliveResponseHeaderTimeout(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.Header().Set("Content-Length", "5")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		time.Sleep(100 * time.Millisecond)
+		_, _ = io.WriteString(w, "hello")
+	}))
+	defer server.Close()
+	client, err := NewClient(Config{
+		APIKey:         "test-key",
+		SandboxURL:     server.URL,
+		RequestTimeout: 30 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	file, err := client.ReadFile(ctx, &Sandbox{ID: "slow-body"}, "/tmp/file", 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(file.Content) != "hello" {
+		t.Fatalf("unexpected streamed content %q", file.Content)
 	}
 }
 

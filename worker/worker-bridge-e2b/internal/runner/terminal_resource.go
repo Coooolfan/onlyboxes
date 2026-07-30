@@ -25,6 +25,7 @@ const (
 	terminalResourceCodeFileNotFound   = "file_not_found"
 	terminalResourceCodePathIsDir      = "path_is_directory"
 	terminalResourceCodeFileTooLarge   = "file_too_large"
+	terminalExportLimitMarker          = "ONLYBOXES_EXPORT_FILE_TOO_LARGE"
 )
 
 const sandboxExportScript = `import base64
@@ -44,12 +45,35 @@ target = url.path or "/"
 if url.query:
     target += "?" + url.query
 headers = dict(config.get("headers") or {})
-headers["Content-Length"] = str(os.path.getsize(file_path))
+max_bytes = int(config.get("max_bytes") or 0)
+size = os.path.getsize(file_path)
+if max_bytes > 0 and size > max_bytes:
+    raise RuntimeError("ONLYBOXES_EXPORT_FILE_TOO_LARGE")
+headers["Content-Length"] = str(size)
 connection_type = http.client.HTTPSConnection if url.scheme == "https" else http.client.HTTPConnection
 connection = connection_type(url.hostname, url.port)
+
+class LimitedReader:
+    def __init__(self, source, limit):
+        self.source = source
+        self.remaining = limit
+
+    def read(self, size=-1):
+        if self.remaining == 0:
+            if self.source.read(1):
+                raise RuntimeError("ONLYBOXES_EXPORT_FILE_TOO_LARGE")
+            return b""
+        if self.remaining > 0 and (size < 0 or size > self.remaining):
+            size = self.remaining
+        chunk = self.source.read(size)
+        if self.remaining > 0:
+            self.remaining -= len(chunk)
+        return chunk
+
 try:
     with open(file_path, "rb") as source:
-        connection.request("PUT", target, body=source, headers=headers)
+        body = LimitedReader(source, max_bytes) if max_bytes > 0 else source
+        connection.request("PUT", target, body=body, headers=headers)
         response = connection.getresponse()
         response.read(1024)
         if response.status < 200 or response.status >= 300:
@@ -112,6 +136,18 @@ func (m *terminalSessionManager) ResolveResource(ctx context.Context, req termin
 	}
 	if err := m.awaitSessionReady(ctx, session, false); err != nil {
 		return terminalResourceRunResult{}, err
+	}
+	if err := m.syncSandboxTimeout(ctx, session); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			m.releaseAndDestroySession(sessionID)
+			return terminalResourceRunResult{}, err
+		}
+		if errors.Is(err, e2b.ErrSandboxNotFound) {
+			m.releaseAndDestroySession(sessionID)
+			return terminalResourceRunResult{}, newTerminalExecError(terminalExecCodeSessionNotFound, terminalExecNoSessionMessage)
+		}
+		m.releaseSession(sessionID)
+		return terminalResourceRunResult{}, fmt.Errorf("extend E2B sandbox timeout: %w", err)
 	}
 	result, err := m.resolveResource(ctx, session, filePath, action, req.SignedURL, req.Headers)
 	if err != nil {
@@ -237,7 +273,14 @@ func (m *terminalSessionManager) exportResourceThroughWorker(
 	if m.exportMaxBytes > 0 && source.Size > int64(m.exportMaxBytes) {
 		return newTerminalExecError(terminalResourceCodeFileTooLarge, "file exceeds export limit")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, signedURL, source.Body)
+	var uploadBody io.Reader = source.Body
+	if m.exportMaxBytes > 0 {
+		uploadBody = &exportLimitReader{
+			source:    source.Body,
+			remaining: int64(m.exportMaxBytes),
+		}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, signedURL, uploadBody)
 	if err != nil {
 		return fmt.Errorf("build export request: %w", err)
 	}
@@ -251,6 +294,9 @@ func (m *terminalSessionManager) exportResourceThroughWorker(
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
+		if errors.Is(err, errTerminalExportTooLarge) {
+			return newTerminalExecError(terminalResourceCodeFileTooLarge, "file exceeds export limit")
+		}
 		return fmt.Errorf("upload export file: %w", err)
 	}
 	defer resp.Body.Close()
@@ -271,7 +317,7 @@ func (m *terminalSessionManager) exportResourceFromSandbox(
 	filePath, signedURL string,
 	headers map[string]string,
 ) error {
-	command, err := buildSandboxExportCommand(filePath, signedURL, headers)
+	command, err := buildSandboxExportCommand(filePath, signedURL, headers, m.exportMaxBytes)
 	if err != nil {
 		return err
 	}
@@ -287,20 +333,25 @@ func (m *terminalSessionManager) exportResourceFromSandbox(
 		if message == "" {
 			message = "upload command failed"
 		}
+		if strings.Contains(message, terminalExportLimitMarker) {
+			return newTerminalExecError(terminalResourceCodeFileTooLarge, "file exceeds export limit")
+		}
 		return fmt.Errorf("sandbox export failed: exit_code=%d: %s", output.ExitCode, message)
 	}
 	return nil
 }
 
-func buildSandboxExportCommand(filePath, signedURL string, headers map[string]string) (string, error) {
+func buildSandboxExportCommand(filePath, signedURL string, headers map[string]string, maxBytes int) (string, error) {
 	payload, err := json.Marshal(struct {
 		FilePath  string            `json:"file_path"`
 		SignedURL string            `json:"signed_url"`
 		Headers   map[string]string `json:"headers,omitempty"`
+		MaxBytes  int               `json:"max_bytes,omitempty"`
 	}{
 		FilePath:  filePath,
 		SignedURL: signedURL,
 		Headers:   headers,
+		MaxBytes:  maxBytes,
 	})
 	if err != nil {
 		return "", fmt.Errorf("encode sandbox export request: %w", err)
@@ -308,6 +359,33 @@ func buildSandboxExportCommand(filePath, signedURL string, headers map[string]st
 	encodedScript := base64.StdEncoding.EncodeToString([]byte(sandboxExportScript))
 	encodedPayload := base64.StdEncoding.EncodeToString(payload)
 	return "python3 -c 'exec(__import__(\"base64\").b64decode(\"" + encodedScript + "\"))' " + encodedPayload, nil
+}
+
+var errTerminalExportTooLarge = errors.New("terminal export exceeds configured limit")
+
+type exportLimitReader struct {
+	source    io.Reader
+	remaining int64
+}
+
+func (r *exportLimitReader) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if r.remaining > 0 {
+		if int64(len(p)) > r.remaining {
+			p = p[:r.remaining]
+		}
+		n, err := r.source.Read(p)
+		r.remaining -= int64(n)
+		return n, err
+	}
+	var probe [1]byte
+	n, err := r.source.Read(probe[:])
+	if n > 0 {
+		return 0, errTerminalExportTooLarge
+	}
+	return 0, err
 }
 
 func normalizeTerminalExportMode(mode string) string {

@@ -109,9 +109,12 @@ func Run(ctx context.Context, cfg config.Config) error {
 			return err
 		}
 
-		err := runSession(ctx, cfg)
+		connected, err := runSessionWithStatus(ctx, cfg)
 		if err == nil {
 			return nil
+		}
+		if connected {
+			reconnectDelay = initialReconnectDelay
 		}
 
 		if errCtx := ctx.Err(); errCtx != nil {

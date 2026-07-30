@@ -87,6 +87,7 @@ type terminalSession struct {
 	sandbox                 *e2b.Sandbox
 	desiredLeaseExpiresAt   time.Time
 	confirmedLeaseExpiresAt time.Time
+	remoteTimeoutExpiresAt  time.Time
 	leaseSyncMu             sync.Mutex
 	inflight                int
 	destroying              bool
@@ -112,6 +113,8 @@ type terminalSessionManagerConfig struct {
 type terminalSessionManager struct {
 	mu       sync.Mutex
 	sessions map[string]*terminalSession
+	closed   bool
+	createWG sync.WaitGroup
 
 	backend            e2bBackend
 	template           string
@@ -279,6 +282,9 @@ func (m *terminalSessionManager) resolveLeaseDuration(value *int) (time.Duration
 func (m *terminalSessionManager) claimSession(sessionID string, leaseTarget time.Time, createIfMissing bool) (*terminalSession, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.closed {
+		return nil, false, newTerminalExecError("execution_failed", terminalExecNotReadyMessage)
+	}
 	if sessionID == "" {
 		return m.newSessionLocked(uuid.NewString(), leaseTarget), true, nil
 	}
@@ -300,6 +306,7 @@ func (m *terminalSessionManager) claimSession(sessionID string, leaseTarget time
 }
 
 func (m *terminalSessionManager) newSessionLocked(sessionID string, leaseTarget time.Time) *terminalSession {
+	m.createWG.Add(1)
 	session := &terminalSession{
 		sessionID:             sessionID,
 		desiredLeaseExpiresAt: leaseTarget,
@@ -312,6 +319,7 @@ func (m *terminalSessionManager) newSessionLocked(sessionID string, leaseTarget 
 
 func (m *terminalSessionManager) awaitSessionReady(ctx context.Context, session *terminalSession, created bool) error {
 	if created {
+		defer m.createWG.Done()
 		m.mu.Lock()
 		leaseExpiresAt := session.desiredLeaseExpiresAt
 		m.mu.Unlock()
@@ -322,6 +330,7 @@ func (m *terminalSessionManager) awaitSessionReady(ctx context.Context, session 
 		session.initErr = err
 		if err == nil {
 			session.confirmedLeaseExpiresAt = leaseExpiresAt
+			session.remoteTimeoutExpiresAt = leaseExpiresAt
 		}
 		m.mu.Unlock()
 		close(session.ready)
@@ -349,22 +358,33 @@ func (m *terminalSessionManager) syncSandboxTimeout(ctx context.Context, session
 	defer session.leaseSyncMu.Unlock()
 
 	m.mu.Lock()
-	expires := session.desiredLeaseExpiresAt
-	confirmedExpires := session.confirmedLeaseExpiresAt
+	leaseExpires := session.desiredLeaseExpiresAt
+	targetExpires := leaseExpires
+	if deadline, ok := ctx.Deadline(); ok && deadline.After(targetExpires) {
+		targetExpires = deadline
+	}
+	remoteExpires := session.remoteTimeoutExpiresAt
 	sandbox := session.sandbox
+	if !remoteExpires.Before(targetExpires) {
+		if session.confirmedLeaseExpiresAt.Before(leaseExpires) {
+			session.confirmedLeaseExpiresAt = leaseExpires
+		}
+		m.mu.Unlock()
+		return nil
+	}
 	m.mu.Unlock()
 	if sandbox == nil {
 		return errors.New("E2B sandbox is unavailable")
 	}
-	if !confirmedExpires.Before(expires) {
-		return nil
-	}
-	if err := m.backend.SetTimeout(ctx, sandbox.ID, secondsUntil(expires)); err != nil {
+	if err := m.backend.SetTimeout(ctx, sandbox.ID, secondsUntil(targetExpires)); err != nil {
 		return err
 	}
 	m.mu.Lock()
-	if session.confirmedLeaseExpiresAt.Before(expires) {
-		session.confirmedLeaseExpiresAt = expires
+	if session.remoteTimeoutExpiresAt.Before(targetExpires) {
+		session.remoteTimeoutExpiresAt = targetExpires
+	}
+	if session.confirmedLeaseExpiresAt.Before(leaseExpires) {
+		session.confirmedLeaseExpiresAt = leaseExpires
 	}
 	m.mu.Unlock()
 	return nil
@@ -461,8 +481,12 @@ func (m *terminalSessionManager) Close() {
 		return
 	}
 	m.closeOnce.Do(func() {
+		m.mu.Lock()
+		m.closed = true
+		m.mu.Unlock()
 		close(m.stopCh)
 		<-m.doneCh
+		m.createWG.Wait()
 		m.mu.Lock()
 		var sandboxes []*e2b.Sandbox
 		for _, session := range m.sessions {

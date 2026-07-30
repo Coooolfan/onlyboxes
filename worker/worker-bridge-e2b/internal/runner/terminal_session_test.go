@@ -423,6 +423,77 @@ func TestTerminalSessionJanitorAutomaticallyKillsExpiredSandbox(t *testing.T) {
 	}
 }
 
+func TestTerminalManagerCloseWaitsForSandboxCreation(t *testing.T) {
+	t.Parallel()
+	createStarted := make(chan struct{})
+	createRelease := make(chan struct{})
+	backend := &fakeE2BBackend{}
+	backend.createFn = func(context.Context, string, int) (*e2b.Sandbox, error) {
+		close(createStarted)
+		<-createRelease
+		return &e2b.Sandbox{ID: "created-during-close"}, nil
+	}
+	manager := newTestTerminalManager(backend, 1)
+	execDone := make(chan error, 1)
+	go func() {
+		_, err := manager.Execute(context.Background(), terminalExecRequest{Command: "seed"})
+		execDone <- err
+	}()
+	<-createStarted
+
+	closeDone := make(chan struct{})
+	go func() {
+		manager.Close()
+		close(closeDone)
+	}()
+	select {
+	case <-closeDone:
+		t.Fatal("manager closed before sandbox creation completed")
+	case <-time.After(30 * time.Millisecond):
+	}
+	close(createRelease)
+	select {
+	case <-closeDone:
+	case <-time.After(time.Second):
+		t.Fatal("manager did not close after sandbox creation completed")
+	}
+	<-execDone
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	if backend.killed != 1 || len(backend.killedIDs) != 1 || backend.killedIDs[0] != "created-during-close" {
+		t.Fatalf("created sandbox was not cleaned up: killed=%d ids=%v", backend.killed, backend.killedIDs)
+	}
+}
+
+func TestCommandDeadlineExtendsRemoteTimeoutWithoutExtendingLease(t *testing.T) {
+	t.Parallel()
+	backend := &fakeE2BBackend{}
+	manager := newTestTerminalManager(backend, 1)
+	defer manager.Close()
+
+	lease := 2
+	startedAt := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	result, err := manager.Execute(ctx, terminalExecRequest{
+		Command:     "long-command",
+		LeaseTTLSec: &lease,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend.mu.Lock()
+	timeouts := append([]int(nil), backend.timeouts...)
+	backend.mu.Unlock()
+	if len(timeouts) != 1 || timeouts[0] < 19 {
+		t.Fatalf("command deadline did not protect the remote sandbox: %v", timeouts)
+	}
+	leaseDuration := time.UnixMilli(result.LeaseExpiresUnixMS).Sub(startedAt)
+	if leaseDuration < time.Second || leaseDuration > 4*time.Second {
+		t.Fatalf("command deadline changed the user lease: %s", leaseDuration)
+	}
+}
+
 func TestTerminalSessionCreationGateSharesOneSandbox(t *testing.T) {
 	t.Parallel()
 	createStarted := make(chan struct{})
@@ -744,6 +815,66 @@ func TestTerminalResourceSandboxExportUsesSandboxCommand(t *testing.T) {
 	}
 }
 
+func TestWorkerExportEnforcesLimitOnUnknownLengthStream(t *testing.T) {
+	t.Parallel()
+	backend := &fakeE2BBackend{}
+	backend.runFn = func(_ context.Context, _ *e2b.Sandbox, command string, _ int) (e2b.CommandResult, error) {
+		if command == "seed" {
+			return e2b.CommandResult{}, nil
+		}
+		return e2b.CommandResult{Stdout: `{"mime_type":"text/plain","size_bytes":5}`}, nil
+	}
+	backend.openFn = func(context.Context, *e2b.Sandbox, string) (e2b.FileReader, error) {
+		return e2b.FileReader{
+			Body:     io.NopCloser(strings.NewReader("123456")),
+			MIMEType: "text/plain",
+			Size:     -1,
+		}, nil
+	}
+	manager := newTerminalSessionManager(terminalSessionManagerConfig{
+		Backend:            backend,
+		Template:           "terminal-template",
+		LeaseMinSec:        1,
+		LeaseMaxSec:        60,
+		LeaseDefaultSec:    10,
+		OutputLimitBytes:   1024,
+		ExportMaxBytes:     5,
+		ExportMode:         terminalExportModeWorker,
+		SessionMaxInflight: 1,
+	})
+	defer manager.Close()
+	seed, err := manager.Execute(context.Background(), terminalExecRequest{Command: "seed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	uploadedCh := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		uploaded, _ := io.ReadAll(req.Body)
+		uploadedCh <- uploaded
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	_, err = manager.ResolveResource(context.Background(), terminalResourceRequest{
+		SessionID: seed.SessionID,
+		FilePath:  "/tmp/growing.txt",
+		Action:    terminalResourceActionExport,
+		SignedURL: server.URL,
+	})
+	if terminalErrorCode(err) != terminalResourceCodeFileTooLarge {
+		t.Fatalf("expected file_too_large, got %v", err)
+	}
+	var uploaded []byte
+	select {
+	case uploaded = <-uploadedCh:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for export upload")
+	}
+	if len(uploaded) > 5 {
+		t.Fatalf("export uploaded %d bytes past the configured limit", len(uploaded))
+	}
+}
+
 func TestSandboxExportCommandStreamsFile(t *testing.T) {
 	t.Parallel()
 	if _, err := exec.LookPath("python3"); err != nil {
@@ -766,6 +897,7 @@ func TestSandboxExportCommandStreamsFile(t *testing.T) {
 		filePath,
 		server.URL+"/upload?signature=secret",
 		map[string]string{"X-Test-Export": "forwarded"},
+		0,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -776,6 +908,35 @@ func TestSandboxExportCommandStreamsFile(t *testing.T) {
 	}
 	if string(uploaded) != "sandbox-direct" || receivedHeader != "forwarded" {
 		t.Fatalf("unexpected upload body=%q header=%q", uploaded, receivedHeader)
+	}
+}
+
+func TestSandboxExportCommandEnforcesLimit(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 is required")
+	}
+	filePath := filepath.Join(t.TempDir(), "export-too-large.txt")
+	if err := os.WriteFile(filePath, []byte("123456"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var uploaded []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		uploaded, _ = io.ReadAll(req.Body)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	command, err := buildSandboxExportCommand(filePath, server.URL, nil, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := exec.Command("/bin/bash", "-l", "-c", command).CombinedOutput()
+	if err == nil || !strings.Contains(string(output), terminalExportLimitMarker) {
+		t.Fatalf("expected sandbox export limit failure, err=%v output=%s", err, output)
+	}
+	if len(uploaded) > 5 {
+		t.Fatalf("sandbox export uploaded %d bytes past the configured limit", len(uploaded))
 	}
 }
 

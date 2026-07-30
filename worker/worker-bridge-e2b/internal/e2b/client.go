@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -102,15 +103,22 @@ func NewClient(cfg Config) (*Client, error) {
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ForceAttemptHTTP2 = true
+	sandboxTransport := transport.Clone()
+	sandboxTransport.DialContext = (&net.Dialer{
+		Timeout:   requestTimeout,
+		KeepAlive: 30 * time.Second,
+	}).DialContext
+	sandboxTransport.TLSHandshakeTimeout = requestTimeout
+	sandboxTransport.ResponseHeaderTimeout = requestTimeout
 	return &Client{
 		apiKey:      strings.TrimSpace(cfg.APIKey),
 		apiURL:      apiURL,
 		domain:      domain,
 		sandboxURL:  strings.TrimRight(strings.TrimSpace(cfg.SandboxURL), "/"),
 		controlHTTP: &http.Client{Transport: transport.Clone(), Timeout: requestTimeout},
-		// envd commands and file streams use the console dispatch context as
-		// their deadline because they may outlive a Control API request.
-		sandboxHTTP: &http.Client{Transport: transport},
+		// Envd connection setup and response headers use the configured request
+		// timeout. Once headers arrive, streams use the console dispatch context.
+		sandboxHTTP: &http.Client{Transport: sandboxTransport},
 	}, nil
 }
 

@@ -39,7 +39,10 @@ func TestConsoleSessionContract(t *testing.T) {
 	cfg.ConsoleGRPCTarget = listener.Addr().String()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	err = runSession(ctx, cfg)
+	connected, err := runSessionWithStatus(ctx, cfg)
+	if !connected {
+		t.Fatal("expected the session handshake to complete")
+	}
 	if status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("expected FailedPrecondition, got %v", err)
 	}

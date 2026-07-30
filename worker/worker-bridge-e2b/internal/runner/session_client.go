@@ -22,41 +22,46 @@ import (
 )
 
 func runSession(ctx context.Context, cfg config.Config) error {
+	_, err := runSessionWithStatus(ctx, cfg)
+	return err
+}
+
+func runSessionWithStatus(ctx context.Context, cfg config.Config) (bool, error) {
 	conn, err := dial(ctx, cfg)
 	if err != nil {
-		return fmt.Errorf("dial console: %w", err)
+		return false, fmt.Errorf("dial console: %w", err)
 	}
 	defer conn.Close()
 
 	client := registryv1.NewWorkerRegistryServiceClient(conn)
 	stream, err := client.Connect(ctx)
 	if err != nil {
-		return fmt.Errorf("open connect stream: %w", err)
+		return false, fmt.Errorf("open connect stream: %w", err)
 	}
 	defer stream.CloseSend()
 
 	hello, err := buildHello(cfg)
 	if err != nil {
-		return fmt.Errorf("build hello: %w", err)
+		return false, fmt.Errorf("build hello: %w", err)
 	}
 
 	if err := stream.Send(&registryv1.ConnectRequest{
 		Payload: &registryv1.ConnectRequest_Hello{Hello: hello},
 	}); err != nil {
-		return fmt.Errorf("send hello: %w", err)
+		return false, fmt.Errorf("send hello: %w", err)
 	}
 
 	resp, err := recvWithTimeout(ctx, cfg.CallTimeout, stream.Recv)
 	if err != nil {
-		return fmt.Errorf("recv connect_ack: %w", err)
+		return false, fmt.Errorf("recv connect_ack: %w", err)
 	}
 	ack := resp.GetConnectAck()
 	if ack == nil {
-		return fmt.Errorf("unexpected first response frame")
+		return false, fmt.Errorf("unexpected first response frame")
 	}
 	sessionID := strings.TrimSpace(ack.GetSessionId())
 	if sessionID == "" {
-		return fmt.Errorf("connect_ack.session_id is required")
+		return false, fmt.Errorf("connect_ack.session_id is required")
 	}
 
 	heartbeatInterval := durationFromServer(ack.GetHeartbeatIntervalSec(), cfg.HeartbeatInterval)
@@ -72,7 +77,7 @@ func runSession(ctx context.Context, cfg config.Config) error {
 	go senderLoop(sessionCtx, stream, outbound, sessionErrCh)
 	go receiverLoop(sessionCtx, stream, outbound, heartbeatAckCh, sessionErrCh)
 
-	return heartbeatLoop(sessionCtx, outbound, heartbeatAckCh, sessionErrCh, cfg, sessionID, heartbeatInterval)
+	return true, heartbeatLoop(sessionCtx, outbound, heartbeatAckCh, sessionErrCh, cfg, sessionID, heartbeatInterval)
 }
 
 func dial(ctx context.Context, cfg config.Config) (*grpc.ClientConn, error) {

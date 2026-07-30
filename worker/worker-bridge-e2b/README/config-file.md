@@ -62,12 +62,12 @@ owner = "team-a"
 | `WORKER_E2B_SANDBOX_URL` | `E2B_SANDBOX_URL` | `e2b_sandbox_url` | 空 | 覆盖 envd 沙箱基础 URL，用于自托管、调试或集成测试 |
 | `WORKER_E2B_PYTHON_TEMPLATE` | `E2B_PYTHON_EXEC_TEMPLATE` | `e2b_python_template` | 必填 | `pythonExec` 使用的模板 ID 或别名 |
 | `WORKER_E2B_TERMINAL_TEMPLATE` | `E2B_TERMINAL_EXEC_TEMPLATE` | `e2b_terminal_template` | 必填 | `terminalExec` 使用的模板 ID 或别名 |
-| `WORKER_E2B_REQUEST_TIMEOUT_SEC` | — | `e2b_request_timeout_sec` | `60` | 正整数；E2B Control API 请求超时秒数 |
+| `WORKER_E2B_REQUEST_TIMEOUT_SEC` | — | `e2b_request_timeout_sec` | `60` | 正整数；E2B Control API 请求以及 envd 建连、TLS 握手和响应头等待的超时秒数 |
 | `WORKER_E2B_PYTHON_TIMEOUT_SEC` | `E2B_SANDBOX_TIMEOUT_SEC` | `e2b_python_timeout_sec` | `300` | 正整数；一次性 Python 沙箱的 E2B timeout 秒数 |
 
 `WORKER_*` 变量始终优先于同一行的 E2B 别名。API URL 和 sandbox URL 末尾的 `/` 会被移除。
 
-envd 的命令执行与文件流不使用该请求超时，而是遵循 console 下发的 command deadline，避免长时间运行的命令或文件导出被 Control API 的默认超时提前中断。
+envd 成功返回响应头后，命令执行与文件流遵循 console 下发的 command deadline，避免长时间运行的命令或文件导出被建连超时提前中断。
 
 ## 终端 session 与文件
 
