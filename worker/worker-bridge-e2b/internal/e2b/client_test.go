@@ -21,6 +21,23 @@ type processTestHandler struct {
 	t *testing.T
 }
 
+func TestRequestTimeoutAppliesOnlyToControlAPI(t *testing.T) {
+	t.Parallel()
+	client, err := NewClient(Config{
+		APIKey:         "test-key",
+		RequestTimeout: 250 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.controlHTTP.Timeout != 250*time.Millisecond {
+		t.Fatalf("unexpected Control API timeout: %s", client.controlHTTP.Timeout)
+	}
+	if client.sandboxHTTP.Timeout != 0 {
+		t.Fatalf("envd must use the command context deadline, got client timeout %s", client.sandboxHTTP.Timeout)
+	}
+}
+
 func (h processTestHandler) Start(
 	_ context.Context,
 	req *connect.Request[processv1.StartRequest],

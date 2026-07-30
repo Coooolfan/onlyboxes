@@ -22,6 +22,7 @@ e2b_api_url = "https://api.e2b.app"
 e2b_domain = "e2b.app"
 e2b_python_template = ""
 e2b_terminal_template = ""
+# Control API request timeout; envd operations use the console command deadline.
 e2b_request_timeout_sec = 60
 e2b_python_timeout_sec = 300
 # Optional override for self-hosted E2B or integration tests.

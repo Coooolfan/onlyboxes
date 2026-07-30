@@ -108,6 +108,8 @@ func NewClient(cfg Config) (*Client, error) {
 		domain:      domain,
 		sandboxURL:  strings.TrimRight(strings.TrimSpace(cfg.SandboxURL), "/"),
 		controlHTTP: &http.Client{Transport: transport.Clone(), Timeout: requestTimeout},
+		// envd commands and file streams use the console dispatch context as
+		// their deadline because they may outlive a Control API request.
 		sandboxHTTP: &http.Client{Transport: transport},
 	}, nil
 }
