@@ -33,6 +33,8 @@ terminal_lease_default_sec = 60
 terminal_output_limit_bytes = 1048576
 # 0 means no export size limit.
 terminal_export_max_bytes = 0
+# worker streams files through this process; sandbox uploads directly from E2B.
+terminal_export_mode = "worker"
 terminal_session_max_inflight = 1
 
 echo_max_inflight = 4

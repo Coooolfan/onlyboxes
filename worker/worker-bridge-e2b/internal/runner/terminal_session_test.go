@@ -7,7 +7,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -554,6 +558,89 @@ func TestTerminalResourceValidateReadAndExport(t *testing.T) {
 	}
 	if exported.Blob != nil || exported.SizeBytes != 5 {
 		t.Fatalf("unexpected export result: %#v", exported)
+	}
+}
+
+func TestTerminalResourceSandboxExportUsesSandboxCommand(t *testing.T) {
+	t.Parallel()
+	var exportCommand string
+	backend := &fakeE2BBackend{}
+	backend.runFn = func(_ context.Context, _ *e2b.Sandbox, command string, _ int) (e2b.CommandResult, error) {
+		switch {
+		case command == "seed":
+			return e2b.CommandResult{}, nil
+		case strings.Contains(command, "mimetypes.guess_type"):
+			return e2b.CommandResult{Stdout: `{"mime_type":"text/plain","size_bytes":5}`}, nil
+		default:
+			exportCommand = command
+			return e2b.CommandResult{}, nil
+		}
+	}
+	backend.openFn = func(context.Context, *e2b.Sandbox, string) (e2b.FileReader, error) {
+		t.Fatal("sandbox export must not open the file through the worker")
+		return e2b.FileReader{}, nil
+	}
+	manager := newTerminalSessionManager(terminalSessionManagerConfig{
+		Backend:            backend,
+		Template:           "terminal-template",
+		LeaseMinSec:        1,
+		LeaseMaxSec:        60,
+		LeaseDefaultSec:    10,
+		OutputLimitBytes:   1024,
+		ExportMode:         terminalExportModeSandbox,
+		SessionMaxInflight: 1,
+	})
+	defer manager.Close()
+	seed, err := manager.Execute(context.Background(), terminalExecRequest{Command: "seed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.ResolveResource(context.Background(), terminalResourceRequest{
+		SessionID: seed.SessionID,
+		FilePath:  "/tmp/hello.txt",
+		Action:    terminalResourceActionExport,
+		SignedURL: "https://uploads.example.com/object?signature=secret",
+		Headers:   map[string]string{"X-Test-Export": "forwarded"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(exportCommand, "python3 -c ") {
+		t.Fatalf("expected sandbox Python upload command, got %q", exportCommand)
+	}
+}
+
+func TestSandboxExportCommandStreamsFile(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 is required")
+	}
+	filePath := filepath.Join(t.TempDir(), "export.txt")
+	if err := os.WriteFile(filePath, []byte("sandbox-direct"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var uploaded []byte
+	var receivedHeader string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		uploaded, _ = io.ReadAll(req.Body)
+		receivedHeader = req.Header.Get("X-Test-Export")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	command, err := buildSandboxExportCommand(
+		filePath,
+		server.URL+"/upload?signature=secret",
+		map[string]string{"X-Test-Export": "forwarded"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := exec.Command("/bin/bash", "-l", "-c", command).CombinedOutput()
+	if err != nil {
+		t.Fatalf("sandbox export command failed: %v: %s", err, output)
+	}
+	if string(uploaded) != "sandbox-direct" || receivedHeader != "forwarded" {
+		t.Fatalf("unexpected upload body=%q header=%q", uploaded, receivedHeader)
 	}
 }
 

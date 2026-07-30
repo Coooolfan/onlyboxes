@@ -20,6 +20,7 @@ const (
 	defaultTerminalLeaseMax        = 1800
 	defaultTerminalLeaseTTL        = 60
 	defaultTerminalOutputMax       = 1024 * 1024
+	defaultTerminalExportMode      = "worker"
 	defaultTerminalSessionInflight = 1
 	defaultLogLevel                = "info"
 	defaultLogFormat               = "json"
@@ -51,6 +52,7 @@ type Config struct {
 	TerminalLeaseDefaultSec     int
 	TerminalOutputLimitBytes    int
 	TerminalExportMaxBytes      int
+	TerminalExportMode          string
 	TerminalSessionMaxInflight  int
 	EchoMaxInflight             int
 	PythonExecMaxInflight       int
@@ -114,6 +116,7 @@ func Load() Config {
 		TerminalLeaseDefaultSec:     terminalLeaseDefaultSec,
 		TerminalOutputLimitBytes:    src.positiveInt("WORKER_TERMINAL_OUTPUT_LIMIT_BYTES", defaultTerminalOutputMax),
 		TerminalExportMaxBytes:      src.nonNegativeInt("WORKER_TERMINAL_EXPORT_MAX_BYTES", 0),
+		TerminalExportMode:          src.terminalExportMode("WORKER_TERMINAL_EXPORT_MODE", defaultTerminalExportMode),
 		TerminalSessionMaxInflight:  src.positiveInt("WORKER_TERMINAL_SESSION_MAX_INFLIGHT", defaultTerminalSessionInflight),
 		EchoMaxInflight:             src.positiveInt("WORKER_ECHO_MAX_INFLIGHT", defaultMaxInflight),
 		PythonExecMaxInflight:       src.positiveInt("WORKER_PYTHON_EXEC_MAX_INFLIGHT", defaultMaxInflight),
@@ -187,6 +190,15 @@ func (s source) logLevel(key, fallback string) string {
 func (s source) logFormat(key, fallback string) string {
 	switch value := strings.ToLower(strings.TrimSpace(s.get(key))); value {
 	case "json", "text":
+		return value
+	default:
+		return fallback
+	}
+}
+
+func (s source) terminalExportMode(key, fallback string) string {
+	switch value := strings.ToLower(strings.TrimSpace(s.get(key))); value {
+	case "worker", "sandbox":
 		return value
 	default:
 		return fallback

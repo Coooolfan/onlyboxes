@@ -20,10 +20,43 @@ const (
 	terminalResourceActionValidate     = "validate"
 	terminalResourceActionRead         = "read"
 	terminalResourceActionExport       = "export"
+	terminalExportModeWorker           = "worker"
+	terminalExportModeSandbox          = "sandbox"
 	terminalResourceCodeFileNotFound   = "file_not_found"
 	terminalResourceCodePathIsDir      = "path_is_directory"
 	terminalResourceCodeFileTooLarge   = "file_too_large"
 )
+
+const sandboxExportScript = `import base64
+import http.client
+import json
+import os
+import sys
+import urllib.parse
+
+config = json.loads(base64.b64decode(sys.argv[1]))
+file_path = config["file_path"]
+url = urllib.parse.urlsplit(config["signed_url"])
+if url.scheme not in ("http", "https") or not url.hostname:
+    raise ValueError("signed_url must be an absolute HTTP or HTTPS URL")
+
+target = url.path or "/"
+if url.query:
+    target += "?" + url.query
+headers = dict(config.get("headers") or {})
+headers["Content-Length"] = str(os.path.getsize(file_path))
+connection_type = http.client.HTTPSConnection if url.scheme == "https" else http.client.HTTPConnection
+connection = connection_type(url.hostname, url.port)
+try:
+    with open(file_path, "rb") as source:
+        connection.request("PUT", target, body=source, headers=headers)
+        response = connection.getresponse()
+        response.read(1024)
+        if response.status < 200 or response.status >= 300:
+            raise RuntimeError("upload returned HTTP status %d" % response.status)
+finally:
+    connection.close()
+`
 
 type terminalResourcePayload struct {
 	SessionID string            `json:"session_id"`
@@ -181,6 +214,18 @@ func (m *terminalSessionManager) exportResource(
 	filePath, signedURL string,
 	headers map[string]string,
 ) error {
+	if m.exportMode == terminalExportModeSandbox {
+		return m.exportResourceFromSandbox(ctx, sandbox, filePath, signedURL, headers)
+	}
+	return m.exportResourceThroughWorker(ctx, sandbox, filePath, signedURL, headers)
+}
+
+func (m *terminalSessionManager) exportResourceThroughWorker(
+	ctx context.Context,
+	sandbox *e2b.Sandbox,
+	filePath, signedURL string,
+	headers map[string]string,
+) error {
 	source, err := m.backend.OpenFile(ctx, sandbox, filePath)
 	if errors.Is(err, e2b.ErrFileNotFound) {
 		return newTerminalExecError(terminalResourceCodeFileNotFound, "file not found")
@@ -218,6 +263,58 @@ func (m *terminalSessionManager) exportResource(
 		return fmt.Errorf("upload export file failed: %s", message)
 	}
 	return nil
+}
+
+func (m *terminalSessionManager) exportResourceFromSandbox(
+	ctx context.Context,
+	sandbox *e2b.Sandbox,
+	filePath, signedURL string,
+	headers map[string]string,
+) error {
+	command, err := buildSandboxExportCommand(filePath, signedURL, headers)
+	if err != nil {
+		return err
+	}
+	output, err := m.backend.Run(ctx, sandbox, command, 64*1024)
+	if err != nil {
+		return fmt.Errorf("run sandbox export: %w", err)
+	}
+	if output.ExitCode != 0 {
+		message := strings.TrimSpace(output.Stderr)
+		if message == "" {
+			message = strings.TrimSpace(output.Stdout)
+		}
+		if message == "" {
+			message = "upload command failed"
+		}
+		return fmt.Errorf("sandbox export failed: exit_code=%d: %s", output.ExitCode, message)
+	}
+	return nil
+}
+
+func buildSandboxExportCommand(filePath, signedURL string, headers map[string]string) (string, error) {
+	payload, err := json.Marshal(struct {
+		FilePath  string            `json:"file_path"`
+		SignedURL string            `json:"signed_url"`
+		Headers   map[string]string `json:"headers,omitempty"`
+	}{
+		FilePath:  filePath,
+		SignedURL: signedURL,
+		Headers:   headers,
+	})
+	if err != nil {
+		return "", fmt.Errorf("encode sandbox export request: %w", err)
+	}
+	encodedScript := base64.StdEncoding.EncodeToString([]byte(sandboxExportScript))
+	encodedPayload := base64.StdEncoding.EncodeToString(payload)
+	return "python3 -c 'exec(__import__(\"base64\").b64decode(\"" + encodedScript + "\"))' " + encodedPayload, nil
+}
+
+func normalizeTerminalExportMode(mode string) string {
+	if strings.EqualFold(strings.TrimSpace(mode), terminalExportModeSandbox) {
+		return terminalExportModeSandbox
+	}
+	return terminalExportModeWorker
 }
 
 func normalizeTerminalResourceAction(action string) string {

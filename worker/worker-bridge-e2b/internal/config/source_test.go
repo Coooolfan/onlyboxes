@@ -29,6 +29,7 @@ e2b_api_key = "test-api-key"
 e2b_python_template = "python-template"
 e2b_terminal_template = "terminal-template"
 e2b_request_timeout_sec = 12
+terminal_export_mode = "sandbox"
 log_level = "debug"
 log_add_source = true
 
@@ -63,11 +64,27 @@ description = "gpu,shared"
 	if cfg.E2BRequestTimeout != 12*time.Second {
 		t.Fatalf("unexpected E2B request timeout %s", cfg.E2BRequestTimeout)
 	}
+	if cfg.TerminalExportMode != "sandbox" {
+		t.Fatalf("unexpected terminal export mode %q", cfg.TerminalExportMode)
+	}
 	if cfg.LogLevel != "debug" || !cfg.LogAddSource {
 		t.Fatalf("unexpected log config %q/%t", cfg.LogLevel, cfg.LogAddSource)
 	}
 	if cfg.Labels["region"] != "cn" || cfg.Labels["owner"] != "team-a" || cfg.Labels["description"] != "gpu,shared" {
 		t.Fatalf("unexpected labels %v", cfg.Labels)
+	}
+}
+
+func TestTerminalExportModeDefaultsToWorker(t *testing.T) {
+	writeConfigFile(t, `terminal_export_mode = "invalid"`)
+
+	if got := Load().TerminalExportMode; got != defaultTerminalExportMode {
+		t.Fatalf("expected default terminal export mode %q, got %q", defaultTerminalExportMode, got)
+	}
+
+	t.Setenv("WORKER_TERMINAL_EXPORT_MODE", "SANDBOX")
+	if got := Load().TerminalExportMode; got != "sandbox" {
+		t.Fatalf("expected case-insensitive sandbox mode, got %q", got)
 	}
 }
 

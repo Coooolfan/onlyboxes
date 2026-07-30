@@ -96,6 +96,7 @@ type terminalSessionManagerConfig struct {
 	LeaseDefaultSec    int
 	OutputLimitBytes   int
 	ExportMaxBytes     int
+	ExportMode         string
 	SessionMaxInflight int
 	// JanitorInterval is test-only tuning in practice; zero selects the
 	// production interval.
@@ -113,6 +114,7 @@ type terminalSessionManager struct {
 	leaseDefaultSec    int
 	outputLimitBytes   int
 	exportMaxBytes     int
+	exportMode         string
 	sessionMaxInflight int
 	janitorInterval    time.Duration
 
@@ -158,6 +160,7 @@ func newTerminalSessionManager(cfg terminalSessionManagerConfig) *terminalSessio
 		leaseDefaultSec:    leaseDefault,
 		outputLimitBytes:   outputLimit,
 		exportMaxBytes:     cfg.ExportMaxBytes,
+		exportMode:         normalizeTerminalExportMode(cfg.ExportMode),
 		sessionMaxInflight: maxInflight,
 		janitorInterval:    janitorInterval,
 		stopCh:             make(chan struct{}),
