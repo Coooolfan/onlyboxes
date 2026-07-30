@@ -83,13 +83,15 @@ func newTerminalExecError(code, message string) *terminalExecError {
 }
 
 type terminalSession struct {
-	sessionID      string
-	sandbox        *e2b.Sandbox
-	leaseExpiresAt time.Time
-	inflight       int
-	destroying     bool
-	ready          chan struct{}
-	initErr        error
+	sessionID               string
+	sandbox                 *e2b.Sandbox
+	desiredLeaseExpiresAt   time.Time
+	confirmedLeaseExpiresAt time.Time
+	leaseSyncMu             sync.Mutex
+	inflight                int
+	destroying              bool
+	ready                   chan struct{}
+	initErr                 error
 }
 
 type terminalSessionManagerConfig struct {
@@ -285,8 +287,8 @@ func (m *terminalSessionManager) claimSession(sessionID string, leaseTarget time
 			return nil, false, newTerminalExecError(terminalExecCodeSessionBusy, terminalExecBusyMessage)
 		}
 		existing.inflight++
-		if existing.leaseExpiresAt.Before(leaseTarget) {
-			existing.leaseExpiresAt = leaseTarget
+		if existing.desiredLeaseExpiresAt.Before(leaseTarget) {
+			existing.desiredLeaseExpiresAt = leaseTarget
 		}
 		return existing, false, nil
 	}
@@ -299,10 +301,10 @@ func (m *terminalSessionManager) claimSession(sessionID string, leaseTarget time
 
 func (m *terminalSessionManager) newSessionLocked(sessionID string, leaseTarget time.Time) *terminalSession {
 	session := &terminalSession{
-		sessionID:      sessionID,
-		leaseExpiresAt: leaseTarget,
-		inflight:       1,
-		ready:          make(chan struct{}),
+		sessionID:             sessionID,
+		desiredLeaseExpiresAt: leaseTarget,
+		inflight:              1,
+		ready:                 make(chan struct{}),
 	}
 	m.sessions[sessionID] = session
 	return session
@@ -310,10 +312,18 @@ func (m *terminalSessionManager) newSessionLocked(sessionID string, leaseTarget 
 
 func (m *terminalSessionManager) awaitSessionReady(ctx context.Context, session *terminalSession, created bool) error {
 	if created {
-		timeout := secondsUntil(session.leaseExpiresAt)
+		m.mu.Lock()
+		leaseExpiresAt := session.desiredLeaseExpiresAt
+		m.mu.Unlock()
+		timeout := secondsUntil(leaseExpiresAt)
 		sandbox, err := m.backend.Create(ctx, m.template, timeout)
+		m.mu.Lock()
 		session.sandbox = sandbox
 		session.initErr = err
+		if err == nil {
+			session.confirmedLeaseExpiresAt = leaseExpiresAt
+		}
+		m.mu.Unlock()
 		close(session.ready)
 		if err != nil {
 			m.releaseAndDestroySession(session.sessionID)
@@ -335,14 +345,29 @@ func (m *terminalSessionManager) awaitSessionReady(ctx context.Context, session 
 }
 
 func (m *terminalSessionManager) syncSandboxTimeout(ctx context.Context, session *terminalSession) error {
+	session.leaseSyncMu.Lock()
+	defer session.leaseSyncMu.Unlock()
+
 	m.mu.Lock()
-	expires := session.leaseExpiresAt
+	expires := session.desiredLeaseExpiresAt
+	confirmedExpires := session.confirmedLeaseExpiresAt
 	sandbox := session.sandbox
 	m.mu.Unlock()
 	if sandbox == nil {
 		return errors.New("E2B sandbox is unavailable")
 	}
-	return m.backend.SetTimeout(ctx, sandbox.ID, secondsUntil(expires))
+	if !confirmedExpires.Before(expires) {
+		return nil
+	}
+	if err := m.backend.SetTimeout(ctx, sandbox.ID, secondsUntil(expires)); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	if session.confirmedLeaseExpiresAt.Before(expires) {
+		session.confirmedLeaseExpiresAt = expires
+	}
+	m.mu.Unlock()
+	return nil
 }
 
 func secondsUntil(target time.Time) int {
@@ -363,7 +388,7 @@ func (m *terminalSessionManager) releaseSession(sessionID string) (time.Time, bo
 	if session.inflight > 0 {
 		session.inflight--
 	}
-	expires := session.leaseExpiresAt
+	expires := session.confirmedLeaseExpiresAt
 	var sandbox *e2b.Sandbox
 	if session.destroying && session.inflight == 0 {
 		delete(m.sessions, sessionID)
@@ -417,7 +442,7 @@ func (m *terminalSessionManager) cleanupExpiredSessions() {
 	var expired []*e2b.Sandbox
 	m.mu.Lock()
 	for id, session := range m.sessions {
-		if session == nil || session.destroying || session.inflight > 0 || session.leaseExpiresAt.After(now) {
+		if session == nil || session.destroying || session.inflight > 0 || session.confirmedLeaseExpiresAt.After(now) {
 			continue
 		}
 		delete(m.sessions, id)

@@ -142,8 +142,142 @@ func TestTerminalSessionCreatesReusesAndExtendsE2BLease(t *testing.T) {
 	if backend.created != 1 {
 		t.Fatalf("expected one E2B sandbox, got %d", backend.created)
 	}
-	if len(backend.timeouts) != 2 || backend.timeouts[1] < 19 {
+	if len(backend.timeouts) != 1 || backend.timeouts[0] < 19 {
 		t.Fatalf("unexpected E2B timeout updates: %v", backend.timeouts)
+	}
+}
+
+func TestConcurrentLeaseUpdatesAreAppliedInIncreasingOrder(t *testing.T) {
+	t.Parallel()
+	firstSyncStarted := make(chan struct{})
+	firstSyncRelease := make(chan struct{})
+	var timeoutMu sync.Mutex
+	var timeouts []int
+	activeSyncs := 0
+	maxActiveSyncs := 0
+	backend := &fakeE2BBackend{}
+	backend.timeoutFn = func(ctx context.Context, _ string, timeout int) error {
+		timeoutMu.Lock()
+		timeouts = append(timeouts, timeout)
+		activeSyncs++
+		if activeSyncs > maxActiveSyncs {
+			maxActiveSyncs = activeSyncs
+		}
+		call := len(timeouts)
+		timeoutMu.Unlock()
+		if call == 1 {
+			close(firstSyncStarted)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-firstSyncRelease:
+			}
+		}
+		timeoutMu.Lock()
+		activeSyncs--
+		timeoutMu.Unlock()
+		return nil
+	}
+	manager := newTestTerminalManager(backend, 2)
+	defer manager.Close()
+	seed, err := manager.Execute(context.Background(), terminalExecRequest{Command: "seed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	type leaseOutcome struct {
+		result terminalExecRunResult
+		err    error
+	}
+	outcomes := make(chan leaseOutcome, 2)
+	shortLease := 20
+	go func() {
+		result, err := manager.Execute(context.Background(), terminalExecRequest{
+			Command:     "short",
+			SessionID:   seed.SessionID,
+			LeaseTTLSec: &shortLease,
+		})
+		outcomes <- leaseOutcome{result: result, err: err}
+	}()
+	<-firstSyncStarted
+
+	longLease := 40
+	go func() {
+		result, err := manager.Execute(context.Background(), terminalExecRequest{
+			Command:     "long",
+			SessionID:   seed.SessionID,
+			LeaseTTLSec: &longLease,
+		})
+		outcomes <- leaseOutcome{result: result, err: err}
+	}()
+	waitForCondition(t, time.Second, func() bool {
+		manager.mu.Lock()
+		defer manager.mu.Unlock()
+		session := manager.sessions[seed.SessionID]
+		return session != nil && time.Until(session.desiredLeaseExpiresAt) > 35*time.Second
+	}, "longer lease was not recorded while the first timeout update was in flight")
+	close(firstSyncRelease)
+
+	for range 2 {
+		outcome := <-outcomes
+		if outcome.err != nil {
+			t.Fatal(outcome.err)
+		}
+	}
+	timeoutMu.Lock()
+	defer timeoutMu.Unlock()
+	if len(timeouts) != 2 || timeouts[1] <= timeouts[0] {
+		t.Fatalf("lease updates were not increasing: %v", timeouts)
+	}
+	if maxActiveSyncs != 1 {
+		t.Fatalf("SetTimeout calls overlapped: max_active=%d", maxActiveSyncs)
+	}
+}
+
+func TestFailedLeaseUpdateDoesNotAdvanceConfirmedExpiry(t *testing.T) {
+	t.Parallel()
+	backend := &fakeE2BBackend{}
+	manager := newTestTerminalManager(backend, 1)
+	defer manager.Close()
+	seed, err := manager.Execute(context.Background(), terminalExecRequest{Command: "seed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	backend.timeoutFn = func(context.Context, string, int) error {
+		return errors.New("timeout update failed")
+	}
+	longLease := 20
+	if _, err := manager.Execute(context.Background(), terminalExecRequest{
+		Command:     "fails",
+		SessionID:   seed.SessionID,
+		LeaseTTLSec: &longLease,
+	}); err == nil {
+		t.Fatal("expected lease update failure")
+	}
+	manager.mu.Lock()
+	session := manager.sessions[seed.SessionID]
+	confirmedAfterFailure := session.confirmedLeaseExpiresAt
+	desiredAfterFailure := session.desiredLeaseExpiresAt
+	manager.mu.Unlock()
+	if confirmedAfterFailure.UnixMilli() != seed.LeaseExpiresUnixMS {
+		t.Fatalf("failed update advanced confirmed lease: before=%d after=%d", seed.LeaseExpiresUnixMS, confirmedAfterFailure.UnixMilli())
+	}
+	if !desiredAfterFailure.After(confirmedAfterFailure) {
+		t.Fatalf("expected the requested lease to remain pending: desired=%s confirmed=%s", desiredAfterFailure, confirmedAfterFailure)
+	}
+
+	backend.timeoutFn = nil
+	retried, err := manager.Execute(context.Background(), terminalExecRequest{
+		Command:     "retry",
+		SessionID:   seed.SessionID,
+		LeaseTTLSec: &longLease,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retried.LeaseExpiresUnixMS <= seed.LeaseExpiresUnixMS {
+		t.Fatalf("retry did not confirm the pending lease: before=%d after=%d", seed.LeaseExpiresUnixMS, retried.LeaseExpiresUnixMS)
 	}
 }
 
@@ -270,7 +404,7 @@ func TestTerminalSessionJanitorAutomaticallyKillsExpiredSandbox(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager.mu.Lock()
-	manager.sessions[created.SessionID].leaseExpiresAt = time.Now().Add(-time.Second)
+	manager.sessions[created.SessionID].confirmedLeaseExpiresAt = time.Now().Add(-time.Second)
 	manager.mu.Unlock()
 
 	waitForCondition(t, time.Second, func() bool {
