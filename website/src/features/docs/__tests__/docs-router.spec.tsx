@@ -78,6 +78,44 @@ describe('docs routing', () => {
     expect(view.getByRole('link', { name: '简体中文' })).toHaveAttribute('href', '/zh-CN/docs/quick-start/')
   })
 
+  it('renders build-time syntax highlighting without changing copied code', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    const originalClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    })
+
+    const view = renderRoutes('/en/docs/worker-bridge-e2b')
+
+    expect(await view.findByRole('heading', { name: 'E2B Bridge Runtime' })).toBeInTheDocument()
+
+    const codeBlock = view.container.querySelector<HTMLPreElement>('pre.shiki')
+    const tokens = codeBlock?.querySelectorAll<HTMLElement>('.line > span') ?? []
+
+    expect(codeBlock).not.toBeNull()
+    expect(codeBlock).toHaveClass('github-light', 'github-dark')
+    expect(tokens.length).toBeGreaterThan(3)
+    expect(tokens[0]?.style.getPropertyValue('--shiki-light')).not.toBe('')
+    expect(tokens[0]?.style.getPropertyValue('--shiki-dark')).not.toBe('')
+
+    const code = codeBlock?.textContent ?? ''
+    const copyButton = codeBlock?.parentElement?.querySelector<HTMLButtonElement>('button[aria-label="Copy code"]')
+
+    expect(copyButton).not.toBeNull()
+    fireEvent.click(copyButton!)
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(code))
+
+    fireEvent.click(view.getByRole('button', { name: 'Toggle theme' }))
+    expect(view.container.querySelector('[data-docs-theme="dark"]')).not.toBeNull()
+
+    if (originalClipboard) {
+      Object.defineProperty(navigator, 'clipboard', originalClipboard)
+    } else {
+      Reflect.deleteProperty(navigator, 'clipboard')
+    }
+  })
+
   it('highlights every toc section whose content is currently visible', async () => {
     const rects = new WeakMap<Element, DOMRect>()
     const defaultRect = new DOMRect(0, 0, 0, 0)

@@ -5,12 +5,30 @@ import mdx from '@mdx-js/rollup'
 import tailwindcss from '@tailwindcss/vite'
 import remarkGfm from 'remark-gfm'
 import rehypeSlug from 'rehype-slug'
+import rehypeShiki from '@shikijs/rehype'
 import fs from 'node:fs'
 import path from 'node:path'
 
 const mdxPlugin = mdx({
   remarkPlugins: [remarkGfm],
-  rehypePlugins: [rehypeSlug],
+  rehypePlugins: [
+    rehypeSlug,
+    [
+      rehypeShiki,
+      {
+        themes: {
+          light: 'github-light',
+          dark: 'github-dark',
+        },
+        defaultColor: false,
+        defaultLanguage: 'text',
+        fallbackLanguage: 'text',
+        langAlias: {
+          env: 'dotenv',
+        },
+      },
+    ],
+  ],
 }) as Plugin
 
 mdxPlugin.enforce = 'pre'
