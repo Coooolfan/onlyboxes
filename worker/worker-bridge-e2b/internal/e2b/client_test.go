@@ -3,11 +3,13 @@ package e2b
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,6 +21,22 @@ import (
 type processTestHandler struct {
 	processv1connect.UnimplementedProcessHandler
 	t *testing.T
+}
+
+type processSignalRecord struct {
+	pid       uint32
+	tag       string
+	signal    processv1.Signal
+	sandboxID string
+	token     string
+}
+
+type interruptedProcessTestHandler struct {
+	processv1connect.UnimplementedProcessHandler
+	sendStart bool
+	startTags chan string
+	signals   chan processSignalRecord
+	notFound  *atomic.Int32
 }
 
 func TestRequestTimeoutBoundsEnvdSetupWithoutBoundingStreams(t *testing.T) {
@@ -63,6 +81,9 @@ func (h processTestHandler) Start(
 	if process.GetCmd() != "/bin/bash" || strings.Join(process.GetArgs(), " ") != "-l -c printf ok" {
 		h.t.Errorf("unexpected process request: %#v", process)
 	}
+	if strings.TrimSpace(req.Msg.GetTag()) == "" {
+		h.t.Error("process request is missing a cleanup tag")
+	}
 	if err := stream.Send(&processv1.StartResponse{Event: &processv1.ProcessEvent{
 		Event: &processv1.ProcessEvent_Start{Start: &processv1.ProcessEvent_StartEvent{Pid: 42}},
 	}}); err != nil {
@@ -78,6 +99,41 @@ func (h processTestHandler) Start(
 	return stream.Send(&processv1.StartResponse{Event: &processv1.ProcessEvent{
 		Event: &processv1.ProcessEvent_End{End: &processv1.ProcessEvent_EndEvent{ExitCode: 0, Exited: true}},
 	}})
+}
+
+func (h interruptedProcessTestHandler) Start(
+	_ context.Context,
+	req *connect.Request[processv1.StartRequest],
+	stream *connect.ServerStream[processv1.StartResponse],
+) error {
+	h.startTags <- req.Msg.GetTag()
+	if h.sendStart {
+		if err := stream.Send(&processv1.StartResponse{Event: &processv1.ProcessEvent{
+			Event: &processv1.ProcessEvent_Start{
+				Start: &processv1.ProcessEvent_StartEvent{Pid: 42},
+			},
+		}}); err != nil {
+			return err
+		}
+	}
+	return connect.NewError(connect.CodeUnavailable, errors.New("output stream interrupted"))
+}
+
+func (h interruptedProcessTestHandler) SendSignal(
+	_ context.Context,
+	req *connect.Request[processv1.SendSignalRequest],
+) (*connect.Response[processv1.SendSignalResponse], error) {
+	if h.notFound != nil && h.notFound.Add(-1) >= 0 {
+		return nil, connect.NewError(connect.CodeNotFound, errors.New("process is not registered yet"))
+	}
+	h.signals <- processSignalRecord{
+		pid:       req.Msg.GetProcess().GetPid(),
+		tag:       req.Msg.GetProcess().GetTag(),
+		signal:    req.Msg.GetSignal(),
+		sandboxID: req.Header().Get("E2b-Sandbox-Id"),
+		token:     req.Header().Get("X-Access-Token"),
+	}
+	return connect.NewResponse(&processv1.SendSignalResponse{}), nil
 }
 
 func TestControlPlaneLifecycle(t *testing.T) {
@@ -298,5 +354,77 @@ func TestRunUsesEnvdConnectJSONStream(t *testing.T) {
 	}
 	if result.Stdout != "ok" || result.Stderr != "" || result.ExitCode != 0 {
 		t.Fatalf("unexpected command result: %#v", result)
+	}
+}
+
+func TestRunStopsInterruptedProcess(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		sendStart bool
+		wantPID   uint32
+		notFound  int32
+	}{
+		{
+			name:      "by PID after start event",
+			sendStart: true,
+			wantPID:   42,
+		},
+		{
+			name:      "by tag before start event",
+			sendStart: false,
+			notFound:  1,
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			startTags := make(chan string, 1)
+			signals := make(chan processSignalRecord, 1)
+			var notFound atomic.Int32
+			notFound.Store(tt.notFound)
+			path, handler := processv1connect.NewProcessHandler(interruptedProcessTestHandler{
+				sendStart: tt.sendStart,
+				startTags: startTags,
+				signals:   signals,
+				notFound:  &notFound,
+			})
+			mux := http.NewServeMux()
+			mux.Handle(path, handler)
+			server := httptest.NewServer(mux)
+			defer server.Close()
+
+			client, err := NewClient(Config{APIKey: "test-key", SandboxURL: server.URL})
+			if err != nil {
+				t.Fatal(err)
+			}
+			sandbox := &Sandbox{ID: "sb-interrupted", AccessToken: "interrupted-token"}
+			_, err = client.Run(context.Background(), sandbox, "sleep 60", 1024)
+			if err == nil || !strings.Contains(err.Error(), "output stream interrupted") {
+				t.Fatalf("expected interrupted stream error, got %v", err)
+			}
+
+			startTag := <-startTags
+			if strings.TrimSpace(startTag) == "" {
+				t.Fatal("start request is missing a cleanup tag")
+			}
+			signal := <-signals
+			if signal.signal != processv1.Signal_SIGNAL_SIGKILL {
+				t.Fatalf("unexpected cleanup signal: %s", signal.signal)
+			}
+			if signal.pid != tt.wantPID {
+				t.Fatalf("unexpected cleanup pid: got %d want %d", signal.pid, tt.wantPID)
+			}
+			if tt.wantPID == 0 && signal.tag != startTag {
+				t.Fatalf("cleanup tag %q does not match start tag %q", signal.tag, startTag)
+			}
+			if tt.wantPID != 0 && signal.tag != "" {
+				t.Fatalf("PID cleanup unexpectedly used tag %q", signal.tag)
+			}
+			if signal.sandboxID != sandbox.ID || signal.token != sandbox.AccessToken {
+				t.Fatalf("cleanup is missing E2B routing headers: %#v", signal)
+			}
+		})
 	}
 }

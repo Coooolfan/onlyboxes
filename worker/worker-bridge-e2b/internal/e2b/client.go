@@ -17,11 +17,17 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/google/uuid"
 	processv1 "github.com/onlyboxes/onlyboxes/worker/worker-bridge-e2b/internal/e2b/process/v1"
 	"github.com/onlyboxes/onlyboxes/worker/worker-bridge-e2b/internal/e2b/process/v1/processv1connect"
 )
 
-const envdPort = 49983
+const (
+	envdPort                    = 49983
+	envdProcessCleanupTimeout   = 3 * time.Second
+	envdProcessTagCleanupGrace  = 250 * time.Millisecond
+	envdProcessCleanupRetryWait = 25 * time.Millisecond
+)
 
 type Config struct {
 	APIKey         string
@@ -193,19 +199,26 @@ func (c *Client) Kill(ctx context.Context, sandboxID string) error {
 	return err
 }
 
-func (c *Client) Run(ctx context.Context, sandbox *Sandbox, command string, maxOutputBytes int) (CommandResult, error) {
+func (c *Client) Run(
+	ctx context.Context,
+	sandbox *Sandbox,
+	command string,
+	maxOutputBytes int,
+) (result CommandResult, runErr error) {
 	if sandbox == nil || strings.TrimSpace(sandbox.ID) == "" {
 		return CommandResult{}, errors.New("sandbox is required")
 	}
 	baseURL := c.sandboxBaseURL(sandbox)
 	rpc := processv1connect.NewProcessClient(c.sandboxHTTP, baseURL, connect.WithProtoJSON())
 	stdin := false
+	tag := "onlyboxes-" + uuid.NewString()
 	req := connect.NewRequest(&processv1.StartRequest{
 		Process: &processv1.ProcessConfig{
 			Cmd:  "/bin/bash",
 			Args: []string{"-l", "-c", command},
 			Envs: map[string]string{},
 		},
+		Tag:   &tag,
 		Stdin: &stdin,
 	})
 	c.applySandboxHeaders(req.Header(), sandbox)
@@ -217,26 +230,41 @@ func (c *Client) Run(ctx context.Context, sandbox *Sandbox, command string, maxO
 		}
 		return CommandResult{}, fmt.Errorf("start E2B command: %w", err)
 	}
+	var pid uint32
+	ended := false
+	defer func() {
+		if ended {
+			return
+		}
+		if err := c.stopProcess(sandbox, pid, tag); err != nil {
+			if runErr == nil {
+				runErr = fmt.Errorf("stop incomplete E2B command: %w", err)
+				return
+			}
+			runErr = fmt.Errorf("%w; stop incomplete E2B command: %v", runErr, err)
+		}
+	}()
 	var stdout, stderr limitedBuffer
 	stdout.limit = maxOutputBytes
 	stderr.limit = maxOutputBytes
-	result := CommandResult{}
-	ended := false
 	for stream.Receive() {
 		event := stream.Msg().GetEvent()
 		if event == nil {
 			continue
+		}
+		if start := event.GetStart(); start != nil {
+			pid = start.GetPid()
 		}
 		if data := event.GetData(); data != nil {
 			stdout.Write(data.GetStdout())
 			stderr.Write(data.GetStderr())
 		}
 		if end := event.GetEnd(); end != nil {
+			ended = true
 			result.ExitCode = int(end.GetExitCode())
 			if end.GetError() != "" && result.ExitCode == 0 {
 				return CommandResult{}, fmt.Errorf("E2B command failed: %s", end.GetError())
 			}
-			ended = true
 		}
 	}
 	if err := stream.Err(); err != nil {
@@ -253,6 +281,49 @@ func (c *Client) Run(ctx context.Context, sandbox *Sandbox, command string, maxO
 	result.StdoutTruncated = stdout.truncated
 	result.StderrTruncated = stderr.truncated
 	return result, nil
+}
+
+func (c *Client) stopProcess(sandbox *Sandbox, pid uint32, tag string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), envdProcessCleanupTimeout)
+	defer cancel()
+
+	rpc := processv1connect.NewProcessClient(
+		c.sandboxHTTP,
+		c.sandboxBaseURL(sandbox),
+		connect.WithProtoJSON(),
+	)
+	selector := &processv1.ProcessSelector{}
+	if pid != 0 {
+		selector.Selector = &processv1.ProcessSelector_Pid{Pid: pid}
+	} else {
+		selector.Selector = &processv1.ProcessSelector_Tag{Tag: tag}
+	}
+	req := connect.NewRequest(&processv1.SendSignalRequest{
+		Process: selector,
+		Signal:  processv1.Signal_SIGNAL_SIGKILL,
+	})
+	c.applySandboxHeaders(req.Header(), sandbox)
+
+	tagDeadline := time.Now().Add(envdProcessTagCleanupGrace)
+	for {
+		_, err := rpc.SendSignal(ctx, req)
+		if err == nil || (pid != 0 && connect.CodeOf(err) == connect.CodeNotFound) {
+			return nil
+		}
+		if pid != 0 || connect.CodeOf(err) != connect.CodeNotFound {
+			return err
+		}
+		if !time.Now().Before(tagDeadline) {
+			return nil
+		}
+		timer := time.NewTimer(envdProcessCleanupRetryWait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 func (c *Client) ReadFile(ctx context.Context, sandbox *Sandbox, filePath string, maxBytes int64) (File, error) {
