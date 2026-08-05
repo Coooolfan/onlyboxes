@@ -27,6 +27,7 @@ jobs:
       worker-docker: ${{ steps.filter.outputs.worker-docker }}
       worker-sys: ${{ steps.filter.outputs.worker-sys }}
       worker-boxlite: ${{ steps.filter.outputs.worker-boxlite }}
+      worker-bridge-e2b: ${{ steps.filter.outputs.worker-bridge-e2b }}
       web: ${{ steps.filter.outputs.web }}
       website: ${{ steps.filter.outputs.website }}
     steps:
@@ -56,6 +57,9 @@ jobs:
             worker-boxlite:
               - *shared
               - 'worker/worker-boxlite/**'
+            worker-bridge-e2b:
+              - *shared
+              - 'worker/worker-bridge-e2b/**'
             web:
               - '.github/workflows/ci.yml'
               - 'web/**'
@@ -174,6 +178,30 @@ jobs:
       - name: Unit tests
         run: cargo test
 
+  worker-bridge-e2b:
+    name: Check worker-bridge-e2b
+    needs: changes
+    if: needs.changes.outputs.worker-bridge-e2b == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./worker/worker-bridge-e2b
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: worker/worker-bridge-e2b/go.mod
+          cache-dependency-path: worker/worker-bridge-e2b/go.sum
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Unit tests
+        run: go test -race ./...
+
   web:
     name: Check web
     needs: changes
@@ -274,6 +302,7 @@ jobs:
       - worker-docker
       - worker-sys
       - worker-boxlite
+      - worker-bridge-e2b
       - web
       - website
     runs-on: ubuntu-latest

@@ -24,7 +24,7 @@ button {
 /* Code block scrollbar */
 pre {
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+  scrollbar-color: var(--ob-pre-scrollbar) transparent;
 }
 
 pre::-webkit-scrollbar {
@@ -36,18 +36,18 @@ pre::-webkit-scrollbar-track {
 }
 
 pre::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--ob-pre-scrollbar);
   border-radius: 3px;
 }
 
 pre::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.25);
+  background: var(--ob-pre-scrollbar-hover);
 }
 
 /* Code block selection */
 pre ::selection {
-  background: rgba(255, 255, 255, 0.2);
-  color: #ffffff;
+  background: var(--ob-pre-selection);
+  color: inherit;
 }
 
 /* Docs theme tokens — light */
@@ -59,8 +59,11 @@ pre ::selection {
   --ob-line: #e5e5e5;
   --ob-code-bg: #f5f5f5;
   --ob-code-text: #171717;
-  --ob-pre-bg: #0a0a0a;
-  --ob-pre-text: #f5f5f5;
+  --ob-pre-bg: #f6f8fa;
+  --ob-pre-text: #24292f;
+  --ob-pre-scrollbar: rgba(31, 35, 40, 0.18);
+  --ob-pre-scrollbar-hover: rgba(31, 35, 40, 0.3);
+  --ob-pre-selection: rgba(9, 105, 218, 0.22);
   --ob-blockquote-bg: #fafafa;
   --ob-blockquote-border: #e5e5e5;
   --ob-blockquote-text: #525252;
@@ -85,10 +88,30 @@ pre ::selection {
   --ob-code-text: #e5e5e5;
   --ob-pre-bg: #141414;
   --ob-pre-text: #e5e5e5;
+  --ob-pre-scrollbar: rgba(255, 255, 255, 0.15);
+  --ob-pre-scrollbar-hover: rgba(255, 255, 255, 0.25);
+  --ob-pre-selection: rgba(255, 255, 255, 0.2);
   --ob-blockquote-bg: #141414;
   --ob-blockquote-border: #262626;
   --ob-blockquote-text: #a3a3a3;
   --ob-table-header-bg: #141414;
   --ob-table-border: #262626;
   --ob-table-text: #a3a3a3;
+}
+
+/* Shiki emits both token palettes at build time; the docs theme selects one. */
+[data-docs-theme="light"] .shiki,
+[data-docs-theme="light"] .shiki span {
+  color: var(--shiki-light);
+  font-style: var(--shiki-light-font-style);
+  font-weight: var(--shiki-light-font-weight);
+  text-decoration: var(--shiki-light-text-decoration);
+}
+
+[data-docs-theme="dark"] .shiki,
+[data-docs-theme="dark"] .shiki span {
+  color: var(--shiki-dark);
+  font-style: var(--shiki-dark-font-style);
+  font-weight: var(--shiki-dark-font-weight);
+  text-decoration: var(--shiki-dark-text-decoration);
 }

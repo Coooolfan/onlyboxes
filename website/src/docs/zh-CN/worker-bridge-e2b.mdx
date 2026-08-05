@@ -1,0 +1,134 @@
+export const meta = {
+  title: 'E2B Bridge',
+  description: '通过远程 E2B 沙箱运行 OnlyBoxes 执行任务。',
+  section: '运行时',
+  order: 45,
+  slug: 'worker-bridge-e2b',
+}
+
+# E2B Bridge 运行时
+
+`worker-bridge-e2b` 将 OnlyBoxes 控制节点连接到远程 E2B 沙箱。worker 在本地管理 session 与任务分发，由 E2B 提供实际执行环境。
+
+## 适用场景
+
+- 希望使用托管的远程沙箱，不在 worker 主机上运行 Docker 或 KVM
+- 需要为 Python 与终端任务准备不同的 E2B 模板
+- 可以接受远程执行带来的网络延迟和外部服务依赖
+
+## 工作原理
+
+1. Worker 通过 gRPC 连接 OnlyBoxes 控制节点。
+2. Worker 通过 E2B Control API 创建、续期和销毁沙箱。
+3. 命令执行和文件读取通过沙箱内的 envd 完成。
+4. `pythonExec` 每次请求使用一个新沙箱；`terminalExec` 会话在租约到期前复用同一沙箱。
+
+## 前置条件
+
+- E2B API Key
+- 提供 Python 和 `uv` 的 E2B Python 模板
+- 提供 `/bin/bash` 和 `python3` 的 E2B 终端模板
+- 能够访问 OnlyBoxes 控制节点与 E2B 端点
+
+## 启动 worker
+
+从 [GitHub Releases 页面](https://github.com/Coooolfan/onlyboxes/releases/latest) 下载与系统架构匹配的 `worker-bridge-e2b` 二进制，然后运行：
+
+```bash
+WORKER_CONSOLE_GRPC_TARGET=<console_grpc_target> \
+WORKER_ID=<worker_id> \
+WORKER_SECRET=<worker_secret> \
+WORKER_E2B_API_KEY=<e2b_api_key> \
+WORKER_E2B_PYTHON_TEMPLATE=<python_template_id_or_alias> \
+WORKER_E2B_TERMINAL_TEMPLATE=<terminal_template_id_or_alias> \
+./onlyboxes-worker-bridge-e2b
+```
+
+worker 默认要求 TLS。只有在可信的明文开发链路中才应设置 `WORKER_CONSOLE_INSECURE=true`。
+
+## 配置文件
+
+设置 `WORKER_CONFIG_FILE` 可以显式指定 `config.toml`；未设置时，worker 会依次查找程序文件同目录和当前工作目录下的 `config.toml`。
+
+配置优先级为：`WORKER_*` 环境变量、E2B 兼容环境变量别名、`config.toml`、内置默认值。
+
+```toml
+id = "wk_..."
+secret = "..."
+console_grpc_target = "console.internal:50051"
+e2b_api_key = "..."
+e2b_python_template = "python-template"
+e2b_terminal_template = "terminal-template"
+
+[labels]
+region = "cn"
+```
+
+全部配置项见[带注释的配置模板](https://github.com/Coooolfan/onlyboxes/blob/main/worker/worker-bridge-e2b/config.example.toml)。
+
+## 环境变量
+
+### 连接与身份
+
+| 变量 | 必填 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `WORKER_ID` | 是 | | Dashboard 中的 Worker ID |
+| `WORKER_SECRET` | 是 | | 创建 worker 时的一次性密钥 |
+| `WORKER_CONSOLE_GRPC_TARGET` | 否 | `127.0.0.1:50051` | 控制节点 gRPC 地址 |
+| `WORKER_CONSOLE_INSECURE` | 否 | `false` | 仅在可信环境中设为 `true` 以允许非 TLS 连接 |
+| `WORKER_NODE_NAME` | 否 | 自动生成 | 可读的节点名称 |
+| `WORKER_LABELS` | 否 | | JSON 或逗号分隔的 `key=value` 标签 |
+
+### E2B
+
+| 变量 | 必填 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `WORKER_E2B_API_KEY` | 是 | | E2B Control API Key；别名：`E2B_API_KEY` |
+| `WORKER_E2B_PYTHON_TEMPLATE` | 是 | | `pythonExec` 使用的模板；别名：`E2B_PYTHON_EXEC_TEMPLATE` |
+| `WORKER_E2B_TERMINAL_TEMPLATE` | 是 | | 终端 session 使用的模板；别名：`E2B_TERMINAL_EXEC_TEMPLATE` |
+| `WORKER_E2B_API_URL` | 否 | `https://api.e2b.app` | Control API 基础 URL；别名：`E2B_API_URL` |
+| `WORKER_E2B_DOMAIN` | 否 | `e2b.app` | 沙箱域名后缀；别名：`E2B_DOMAIN` |
+| `WORKER_E2B_SANDBOX_URL` | 否 | | 覆盖 envd 基础 URL；别名：`E2B_SANDBOX_URL` |
+| `WORKER_E2B_REQUEST_TIMEOUT_SEC` | 否 | `60` | Control API 与 envd 建连超时 |
+| `WORKER_E2B_PYTHON_TIMEOUT_SEC` | 否 | `300` | 一次性 Python 沙箱的生命周期；别名：`E2B_SANDBOX_TIMEOUT_SEC` |
+
+### 终端
+
+| 变量 | 必填 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `WORKER_TERMINAL_LEASE_MIN_SEC` | 否 | `60` | 请求可指定的最短 session 租约 |
+| `WORKER_TERMINAL_LEASE_MAX_SEC` | 否 | `1800` | 请求可指定的最长 session 租约 |
+| `WORKER_TERMINAL_LEASE_DEFAULT_SEC` | 否 | `300` | 默认 session 租约 |
+| `WORKER_TERMINAL_OUTPUT_LIMIT_BYTES` | 否 | `1048576` | 每路输出流与文件读取的大小限制 |
+| `WORKER_TERMINAL_EXPORT_MAX_BYTES` | 否 | `0`（无限制） | 导出文件大小上限 |
+| `WORKER_TERMINAL_EXPORT_MODE` | 否 | `sandbox` | `sandbox` 由 E2B 直接上传；`worker` 由 worker 转发文件 |
+| `WORKER_TERMINAL_SESSION_MAX_INFLIGHT` | 否 | `128` | 单个 session 允许的并发操作数 |
+
+终端命令共享沙箱文件系统，但每次调用都在独立的 `/bin/bash -l -c` 进程中执行，不会在调用之间保留当前目录、shell 变量或进程环境。
+
+### 能力并发
+
+| 变量 | 必填 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `WORKER_ECHO_MAX_INFLIGHT` | 否 | `128` | `echo` 并发调用数 |
+| `WORKER_PYTHON_EXEC_MAX_INFLIGHT` | 否 | `32` | `pythonExec` 并发调用数 |
+| `WORKER_TERMINAL_EXEC_MAX_INFLIGHT` | 否 | `64` | `terminalExec` 并发调用数 |
+| `WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT` | 否 | `128` | `terminalResource` 并发调用数 |
+
+### 心跳与日志
+
+| 变量 | 必填 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `WORKER_HEARTBEAT_INTERVAL_SEC` | 否 | `5` | 心跳间隔秒数 |
+| `WORKER_HEARTBEAT_JITTER_PCT` | 否 | `20` | 心跳抖动百分比 |
+| `WORKER_CALL_TIMEOUT_SEC` | 否 | `ceil(2.5 * interval)` | console hello 与心跳确认超时 |
+| `WORKER_LOG_LEVEL` | 否 | `info` | `debug` / `info` / `warn` / `error` |
+| `WORKER_LOG_FORMAT` | 否 | `json` | `json` / `text` |
+| `WORKER_LOG_ADD_SOURCE` | 否 | `false` | 是否包含源文件和行号 |
+
+## 相关文档
+
+- [架构](/zh-CN/docs/architecture)
+- [Docker 运行时](/zh-CN/docs/worker-docker)
+- [Boxlite 运行时](/zh-CN/docs/worker-boxlite)
+- [系统进程运行时](/zh-CN/docs/worker-sys)

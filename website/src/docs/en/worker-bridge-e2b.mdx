@@ -1,0 +1,134 @@
+export const meta = {
+  title: 'E2B Bridge',
+  description: 'Run OnlyBoxes executions in remote E2B sandboxes.',
+  section: 'Runtimes',
+  order: 45,
+  slug: 'worker-bridge-e2b',
+}
+
+# E2B Bridge Runtime
+
+`worker-bridge-e2b` connects an OnlyBoxes control node to remote E2B sandboxes. The worker manages sessions and task dispatch locally, while E2B provides the execution environment.
+
+## When to use
+
+- You want managed remote sandboxes without running Docker or KVM on the worker host
+- You need E2B templates tailored to different Python and terminal workloads
+- You accept the network latency and external service dependency of a remote execution backend
+
+## How it works
+
+1. The worker connects to the OnlyBoxes control node over gRPC.
+2. It creates, extends, and destroys sandboxes through the E2B Control API.
+3. It executes commands and reads files through envd inside each sandbox.
+4. `pythonExec` uses a new sandbox per request; terminal sessions reuse a sandbox until their lease expires.
+
+## Prerequisites
+
+- An E2B API key
+- An E2B Python template with Python and `uv`
+- An E2B terminal template with `/bin/bash` and `python3`
+- Network access to the OnlyBoxes control node and E2B endpoints
+
+## Starting the worker
+
+Download the matching `worker-bridge-e2b` binary from the [GitHub releases page](https://github.com/Coooolfan/onlyboxes/releases/latest), then run:
+
+```bash
+WORKER_CONSOLE_GRPC_TARGET=<console_grpc_target> \
+WORKER_ID=<worker_id> \
+WORKER_SECRET=<worker_secret> \
+WORKER_E2B_API_KEY=<e2b_api_key> \
+WORKER_E2B_PYTHON_TEMPLATE=<python_template_id_or_alias> \
+WORKER_E2B_TERMINAL_TEMPLATE=<terminal_template_id_or_alias> \
+./onlyboxes-worker-bridge-e2b
+```
+
+Workers require TLS by default. Set `WORKER_CONSOLE_INSECURE=true` only for a trusted plaintext development connection.
+
+## Configuration file
+
+Set `WORKER_CONFIG_FILE` to use a specific `config.toml`. Otherwise, the worker looks next to its binary and then in the current working directory.
+
+Configuration precedence is: `WORKER_*` environment variable, E2B-compatible environment variable alias, `config.toml`, then built-in default.
+
+```toml
+id = "wk_..."
+secret = "..."
+console_grpc_target = "console.internal:50051"
+e2b_api_key = "..."
+e2b_python_template = "python-template"
+e2b_terminal_template = "terminal-template"
+
+[labels]
+region = "us"
+```
+
+See the [annotated configuration template](https://github.com/Coooolfan/onlyboxes/blob/main/worker/worker-bridge-e2b/config.example.toml) for all available keys.
+
+## Environment variables
+
+### Connection and identity
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `WORKER_ID` | Yes | | Worker ID from the dashboard |
+| `WORKER_SECRET` | Yes | | One-time secret from worker creation |
+| `WORKER_CONSOLE_GRPC_TARGET` | No | `127.0.0.1:50051` | Control node gRPC address |
+| `WORKER_CONSOLE_INSECURE` | No | `false` | Set `true` only to allow a trusted non-TLS connection |
+| `WORKER_NODE_NAME` | No | generated | Human-readable node name |
+| `WORKER_LABELS` | No | | JSON or comma-separated `key=value` labels |
+
+### E2B
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `WORKER_E2B_API_KEY` | Yes | | E2B Control API key; alias: `E2B_API_KEY` |
+| `WORKER_E2B_PYTHON_TEMPLATE` | Yes | | Template used by `pythonExec`; alias: `E2B_PYTHON_EXEC_TEMPLATE` |
+| `WORKER_E2B_TERMINAL_TEMPLATE` | Yes | | Template used by terminal sessions; alias: `E2B_TERMINAL_EXEC_TEMPLATE` |
+| `WORKER_E2B_API_URL` | No | `https://api.e2b.app` | Control API base URL; alias: `E2B_API_URL` |
+| `WORKER_E2B_DOMAIN` | No | `e2b.app` | Sandbox domain suffix; alias: `E2B_DOMAIN` |
+| `WORKER_E2B_SANDBOX_URL` | No | | Override the envd base URL; alias: `E2B_SANDBOX_URL` |
+| `WORKER_E2B_REQUEST_TIMEOUT_SEC` | No | `60` | Control API and envd connection timeout |
+| `WORKER_E2B_PYTHON_TIMEOUT_SEC` | No | `300` | Lifetime of a one-shot Python sandbox; alias: `E2B_SANDBOX_TIMEOUT_SEC` |
+
+### Terminal
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `WORKER_TERMINAL_LEASE_MIN_SEC` | No | `60` | Minimum requested session lease |
+| `WORKER_TERMINAL_LEASE_MAX_SEC` | No | `1800` | Maximum requested session lease |
+| `WORKER_TERMINAL_LEASE_DEFAULT_SEC` | No | `300` | Default session lease |
+| `WORKER_TERMINAL_OUTPUT_LIMIT_BYTES` | No | `1048576` | Limit for each output stream and file reads |
+| `WORKER_TERMINAL_EXPORT_MAX_BYTES` | No | `0` (unlimited) | Maximum exported file size |
+| `WORKER_TERMINAL_EXPORT_MODE` | No | `sandbox` | `sandbox` uploads directly from E2B; `worker` proxies file bytes |
+| `WORKER_TERMINAL_SESSION_MAX_INFLIGHT` | No | `128` | Concurrent operations allowed in one session |
+
+Terminal commands share the sandbox filesystem but run in separate `/bin/bash -l -c` processes. They do not preserve the current directory, shell variables, or process environment between calls.
+
+### Capability concurrency
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `WORKER_ECHO_MAX_INFLIGHT` | No | `128` | Concurrent `echo` calls |
+| `WORKER_PYTHON_EXEC_MAX_INFLIGHT` | No | `32` | Concurrent `pythonExec` calls |
+| `WORKER_TERMINAL_EXEC_MAX_INFLIGHT` | No | `64` | Concurrent `terminalExec` calls |
+| `WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT` | No | `128` | Concurrent `terminalResource` calls |
+
+### Heartbeat and logging
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `WORKER_HEARTBEAT_INTERVAL_SEC` | No | `5` | Heartbeat interval in seconds |
+| `WORKER_HEARTBEAT_JITTER_PCT` | No | `20` | Heartbeat jitter percentage |
+| `WORKER_CALL_TIMEOUT_SEC` | No | `ceil(2.5 * interval)` | Timeout for console hello and heartbeat acknowledgements |
+| `WORKER_LOG_LEVEL` | No | `info` | `debug` / `info` / `warn` / `error` |
+| `WORKER_LOG_FORMAT` | No | `json` | `json` / `text` |
+| `WORKER_LOG_ADD_SOURCE` | No | `false` | Include source file and line |
+
+## Related docs
+
+- [Architecture](/en/docs/architecture)
+- [Docker Runtime](/en/docs/worker-docker)
+- [Boxlite Runtime](/en/docs/worker-boxlite)
+- [System Process Runtime](/en/docs/worker-sys)

@@ -1,3 +1,5 @@
+import { ArchitectureDiagram } from '../../features/site/ArchitectureDiagram'
+
 export const meta = {
   title: '架构',
   description: '控制节点与执行节点的连接方式。',
@@ -10,7 +12,7 @@ export const meta = {
 
 OnlyBoxes 采用控制面与执行面分离的架构。
 
-![OnlyBoxes 架构图](/docs-assets/architecture.zh-CN.svg)
+<ArchitectureDiagram className="mt-6" />
 
 ## 控制节点
 
@@ -38,6 +40,7 @@ worker 负责真正的执行环境。worker 会通过 gRPC 连接控制节点，
 | --- | --- | --- | --- |
 | `worker-docker` | runc | Docker 容器 | 通用代码沙箱执行 |
 | `worker-boxlite` | KVM | [boxlite](https://boxlite.ai/) | 特定运行时后端 |
+| `worker-bridge-e2b` | E2B | 远程 E2B 沙箱 | 托管式远程沙箱执行 |
 | `worker-sys` | - | 宿主机进程 | 真实设备或直接主机控制 |
 
 ## 推荐部署方式

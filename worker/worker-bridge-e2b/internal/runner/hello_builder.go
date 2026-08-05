@@ -1,0 +1,49 @@
+package runner
+
+import (
+	"fmt"
+	"strings"
+
+	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
+	"github.com/onlyboxes/onlyboxes/worker/worker-bridge-e2b/internal/buildinfo"
+	"github.com/onlyboxes/onlyboxes/worker/worker-bridge-e2b/internal/config"
+)
+
+func buildHello(cfg config.Config) (*registryv1.ConnectHello, error) {
+	nodeName := strings.TrimSpace(cfg.NodeName)
+	if nodeName == "" {
+		suffix := cfg.WorkerID
+		if len(suffix) > 8 {
+			suffix = suffix[:8]
+		}
+		nodeName = fmt.Sprintf("worker-bridge-e2b-%s", suffix)
+	}
+
+	hello := &registryv1.ConnectHello{
+		NodeId:       cfg.WorkerID,
+		NodeName:     nodeName,
+		ExecutorKind: cfg.ExecutorKind,
+		Labels:       cfg.Labels,
+		Version:      buildinfo.Version,
+		WorkerSecret: cfg.WorkerSecret,
+		Capabilities: []*registryv1.CapabilityDeclaration{
+			{
+				Name:        echoCapabilityName,
+				MaxInflight: int32(cfg.EchoMaxInflight),
+			},
+			{
+				Name:        pythonExecCapabilityDeclared,
+				MaxInflight: int32(cfg.PythonExecMaxInflight),
+			},
+			{
+				Name:        terminalExecCapabilityDeclared,
+				MaxInflight: int32(cfg.TerminalExecMaxInflight),
+			},
+			{
+				Name:        terminalResourceCapabilityDeclared,
+				MaxInflight: int32(cfg.TerminalResourceMaxInflight),
+			},
+		},
+	}
+	return hello, nil
+}
