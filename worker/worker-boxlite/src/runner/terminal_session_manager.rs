@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime};
@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use base64::Engine;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{watch, Mutex};
+use tokio::sync::{watch, Mutex, Notify};
 use tokio_util::io::ReaderStream;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -18,10 +18,17 @@ use crate::boxlite_runtime::{self, BoxliteCommandError, CollectedExecOutput};
 use crate::config::Config;
 
 pub(crate) const TERMINAL_EXEC_JANITOR_INTERVAL: Duration = Duration::from_secs(5);
+#[cfg(not(test))]
+const TERMINAL_CREATION_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+#[cfg(test)]
+const TERMINAL_CREATION_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(100);
+const TERMINAL_MANAGER_CLOSED_MESSAGE: &str = "terminal session manager is closed";
 pub(crate) const TERMINAL_EXEC_NO_SESSION_MESSAGE: &str = "session not found";
 pub(crate) const TERMINAL_EXEC_BUSY_MESSAGE: &str = "session is busy";
+pub(crate) const TERMINAL_EXEC_CAPACITY_MESSAGE: &str = "terminal session capacity exceeded";
 pub(crate) const TERMINAL_EXEC_CODE_SESSION_NOT_FOUND: &str = "session_not_found";
 pub(crate) const TERMINAL_EXEC_CODE_SESSION_BUSY: &str = "session_busy";
+pub(crate) const TERMINAL_EXEC_CODE_SESSION_CAPACITY_EXCEEDED: &str = "session_capacity_exceeded";
 pub(crate) const TERMINAL_EXEC_CODE_INVALID_PAYLOAD: &str = "invalid_payload";
 pub(crate) const TERMINAL_RESOURCE_ACTION_VALIDATE: &str = "validate";
 pub(crate) const TERMINAL_RESOURCE_ACTION_READ: &str = "read";
@@ -159,6 +166,14 @@ pub(crate) struct TerminalExecError {
 }
 
 impl TerminalExecError {
+    #[cfg(test)]
+    pub(crate) fn new(code: &str, message: &str) -> Self {
+        Self {
+            code: code.to_owned(),
+            message: message.to_owned(),
+        }
+    }
+
     pub(crate) fn code(&self) -> &str {
         &self.code
     }
@@ -172,7 +187,7 @@ impl std::fmt::Display for TerminalExecError {
 
 impl std::error::Error for TerminalExecError {}
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum TerminalOperationError {
     #[error("command deadline exceeded")]
     DeadlineExceeded,
@@ -184,7 +199,11 @@ pub(crate) enum TerminalOperationError {
 
 #[async_trait]
 pub(crate) trait TerminalBackend: Send + Sync {
-    async fn create_session_box(&self) -> Result<String, String>;
+    async fn create_session_box(
+        &self,
+        shutdown: CancellationToken,
+        deadline_unix_ms: i64,
+    ) -> Result<String, TerminalOperationError>;
     async fn exec_shell_command(
         &self,
         box_id: &str,
@@ -214,7 +233,7 @@ pub(crate) trait TerminalBackend: Send + Sync {
 enum SessionReadyState {
     Pending,
     Ready(String),
-    Failed(String),
+    Failed(TerminalOperationError),
 }
 
 #[derive(Debug)]
@@ -228,6 +247,8 @@ struct TerminalSession {
     /// Stops the session accepting new commands. The box is removed by whichever
     /// caller drops inflight to zero.
     destroying: bool,
+    /// Whether this session owns one worker-level terminal capacity slot.
+    capacity_reserved: bool,
     /// Gates command execution on box creation. boxlite inserts sessions with an
     /// empty box_id before the microVM exists, so concurrent callers must wait
     /// here rather than exec against an empty id.
@@ -242,6 +263,8 @@ pub(crate) struct TerminalSessionManagerConfig {
     pub output_limit_bytes: usize,
     pub export_max_bytes: usize,
     pub session_max_inflight: u32,
+    /// Caps terminal sandbox reservations across all sessions. Zero is unlimited.
+    pub max_active_sessions: u32,
 }
 
 pub(crate) struct TerminalSessionManager {
@@ -253,6 +276,13 @@ pub(crate) struct TerminalSessionManager {
     output_limit_bytes: usize,
     export_max_bytes: usize,
     session_max_inflight: u32,
+    max_active_sessions: u32,
+    active_session_reservations: AtomicU32,
+    pending_creations: AtomicU32,
+    cleanup_done: Notify,
+    pending_cleanups: AtomicU32,
+    creation_done: Notify,
+    janitor_done: Notify,
     shutdown: CancellationToken,
     closed: AtomicBool,
 }
@@ -268,6 +298,7 @@ pub(crate) fn shared_terminal_session_manager(cfg: &Config) -> Arc<TerminalSessi
                     output_limit_bytes: cfg.terminal_output_limit_bytes,
                     export_max_bytes: cfg.terminal_export_max_bytes,
                     session_max_inflight: cfg.terminal_session_max_inflight,
+                    max_active_sessions: cfg.terminal_max_active_sessions,
                 },
                 Arc::new(BoxliteTerminalBackend::new(cfg.clone())),
             )
@@ -288,6 +319,58 @@ pub(crate) async fn shared_active_session_count() -> i32 {
     }
 }
 
+struct RetiredSession {
+    box_id: String,
+    capacity_reserved: bool,
+    cleanup_tracked: bool,
+}
+
+struct PendingCreationGuard<'a> {
+    manager: &'a TerminalSessionManager,
+}
+
+impl Drop for PendingCreationGuard<'_> {
+    fn drop(&mut self) {
+        let previous = self
+            .manager
+            .pending_creations
+            .fetch_sub(1, Ordering::SeqCst);
+        debug_assert!(previous > 0, "pending terminal creation counter underflow");
+        self.manager.creation_done.notify_one();
+    }
+}
+
+struct RetiredCleanupGuard<'a> {
+    manager: &'a TerminalSessionManager,
+    capacity_reserved: bool,
+    cleanup_tracked: bool,
+}
+
+impl Drop for RetiredCleanupGuard<'_> {
+    fn drop(&mut self) {
+        if self.capacity_reserved {
+            let released = self.manager.active_session_reservations.fetch_update(
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+                |count| count.checked_sub(1),
+            );
+            debug_assert!(released.is_ok(), "terminal capacity reservation underflow");
+        }
+        if self.cleanup_tracked {
+            let released = self.manager.pending_cleanups.fetch_update(
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+                |count| count.checked_sub(1),
+            );
+            debug_assert!(
+                released.is_ok(),
+                "pending terminal cleanup counter underflow"
+            );
+            self.manager.cleanup_done.notify_one();
+        }
+    }
+}
+
 impl TerminalSessionManager {
     pub(crate) fn new(
         cfg: TerminalSessionManagerConfig,
@@ -304,6 +387,7 @@ impl TerminalSessionManager {
             lease_default_sec = lease_max_sec;
         }
 
+        let max_active_sessions = cfg.max_active_sessions;
         let manager = Arc::new(Self {
             backend,
             sessions: Mutex::new(HashMap::new()),
@@ -313,6 +397,13 @@ impl TerminalSessionManager {
             output_limit_bytes: cfg.output_limit_bytes.max(1),
             export_max_bytes: cfg.export_max_bytes,
             session_max_inflight: cfg.session_max_inflight.max(1),
+            max_active_sessions,
+            active_session_reservations: AtomicU32::new(0),
+            pending_creations: AtomicU32::new(0),
+            cleanup_done: Notify::new(),
+            pending_cleanups: AtomicU32::new(0),
+            creation_done: Notify::new(),
+            janitor_done: Notify::new(),
             shutdown: CancellationToken::new(),
             closed: AtomicBool::new(false),
         });
@@ -347,20 +438,37 @@ impl TerminalSessionManager {
             .await?;
 
         let box_id = if claimed.created {
-            match self.backend.create_session_box().await {
+            let _creation_guard = PendingCreationGuard { manager: self };
+            match self
+                .backend
+                .create_session_box(self.shutdown.clone(), req.deadline_unix_ms)
+                .await
+            {
                 Ok(box_id) => {
-                    self.publish_session_ready(&claimed.session_id, &box_id)
-                        .await;
+                    if !self
+                        .publish_session_ready(&claimed.session_id, &box_id)
+                        .await
+                    {
+                        // close() may have retired a creation that ignored the
+                        // shutdown token. Clean up if it returns later.
+                        self.backend.remove_box(&box_id).await;
+                        return Err(TerminalOperationError::ExecutionFailed(
+                            TERMINAL_MANAGER_CLOSED_MESSAGE.to_owned(),
+                        ));
+                    }
                     box_id
                 }
                 Err(err) => {
                     self.publish_session_failed(&claimed.session_id, &err).await;
                     self.release_and_destroy_session(&claimed.session_id).await;
-                    return Err(TerminalOperationError::ExecutionFailed(err));
+                    return Err(err);
                 }
             }
         } else {
-            match self.await_session_ready(&claimed).await {
+            match self
+                .await_session_ready(&claimed, req.deadline_unix_ms)
+                .await
+            {
                 Ok(box_id) => box_id,
                 Err(err) => {
                     self.release_session(&claimed.session_id).await;
@@ -456,7 +564,10 @@ impl TerminalSessionManager {
         }
 
         let claimed = self.claim_existing_session(&session_id).await?;
-        let box_id = match self.await_session_ready(&claimed).await {
+        let box_id = match self
+            .await_session_ready(&claimed, req.deadline_unix_ms)
+            .await
+        {
             Ok(box_id) => box_id,
             Err(err) => {
                 self.release_session(&session_id).await;
@@ -608,60 +719,120 @@ impl TerminalSessionManager {
         }
 
         self.shutdown.cancel();
+        self.janitor_done.notified().await;
+        {
+            let barrier = self.sessions.lock().await;
+            drop(barrier);
+        }
+        if tokio::time::timeout(
+            TERMINAL_CREATION_SHUTDOWN_TIMEOUT,
+            self.wait_for_pending_creations(),
+        )
+        .await
+        .is_err()
+        {
+            tracing::warn!(
+                pending_creations = self.pending_creations.load(Ordering::SeqCst),
+                "timed out waiting for terminal Box creation during shutdown"
+            );
+        }
+
         let sessions = {
             let mut sessions = self.sessions.lock().await;
             sessions
                 .drain()
-                .map(|(_, session)| session.box_id)
-                .filter(|box_id| !box_id.trim().is_empty())
+                .map(|(_, session)| RetiredSession {
+                    box_id: session.box_id,
+                    capacity_reserved: session.capacity_reserved,
+                    cleanup_tracked: false,
+                })
                 .collect::<Vec<_>>()
         };
 
-        for box_id in sessions {
-            self.backend.remove_box(&box_id).await;
+        self.wait_for_pending_cleanups().await;
+        for session in sessions {
+            self.cleanup_retired_session(session).await;
+        }
+    }
+
+    async fn wait_for_pending_creations(&self) {
+        loop {
+            if self.pending_creations.load(Ordering::SeqCst) == 0 {
+                return;
+            }
+            self.creation_done.notified().await;
         }
     }
 
     pub(crate) async fn active_session_count(&self) -> i32 {
-        let sessions = self.sessions.lock().await;
-        sessions
-            .values()
-            .filter(|session| !session.destroying)
-            .count()
-            .try_into()
-            .unwrap_or(i32::MAX)
+        self.active_session_reservations
+            .load(Ordering::SeqCst)
+            .min(i32::MAX as u32) as i32
     }
 
     pub(crate) async fn cleanup_expired_sessions(&self) {
         let now = SystemTime::now();
         let expired = {
             let mut sessions = self.sessions.lock().await;
-            let mut expired = Vec::new();
-            sessions.retain(|_, session| {
-                let should_remove =
-                    session.inflight == 0 && !session.destroying && session.lease_expires_at <= now;
-                if should_remove && !session.box_id.trim().is_empty() {
-                    expired.push(session.box_id.clone());
-                }
-                !should_remove
-            });
-            expired
+            let expired_ids = sessions
+                .iter()
+                .filter(|(_, session)| {
+                    session.inflight == 0 && !session.destroying && session.lease_expires_at <= now
+                })
+                .map(|(session_id, _)| session_id.clone())
+                .collect::<Vec<_>>();
+
+            expired_ids
+                .into_iter()
+                .filter_map(|session_id| sessions.remove(&session_id))
+                .map(|session| {
+                    self.pending_cleanups.fetch_add(1, Ordering::SeqCst);
+                    RetiredSession {
+                        box_id: session.box_id,
+                        capacity_reserved: session.capacity_reserved,
+                        cleanup_tracked: true,
+                    }
+                })
+                .collect::<Vec<_>>()
         };
 
-        for box_id in expired {
-            self.backend.remove_box(&box_id).await;
+        for session in expired {
+            self.cleanup_retired_session(session).await;
+        }
+    }
+
+    async fn wait_for_pending_cleanups(&self) {
+        loop {
+            if self.pending_cleanups.load(Ordering::SeqCst) == 0 {
+                return;
+            }
+            self.cleanup_done.notified().await;
+        }
+    }
+
+    async fn cleanup_retired_session(&self, session: RetiredSession) {
+        // Drop releases local capacity even if this async cleanup is cancelled.
+        // The backend attempt is no longer in progress once the future is dropped.
+        let _cleanup_guard = RetiredCleanupGuard {
+            manager: self,
+            capacity_reserved: session.capacity_reserved,
+            cleanup_tracked: session.cleanup_tracked,
+        };
+        if !session.box_id.trim().is_empty() {
+            self.backend.remove_box(&session.box_id).await;
         }
     }
 
     async fn janitor_loop(self: Arc<Self>) {
         loop {
             tokio::select! {
-                _ = self.shutdown.cancelled() => return,
+                _ = self.shutdown.cancelled() => break,
                 _ = tokio::time::sleep(TERMINAL_EXEC_JANITOR_INTERVAL) => {
                     self.cleanup_expired_sessions().await;
                 }
             }
         }
+        self.janitor_done.notify_one();
     }
 
     fn resolve_lease_duration(
@@ -691,12 +862,17 @@ impl TerminalSessionManager {
         lease_target: SystemTime,
     ) -> Result<ClaimedSession, TerminalOperationError> {
         let mut sessions = self.sessions.lock().await;
+        if self.closed.load(Ordering::SeqCst) {
+            return Err(TerminalOperationError::ExecutionFailed(
+                "terminal session manager is closed".to_owned(),
+            ));
+        }
         if session_id.is_empty() {
-            return Ok(Self::insert_pending_session(
+            return self.insert_pending_session(
                 &mut sessions,
                 Uuid::new_v4().to_string(),
                 lease_target,
-            ));
+            );
         }
 
         match sessions.get_mut(&session_id) {
@@ -733,20 +909,27 @@ impl TerminalSessionManager {
                     }
                     .into());
                 }
-                Ok(Self::insert_pending_session(
-                    &mut sessions,
-                    session_id,
-                    lease_target,
-                ))
+                self.insert_pending_session(&mut sessions, session_id, lease_target)
             }
         }
     }
 
     fn insert_pending_session(
+        &self,
         sessions: &mut HashMap<String, TerminalSession>,
         session_id: String,
         lease_target: SystemTime,
-    ) -> ClaimedSession {
+    ) -> Result<ClaimedSession, TerminalOperationError> {
+        if self.max_active_sessions > 0
+            && self.active_session_reservations.load(Ordering::SeqCst) >= self.max_active_sessions
+        {
+            return Err(TerminalExecError {
+                code: TERMINAL_EXEC_CODE_SESSION_CAPACITY_EXCEEDED.to_owned(),
+                message: TERMINAL_EXEC_CAPACITY_MESSAGE.to_owned(),
+            }
+            .into());
+        }
+
         let (ready_tx, ready_rx) = watch::channel(SessionReadyState::Pending);
         sessions.insert(
             session_id.clone(),
@@ -756,14 +939,18 @@ impl TerminalSessionManager {
                 lease_expires_at: lease_target,
                 inflight: 1,
                 destroying: false,
+                capacity_reserved: true,
                 ready_tx,
             },
         );
-        ClaimedSession {
+        self.active_session_reservations
+            .fetch_add(1, Ordering::SeqCst);
+        self.pending_creations.fetch_add(1, Ordering::SeqCst);
+        Ok(ClaimedSession {
             session_id,
             ready_rx,
             created: true,
-        }
+        })
     }
 
     async fn claim_existing_session(
@@ -771,6 +958,11 @@ impl TerminalSessionManager {
         session_id: &str,
     ) -> Result<ClaimedSession, TerminalOperationError> {
         let mut sessions = self.sessions.lock().await;
+        if self.closed.load(Ordering::SeqCst) {
+            return Err(TerminalOperationError::ExecutionFailed(
+                "terminal session manager is closed".to_owned(),
+            ));
+        }
         match sessions.get_mut(session_id) {
             Some(session) if !session.destroying => {
                 if session.inflight >= self.session_max_inflight {
@@ -796,24 +988,27 @@ impl TerminalSessionManager {
     }
 
     /// Publishes a successfully created box to everyone waiting on the session.
-    async fn publish_session_ready(&self, session_id: &str, box_id: &str) {
+    /// Returns false when shutdown already retired the pending session.
+    async fn publish_session_ready(&self, session_id: &str, box_id: &str) -> bool {
         let mut sessions = self.sessions.lock().await;
-        if let Some(session) = sessions.get_mut(session_id) {
-            session.box_id = box_id.to_owned();
-            let _ = session
-                .ready_tx
-                .send(SessionReadyState::Ready(box_id.to_owned()));
-        }
+        let Some(session) = sessions.get_mut(session_id) else {
+            return false;
+        };
+        session.box_id = box_id.to_owned();
+        let _ = session
+            .ready_tx
+            .send(SessionReadyState::Ready(box_id.to_owned()));
+        true
     }
 
     /// Publishes a creation failure so waiters fail with the creator's error
     /// instead of hanging or running against a box that never existed.
-    async fn publish_session_failed(&self, session_id: &str, message: &str) {
+    async fn publish_session_failed(&self, session_id: &str, error: &TerminalOperationError) {
         let sessions = self.sessions.lock().await;
         if let Some(session) = sessions.get(session_id) {
             let _ = session
                 .ready_tx
-                .send(SessionReadyState::Failed(message.to_owned()));
+                .send(SessionReadyState::Failed(error.clone()));
         }
     }
 
@@ -821,18 +1016,29 @@ impl TerminalSessionManager {
     async fn await_session_ready(
         &self,
         claimed: &ClaimedSession,
+        deadline_unix_ms: i64,
     ) -> Result<String, TerminalOperationError> {
         let mut ready_rx = claimed.ready_rx.clone();
-        let state = ready_rx
-            .wait_for(|state| !matches!(state, SessionReadyState::Pending))
+        let state = match boxlite_runtime::remaining_until_deadline(deadline_unix_ms) {
+            Some(remaining) if remaining.is_zero() => {
+                return Err(TerminalOperationError::DeadlineExceeded);
+            }
+            Some(remaining) => tokio::time::timeout(
+                remaining,
+                ready_rx.wait_for(|state| !matches!(state, SessionReadyState::Pending)),
+            )
             .await
-            .map(|state| state.clone());
+            .map_err(|_| TerminalOperationError::DeadlineExceeded)?
+            .map(|state| state.clone()),
+            None => ready_rx
+                .wait_for(|state| !matches!(state, SessionReadyState::Pending))
+                .await
+                .map(|state| state.clone()),
+        };
 
         match state {
             Ok(SessionReadyState::Ready(box_id)) => Ok(box_id),
-            Ok(SessionReadyState::Failed(message)) => {
-                Err(TerminalOperationError::ExecutionFailed(message))
-            }
+            Ok(SessionReadyState::Failed(error)) => Err(error),
             // Pending is excluded by the predicate; a receive error means the
             // session was dropped while we waited.
             Ok(SessionReadyState::Pending) | Err(_) => Err(TerminalExecError {
@@ -847,22 +1053,27 @@ impl TerminalSessionManager {
     /// that already produced a result still reports success here, even if the
     /// session is being torn down: the work completed and its output is valid.
     async fn release_session(&self, session_id: &str) -> Option<SystemTime> {
-        let (lease, box_id) = {
+        let (lease, retired) = {
             let mut sessions = self.sessions.lock().await;
             let session = sessions.get_mut(session_id)?;
             session.inflight = session.inflight.saturating_sub(1);
             let lease = session.lease_expires_at;
             let reclaim = session.destroying && session.inflight == 0;
-            let box_id = if reclaim {
-                sessions.remove(session_id).map(|session| session.box_id)
+            let retired = if reclaim {
+                self.pending_cleanups.fetch_add(1, Ordering::SeqCst);
+                sessions.remove(session_id).map(|session| RetiredSession {
+                    box_id: session.box_id,
+                    capacity_reserved: session.capacity_reserved,
+                    cleanup_tracked: true,
+                })
             } else {
                 None
             };
-            (lease, box_id)
+            (lease, retired)
         };
 
-        if let Some(box_id) = box_id.filter(|value| !value.trim().is_empty()) {
-            self.backend.remove_box(&box_id).await;
+        if let Some(retired) = retired {
+            self.cleanup_retired_session(retired).await;
         }
         Some(lease)
     }
@@ -871,14 +1082,19 @@ impl TerminalSessionManager {
     /// survives until the last concurrent command drains, so one command's
     /// timeout cannot kill its siblings.
     async fn release_and_destroy_session(&self, session_id: &str) {
-        let box_id = {
+        let retired = {
             let mut sessions = self.sessions.lock().await;
             match sessions.get_mut(session_id) {
                 Some(session) => {
                     session.destroying = true;
                     session.inflight = session.inflight.saturating_sub(1);
                     if session.inflight == 0 {
-                        sessions.remove(session_id).map(|session| session.box_id)
+                        self.pending_cleanups.fetch_add(1, Ordering::SeqCst);
+                        sessions.remove(session_id).map(|session| RetiredSession {
+                            box_id: session.box_id,
+                            capacity_reserved: session.capacity_reserved,
+                            cleanup_tracked: true,
+                        })
                     } else {
                         None
                     }
@@ -887,8 +1103,8 @@ impl TerminalSessionManager {
             }
         };
 
-        if let Some(box_id) = box_id.filter(|value| !value.trim().is_empty()) {
-            self.backend.remove_box(&box_id).await;
+        if let Some(retired) = retired {
+            self.cleanup_retired_session(retired).await;
         }
     }
 
@@ -910,6 +1126,7 @@ impl TerminalSessionManager {
                 lease_expires_at,
                 inflight,
                 destroying: false,
+                capacity_reserved: false,
                 ready_tx,
             },
         );
@@ -983,11 +1200,23 @@ impl BoxliteTerminalBackend {
 
 #[async_trait]
 impl TerminalBackend for BoxliteTerminalBackend {
-    async fn create_session_box(&self) -> Result<String, String> {
+    async fn create_session_box(
+        &self,
+        shutdown: CancellationToken,
+        deadline_unix_ms: i64,
+    ) -> Result<String, TerminalOperationError> {
         let name = format!("worker-boxlite-terminal-{}", Uuid::new_v4());
-        boxlite_runtime::create_terminal_session_box(&self.cfg, &name)
+        boxlite_runtime::create_terminal_session_box(&self.cfg, &name, shutdown, deadline_unix_ms)
             .await
-            .map_err(|err| err.to_string())
+            .map_err(|err| match err {
+                BoxliteCommandError::DeadlineExceeded => TerminalOperationError::DeadlineExceeded,
+                BoxliteCommandError::MissingBox => TerminalOperationError::ExecutionFailed(
+                    "terminalExec box disappeared during creation".to_owned(),
+                ),
+                BoxliteCommandError::ExecutionFailed(message) => {
+                    TerminalOperationError::ExecutionFailed(message)
+                }
+            })
     }
 
     async fn exec_shell_command(
@@ -1196,6 +1425,7 @@ impl Drop for TempPathGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
@@ -1219,7 +1449,11 @@ mod tests {
 
     #[async_trait]
     impl TerminalBackend for StatefulShellBackend {
-        async fn create_session_box(&self) -> Result<String, String> {
+        async fn create_session_box(
+            &self,
+            _shutdown: CancellationToken,
+            _deadline_unix_ms: i64,
+        ) -> Result<String, TerminalOperationError> {
             let mut next = self.next_box.lock().await;
             *next += 1;
             Ok(format!("box-{next}"))
@@ -1299,6 +1533,182 @@ mod tests {
         }
     }
 
+    struct GatedCapacityBackend {
+        create_started: Notify,
+        create_gate: Notify,
+        create_blocked: AtomicBool,
+        ignore_shutdown: AtomicBool,
+        fail_next_create: AtomicBool,
+        remove_started: Notify,
+        remove_gate: Notify,
+        remove_blocked: AtomicBool,
+        removed: Mutex<Vec<String>>,
+    }
+
+    impl GatedCapacityBackend {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                create_started: Notify::new(),
+                create_gate: Notify::new(),
+                create_blocked: AtomicBool::new(false),
+                ignore_shutdown: AtomicBool::new(false),
+                fail_next_create: AtomicBool::new(false),
+                remove_started: Notify::new(),
+                remove_gate: Notify::new(),
+                remove_blocked: AtomicBool::new(false),
+                removed: Mutex::new(Vec::new()),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl TerminalBackend for GatedCapacityBackend {
+        async fn create_session_box(
+            &self,
+            shutdown: CancellationToken,
+            _deadline_unix_ms: i64,
+        ) -> Result<String, TerminalOperationError> {
+            if self.fail_next_create.swap(false, Ordering::SeqCst) {
+                return Err(TerminalOperationError::ExecutionFailed(
+                    "create failed".to_owned(),
+                ));
+            }
+            if self.create_blocked.load(Ordering::SeqCst) {
+                self.create_started.notify_one();
+                if self.ignore_shutdown.load(Ordering::SeqCst) {
+                    self.create_gate.notified().await;
+                } else {
+                    tokio::select! {
+                        _ = self.create_gate.notified() => {}
+                        _ = shutdown.cancelled() => {
+                            return Err(TerminalOperationError::ExecutionFailed(
+                                TERMINAL_MANAGER_CLOSED_MESSAGE.to_owned(),
+                            ));
+                        }
+                    }
+                }
+            }
+            Ok("box-capacity".to_owned())
+        }
+
+        async fn exec_shell_command(
+            &self,
+            _box_id: &str,
+            command: &str,
+            _deadline_unix_ms: i64,
+        ) -> Result<CollectedExecOutput, BoxliteCommandError> {
+            Ok(CollectedExecOutput {
+                stdout: command.to_owned(),
+                stderr: String::new(),
+                exit_code: 0,
+            })
+        }
+
+        async fn exec_resource_probe(
+            &self,
+            _box_id: &str,
+            _action: &str,
+            _file_path: &str,
+            _max_read_bytes: usize,
+            _deadline_unix_ms: i64,
+        ) -> Result<CollectedExecOutput, BoxliteCommandError> {
+            Ok(CollectedExecOutput {
+                stdout: r#"{"mime_type":"text/plain","size_bytes":5}"#.to_owned(),
+                stderr: String::new(),
+                exit_code: 0,
+            })
+        }
+
+        async fn copy_out_file(
+            &self,
+            _box_id: &str,
+            _container_src: &str,
+            host_dst: &Path,
+            _deadline_unix_ms: i64,
+        ) -> Result<(), BoxliteCommandError> {
+            std::fs::write(host_dst, b"hello")
+                .map_err(|err| BoxliteCommandError::ExecutionFailed(err.to_string()))
+        }
+
+        async fn remove_box(&self, box_id: &str) {
+            if self.remove_blocked.load(Ordering::SeqCst) {
+                self.remove_started.notify_one();
+                self.remove_gate.notified().await;
+            }
+            self.removed.lock().await.push(box_id.to_owned());
+        }
+    }
+
+    struct CreationDeadlineBackend {
+        create_started: Notify,
+    }
+
+    impl CreationDeadlineBackend {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                create_started: Notify::new(),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl TerminalBackend for CreationDeadlineBackend {
+        async fn create_session_box(
+            &self,
+            shutdown: CancellationToken,
+            deadline_unix_ms: i64,
+        ) -> Result<String, TerminalOperationError> {
+            self.create_started.notify_one();
+            let Some(remaining) = boxlite_runtime::remaining_until_deadline(deadline_unix_ms)
+            else {
+                return Err(TerminalOperationError::ExecutionFailed(
+                    "test creation deadline is required".to_owned(),
+                ));
+            };
+            if remaining.is_zero() {
+                return Err(TerminalOperationError::DeadlineExceeded);
+            }
+            tokio::select! {
+                _ = shutdown.cancelled() => Err(TerminalOperationError::ExecutionFailed(
+                    TERMINAL_MANAGER_CLOSED_MESSAGE.to_owned(),
+                )),
+                _ = tokio::time::sleep(remaining) => Err(TerminalOperationError::DeadlineExceeded),
+            }
+        }
+
+        async fn exec_shell_command(
+            &self,
+            _box_id: &str,
+            _command: &str,
+            _deadline_unix_ms: i64,
+        ) -> Result<CollectedExecOutput, BoxliteCommandError> {
+            unreachable!()
+        }
+
+        async fn exec_resource_probe(
+            &self,
+            _box_id: &str,
+            _action: &str,
+            _file_path: &str,
+            _max_read_bytes: usize,
+            _deadline_unix_ms: i64,
+        ) -> Result<CollectedExecOutput, BoxliteCommandError> {
+            unreachable!()
+        }
+
+        async fn copy_out_file(
+            &self,
+            _box_id: &str,
+            _container_src: &str,
+            _host_dst: &Path,
+            _deadline_unix_ms: i64,
+        ) -> Result<(), BoxliteCommandError> {
+            unreachable!()
+        }
+
+        async fn remove_box(&self, _box_id: &str) {}
+    }
+
     struct BlockingShellBackend {
         started: Notify,
         gate: Notify,
@@ -1307,7 +1717,11 @@ mod tests {
 
     #[async_trait]
     impl TerminalBackend for BlockingShellBackend {
-        async fn create_session_box(&self) -> Result<String, String> {
+        async fn create_session_box(
+            &self,
+            _shutdown: CancellationToken,
+            _deadline_unix_ms: i64,
+        ) -> Result<String, TerminalOperationError> {
             Ok("box-1".to_owned())
         }
 
@@ -1362,7 +1776,11 @@ mod tests {
 
     #[async_trait]
     impl TerminalBackend for BlockingMixedBackend {
-        async fn create_session_box(&self) -> Result<String, String> {
+        async fn create_session_box(
+            &self,
+            _shutdown: CancellationToken,
+            _deadline_unix_ms: i64,
+        ) -> Result<String, TerminalOperationError> {
             Ok("box-mixed".to_owned())
         }
 
@@ -1416,7 +1834,11 @@ mod tests {
 
     #[async_trait]
     impl TerminalBackend for EmptyResourceBackend {
-        async fn create_session_box(&self) -> Result<String, String> {
+        async fn create_session_box(
+            &self,
+            _shutdown: CancellationToken,
+            _deadline_unix_ms: i64,
+        ) -> Result<String, TerminalOperationError> {
             unreachable!()
         }
 
@@ -1463,7 +1885,11 @@ mod tests {
 
     #[async_trait]
     impl TerminalBackend for TimeoutShellBackend {
-        async fn create_session_box(&self) -> Result<String, String> {
+        async fn create_session_box(
+            &self,
+            _shutdown: CancellationToken,
+            _deadline_unix_ms: i64,
+        ) -> Result<String, TerminalOperationError> {
             Ok("box-timeout".to_owned())
         }
 
@@ -1502,6 +1928,59 @@ mod tests {
         }
     }
 
+    struct ResourceTimeoutBackend {
+        removed: Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl TerminalBackend for ResourceTimeoutBackend {
+        async fn create_session_box(
+            &self,
+            _shutdown: CancellationToken,
+            _deadline_unix_ms: i64,
+        ) -> Result<String, TerminalOperationError> {
+            Ok("box-resource-timeout".to_owned())
+        }
+
+        async fn exec_shell_command(
+            &self,
+            _box_id: &str,
+            _command: &str,
+            _deadline_unix_ms: i64,
+        ) -> Result<CollectedExecOutput, BoxliteCommandError> {
+            Ok(CollectedExecOutput {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: 0,
+            })
+        }
+
+        async fn exec_resource_probe(
+            &self,
+            _box_id: &str,
+            _action: &str,
+            _file_path: &str,
+            _max_read_bytes: usize,
+            _deadline_unix_ms: i64,
+        ) -> Result<CollectedExecOutput, BoxliteCommandError> {
+            Err(BoxliteCommandError::DeadlineExceeded)
+        }
+
+        async fn copy_out_file(
+            &self,
+            _box_id: &str,
+            _container_src: &str,
+            _host_dst: &Path,
+            _deadline_unix_ms: i64,
+        ) -> Result<(), BoxliteCommandError> {
+            unreachable!()
+        }
+
+        async fn remove_box(&self, box_id: &str) {
+            self.removed.lock().await.push(box_id.to_owned());
+        }
+    }
+
     struct DomainResourceBackend {
         stdout: String,
         exit_code: i32,
@@ -1509,7 +1988,11 @@ mod tests {
 
     #[async_trait]
     impl TerminalBackend for DomainResourceBackend {
-        async fn create_session_box(&self) -> Result<String, String> {
+        async fn create_session_box(
+            &self,
+            _shutdown: CancellationToken,
+            _deadline_unix_ms: i64,
+        ) -> Result<String, TerminalOperationError> {
             Ok("box-domain".to_owned())
         }
 
@@ -1628,6 +2111,7 @@ mod tests {
                 output_limit_bytes,
                 export_max_bytes: 0,
                 session_max_inflight: 1,
+                max_active_sessions: 0,
             },
             backend,
         )
@@ -1743,6 +2227,7 @@ mod tests {
         assert!(matches!(err, TerminalOperationError::DeadlineExceeded));
         assert!(manager.get_test_session("timeout-session").await.is_none());
         assert_eq!(backend.removed.lock().await.as_slice(), &["box-timeout"]);
+        assert_eq!(manager.active_session_count().await, 0);
 
         manager.close().await;
     }
@@ -1965,6 +2450,7 @@ mod tests {
                 output_limit_bytes: 1024,
                 export_max_bytes: 3,
                 session_max_inflight: 1,
+                max_active_sessions: 0,
             },
             backend,
         );
@@ -2172,6 +2658,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn resource_timeout_releases_active_session_capacity() {
+        let backend = Arc::new(ResourceTimeoutBackend {
+            removed: Mutex::new(Vec::new()),
+        });
+        let manager = TerminalSessionManager::new(
+            TerminalSessionManagerConfig {
+                lease_min_sec: 60,
+                lease_max_sec: 1800,
+                lease_default_sec: 60,
+                output_limit_bytes: 1024,
+                export_max_bytes: 0,
+                session_max_inflight: 1,
+                max_active_sessions: 1,
+            },
+            backend.clone(),
+        );
+
+        manager
+            .execute(TerminalExecRequest {
+                command: "seed".to_owned(),
+                session_id: "resource-timeout".to_owned(),
+                create_if_missing: true,
+                lease_ttl_sec: None,
+                deadline_unix_ms: 0,
+            })
+            .await
+            .unwrap();
+        let err = manager
+            .resolve_resource(TerminalResourceRequest {
+                session_id: "resource-timeout".to_owned(),
+                file_path: "/workspace/file.txt".to_owned(),
+                action: TERMINAL_RESOURCE_ACTION_READ.to_owned(),
+                signed_url: String::new(),
+                headers: HashMap::new(),
+                deadline_unix_ms: 0,
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(err, TerminalOperationError::DeadlineExceeded));
+        assert_eq!(manager.active_session_count().await, 0);
+        assert_eq!(
+            backend.removed.lock().await.as_slice(),
+            &["box-resource-timeout"]
+        );
+
+        manager.close().await;
+    }
+
+    #[tokio::test]
     async fn same_session_exec_and_resource_share_busy_state() {
         let backend = Arc::new(BlockingMixedBackend {
             exec_started: Notify::new(),
@@ -2317,6 +2852,579 @@ mod tests {
         manager.close().await;
     }
 
+    #[tokio::test]
+    async fn active_session_capacity_rejects_new_sessions_but_allows_existing() {
+        let backend = StatefulShellBackend::new();
+        let manager = TerminalSessionManager::new(
+            TerminalSessionManagerConfig {
+                lease_min_sec: 60,
+                lease_max_sec: 1800,
+                lease_default_sec: 60,
+                output_limit_bytes: 1024,
+                export_max_bytes: 0,
+                session_max_inflight: 2,
+                max_active_sessions: 2,
+            },
+            backend.clone(),
+        );
+
+        for session_id in ["session-a", "session-b"] {
+            manager
+                .execute(TerminalExecRequest {
+                    command: "seed".to_owned(),
+                    session_id: session_id.to_owned(),
+                    create_if_missing: true,
+                    lease_ttl_sec: None,
+                    deadline_unix_ms: 0,
+                })
+                .await
+                .unwrap();
+        }
+        assert_eq!(manager.active_session_count().await, 2);
+
+        let err = manager
+            .execute(TerminalExecRequest {
+                command: "overflow".to_owned(),
+                session_id: "session-c".to_owned(),
+                create_if_missing: true,
+                lease_ttl_sec: None,
+                deadline_unix_ms: 0,
+            })
+            .await
+            .unwrap_err();
+        match err {
+            TerminalOperationError::Terminal(error) => {
+                assert_eq!(error.code(), TERMINAL_EXEC_CODE_SESSION_CAPACITY_EXCEEDED)
+            }
+            other => panic!("unexpected capacity error: {other}"),
+        }
+        assert_eq!(
+            *backend.next_box.lock().await,
+            2,
+            "capacity rejection reached Box creation"
+        );
+
+        let missing = manager
+            .execute(TerminalExecRequest {
+                command: "missing".to_owned(),
+                session_id: "missing".to_owned(),
+                create_if_missing: false,
+                lease_ttl_sec: None,
+                deadline_unix_ms: 0,
+            })
+            .await
+            .unwrap_err();
+        match missing {
+            TerminalOperationError::Terminal(error) => {
+                assert_eq!(error.code(), TERMINAL_EXEC_CODE_SESSION_NOT_FOUND)
+            }
+            other => panic!("unexpected missing-session error: {other}"),
+        }
+
+        let reused = manager
+            .execute(TerminalExecRequest {
+                command: "reuse".to_owned(),
+                session_id: "session-a".to_owned(),
+                create_if_missing: false,
+                lease_ttl_sec: None,
+                deadline_unix_ms: 0,
+            })
+            .await
+            .unwrap();
+        assert_eq!(reused.stdout, "reuse");
+
+        let resource = manager
+            .resolve_resource(TerminalResourceRequest {
+                session_id: "session-a".to_owned(),
+                file_path: "/workspace/a.txt".to_owned(),
+                action: TERMINAL_RESOURCE_ACTION_VALIDATE.to_owned(),
+                signed_url: String::new(),
+                headers: HashMap::new(),
+                deadline_unix_ms: 0,
+            })
+            .await
+            .unwrap();
+        assert_eq!(resource.size_bytes, 5);
+        assert_eq!(manager.active_session_count().await, 2);
+
+        manager.close().await;
+    }
+
+    #[tokio::test]
+    async fn active_session_capacity_zero_is_unlimited() {
+        let backend = StatefulShellBackend::new();
+        let manager = TerminalSessionManager::new(
+            TerminalSessionManagerConfig {
+                lease_min_sec: 60,
+                lease_max_sec: 1800,
+                lease_default_sec: 60,
+                output_limit_bytes: 1024,
+                export_max_bytes: 0,
+                session_max_inflight: 1,
+                max_active_sessions: 0,
+            },
+            backend.clone(),
+        );
+
+        for session_id in ["one", "two", "three"] {
+            manager
+                .execute(TerminalExecRequest {
+                    command: "seed".to_owned(),
+                    session_id: session_id.to_owned(),
+                    create_if_missing: true,
+                    lease_ttl_sec: None,
+                    deadline_unix_ms: 0,
+                })
+                .await
+                .unwrap();
+        }
+        assert_eq!(manager.active_session_count().await, 3);
+        assert_eq!(*backend.next_box.lock().await, 3);
+
+        manager.close().await;
+        assert_eq!(manager.active_session_count().await, 0);
+        assert_eq!(backend.removed.lock().await.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn active_session_capacity_counts_creation_and_releases_after_failure() {
+        let backend = GatedCapacityBackend::new();
+        backend.create_blocked.store(true, Ordering::SeqCst);
+        let manager = TerminalSessionManager::new(
+            TerminalSessionManagerConfig {
+                lease_min_sec: 60,
+                lease_max_sec: 1800,
+                lease_default_sec: 60,
+                output_limit_bytes: 1024,
+                export_max_bytes: 0,
+                session_max_inflight: 1,
+                max_active_sessions: 1,
+            },
+            backend.clone(),
+        );
+
+        let create_started = backend.create_started.notified();
+        let manager_for_task = manager.clone();
+        let creator = tokio::spawn(async move {
+            manager_for_task
+                .execute(TerminalExecRequest {
+                    command: "create".to_owned(),
+                    session_id: "creating".to_owned(),
+                    create_if_missing: true,
+                    lease_ttl_sec: None,
+                    deadline_unix_ms: 0,
+                })
+                .await
+        });
+        create_started.await;
+        assert_eq!(manager.active_session_count().await, 1);
+
+        let err = manager
+            .execute(TerminalExecRequest {
+                command: "overflow".to_owned(),
+                session_id: "second".to_owned(),
+                create_if_missing: true,
+                lease_ttl_sec: None,
+                deadline_unix_ms: 0,
+            })
+            .await
+            .unwrap_err();
+        match err {
+            TerminalOperationError::Terminal(error) => {
+                assert_eq!(error.code(), TERMINAL_EXEC_CODE_SESSION_CAPACITY_EXCEEDED)
+            }
+            other => panic!("unexpected capacity error: {other}"),
+        }
+
+        backend.create_gate.notify_one();
+        backend.create_blocked.store(false, Ordering::SeqCst);
+        creator.await.unwrap().unwrap();
+        assert_eq!(manager.active_session_count().await, 1);
+        manager.release_and_destroy_session("creating").await;
+        assert_eq!(manager.active_session_count().await, 0);
+
+        backend.fail_next_create.store(true, Ordering::SeqCst);
+        let failed = manager
+            .execute(TerminalExecRequest {
+                command: "failed".to_owned(),
+                session_id: String::new(),
+                create_if_missing: false,
+                lease_ttl_sec: None,
+                deadline_unix_ms: 0,
+            })
+            .await;
+        assert!(failed.is_err());
+        assert_eq!(manager.active_session_count().await, 0);
+
+        manager
+            .execute(TerminalExecRequest {
+                command: "replacement".to_owned(),
+                session_id: "replacement".to_owned(),
+                create_if_missing: true,
+                lease_ttl_sec: None,
+                deadline_unix_ms: 0,
+            })
+            .await
+            .unwrap();
+        assert_eq!(manager.active_session_count().await, 1);
+
+        manager.close().await;
+    }
+
+    #[tokio::test]
+    async fn waiter_deadline_does_not_cancel_pending_creation() {
+        let backend = GatedCapacityBackend::new();
+        backend.create_blocked.store(true, Ordering::SeqCst);
+        let manager = TerminalSessionManager::new(
+            TerminalSessionManagerConfig {
+                lease_min_sec: 60,
+                lease_max_sec: 1800,
+                lease_default_sec: 60,
+                output_limit_bytes: 1024,
+                export_max_bytes: 0,
+                session_max_inflight: 2,
+                max_active_sessions: 1,
+            },
+            backend.clone(),
+        );
+        let create_started = backend.create_started.notified();
+
+        let creator_manager = manager.clone();
+        let creator = tokio::spawn(async move {
+            creator_manager
+                .execute(TerminalExecRequest {
+                    command: "creator".to_owned(),
+                    session_id: "waiter-deadline".to_owned(),
+                    create_if_missing: true,
+                    lease_ttl_sec: None,
+                    deadline_unix_ms: 0,
+                })
+                .await
+        });
+        create_started.await;
+
+        let waiter_error = manager
+            .execute(TerminalExecRequest {
+                command: "waiter".to_owned(),
+                session_id: "waiter-deadline".to_owned(),
+                create_if_missing: true,
+                lease_ttl_sec: None,
+                deadline_unix_ms: to_unix_millis(SystemTime::now()) + 50,
+            })
+            .await
+            .expect_err("waiter should exceed its own deadline");
+        assert!(matches!(
+            waiter_error,
+            TerminalOperationError::DeadlineExceeded
+        ));
+        assert_eq!(manager.active_session_count().await, 1);
+
+        backend.create_blocked.store(false, Ordering::SeqCst);
+        backend.create_gate.notify_one();
+        creator.await.unwrap().unwrap();
+        assert_eq!(manager.active_session_count().await, 1);
+
+        manager.close().await;
+    }
+
+    #[tokio::test]
+    async fn box_creation_deadline_releases_capacity_and_wakes_waiters() {
+        let backend = CreationDeadlineBackend::new();
+        let manager = TerminalSessionManager::new(
+            TerminalSessionManagerConfig {
+                lease_min_sec: 60,
+                lease_max_sec: 1800,
+                lease_default_sec: 60,
+                output_limit_bytes: 1024,
+                export_max_bytes: 0,
+                session_max_inflight: 2,
+                max_active_sessions: 1,
+            },
+            backend.clone(),
+        );
+        let deadline_unix_ms = to_unix_millis(SystemTime::now()) + 500;
+        let create_started = backend.create_started.notified();
+
+        let creator_manager = manager.clone();
+        let creator = tokio::spawn(async move {
+            creator_manager
+                .execute(TerminalExecRequest {
+                    command: "creator".to_owned(),
+                    session_id: "creation-deadline".to_owned(),
+                    create_if_missing: true,
+                    lease_ttl_sec: None,
+                    deadline_unix_ms,
+                })
+                .await
+        });
+        create_started.await;
+
+        let waiter_manager = manager.clone();
+        let waiter = tokio::spawn(async move {
+            waiter_manager
+                .execute(TerminalExecRequest {
+                    command: "waiter".to_owned(),
+                    session_id: "creation-deadline".to_owned(),
+                    create_if_missing: true,
+                    lease_ttl_sec: None,
+                    deadline_unix_ms,
+                })
+                .await
+        });
+        tokio::time::timeout(Duration::from_millis(250), async {
+            loop {
+                let waiter_joined = manager
+                    .sessions
+                    .lock()
+                    .await
+                    .get("creation-deadline")
+                    .is_some_and(|session| session.inflight == 2);
+                if waiter_joined {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("waiter should join the pending creation");
+
+        for result in [creator, waiter] {
+            let error = tokio::time::timeout(Duration::from_secs(2), result)
+                .await
+                .expect("creation deadline should complete")
+                .expect("creation task should join")
+                .expect_err("creation should exceed its deadline");
+            assert!(matches!(error, TerminalOperationError::DeadlineExceeded));
+        }
+        assert_eq!(manager.active_session_count().await, 0);
+        assert!(manager.sessions.lock().await.is_empty());
+
+        manager.close().await;
+    }
+
+    #[tokio::test]
+    async fn active_session_capacity_releases_after_async_box_cleanup() {
+        let backend = GatedCapacityBackend::new();
+        let manager = TerminalSessionManager::new(
+            TerminalSessionManagerConfig {
+                lease_min_sec: 60,
+                lease_max_sec: 1800,
+                lease_default_sec: 60,
+                output_limit_bytes: 1024,
+                export_max_bytes: 0,
+                session_max_inflight: 1,
+                max_active_sessions: 1,
+            },
+            backend.clone(),
+        );
+
+        manager
+            .execute(TerminalExecRequest {
+                command: "seed".to_owned(),
+                session_id: "expired".to_owned(),
+                create_if_missing: true,
+                lease_ttl_sec: None,
+                deadline_unix_ms: 0,
+            })
+            .await
+            .unwrap();
+        {
+            let mut sessions = manager.sessions.lock().await;
+            sessions
+                .get_mut("expired")
+                .expect("expired session")
+                .lease_expires_at = SystemTime::UNIX_EPOCH;
+        }
+
+        backend.remove_blocked.store(true, Ordering::SeqCst);
+        let remove_started = backend.remove_started.notified();
+        let manager_for_cleanup = manager.clone();
+        let cleanup = tokio::spawn(async move {
+            manager_for_cleanup.cleanup_expired_sessions().await;
+        });
+        remove_started.await;
+        assert_eq!(manager.active_session_count().await, 1);
+
+        let err = manager
+            .execute(TerminalExecRequest {
+                command: "overflow".to_owned(),
+                session_id: "replacement".to_owned(),
+                create_if_missing: true,
+                lease_ttl_sec: None,
+                deadline_unix_ms: 0,
+            })
+            .await
+            .unwrap_err();
+        match err {
+            TerminalOperationError::Terminal(error) => {
+                assert_eq!(error.code(), TERMINAL_EXEC_CODE_SESSION_CAPACITY_EXCEEDED)
+            }
+            other => panic!("unexpected capacity error: {other}"),
+        }
+
+        let manager_for_close = manager.clone();
+        let mut close_task = tokio::spawn(async move {
+            manager_for_close.close().await;
+        });
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), &mut close_task)
+                .await
+                .is_err(),
+            "close returned while Box cleanup was still running"
+        );
+
+        backend.remove_gate.notify_one();
+        backend.remove_blocked.store(false, Ordering::SeqCst);
+        cleanup.await.unwrap();
+        close_task.await.unwrap();
+        assert_eq!(manager.active_session_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn cancelled_box_cleanup_releases_active_session_capacity() {
+        let backend = GatedCapacityBackend::new();
+        let manager = TerminalSessionManager::new(
+            TerminalSessionManagerConfig {
+                lease_min_sec: 60,
+                lease_max_sec: 1800,
+                lease_default_sec: 60,
+                output_limit_bytes: 1024,
+                export_max_bytes: 0,
+                session_max_inflight: 1,
+                max_active_sessions: 1,
+            },
+            backend.clone(),
+        );
+
+        manager
+            .execute(TerminalExecRequest {
+                command: "seed".to_owned(),
+                session_id: "cancelled-cleanup".to_owned(),
+                create_if_missing: true,
+                lease_ttl_sec: None,
+                deadline_unix_ms: 0,
+            })
+            .await
+            .unwrap();
+        {
+            let mut sessions = manager.sessions.lock().await;
+            sessions
+                .get_mut("cancelled-cleanup")
+                .expect("session")
+                .lease_expires_at = SystemTime::UNIX_EPOCH;
+        }
+
+        backend.remove_blocked.store(true, Ordering::SeqCst);
+        let remove_started = backend.remove_started.notified();
+        let manager_for_cleanup = manager.clone();
+        let cleanup = tokio::spawn(async move {
+            manager_for_cleanup.cleanup_expired_sessions().await;
+        });
+        remove_started.await;
+        assert_eq!(manager.active_session_count().await, 1);
+
+        cleanup.abort();
+        assert!(cleanup.await.unwrap_err().is_cancelled());
+        assert_eq!(manager.active_session_count().await, 0);
+        assert_eq!(manager.pending_cleanups.load(Ordering::SeqCst), 0);
+
+        manager.close().await;
+    }
+
+    #[tokio::test]
+    async fn close_cancels_pending_box_creation_and_releases_capacity() {
+        let backend = GatedCapacityBackend::new();
+        backend.create_blocked.store(true, Ordering::SeqCst);
+        let manager = TerminalSessionManager::new(
+            TerminalSessionManagerConfig {
+                lease_min_sec: 60,
+                lease_max_sec: 1800,
+                lease_default_sec: 60,
+                output_limit_bytes: 1024,
+                export_max_bytes: 0,
+                session_max_inflight: 1,
+                max_active_sessions: 1,
+            },
+            backend.clone(),
+        );
+
+        let create_started = backend.create_started.notified();
+        let manager_for_creator = manager.clone();
+        let creator = tokio::spawn(async move {
+            manager_for_creator
+                .execute(TerminalExecRequest {
+                    command: "create".to_owned(),
+                    session_id: "creating-on-close".to_owned(),
+                    create_if_missing: true,
+                    lease_ttl_sec: None,
+                    deadline_unix_ms: 0,
+                })
+                .await
+        });
+        create_started.await;
+
+        tokio::time::timeout(Duration::from_secs(1), manager.close())
+            .await
+            .expect("close should cancel pending creation");
+        let result = creator.await.unwrap();
+        assert!(
+            matches!(result, Err(TerminalOperationError::ExecutionFailed(message)) if message == TERMINAL_MANAGER_CLOSED_MESSAGE)
+        );
+        assert_eq!(manager.active_session_count().await, 0);
+        assert!(backend.removed.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn close_is_bounded_when_backend_ignores_shutdown_during_creation() {
+        let backend = GatedCapacityBackend::new();
+        backend.create_blocked.store(true, Ordering::SeqCst);
+        backend.ignore_shutdown.store(true, Ordering::SeqCst);
+        let manager = TerminalSessionManager::new(
+            TerminalSessionManagerConfig {
+                lease_min_sec: 60,
+                lease_max_sec: 1800,
+                lease_default_sec: 60,
+                output_limit_bytes: 1024,
+                export_max_bytes: 0,
+                session_max_inflight: 1,
+                max_active_sessions: 1,
+            },
+            backend.clone(),
+        );
+
+        let create_started = backend.create_started.notified();
+        let manager_for_creator = manager.clone();
+        let creator = tokio::spawn(async move {
+            manager_for_creator
+                .execute(TerminalExecRequest {
+                    command: "create".to_owned(),
+                    session_id: "stuck-creation".to_owned(),
+                    create_if_missing: true,
+                    lease_ttl_sec: None,
+                    deadline_unix_ms: 0,
+                })
+                .await
+        });
+        create_started.await;
+
+        tokio::time::timeout(Duration::from_secs(1), manager.close())
+            .await
+            .expect("close must remain bounded when backend ignores cancellation");
+        assert_eq!(manager.active_session_count().await, 0);
+        assert!(manager.sessions.lock().await.is_empty());
+
+        backend.create_gate.notify_one();
+        let result = tokio::time::timeout(Duration::from_secs(1), creator)
+            .await
+            .expect("late creation should finish after gate opens")
+            .unwrap();
+        assert!(
+            matches!(result, Err(TerminalOperationError::ExecutionFailed(message)) if message == TERMINAL_MANAGER_CLOSED_MESSAGE)
+        );
+        assert_eq!(backend.removed.lock().await.as_slice(), &["box-capacity"]);
+        assert_eq!(manager.pending_creations.load(Ordering::SeqCst), 0);
+    }
+
     // ---- per-session concurrency ----
 
     fn manager_with_limit(
@@ -2331,6 +3439,7 @@ mod tests {
                 output_limit_bytes: 1024 * 1024,
                 export_max_bytes: 0,
                 session_max_inflight,
+                max_active_sessions: 0,
             },
             backend,
         )
@@ -2362,13 +3471,13 @@ mod tests {
     struct GatedCreateBackend {
         create_gate: Gate,
         create_started: Gate,
-        create_result: Result<String, String>,
+        create_result: Result<String, TerminalOperationError>,
         exec_box_ids: Mutex<Vec<String>>,
         removed: Mutex<Vec<String>>,
     }
 
     impl GatedCreateBackend {
-        fn new(create_result: Result<String, String>) -> Arc<Self> {
+        fn new(create_result: Result<String, TerminalOperationError>) -> Arc<Self> {
             Arc::new(Self {
                 create_gate: Gate::new(),
                 create_started: Gate::new(),
@@ -2381,7 +3490,11 @@ mod tests {
 
     #[async_trait]
     impl TerminalBackend for GatedCreateBackend {
-        async fn create_session_box(&self) -> Result<String, String> {
+        async fn create_session_box(
+            &self,
+            _shutdown: CancellationToken,
+            _deadline_unix_ms: i64,
+        ) -> Result<String, TerminalOperationError> {
             self.create_started.open();
             self.create_gate.wait().await;
             self.create_result.clone()
@@ -2446,7 +3559,11 @@ mod tests {
 
     #[async_trait]
     impl TerminalBackend for SiblingBackend {
-        async fn create_session_box(&self) -> Result<String, String> {
+        async fn create_session_box(
+            &self,
+            _shutdown: CancellationToken,
+            _deadline_unix_ms: i64,
+        ) -> Result<String, TerminalOperationError> {
             Ok("box-sibling".to_owned())
         }
 
@@ -2534,7 +3651,11 @@ mod tests {
 
     #[async_trait]
     impl TerminalBackend for ConcurrentExecBackend {
-        async fn create_session_box(&self) -> Result<String, String> {
+        async fn create_session_box(
+            &self,
+            _shutdown: CancellationToken,
+            _deadline_unix_ms: i64,
+        ) -> Result<String, TerminalOperationError> {
             Ok("box-concurrent".to_owned())
         }
 
@@ -2717,6 +3838,11 @@ mod tests {
             backend.exec_box_ids.lock().await.is_empty(),
             "a command ran before the box existed"
         );
+        assert_eq!(
+            manager.active_session_count().await,
+            1,
+            "concurrent creation must use one reservation"
+        );
 
         backend.create_gate.open();
         creator.await.expect("join").expect("creator exec");
@@ -2733,7 +3859,9 @@ mod tests {
 
     #[tokio::test]
     async fn create_failure_reaches_all_waiters() {
-        let backend = GatedCreateBackend::new(Err("create boom".to_owned()));
+        let backend = GatedCreateBackend::new(Err(TerminalOperationError::ExecutionFailed(
+            "create boom".to_owned(),
+        )));
         let manager = manager_with_limit(backend.clone(), 3);
 
         let creator = {
@@ -2806,6 +3934,11 @@ mod tests {
             backend.removed.lock().await.is_empty(),
             "box removed while a sibling command was still in flight"
         );
+        assert_eq!(
+            manager.active_session_count().await,
+            1,
+            "destroying session must retain its reservation"
+        );
 
         backend.sibling_gate.open();
         let result = sibling
@@ -2820,6 +3953,7 @@ mod tests {
             "box must be reclaimed once inflight drains"
         );
         assert!(manager.get_test_session(&session_id).await.is_none());
+        assert_eq!(manager.active_session_count().await, 0);
 
         manager.close().await;
     }
@@ -2877,7 +4011,11 @@ mod tests {
 
     #[async_trait]
     impl TerminalBackend for ExecBlockingResourceFreeBackend {
-        async fn create_session_box(&self) -> Result<String, String> {
+        async fn create_session_box(
+            &self,
+            _shutdown: CancellationToken,
+            _deadline_unix_ms: i64,
+        ) -> Result<String, TerminalOperationError> {
             Ok("box-mixed".to_owned())
         }
 

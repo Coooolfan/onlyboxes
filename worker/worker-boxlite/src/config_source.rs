@@ -89,6 +89,13 @@ impl Source {
         self.parse_positive(env_key, default_value)
     }
 
+    pub fn non_negative_u32(&self, env_key: &str, default_value: u32) -> u32 {
+        self.get(env_key)
+            .trim()
+            .parse::<u32>()
+            .unwrap_or(default_value)
+    }
+
     fn parse_positive<T>(&self, env_key: &str, default_value: T) -> T
     where
         T: std::str::FromStr + PartialOrd + Default,
@@ -295,6 +302,20 @@ region = "cn"
         assert_eq!(src.log_level("WORKER_LOG_LEVEL", "info"), "info");
         assert_eq!(src.log_format("WORKER_LOG_FORMAT", "json"), "json");
         assert_eq!(src.percent_u8("WORKER_HEARTBEAT_JITTER_PCT", 20), 20);
+    }
+
+    #[test]
+    fn non_negative_u32_accepts_zero_and_falls_back_for_invalid_values() {
+        let src = source_from_toml("limit = 7\n");
+        assert_eq!(src.non_negative_u32("WORKER_LIMIT", 0), 7);
+
+        let mut zero = Source::default();
+        zero.values.insert("limit".to_owned(), "0".to_owned());
+        assert_eq!(zero.non_negative_u32("WORKER_LIMIT", 9), 0);
+
+        let mut invalid = Source::default();
+        invalid.values.insert("limit".to_owned(), "-1".to_owned());
+        assert_eq!(invalid.non_negative_u32("WORKER_LIMIT", 9), 9);
     }
 
     #[test]

@@ -23,6 +23,8 @@ const DEFAULT_MAX_INFLIGHT: u32 = 4;
 /// One command per session, matching the behaviour before per-session
 /// concurrency became configurable.
 const DEFAULT_TERMINAL_SESSION_MAX_INFLIGHT: u32 = 1;
+/// Zero keeps terminal session capacity unlimited.
+const DEFAULT_TERMINAL_MAX_ACTIVE_SESSIONS: u32 = 0;
 const DEFAULT_LOG_LEVEL: &str = "info";
 const DEFAULT_LOG_FORMAT: &str = "json";
 const DEFAULT_LOG_ADD_SOURCE: bool = false;
@@ -56,6 +58,8 @@ pub struct Config {
     pub terminal_export_max_bytes: usize,
     /// Caps concurrent commands per terminal session.
     pub terminal_session_max_inflight: u32,
+    /// Caps terminal sandbox sessions managed by this worker. Zero is unlimited.
+    pub terminal_max_active_sessions: u32,
     pub echo_max_inflight: i32,
     pub python_exec_max_inflight: i32,
     pub terminal_exec_max_inflight: i32,
@@ -153,6 +157,10 @@ impl Config {
                 "WORKER_TERMINAL_SESSION_MAX_INFLIGHT",
                 DEFAULT_TERMINAL_SESSION_MAX_INFLIGHT,
             ),
+            terminal_max_active_sessions: src.non_negative_u32(
+                "WORKER_TERMINAL_MAX_ACTIVE_SESSIONS",
+                DEFAULT_TERMINAL_MAX_ACTIVE_SESSIONS,
+            ),
             echo_max_inflight: src.positive_u32("WORKER_ECHO_MAX_INFLIGHT", DEFAULT_MAX_INFLIGHT)
                 as i32,
             python_exec_max_inflight: src
@@ -248,6 +256,22 @@ mod tests {
         assert_eq!(cfg.terminal_exec_image, DEFAULT_TERMINAL_EXEC_IMAGE);
         assert_eq!(cfg.labels.get("region"), Some(&"cn".to_owned()));
         assert_eq!(cfg.labels.get("owner"), Some(&"team-a".to_owned()));
+    }
+
+    #[test]
+    fn load_parses_terminal_max_active_sessions() {
+        std::env::set_var("WORKER_TERMINAL_MAX_ACTIVE_SESSIONS", "0");
+        assert_eq!(Config::load().terminal_max_active_sessions, 0);
+
+        std::env::set_var("WORKER_TERMINAL_MAX_ACTIVE_SESSIONS", "12");
+        assert_eq!(Config::load().terminal_max_active_sessions, 12);
+
+        std::env::set_var("WORKER_TERMINAL_MAX_ACTIVE_SESSIONS", "-1");
+        assert_eq!(
+            Config::load().terminal_max_active_sessions,
+            DEFAULT_TERMINAL_MAX_ACTIVE_SESSIONS
+        );
+        std::env::remove_var("WORKER_TERMINAL_MAX_ACTIVE_SESSIONS");
     }
 
     #[test]

@@ -28,6 +28,8 @@ The loaded config file path is reported once at startup via the `config file loa
 
 See `config.example.toml` in the worker root for a full annotated template.
 
+`terminal_max_active_sessions` maps to `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS`. `0` keeps the existing unlimited behavior; a positive value limits terminal sessions managed by this worker. Creating, ready, destroying, and Box cleanup in progress sessions all consume capacity.
+
 ```toml
 id = "wk_..."
 secret = "..."

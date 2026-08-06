@@ -83,6 +83,7 @@ mod tests {
             terminal_output_limit_bytes: 1024 * 1024,
             terminal_export_max_bytes: 0,
             terminal_session_max_inflight: 1,
+            terminal_max_active_sessions: 0,
             echo_max_inflight: 4,
             python_exec_max_inflight: 4,
             terminal_exec_max_inflight: 4,

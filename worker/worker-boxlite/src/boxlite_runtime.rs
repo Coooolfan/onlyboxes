@@ -9,11 +9,13 @@ use boxlite::{
 };
 use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
+use tokio_util::sync::CancellationToken;
 
 use crate::config::Config;
 
 const BOX_CLEANUP_TIMEOUT: Duration = Duration::from_secs(3);
 const TERMINAL_EXEC_IDLE_COMMAND: &str = "while true; do sleep 3600; done";
+const TERMINAL_SESSION_CREATE_CANCELLED_MESSAGE: &str = "terminal session manager is closed";
 
 static RUNTIME: OnceLock<Result<BoxliteRuntime, String>> = OnceLock::new();
 // Keep terminal session handles alive so the first exec can reuse the
@@ -92,24 +94,86 @@ pub(crate) async fn run_python_exec(
 pub(crate) async fn create_terminal_session_box(
     cfg: &Config,
     box_name: &str,
+    shutdown: CancellationToken,
+    deadline_unix_ms: i64,
 ) -> Result<String, BoxliteCommandError> {
+    if shutdown.is_cancelled() {
+        return Err(BoxliteCommandError::ExecutionFailed(
+            TERMINAL_SESSION_CREATE_CANCELLED_MESSAGE.to_owned(),
+        ));
+    }
+    if remaining_until_deadline(deadline_unix_ms) == Some(Duration::ZERO) {
+        return Err(BoxliteCommandError::DeadlineExceeded);
+    }
+
     let runtime = runtime(cfg)?;
-    let litebox = runtime
-        .create(
+    let litebox = {
+        let create = runtime.create(
             build_terminal_exec_box_options(cfg),
             Some(box_name.trim().to_owned()),
-        )
-        .await
-        .map_err(|err| {
-            BoxliteCommandError::ExecutionFailed(format!("terminalExec create failed: {err}"))
-        })?;
+        );
+        tokio::pin!(create);
+
+        match remaining_until_deadline(deadline_unix_ms) {
+            Some(remaining) => tokio::select! {
+                _ = shutdown.cancelled() => Err(BoxliteCommandError::ExecutionFailed(
+                    TERMINAL_SESSION_CREATE_CANCELLED_MESSAGE.to_owned(),
+                )),
+                _ = tokio::time::sleep(remaining) => Err(BoxliteCommandError::DeadlineExceeded),
+                result = &mut create => result.map_err(|err| {
+                    BoxliteCommandError::ExecutionFailed(format!("terminalExec create failed: {err}"))
+                }),
+            },
+            None => tokio::select! {
+                _ = shutdown.cancelled() => Err(BoxliteCommandError::ExecutionFailed(
+                    TERMINAL_SESSION_CREATE_CANCELLED_MESSAGE.to_owned(),
+                )),
+                result = &mut create => result.map_err(|err| {
+                    BoxliteCommandError::ExecutionFailed(format!("terminalExec create failed: {err}"))
+                }),
+            },
+        }
+    }?;
 
     let box_id = litebox.id().as_str().to_owned();
-    if let Err(err) = litebox.start().await {
+    let start_result = {
+        let start = litebox.start();
+        tokio::pin!(start);
+
+        match remaining_until_deadline(deadline_unix_ms) {
+            Some(remaining) if remaining.is_zero() => Err(BoxliteCommandError::DeadlineExceeded),
+            Some(remaining) => tokio::select! {
+                _ = shutdown.cancelled() => Err(BoxliteCommandError::ExecutionFailed(
+                    TERMINAL_SESSION_CREATE_CANCELLED_MESSAGE.to_owned(),
+                )),
+                _ = tokio::time::sleep(remaining) => Err(BoxliteCommandError::DeadlineExceeded),
+                result = &mut start => result.map_err(|err| {
+                    BoxliteCommandError::ExecutionFailed(format!("terminalExec start failed: {err}"))
+                }),
+            },
+            None => tokio::select! {
+                _ = shutdown.cancelled() => Err(BoxliteCommandError::ExecutionFailed(
+                    TERMINAL_SESSION_CREATE_CANCELLED_MESSAGE.to_owned(),
+                )),
+                result = &mut start => result.map_err(|err| {
+                    BoxliteCommandError::ExecutionFailed(format!("terminalExec start failed: {err}"))
+                }),
+            },
+        }
+    };
+    if let Err(err) = start_result {
         remove_box(cfg, &box_id).await;
-        return Err(BoxliteCommandError::ExecutionFailed(format!(
-            "terminalExec start failed: {err}"
-        )));
+        return Err(err);
+    }
+    if shutdown.is_cancelled() {
+        remove_box(cfg, &box_id).await;
+        return Err(BoxliteCommandError::ExecutionFailed(
+            TERMINAL_SESSION_CREATE_CANCELLED_MESSAGE.to_owned(),
+        ));
+    }
+    if remaining_until_deadline(deadline_unix_ms) == Some(Duration::ZERO) {
+        remove_box(cfg, &box_id).await;
+        return Err(BoxliteCommandError::DeadlineExceeded);
     }
 
     cache_terminal_session_box(litebox);
@@ -570,6 +634,7 @@ mod tests {
             terminal_output_limit_bytes: 1024 * 1024,
             terminal_export_max_bytes: 0,
             terminal_session_max_inflight: 1,
+            terminal_max_active_sessions: 0,
             echo_max_inflight: 4,
             python_exec_max_inflight: 4,
             terminal_exec_max_inflight: 4,
@@ -619,6 +684,7 @@ mod tests {
             terminal_output_limit_bytes: 1024 * 1024,
             terminal_export_max_bytes: 0,
             terminal_session_max_inflight: 1,
+            terminal_max_active_sessions: 0,
             echo_max_inflight: 4,
             python_exec_max_inflight: 4,
             terminal_exec_max_inflight: 4,

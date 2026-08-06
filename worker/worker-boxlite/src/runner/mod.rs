@@ -72,6 +72,8 @@ pub async fn run(shutdown: CancellationToken, cfg: Config) -> Result<(), RunnerE
         lease_max_sec = cfg.terminal_lease_max_sec,
         lease_default_sec = cfg.terminal_lease_default_sec,
         output_limit_bytes = cfg.terminal_output_limit_bytes,
+        session_max_inflight = cfg.terminal_session_max_inflight,
+        max_active_sessions = cfg.terminal_max_active_sessions,
         "terminalExec configured"
     );
 

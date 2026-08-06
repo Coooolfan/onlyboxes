@@ -577,6 +577,8 @@ mod tests {
         result: Result<PythonExecRunResult, BoxliteCommandError>,
     }
 
+    struct TerminalErrorCapabilityRuntime;
+
     #[async_trait]
     impl CapabilityRuntime for FakeCapabilityRuntime {
         async fn run_python_exec(
@@ -631,6 +633,38 @@ mod tests {
                 size_bytes: 3,
                 blob: b"abc".to_vec(),
             })
+        }
+    }
+
+    #[async_trait]
+    impl CapabilityRuntime for TerminalErrorCapabilityRuntime {
+        async fn run_python_exec(
+            &self,
+            _cfg: &Config,
+            _code: &str,
+            _deadline_unix_ms: i64,
+        ) -> Result<PythonExecRunResult, BoxliteCommandError> {
+            unreachable!()
+        }
+
+        async fn run_terminal_exec(
+            &self,
+            _cfg: &Config,
+            _req: TerminalExecRequest,
+        ) -> Result<TerminalExecRunResult, TerminalOperationError> {
+            Err(super::super::terminal_session_manager::TerminalExecError::new(
+                super::super::terminal_session_manager::TERMINAL_EXEC_CODE_SESSION_CAPACITY_EXCEEDED,
+                super::super::terminal_session_manager::TERMINAL_EXEC_CAPACITY_MESSAGE,
+            )
+            .into())
+        }
+
+        async fn run_terminal_resource(
+            &self,
+            _cfg: &Config,
+            _req: TerminalResourceRequest,
+        ) -> Result<TerminalResourceRunResult, TerminalOperationError> {
+            unreachable!()
         }
     }
 
@@ -690,6 +724,7 @@ mod tests {
             terminal_output_limit_bytes: 1024 * 1024,
             terminal_export_max_bytes: 0,
             terminal_session_max_inflight: 1,
+            terminal_max_active_sessions: 0,
             echo_max_inflight: 4,
             python_exec_max_inflight: 4,
             terminal_exec_max_inflight: 4,
@@ -896,6 +931,28 @@ mod tests {
         let decoded: TerminalExecRunResult = serde_json::from_slice(&result.payload_json).unwrap();
         assert_eq!(decoded.session_id, "sess-1");
         assert_eq!(decoded.stdout, "hello\n");
+    }
+
+    #[tokio::test]
+    async fn build_command_result_preserves_terminal_capacity_error() {
+        let request = build_command_result_with_runtime(
+            &test_config(),
+            CommandDispatch {
+                command_id: "cmd-term-capacity".to_owned(),
+                capability: "terminalExec".to_owned(),
+                payload_json: br#"{"command":"pwd","session_id":"new","create_if_missing":true}"#
+                    .to_vec(),
+                deadline_unix_ms: 0,
+            },
+            &TerminalErrorCapabilityRuntime,
+        )
+        .await;
+
+        let error = unwrap_command_result(request)
+            .error
+            .expect("expected capacity error");
+        assert_eq!(error.code, "session_capacity_exceeded");
+        assert_eq!(error.message, "terminal session capacity exceeded");
     }
 
     #[tokio::test]

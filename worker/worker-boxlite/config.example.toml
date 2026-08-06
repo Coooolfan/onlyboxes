@@ -41,6 +41,9 @@ terminal_lease_default_sec = 60
 terminal_output_limit_bytes = 1048576
 # 0 means no export size limit.
 terminal_export_max_bytes = 0
+# Maximum active terminal sessions managed by this worker.
+# 0 means unlimited.
+terminal_max_active_sessions = 0
 # Maximum concurrent commands in one terminal session.
 terminal_session_max_inflight = 1
 
