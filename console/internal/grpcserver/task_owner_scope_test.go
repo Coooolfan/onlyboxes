@@ -5,6 +5,54 @@ import (
 	"testing"
 )
 
+func TestTerminalSessionIntentForTaskInput(t *testing.T) {
+	tests := []struct {
+		name       string
+		capability string
+		input      []byte
+		want       terminalSessionIntent
+	}{
+		{
+			name:       "terminal exec without session id is known new",
+			capability: taskCapabilityTerminalExec,
+			input:      []byte(`{"command":"pwd"}`),
+			want:       terminalSessionIntentKnownNew,
+		},
+		{
+			name:       "terminal exec with blank session id is known new",
+			capability: taskCapabilityTerminalExec,
+			input:      []byte(`{"command":"pwd","session_id":"  "}`),
+			want:       terminalSessionIntentKnownNew,
+		},
+		{
+			name:       "caller supplied session id is unknown",
+			capability: taskCapabilityTerminalExec,
+			input:      []byte(`{"command":"pwd","session_id":"session-1"}`),
+			want:       terminalSessionIntentUnknown,
+		},
+		{
+			name:       "malformed input is unknown",
+			capability: taskCapabilityTerminalExec,
+			input:      []byte(`{"command":`),
+			want:       terminalSessionIntentUnknown,
+		},
+		{
+			name:       "terminal resource is unknown",
+			capability: taskCapabilityTerminalResource,
+			input:      []byte(`{"session_id":"session-1"}`),
+			want:       terminalSessionIntentUnknown,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := terminalSessionIntentForTaskInput(tc.capability, tc.input); got != tc.want {
+				t.Fatalf("intent: got %d want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestUnscopeTerminalSessionIDRejectsOwnerMismatch(t *testing.T) {
 	_, ok := unscopeTerminalSessionID("owner-a", "obx:owner-b:session-1")
 	if ok {

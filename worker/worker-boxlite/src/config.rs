@@ -213,7 +213,7 @@ fn parse_labels(raw: &str) -> BTreeMap<String, String> {
 
 fn default_call_timeout_sec(heartbeat_interval_sec: u64) -> u64 {
     let heartbeat = heartbeat_interval_sec.max(DEFAULT_HEARTBEAT_INTERVAL_SEC);
-    (heartbeat * 5 + 1) / 2
+    (heartbeat * 5).div_ceil(2)
 }
 
 fn clamp_u32(value: u32, min: u32, max: u32) -> u32 {

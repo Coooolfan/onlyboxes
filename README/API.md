@@ -413,6 +413,11 @@ Success `200`:
   "workers": [
     {
       "node_id": "worker-1",
+      "active_session_count": 3,
+      "terminal_session_capacity": {
+        "known": true,
+        "max_active_sessions": 4
+      },
       "capabilities": [
         { "name": "pythonExec", "inflight": 1, "max_inflight": 4 }
       ]
@@ -422,7 +427,12 @@ Success `200`:
 }
 ```
 
-Note: non-admin responses are scoped to the caller-owned `worker-sys`.
+Notes:
+
+- non-admin responses are scoped to the caller-owned `worker-sys`.
+- `active_session_count` is the worker's latest terminal reservation count.
+- `terminal_session_capacity.known=false` means a legacy worker did not declare a maximum; it must not be interpreted as unlimited.
+- `known=true,max_active_sessions=0` explicitly means unlimited active terminal sessions.
 
 ### 5.4 Create Worker Credential
 
@@ -569,7 +579,9 @@ Errors:
   - `terminalExec` and `terminalResource` share that per-session limit.
 - `429` no worker capacity or terminal session capacity
   - `no_capacity` means the worker-level quota for the capability is exhausted, not a single session's.
-  - `session_capacity_exceeded` means the selected sandbox worker has reached `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS`; existing sessions remain usable, but this request could not create a new session.
+  - `session_capacity_exceeded` means every dispatchable sandbox worker attempted for this new session rejected creation because it had reached `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS`; existing sessions remain usable on their bound worker.
+  - for a console-generated new `session_id`, capacity-aware dispatch prefers workers that report available session capacity, then legacy/unknown workers, and treats reported-full workers as last-resort probes.
+  - a worker-side capacity rejection is retried only when the worker explicitly confirms this pre-execution error and the provisional route can be removed safely; transport, timeout, and other execution errors are not retried.
   - these are separate from `session_busy`, which means the per-session command limit was reached.
 - `503` no compatible worker
 - `504` timeout
@@ -695,6 +707,7 @@ Rules:
 - `timeout_ms`: `1..600000`, default `60000`
 - `request_id`: optional dedupe key (scoped per account)
 - for `terminalResource` export payloads, `input.headers` is filtered before dispatch; only `x-amz-*`, `Content-Type`, and `Content-MD5` upload headers are forwarded to workers.
+- one task keeps the same `task_id` and `request_id` across internal terminal capacity retries; `command_id` is the current or last worker dispatch attempt, so it can change while the task is running.
 
 Possible responses:
 
@@ -963,7 +976,11 @@ Console responds with:
 
 ### 10.2 Key Messages
 
-- `ConnectHello` includes worker identity, capabilities, labels, version, and `worker_secret`.
+- `ConnectHello` includes worker identity, capabilities, labels, version, `worker_secret`, and optional `terminal_session_capacity`.
+  - a missing `terminal_session_capacity` means legacy/unknown capacity.
+  - a present declaration carries `max_active_sessions` (`0` means unlimited) and the reservation count in `active_session_count` at Hello construction time.
+  - sandbox workers send the declaration on every connection, including reconnects; `worker-sys` does not declare terminal capacity.
+- `HeartbeatFrame.active_session_count` refreshes the reservation count after Hello. Negative Hello or heartbeat capacity values are rejected.
 - `CommandDispatch` carries:
   - `command_id`
   - `capability`

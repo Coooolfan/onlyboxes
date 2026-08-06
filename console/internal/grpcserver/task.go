@@ -130,6 +130,7 @@ func (s *RegistryService) SubmitTask(ctx context.Context, req SubmitTaskRequest)
 	if !json.Valid(inputJSON) {
 		return SubmitTaskResult{}, status.Error(codes.InvalidArgument, "input must be valid JSON")
 	}
+	intent := terminalSessionIntentForTaskInput(capability, inputJSON)
 	scopedInputJSON, err := s.scopeTaskInputByOwner(capability, ownerID, inputJSON)
 	if err != nil {
 		return SubmitTaskResult{}, err
@@ -244,7 +245,7 @@ func (s *RegistryService) SubmitTask(ctx context.Context, req SubmitTaskRequest)
 		requestReserved = false
 	}
 
-	go s.executeTask(taskCtx, taskID, ownerID, capability, inputJSON)
+	go s.executeTask(taskCtx, taskID, ownerID, capability, inputJSON, intent)
 	return s.resolveSubmitTaskResult(ctx, taskID, runtimeRecord, mode, wait)
 }
 
@@ -363,7 +364,14 @@ func (s *RegistryService) resolveSubmitTaskResult(
 	}
 }
 
-func (s *RegistryService) executeTask(ctx context.Context, taskID string, ownerID string, capability string, inputJSON []byte) {
+func (s *RegistryService) executeTask(
+	ctx context.Context,
+	taskID string,
+	ownerID string,
+	capability string,
+	inputJSON []byte,
+	intent terminalSessionIntent,
+) {
 	if err := s.markTaskDispatched(taskID); err != nil {
 		if errors.Is(err, ErrTaskTransitionNotApplied) {
 			return
@@ -375,14 +383,20 @@ func (s *RegistryService) executeTask(ctx context.Context, taskID string, ownerI
 		return
 	}
 	var markRunningErr error
-	outcome, err := s.dispatchCommand(ctx, capability, inputJSON, 0, ownerID, func(commandID string) {
-		if markErr := s.markTaskRunning(taskID, commandID); markErr != nil {
-			markRunningErr = markErr
-			runtime := s.getTaskRuntime(taskID)
-			if runtime != nil && runtime.cancel != nil {
-				runtime.cancelOnce.Do(runtime.cancel)
+	outcome, err := s.dispatchCommand(ctx, capability, inputJSON, 0, dispatchOptions{
+		ownerID:               ownerID,
+		taskID:                taskID,
+		terminalSessionIntent: intent,
+		onDispatched: func(commandID string) error {
+			markRunningErr = s.markTaskRunning(taskID, commandID)
+			if markRunningErr != nil {
+				runtime := s.getTaskRuntime(taskID)
+				if runtime != nil && runtime.cancel != nil {
+					runtime.cancelOnce.Do(runtime.cancel)
+				}
 			}
-		}
+			return markRunningErr
+		},
 	})
 	if markRunningErr != nil {
 		if errors.Is(markRunningErr, ErrTaskTransitionNotApplied) {

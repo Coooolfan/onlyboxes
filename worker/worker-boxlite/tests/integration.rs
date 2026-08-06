@@ -98,7 +98,7 @@ async fn test_terminal_session_create_and_reuse() {
 
     litebox.start().await.expect("start VM");
 
-    let mut exec1 = litebox
+    let exec1 = litebox
         .exec(BoxCommand::new("sh").args(["-lc", "echo hello > /tmp/test.txt"]))
         .await
         .expect("exec1");

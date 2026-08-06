@@ -5,7 +5,6 @@ import (
 	"errors"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
@@ -29,13 +28,22 @@ type sessionCapability struct {
 	inflight    int
 }
 
+type terminalSessionCapacitySnapshot struct {
+	known              bool
+	maxActiveSessions  int
+	activeSessionCount int
+	observedAt         time.Time
+}
+
 type activeSession struct {
 	nodeID    string
 	sessionID string
 
 	capabilitiesMu sync.Mutex
 	capabilities   map[string]*sessionCapability
-	activeSessions atomic.Int32
+
+	terminalCapacityMu sync.RWMutex
+	terminalCapacity   terminalSessionCapacitySnapshot
 
 	controlOutbound chan *registryv1.ConnectResponse
 	commandOutbound chan *registryv1.ConnectResponse
@@ -49,7 +57,11 @@ type activeSession struct {
 }
 
 func newActiveSession(nodeID string, sessionID string, hello *registryv1.ConnectHello) *activeSession {
-	return &activeSession{
+	return newActiveSessionAt(nodeID, sessionID, hello, time.Now())
+}
+
+func newActiveSessionAt(nodeID string, sessionID string, hello *registryv1.ConnectHello, observedAt time.Time) *activeSession {
+	session := &activeSession{
 		nodeID:          nodeID,
 		sessionID:       sessionID,
 		capabilities:    capabilitiesFromHello(hello),
@@ -58,6 +70,15 @@ func newActiveSession(nodeID string, sessionID string, hello *registryv1.Connect
 		done:            make(chan struct{}),
 		pending:         make(map[string]*pendingCommand),
 	}
+	if capacity := hello.GetTerminalSessionCapacity(); capacity != nil {
+		session.terminalCapacity = terminalSessionCapacitySnapshot{
+			known:              true,
+			maxActiveSessions:  int(capacity.GetMaxActiveSessions()),
+			activeSessionCount: int(capacity.GetActiveSessionCount()),
+			observedAt:         observedAt,
+		}
+	}
+	return session
 }
 
 func (s *activeSession) hasCapability(capability string) bool {
@@ -117,25 +138,23 @@ func (s *activeSession) allCapabilitiesSnapshot() []capabilitySnapshot {
 	return out
 }
 
-func (s *activeSession) setActiveSessionCount(count int32) {
+func (s *activeSession) setActiveSessionCount(count int32, observedAt time.Time) {
 	if s == nil {
 		return
 	}
-	if count < 0 {
-		count = 0
-	}
-	s.activeSessions.Store(count)
+	s.terminalCapacityMu.Lock()
+	defer s.terminalCapacityMu.Unlock()
+	s.terminalCapacity.activeSessionCount = int(count)
+	s.terminalCapacity.observedAt = observedAt
 }
 
-func (s *activeSession) activeSessionCount() int32 {
+func (s *activeSession) terminalSessionCapacitySnapshot() terminalSessionCapacitySnapshot {
 	if s == nil {
-		return 0
+		return terminalSessionCapacitySnapshot{}
 	}
-	count := s.activeSessions.Load()
-	if count < 0 {
-		return 0
-	}
-	return count
+	s.terminalCapacityMu.RLock()
+	defer s.terminalCapacityMu.RUnlock()
+	return s.terminalCapacity
 }
 
 func (s *activeSession) tryAcquireCapability(capability string) bool {

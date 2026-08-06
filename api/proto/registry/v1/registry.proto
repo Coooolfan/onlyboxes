@@ -9,6 +9,13 @@ message CapabilityDeclaration {
   int32 max_inflight = 2;
 }
 
+message TerminalSessionCapacity {
+  // Zero means that active terminal sessions are unlimited.
+  int32 max_active_sessions = 1;
+  // Reservation count at the moment ConnectHello is built.
+  int32 active_session_count = 2;
+}
+
 message ConnectHello {
   string node_id = 1;
   string node_name = 2;
@@ -17,6 +24,7 @@ message ConnectHello {
   string version = 6;
   repeated CapabilityDeclaration capabilities = 10;
   string worker_secret = 11;
+  TerminalSessionCapacity terminal_session_capacity = 12;
 }
 
 message HeartbeatFrame {

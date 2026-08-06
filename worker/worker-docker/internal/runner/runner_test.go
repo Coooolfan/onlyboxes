@@ -53,8 +53,13 @@ func TestRunWaitsBeforeReconnectOnSessionFailure(t *testing.T) {
 	}
 }
 
-func TestBuildHelloCarriesWorkerSecret(t *testing.T) {
+func TestBuildHelloCarriesWorkerSecretAndTerminalCapacity(t *testing.T) {
+	originalActiveSessionCountFn := activeSessionCountFn
+	activeSessionCountFn = func() int32 { return 7 }
+	t.Cleanup(func() { activeSessionCountFn = originalActiveSessionCountFn })
+
 	cfg := testConfig()
+	cfg.TerminalMaxActiveSessions = 12
 	hello, err := buildHello(cfg)
 	if err != nil {
 		t.Fatalf("buildHello failed: %v", err)
@@ -65,6 +70,13 @@ func TestBuildHelloCarriesWorkerSecret(t *testing.T) {
 	}
 	if hello.GetWorkerSecret() != cfg.WorkerSecret {
 		t.Fatalf("expected worker_secret to be set")
+	}
+	capacity := hello.GetTerminalSessionCapacity()
+	if capacity == nil {
+		t.Fatal("expected terminal_session_capacity to be present")
+	}
+	if capacity.GetMaxActiveSessions() != 12 || capacity.GetActiveSessionCount() != 7 {
+		t.Fatalf("unexpected terminal session capacity: %#v", capacity)
 	}
 	capabilityByName := make(map[string]int32, len(hello.GetCapabilities()))
 	for _, capability := range hello.GetCapabilities() {
@@ -87,7 +99,44 @@ func TestBuildHelloCarriesWorkerSecret(t *testing.T) {
 	}
 }
 
+func TestBuildHelloAdvertisesExplicitUnlimitedTerminalCapacity(t *testing.T) {
+	cfg := testConfig()
+	cfg.TerminalMaxActiveSessions = 0
+
+	hello, err := buildHello(cfg)
+	if err != nil {
+		t.Fatalf("buildHello failed: %v", err)
+	}
+	capacity := hello.GetTerminalSessionCapacity()
+	if capacity == nil || capacity.GetMaxActiveSessions() != 0 {
+		t.Fatalf("expected explicit unlimited terminal capacity, got %#v", capacity)
+	}
+}
+
+func TestValidateTerminalMaxActiveSessionsRejectsProtocolOverflow(t *testing.T) {
+	if err := validateTerminalMaxActiveSessions(int(maxProtocolInt32)); err != nil {
+		t.Fatalf("expected max protocol value to be valid: %v", err)
+	}
+	if err := validateTerminalMaxActiveSessions(int(maxProtocolInt32 + 1)); err == nil {
+		t.Fatal("expected protocol overflow to be rejected")
+	}
+}
+
+func TestBuildHelloRejectsNegativeActiveSessionCount(t *testing.T) {
+	originalActiveSessionCountFn := activeSessionCountFn
+	activeSessionCountFn = func() int32 { return -1 }
+	t.Cleanup(func() { activeSessionCountFn = originalActiveSessionCountFn })
+
+	if _, err := buildHello(testConfig()); err == nil {
+		t.Fatal("expected negative active session count to be rejected")
+	}
+}
+
 func TestRunSessionReceivesFailedPreconditionFromServer(t *testing.T) {
+	originalActiveSessionCountFn := activeSessionCountFn
+	activeSessionCountFn = func() int32 { return 3 }
+	t.Cleanup(func() { activeSessionCountFn = originalActiveSessionCountFn })
+
 	server := grpc.NewServer()
 	fakeSvc := &fakeRegistryService{
 		secretByNodeID: map[string]string{"worker-1": "secret-1"},
@@ -108,6 +157,7 @@ func TestRunSessionReceivesFailedPreconditionFromServer(t *testing.T) {
 	cfg.ConsoleGRPCTarget = listener.Addr().String()
 	cfg.HeartbeatInterval = 20 * time.Millisecond
 	cfg.CallTimeout = 2 * time.Second
+	cfg.TerminalMaxActiveSessions = 5
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -118,6 +168,12 @@ func TestRunSessionReceivesFailedPreconditionFromServer(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&fakeSvc.heartbeatCount); got < 2 {
 		t.Fatalf("expected at least two heartbeats before rejection, got %d", got)
+	}
+	if got := atomic.LoadInt32(&fakeSvc.helloMaxActiveSessions); got != 5 {
+		t.Fatalf("expected hello max_active_sessions=5, got %d", got)
+	}
+	if got := atomic.LoadInt32(&fakeSvc.helloActiveSessionCount); got != 3 {
+		t.Fatalf("expected hello active_session_count=3, got %d", got)
 	}
 }
 
@@ -208,6 +264,16 @@ func TestRunRejectsMissingWorkerIdentity(t *testing.T) {
 	err := Run(context.Background(), cfg)
 	if err == nil || err.Error() != "WORKER_ID is required" {
 		t.Fatalf("expected missing WORKER_ID error, got %v", err)
+	}
+}
+
+func TestRunRejectsTerminalCapacityOutsideProtocolRange(t *testing.T) {
+	cfg := testConfig()
+	cfg.TerminalMaxActiveSessions = int(maxProtocolInt32 + 1)
+
+	err := Run(context.Background(), cfg)
+	if err == nil || !strings.Contains(err.Error(), "WORKER_TERMINAL_MAX_ACTIVE_SESSIONS") {
+		t.Fatalf("expected terminal capacity validation error, got %v", err)
 	}
 }
 
@@ -793,12 +859,14 @@ func testConfig() config.Config {
 type fakeRegistryService struct {
 	registryv1.UnimplementedWorkerRegistryServiceServer
 
-	secretByNodeID    map[string]string
-	heartbeatCount    int32
-	echoResultCount   int32
-	pythonResultCount int32
-	dispatchEcho      bool
-	dispatchPython    bool
+	secretByNodeID          map[string]string
+	heartbeatCount          int32
+	helloMaxActiveSessions  int32
+	helloActiveSessionCount int32
+	echoResultCount         int32
+	pythonResultCount       int32
+	dispatchEcho            bool
+	dispatchPython          bool
 }
 
 func (s *fakeRegistryService) Connect(stream grpc.BidiStreamingServer[registryv1.ConnectRequest, registryv1.ConnectResponse]) error {
@@ -837,6 +905,12 @@ func (s *fakeRegistryService) Connect(stream grpc.BidiStreamingServer[registryv1
 	if capabilityByName[terminalResourceCapabilityDeclared] <= 0 {
 		return status.Error(codes.InvalidArgument, "missing terminalResource capability")
 	}
+	capacity := hello.GetTerminalSessionCapacity()
+	if capacity == nil {
+		return status.Error(codes.InvalidArgument, "missing terminal session capacity")
+	}
+	atomic.StoreInt32(&s.helloMaxActiveSessions, capacity.GetMaxActiveSessions())
+	atomic.StoreInt32(&s.helloActiveSessionCount, capacity.GetActiveSessionCount())
 
 	if err := stream.Send(&registryv1.ConnectResponse{
 		Payload: &registryv1.ConnectResponse_ConnectAck{

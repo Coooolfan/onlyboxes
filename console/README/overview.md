@@ -15,6 +15,7 @@ The console service hosts:
 - REST APIs for worker data (dashboard authentication, role-scoped):
   - `GET /api/v1/workers` for paginated worker listing.
   - `GET /api/v1/workers/stats` for aggregated worker status metrics.
+  - `GET /api/v1/workers/inflight` for per-capability inflight and terminal session capacity snapshots.
   - `POST /api/v1/workers` for creating provisioned worker credentials and returning startup command.
   - `DELETE /api/v1/workers/:node_id` for deleting a provisioned worker and revoking its credential (online worker is disconnected immediately).
   - `GET /api/v1/workers/:node_id/startup-command` always returns `410 Gone`.
@@ -43,6 +44,12 @@ The console service hosts:
   - owner isolation is account-scoped: token resolves to `account_id`, and task/session ownership uses `account_id`.
   - task visibility: task lookup/cancel is owner-scoped by account; same-account tokens can access shared tasks, cross-account access returns `404`.
   - task idempotency: `request_id` de-duplication is scoped per account.
+  - terminal session capacity routing:
+    - only requests for a console-generated new terminal session use capacity-aware candidate ordering.
+    - known-available workers are preferred, legacy/unknown workers are next, and reported-full workers are last-resort probes.
+    - an existing session route remains pinned to its original worker even when that worker reports full active-session capacity.
+    - `max_inflight` and active-session capacity are evaluated independently; the worker-local session manager remains the final authority.
+    - an explicit pre-execution `session_capacity_exceeded` can be retried on an untried worker only after the provisional route is safely removed; all attempts share the task deadline.
 - MCP Streamable HTTP API (bearer token required):
   - `POST /mcp` for JSON-RPC requests over Streamable HTTP transport.
   - recommended request header: `Authorization: Bearer <access-token>`.
@@ -257,6 +264,8 @@ Task persistence behavior:
 - task input/result/status lifecycle is persisted in SQLite.
 - startup recovery marks all non-terminal tasks as `failed` with `error_code=console_restarted`.
 - non-expired terminal tasks are retained for `CONSOLE_TASK_RETENTION_DAYS` (default `30`) and cleaned by periodic pruner.
+- internal terminal capacity retries keep one task/request identity; `command_id` is updated to the current or last worker attempt.
+- terminal session capacity snapshots are connection-local and are not persisted to SQLite; reconnect Hello initializes a fresh snapshot.
 
 Persistence config:
 - `CONSOLE_DB_PATH`: SQLite file path (default `./db/onlyboxes-console.db`)

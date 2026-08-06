@@ -66,7 +66,7 @@ END`,
 	}
 	svc.setTaskRuntime(taskID, runtime)
 
-	svc.executeTask(context.Background(), taskID, ownerID, "echo", []byte(`{"message":"hello"}`))
+	svc.executeTask(context.Background(), taskID, ownerID, "echo", []byte(`{"message":"hello"}`), terminalSessionIntentUnknown)
 
 	task, err := svc.taskQueries().GetTaskByID(context.Background(), taskID)
 	if err != nil {

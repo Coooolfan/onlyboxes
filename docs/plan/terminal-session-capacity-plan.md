@@ -374,9 +374,9 @@ console 按 terminalExec inflight 选择 worker-A
 
 该行为不影响容量安全，只影响集群利用率。
 
-后续可增加独立阶段：
+后续可增加独立阶段，完整评估与实施方案见 [terminal-session-capacity-aware-dispatch-plan.md](./terminal-session-capacity-aware-dispatch-plan.md)：
 
-1. hello 上报 `terminal_max_active_sessions`。
+1. hello 通过带 presence 的 `terminal_session_capacity` 上报最大值与初始 active 数。
 2. heartbeat 继续上报当前 reservation 数。
 3. console 对新 session 优先选择有剩余容量的 worker。
 4. worker 本地准入继续作为最终一致性保障。

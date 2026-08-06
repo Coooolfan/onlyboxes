@@ -16,6 +16,7 @@ const (
 	minHeartbeatInterval           = 1 * time.Second
 	initialReconnectDelay          = 1 * time.Second
 	maxReconnectDelay              = 15 * time.Second
+	maxProtocolInt32               = int64(1<<31 - 1)
 	echoCapabilityName             = "echo"
 	pythonExecCapabilityName       = "pythonexec"
 	pythonExecCapabilityDeclared   = "pythonExec"
@@ -51,6 +52,9 @@ func Run(ctx context.Context, cfg config.Config) error {
 	}
 	if strings.TrimSpace(cfg.WorkerSecret) == "" {
 		return errors.New("WORKER_SECRET is required")
+	}
+	if err := validateTerminalMaxActiveSessions(cfg.TerminalMaxActiveSessions); err != nil {
+		return err
 	}
 
 	terminalManager := newTerminalSessionManager(terminalSessionManagerConfig{
@@ -134,4 +138,11 @@ func Run(ctx context.Context, cfg config.Config) error {
 		}
 		reconnectDelay = nextReconnectDelay(reconnectDelay)
 	}
+}
+
+func validateTerminalMaxActiveSessions(maxActiveSessions int) error {
+	if maxActiveSessions < 0 || int64(maxActiveSessions) > maxProtocolInt32 {
+		return errors.New("WORKER_TERMINAL_MAX_ACTIVE_SESSIONS must be between 0 and 2147483647")
+	}
+	return nil
 }

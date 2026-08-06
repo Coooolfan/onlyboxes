@@ -30,9 +30,11 @@ Required identity:
 These values are returned by `console` when calling `POST /api/v1/workers` (startup command response).
 `WORKER_SECRET` is only returned once at creation time; if lost, delete and recreate the worker in dashboard/API.
 
-Version report:
+Version and capacity report:
 - worker registers `version` in `ConnectHello`.
-- the only source is the binary embedded build version (`dev` when not injected); it cannot be overridden at runtime.
+- every Hello, including reconnects, contains `terminal_session_capacity` with configured `max_active_sessions` and the shared manager's current reservation count, so console does not wait for the first heartbeat before scheduling.
+- heartbeat continues to report the latest `active_session_count`.
+- the only version source is the binary embedded build version (`dev` when not injected); it cannot be overridden at runtime.
 
 Capability behavior:
 - `worker-boxlite` hardcodes capability declarations to `echo`, `pythonExec`, `terminalExec`, and `terminalResource`.
@@ -101,7 +103,7 @@ Defaults:
 - terminalExec memory / cpus / max processes: `256 MiB` / `1` / `128`
 - terminal lease min/max/default: `60s` / `1800s` / `60s`
 - terminal output limit: `1048576` bytes per stream (`stdout`/`stderr`) and per `terminalResource read`
-- terminal max active sessions: unlimited (`0`)
+- terminal max active sessions: unlimited (`0`); values above `2147483647` fail startup before the reconnect loop
 - capability max_inflight: `4` per capability
 - log level: `info`
 - log format: `json`

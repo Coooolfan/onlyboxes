@@ -5,6 +5,14 @@ import (
 	"time"
 )
 
+type routeReservationReleaseResult int
+
+const (
+	routeReservationNotOwned routeReservationReleaseResult = iota
+	routeReservationStillInUse
+	routeReservationRemoved
+)
+
 type terminalSessionRoute struct {
 	NodeID         string
 	LastUsedUnixMs int64
@@ -188,14 +196,14 @@ func (s *RegistryService) touchTerminalSessionRoute(sessionID string, now time.T
 
 // clearTerminalSessionRouteReservation releases one provisional dispatch. The
 // route is removed only after every dispatch sharing the reservation failed.
-func (s *RegistryService) clearTerminalSessionRouteReservation(sessionID string, expectedNodeID string, reservationID uint64) {
+func (s *RegistryService) clearTerminalSessionRouteReservation(sessionID string, expectedNodeID string, reservationID uint64) routeReservationReleaseResult {
 	if s == nil || reservationID == 0 {
-		return
+		return routeReservationNotOwned
 	}
 	normalizedSessionID := strings.TrimSpace(sessionID)
 	normalizedNodeID := strings.TrimSpace(expectedNodeID)
 	if normalizedSessionID == "" || normalizedNodeID == "" {
-		return
+		return routeReservationNotOwned
 	}
 
 	s.terminalRoutesMu.Lock()
@@ -203,14 +211,15 @@ func (s *RegistryService) clearTerminalSessionRouteReservation(sessionID string,
 
 	route, ok := s.terminalSessionToNode[normalizedSessionID]
 	if !ok || route.NodeID != normalizedNodeID || route.ReservationID != reservationID {
-		return
+		return routeReservationNotOwned
 	}
 	if route.ProvisionalUses > 1 {
 		route.ProvisionalUses--
 		s.terminalSessionToNode[normalizedSessionID] = route
-		return
+		return routeReservationStillInUse
 	}
 	s.deleteTerminalSessionRouteLocked(normalizedSessionID, route)
+	return routeReservationRemoved
 }
 
 func (s *RegistryService) clearTerminalSessionRoute(sessionID string, expectedNodeID string) {

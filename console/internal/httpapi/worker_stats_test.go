@@ -161,6 +161,10 @@ func TestWorkerStatsAndInflightAreOwnerScopedForNonAdmin(t *testing.T) {
 				{
 					NodeID:             "node-own-sys",
 					ActiveSessionCount: 1,
+					TerminalSessionCapacity: grpcserver.TerminalSessionCapacityInflightEntry{
+						Known:             true,
+						MaxActiveSessions: 4,
+					},
 					Capabilities: []grpcserver.CapabilityInflightEntry{
 						{Name: "computeruse", Inflight: 1, MaxInflight: 1},
 					},
@@ -211,5 +215,9 @@ func TestWorkerStatsAndInflightAreOwnerScopedForNonAdmin(t *testing.T) {
 	}
 	if inflightPayload.Workers[0].ActiveSessionCount != 1 {
 		t.Fatalf("expected active_session_count=1, got %d", inflightPayload.Workers[0].ActiveSessionCount)
+	}
+	capacity := inflightPayload.Workers[0].TerminalSessionCapacity
+	if !capacity.Known || capacity.MaxActiveSessions != 4 {
+		t.Fatalf("unexpected terminal session capacity: %#v", capacity)
 	}
 }

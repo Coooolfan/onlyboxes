@@ -415,6 +415,11 @@ Worker 类型：
   "workers": [
     {
       "node_id": "worker-1",
+      "active_session_count": 3,
+      "terminal_session_capacity": {
+        "known": true,
+        "max_active_sessions": 4
+      },
       "capabilities": [
         { "name": "pythonExec", "inflight": 1, "max_inflight": 4 }
       ]
@@ -424,7 +429,12 @@ Worker 类型：
 }
 ```
 
-说明：普通用户响应仅包含本人 `worker-sys`。
+说明：
+
+- 普通用户响应仅包含本人 `worker-sys`。
+- `active_session_count` 是 worker 最近一次上报的 terminal reservation 数。
+- `terminal_session_capacity.known=false` 表示旧 worker 未声明最大值，不能解释为不限。
+- `known=true,max_active_sessions=0` 明确表示 active terminal session 数不限。
 
 ### 5.4 创建 Worker 凭据
 
@@ -571,7 +581,9 @@ Worker 类型：
   - `terminalExec` 与 `terminalResource` 共用该单 session 上限。
 - `429` 无可用并发容量或 terminal session 容量
   - `no_capacity` 表示 worker 级的该能力配额耗尽，而非单个 session 的上限。
-  - `session_capacity_exceeded` 表示选中的 sandbox worker 已达到 `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS`；已有 session 仍可使用，但本次请求无法创建新 session。
+  - `session_capacity_exceeded` 表示本次新 session 可派发到的 worker 均已实际拒绝创建，因为它们达到了 `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS`；已有 session 仍可在绑定 worker 上使用。
+  - 对 console 自动生成 `session_id` 的新 session 请求，调度依次优先使用已知有空位、旧版/容量未知、已报告满载的 worker；已报告满载的 worker 只作为最后探测。
+  - 只有 worker 明确返回该执行前容量错误且 provisional route 能安全移除时才改派；transport、超时和其他执行错误不会自动重试。
   - 这与 `session_busy` 不同，后者表示单个 session 内的命令并发上限已达到。
 - `503` 无可用 worker
 - `504` 超时
@@ -697,6 +709,7 @@ Task 所有权按账号隔离（由 token 对应账号决定）。
 - `timeout_ms`：`1..600000`，默认 `60000`
 - `request_id`：可选幂等键（账号维度去重）
 - 对于 `terminalResource` export payload，`input.headers` 会在下发前过滤；只有 `x-amz-*`、`Content-Type`、`Content-MD5` 上传头会转发给 worker。
+- terminal 容量改派期间，同一任务保持 `task_id` 与 `request_id` 不变；`command_id` 表示当前或最后一次 worker 派发，因此任务运行中可能更新。
 
 可能响应：
 
@@ -965,7 +978,11 @@ Console 回包：
 
 ### 10.2 核心消息
 
-- `ConnectHello` 包含 worker 标识、能力声明、labels、version、`worker_secret`。
+- `ConnectHello` 包含 worker 标识、能力声明、labels、version、`worker_secret` 和可选 `terminal_session_capacity`。
+  - 缺少 `terminal_session_capacity` 表示旧版 worker 或容量未知。
+  - 声明存在时，`max_active_sessions` 表示最大 active session 数（`0` 表示不限），`active_session_count` 表示构造 Hello 时的 reservation 数。
+  - sandbox worker 每次连接和重连都会发送该声明；`worker-sys` 不声明 terminal capacity。
+- `HeartbeatFrame.active_session_count` 在 Hello 后持续刷新 reservation 数；Hello 或 heartbeat 中的负容量值会被拒绝。
 - `CommandDispatch` 包含：
   - `command_id`
   - `capability`

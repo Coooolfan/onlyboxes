@@ -1057,7 +1057,7 @@ func TestDispatchCommandTerminalRouteRollbackWhenEnqueueFails(t *testing.T) {
 		t.Fatalf("marshal payload failed: %v", err)
 	}
 
-	_, dispatchErr := svc.dispatchCommand(context.Background(), taskCapabilityTerminalExec, payloadJSON, 30*time.Millisecond, "owner-a", nil)
+	_, dispatchErr := svc.dispatchCommand(context.Background(), taskCapabilityTerminalExec, payloadJSON, 30*time.Millisecond, dispatchOptions{ownerID: "owner-a"})
 	if !errors.Is(dispatchErr, context.DeadlineExceeded) {
 		t.Fatalf("expected context.DeadlineExceeded, got %v", dispatchErr)
 	}
@@ -1108,7 +1108,7 @@ func TestDispatchCommandTerminalSessionNotFoundClearsRoute(t *testing.T) {
 		t.Fatalf("marshal payload failed: %v", err)
 	}
 
-	outcome, dispatchErr := svc.dispatchCommand(context.Background(), taskCapabilityTerminalExec, payloadJSON, 2*time.Second, "owner-a", nil)
+	outcome, dispatchErr := svc.dispatchCommand(context.Background(), taskCapabilityTerminalExec, payloadJSON, 2*time.Second, dispatchOptions{ownerID: "owner-a"})
 	if dispatchErr != nil {
 		t.Fatalf("dispatch command failed: %v", dispatchErr)
 	}
@@ -1178,7 +1178,7 @@ func TestDispatchCommandTerminalSessionCapacityOnlyClearsNewRoute(t *testing.T) 
 				t.Fatalf("marshal payload failed: %v", err)
 			}
 
-			outcome, dispatchErr := svc.dispatchCommand(context.Background(), taskCapabilityTerminalExec, payloadJSON, 2*time.Second, "owner-a", nil)
+			outcome, dispatchErr := svc.dispatchCommand(context.Background(), taskCapabilityTerminalExec, payloadJSON, 2*time.Second, dispatchOptions{ownerID: "owner-a"})
 			if dispatchErr != nil {
 				t.Fatalf("dispatch command failed: %v", dispatchErr)
 			}
@@ -1237,7 +1237,7 @@ func TestDispatchCommandTerminalSessionCapacityDoesNotClearConcurrentProvisional
 	secondDone := make(chan dispatchResult, 1)
 
 	go func() {
-		outcome, err := svc.dispatchCommand(context.Background(), taskCapabilityTerminalExec, firstPayload, 2*time.Second, "owner-a", nil)
+		outcome, err := svc.dispatchCommand(context.Background(), taskCapabilityTerminalExec, firstPayload, 2*time.Second, dispatchOptions{ownerID: "owner-a"})
 		firstDone <- dispatchResult{outcome: outcome, err: err}
 	}()
 	firstDispatch := (<-session.commandOutbound).GetCommandDispatch()
@@ -1246,7 +1246,7 @@ func TestDispatchCommandTerminalSessionCapacityDoesNotClearConcurrentProvisional
 	}
 
 	go func() {
-		outcome, err := svc.dispatchCommand(context.Background(), taskCapabilityTerminalExec, secondPayload, 2*time.Second, "owner-a", nil)
+		outcome, err := svc.dispatchCommand(context.Background(), taskCapabilityTerminalExec, secondPayload, 2*time.Second, dispatchOptions{ownerID: "owner-a"})
 		secondDone <- dispatchResult{outcome: outcome, err: err}
 	}()
 	secondDispatch := (<-session.commandOutbound).GetCommandDispatch()
@@ -1298,12 +1298,16 @@ func TestTerminalSessionRouteReservationWaitsForAllProvisionalUses(t *testing.T)
 		t.Fatalf("failed to join provisional route: node=%q reservation=%d joined=%d ok=%t", nodeID, reservationID, joinedReservationID, ok)
 	}
 
-	svc.clearTerminalSessionRouteReservation("session-shared", "node-1", reservationID)
+	if got := svc.clearTerminalSessionRouteReservation("session-shared", "node-1", reservationID); got != routeReservationStillInUse {
+		t.Fatalf("first rollback result: got %d want %d", got, routeReservationStillInUse)
+	}
 	if _, ok := svc.touchTerminalSessionRoute("session-shared", now.Add(2*time.Second)); !ok {
 		t.Fatal("first rollback cleared a route still used by another dispatch")
 	}
 
-	svc.clearTerminalSessionRouteReservation("session-shared", "node-1", joinedReservationID)
+	if got := svc.clearTerminalSessionRouteReservation("session-shared", "node-1", joinedReservationID); got != routeReservationRemoved {
+		t.Fatalf("last rollback result: got %d want %d", got, routeReservationRemoved)
+	}
 	if _, ok := svc.touchTerminalSessionRoute("session-shared", now.Add(3*time.Second)); ok {
 		t.Fatal("last rollback did not clear provisional route")
 	}
@@ -1320,7 +1324,9 @@ func TestTerminalSessionRouteReservationRollbackDoesNotClearConfirmedRoute(t *te
 
 	// A concurrent request can complete first and confirm the shared route.
 	svc.bindTerminalSessionRoute("session-confirmed", "node-1", now.Add(time.Second))
-	svc.clearTerminalSessionRouteReservation("session-confirmed", "node-1", reservationID)
+	if got := svc.clearTerminalSessionRouteReservation("session-confirmed", "node-1", reservationID); got != routeReservationNotOwned {
+		t.Fatalf("late rollback result: got %d want %d", got, routeReservationNotOwned)
+	}
 
 	if gotNodeID, ok := svc.touchTerminalSessionRoute("session-confirmed", now.Add(2*time.Second)); !ok || gotNodeID != "node-1" {
 		t.Fatalf("late capacity rollback cleared a confirmed route: node=%q ok=%t", gotNodeID, ok)
@@ -1940,7 +1946,7 @@ func TestDispatchCommandContextCanceledAfterEnqueueCleansPending(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		_, dispatchErr := svc.dispatchCommand(ctx, "echo", buildEchoPayload("cleanup"), 2*time.Second, "", nil)
+		_, dispatchErr := svc.dispatchCommand(ctx, "echo", buildEchoPayload("cleanup"), 2*time.Second, dispatchOptions{})
 		errCh <- dispatchErr
 	}()
 
@@ -2019,17 +2025,23 @@ func connectWorker(
 	capabilities []string,
 ) (grpc.BidiStreamingClient[registryv1.ConnectRequest, registryv1.ConnectResponse], string, error) {
 	_ = nonce
-	stream, err := client.Connect(context.Background())
-	if err != nil {
-		return nil, "", err
-	}
-
 	hello := &registryv1.ConnectHello{
 		NodeId:       workerID,
 		WorkerSecret: secret,
 	}
 	for _, capability := range capabilities {
 		hello.Capabilities = append(hello.Capabilities, &registryv1.CapabilityDeclaration{Name: capability})
+	}
+	return connectWorkerWithHello(client, hello)
+}
+
+func connectWorkerWithHello(
+	client registryv1.WorkerRegistryServiceClient,
+	hello *registryv1.ConnectHello,
+) (grpc.BidiStreamingClient[registryv1.ConnectRequest, registryv1.ConnectResponse], string, error) {
+	stream, err := client.Connect(context.Background())
+	if err != nil {
+		return nil, "", err
 	}
 
 	if err := stream.Send(&registryv1.ConnectRequest{

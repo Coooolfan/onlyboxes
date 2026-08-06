@@ -70,7 +70,8 @@ func (s *RegistryService) Connect(stream grpc.BidiStreamingServer[registryv1.Con
 		return status.Error(codes.Internal, "failed to create session_id")
 	}
 
-	session := newActiveSession(hello.GetNodeId(), sessionID, hello)
+	session := newActiveSessionAt(hello.GetNodeId(), sessionID, hello, now)
+	logTerminalSessionCapacityInvariant(session.nodeID, session.terminalSessionCapacitySnapshot())
 	replaced := s.swapSession(session)
 	if replaced != nil {
 		replaced.close(status.Error(codes.FailedPrecondition, "session replaced by a newer connection"))
@@ -217,6 +218,9 @@ func (s *RegistryService) handleHeartbeat(ctx context.Context, session *activeSe
 	if heartbeat.GetNodeId() != session.nodeID {
 		return status.Error(codes.InvalidArgument, "node_id mismatch")
 	}
+	if heartbeat.GetActiveSessionCount() < 0 {
+		return status.Error(codes.InvalidArgument, "active_session_count must be non-negative")
+	}
 
 	now := s.nowFn()
 	if err := s.store.TouchWithSession(heartbeat.GetNodeId(), heartbeat.GetSessionId(), now); err != nil {
@@ -228,7 +232,8 @@ func (s *RegistryService) handleHeartbeat(ctx context.Context, session *activeSe
 		}
 		return status.Error(codes.Internal, "failed to update heartbeat")
 	}
-	session.setActiveSessionCount(heartbeat.GetActiveSessionCount())
+	session.setActiveSessionCount(heartbeat.GetActiveSessionCount(), now)
+	logTerminalSessionCapacityInvariant(session.nodeID, session.terminalSessionCapacitySnapshot())
 
 	if err := session.enqueueControl(ctx, newHeartbeatAck(s.heartbeatIntervalSec)); err != nil {
 		if status.Code(err) != codes.Unknown {
@@ -261,7 +266,27 @@ func validateHello(hello *registryv1.ConnectHello) error {
 	if err := validateNodeID(hello.GetNodeId()); err != nil {
 		return err
 	}
+	if capacity := hello.GetTerminalSessionCapacity(); capacity != nil {
+		if capacity.GetMaxActiveSessions() < 0 {
+			return status.Error(codes.InvalidArgument, "terminal_session_capacity.max_active_sessions must be non-negative")
+		}
+		if capacity.GetActiveSessionCount() < 0 {
+			return status.Error(codes.InvalidArgument, "terminal_session_capacity.active_session_count must be non-negative")
+		}
+	}
 	return nil
+}
+
+func logTerminalSessionCapacityInvariant(nodeID string, snapshot terminalSessionCapacitySnapshot) {
+	if !snapshot.known || snapshot.maxActiveSessions <= 0 || snapshot.activeSessionCount <= snapshot.maxActiveSessions {
+		return
+	}
+	slog.Warn(
+		"worker terminal session capacity invariant violated",
+		"node_id", nodeID,
+		"active_session_count", snapshot.activeSessionCount,
+		"max_active_sessions", snapshot.maxActiveSessions,
+	)
 }
 
 func validateNodeID(nodeID string) error {

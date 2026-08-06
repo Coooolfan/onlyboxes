@@ -22,13 +22,13 @@ Value mapping:
 - tables remain structured; `[labels]` replaces `WORKER_LABELS` without losing delimiters in label values.
 - nested tables are joined with `_`, so `[a.b] c = 1` matches `WORKER_A_B_C`.
 
-Validation is identical to the environment variable path: an invalid or out-of-range value falls back to the default instead of aborting startup.
+Validation is identical to the environment variable path: an invalid value normally falls back to the default. `terminal_max_active_sessions` is additionally bounded by the gRPC `int32` field; values above `2147483647` fail startup before the reconnect loop.
 
 The loaded config file path is reported once at startup via the `config file loaded` log line.
 
 See `config.example.toml` in the worker root for a full annotated template.
 
-`terminal_max_active_sessions` maps to `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS`. `0` keeps the existing unlimited behavior; a positive value limits terminal sessions managed by this worker. Creating, ready, destroying, and Box cleanup in progress sessions all consume capacity.
+`terminal_max_active_sessions` maps to `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS`. `0` keeps the existing unlimited behavior; a positive value limits terminal sessions managed by this worker. Creating, ready, destroying, and Box cleanup in progress sessions all consume capacity. The configured maximum and current reservation count are sent in every Connect Hello.
 
 ```toml
 id = "wk_..."
@@ -36,6 +36,7 @@ secret = "..."
 console_grpc_target = "console.internal:50051"
 heartbeat_interval_sec = 5
 terminal_exec_boxlite_image = "coolfan1024/onlyboxes-runtime:default"
+terminal_max_active_sessions = 0
 log_level = "info"
 
 [labels]

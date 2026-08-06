@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -19,6 +21,26 @@ const (
 	terminalSessionNotFoundCode         = "session_not_found"
 	terminalSessionCapacityExceededCode = "session_capacity_exceeded"
 )
+
+type dispatchOptions struct {
+	ownerID               string
+	taskID                string
+	terminalSessionIntent terminalSessionIntent
+	onDispatched          func(commandID string) error
+}
+
+type sessionPickOptions struct {
+	terminalSessionIntent terminalSessionIntent
+	excludedNodeIDs       map[string]struct{}
+	taskID                string
+}
+
+type dispatchAttemptResult struct {
+	outcome           commandOutcome
+	capacityRetryable bool
+}
+
+var errTerminalSessionRetryRouteConflict = errors.New("terminal session route points to an attempted worker")
 
 type CommandExecutionError struct {
 	Code    string
@@ -51,7 +73,7 @@ func (s *RegistryService) DispatchEcho(ctx context.Context, message string, time
 		timeout = defaultEchoTimeout
 	}
 
-	outcome, err := s.dispatchCommand(ctx, echoCapabilityName, buildEchoPayload(message), timeout, "", nil)
+	outcome, err := s.dispatchCommand(ctx, echoCapabilityName, buildEchoPayload(message), timeout, dispatchOptions{})
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrNoCapabilityWorker):
@@ -85,8 +107,7 @@ func (s *RegistryService) dispatchCommand(
 	capability string,
 	payloadJSON []byte,
 	timeout time.Duration,
-	ownerID string,
-	onDispatched func(commandID string),
+	options dispatchOptions,
 ) (commandOutcome, error) {
 	capability = normalizeCapability(capability)
 	if capability == "" {
@@ -106,14 +127,113 @@ func (s *RegistryService) dispatchCommand(
 	defer cancel()
 
 	terminalSessionID := terminalSessionIDFromPayload(capability, payloadJSON)
-	session, terminalRouteReservationID, err := s.pickSessionForDispatch(capability, ownerID, terminalSessionID)
-	if err != nil {
-		return commandOutcome{}, err
-	}
-	rollbackTerminalRouteReservation := func() {
-		if terminalRouteReservationID != 0 && terminalSessionID != "" {
-			s.clearTerminalSessionRouteReservation(terminalSessionID, session.nodeID, terminalRouteReservationID)
+	maxAttempts := 1
+	if capability == taskCapabilityTerminalExec && terminalSessionID != "" {
+		maxAttempts = len(s.listOnlineNodeIDsForCapability(capability, options.ownerID))
+		if maxAttempts < 1 {
+			maxAttempts = 1
 		}
+	}
+
+	attemptedNodeIDs := make(map[string]struct{}, maxAttempts)
+	pickOptions := sessionPickOptions{
+		terminalSessionIntent: options.terminalSessionIntent,
+		excludedNodeIDs:       attemptedNodeIDs,
+		taskID:                options.taskID,
+	}
+	var lastCapacityOutcome *commandOutcome
+
+	for attemptIndex := 1; attemptIndex <= maxAttempts; attemptIndex++ {
+		if err := commandCtx.Err(); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				return commandOutcome{}, context.DeadlineExceeded
+			}
+			return commandOutcome{}, context.Canceled
+		}
+
+		session, terminalRouteReservationID, err := s.pickSessionForDispatch(
+			capability,
+			options.ownerID,
+			terminalSessionID,
+			pickOptions,
+		)
+		if err != nil {
+			if commandErr := commandCtx.Err(); commandErr != nil {
+				if errors.Is(commandErr, context.DeadlineExceeded) {
+					return commandOutcome{}, context.DeadlineExceeded
+				}
+				return commandOutcome{}, context.Canceled
+			}
+			if lastCapacityOutcome != nil {
+				slog.Info(
+					"terminal capacity retry exhausted",
+					"task_id", options.taskID,
+					"attempted_node_count", len(attemptedNodeIDs),
+				)
+				return *lastCapacityOutcome, nil
+			}
+			return commandOutcome{}, err
+		}
+		attemptedNodeIDs[session.nodeID] = struct{}{}
+
+		attemptResult, err := s.dispatchCommandAttempt(
+			commandCtx,
+			capability,
+			payloadJSON,
+			terminalSessionID,
+			session,
+			terminalRouteReservationID,
+			options.onDispatched,
+		)
+		if err != nil {
+			return commandOutcome{}, err
+		}
+		if !attemptResult.capacityRetryable {
+			return attemptResult.outcome, nil
+		}
+
+		capacityOutcome := attemptResult.outcome
+		lastCapacityOutcome = &capacityOutcome
+		if attemptIndex >= maxAttempts {
+			slog.Info(
+				"terminal capacity retry exhausted",
+				"task_id", options.taskID,
+				"attempted_node_count", len(attemptedNodeIDs),
+			)
+			return capacityOutcome, nil
+		}
+		slog.Info(
+			"terminal capacity retry",
+			"task_id", options.taskID,
+			"previous_node_id", session.nodeID,
+			"next_attempt", attemptIndex+1,
+		)
+	}
+
+	if lastCapacityOutcome != nil {
+		return *lastCapacityOutcome, nil
+	}
+	return commandOutcome{}, ErrNoCapabilityWorker
+}
+
+func (s *RegistryService) dispatchCommandAttempt(
+	commandCtx context.Context,
+	capability string,
+	payloadJSON []byte,
+	terminalSessionID string,
+	session *activeSession,
+	terminalRouteReservationID uint64,
+	onDispatched func(commandID string) error,
+) (dispatchAttemptResult, error) {
+	rollbackTerminalRouteReservation := func() routeReservationReleaseResult {
+		if terminalRouteReservationID == 0 || terminalSessionID == "" {
+			return routeReservationNotOwned
+		}
+		return s.clearTerminalSessionRouteReservation(
+			terminalSessionID,
+			session.nodeID,
+			terminalRouteReservationID,
+		)
 	}
 	confirmTerminalRoute := func() {
 		if terminalSessionID != "" {
@@ -130,17 +250,15 @@ func (s *RegistryService) dispatchCommand(
 	if err != nil {
 		session.releaseCapability(capability)
 		rollbackTerminalRouteReservation()
-		return commandOutcome{}, status.Error(codes.Internal, "failed to create command_id")
+		return dispatchAttemptResult{}, status.Error(codes.Internal, "failed to create command_id")
 	}
 
 	resultCh, err := session.registerPending(commandID, capability)
 	if err != nil {
 		session.releaseCapability(capability)
 		rollbackTerminalRouteReservation()
-		return commandOutcome{}, err
+		return dispatchAttemptResult{}, err
 	}
-	// Always release pending state, even when enqueue succeeds and the caller
-	// context is canceled before a worker result arrives.
 	defer session.unregisterPending(commandID)
 
 	dispatch := &registryv1.ConnectResponse{
@@ -159,21 +277,26 @@ func (s *RegistryService) dispatchCommand(
 	if err := session.enqueueCommand(commandCtx, dispatch); err != nil {
 		rollbackTerminalRouteReservation()
 		if errors.Is(err, context.DeadlineExceeded) {
-			return commandOutcome{}, context.DeadlineExceeded
+			return dispatchAttemptResult{}, context.DeadlineExceeded
 		}
 		if errors.Is(err, context.Canceled) {
-			return commandOutcome{}, context.Canceled
+			return dispatchAttemptResult{}, context.Canceled
 		}
 		if mapped := status.FromContextError(err); mapped.Code() != codes.Unknown {
-			return commandOutcome{}, mapped.Err()
+			return dispatchAttemptResult{}, mapped.Err()
 		}
 		if status.Code(err) != codes.Unknown {
-			return commandOutcome{}, err
+			return dispatchAttemptResult{}, err
 		}
-		return commandOutcome{}, status.Error(codes.Unavailable, "worker session unavailable")
+		return dispatchAttemptResult{}, status.Error(codes.Unavailable, "worker session unavailable")
 	}
 	if onDispatched != nil {
-		onDispatched(commandID)
+		if err := onDispatched(commandID); err != nil {
+			if terminalRouteReservationID != 0 {
+				confirmTerminalRoute()
+			}
+			return dispatchAttemptResult{}, err
+		}
 	}
 
 	select {
@@ -184,39 +307,54 @@ func (s *RegistryService) dispatchCommand(
 			confirmTerminalRoute()
 		}
 		if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
-			return commandOutcome{}, context.DeadlineExceeded
+			return dispatchAttemptResult{}, context.DeadlineExceeded
 		}
-		return commandOutcome{}, context.Canceled
+		return dispatchAttemptResult{}, context.Canceled
 	case outcome, ok := <-resultCh:
 		if !ok {
 			rollbackTerminalRouteReservation()
-			return commandOutcome{}, status.Error(codes.Unavailable, "worker session closed before command result")
+			return dispatchAttemptResult{}, status.Error(codes.Unavailable, "worker session closed before command result")
 		}
 		if outcome.err == nil && terminalSessionID != "" {
 			confirmTerminalRoute()
+			return dispatchAttemptResult{outcome: outcome}, nil
 		}
-		if outcome.err != nil && terminalSessionID != "" {
-			if isSessionNotFoundCommandError(outcome.err) {
-				if terminalRouteReservationID != 0 {
-					rollbackTerminalRouteReservation()
-				} else {
-					s.clearTerminalSessionRoute(terminalSessionID, session.nodeID)
-				}
-			} else if isSessionCapacityCommandError(outcome.err) {
+		if outcome.err == nil || terminalSessionID == "" {
+			return dispatchAttemptResult{outcome: outcome}, nil
+		}
+
+		switch {
+		case isSessionNotFoundCommandError(outcome.err):
+			if terminalRouteReservationID != 0 {
 				rollbackTerminalRouteReservation()
-			} else if terminalRouteReservationID != 0 {
-				// Other execution errors do not prove that session creation failed.
-				confirmTerminalRoute()
+			} else {
+				s.clearTerminalSessionRoute(terminalSessionID, session.nodeID)
 			}
+		case isSessionCapacityCommandError(outcome.err):
+			releaseResult := rollbackTerminalRouteReservation()
+			return dispatchAttemptResult{
+				outcome: outcome,
+				capacityRetryable: capability == taskCapabilityTerminalExec &&
+					terminalRouteReservationID != 0 &&
+					releaseResult == routeReservationRemoved,
+			}, nil
+		case terminalRouteReservationID != 0:
+			// Other execution errors do not prove that session creation failed.
+			confirmTerminalRoute()
 		}
-		return outcome, nil
+		return dispatchAttemptResult{outcome: outcome}, nil
 	}
 }
 
-func (s *RegistryService) pickSessionForDispatch(capability string, ownerID string, terminalSessionID string) (*activeSession, uint64, error) {
+func (s *RegistryService) pickSessionForDispatch(
+	capability string,
+	ownerID string,
+	terminalSessionID string,
+	options sessionPickOptions,
+) (*activeSession, uint64, error) {
 	normalizedTerminalSessionID := strings.TrimSpace(terminalSessionID)
 	if normalizedTerminalSessionID == "" {
-		session, err := s.pickSessionForCapability(capability, ownerID)
+		session, err := s.pickSessionForCapability(capability, ownerID, options)
 		return session, 0, err
 	}
 	now := s.nowFn()
@@ -224,7 +362,13 @@ func (s *RegistryService) pickSessionForDispatch(capability string, ownerID stri
 
 	nodeID, reservationID, ok := s.claimTerminalSessionRoute(normalizedTerminalSessionID, now)
 	if !ok {
-		return s.tryReserveAndPickTerminalSession(capability, ownerID, normalizedTerminalSessionID, now)
+		return s.tryReserveAndPickTerminalSession(capability, ownerID, normalizedTerminalSessionID, now, options)
+	}
+	if isNodeExcluded(nodeID, options.excludedNodeIDs) {
+		if reservationID != 0 {
+			s.clearTerminalSessionRouteReservation(normalizedTerminalSessionID, nodeID, reservationID)
+		}
+		return nil, 0, errTerminalSessionRetryRouteConflict
 	}
 
 	session, err := s.pickSessionForNodeAndCapability(nodeID, capability)
@@ -233,7 +377,7 @@ func (s *RegistryService) pickSessionForDispatch(capability string, ownerID stri
 	}
 	if errors.Is(err, ErrNoCapabilityWorker) {
 		s.clearTerminalSessionRoute(normalizedTerminalSessionID, nodeID)
-		return s.tryReserveAndPickTerminalSession(capability, ownerID, normalizedTerminalSessionID, now)
+		return s.tryReserveAndPickTerminalSession(capability, ownerID, normalizedTerminalSessionID, now, options)
 	}
 	s.clearTerminalSessionRouteReservation(normalizedTerminalSessionID, nodeID, reservationID)
 	return nil, 0, err
@@ -244,53 +388,49 @@ func (s *RegistryService) tryReserveAndPickTerminalSession(
 	ownerID string,
 	normalizedTerminalSessionID string,
 	now time.Time,
+	options sessionPickOptions,
 ) (*activeSession, uint64, error) {
-	session, err := s.pickSessionForCapability(capability, ownerID)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	resolvedNodeID, reservationID := s.reserveTerminalSessionRoute(normalizedTerminalSessionID, session.nodeID, now)
-	if resolvedNodeID == session.nodeID {
-		return session, reservationID, nil
-	}
-
-	// Another request reserved this session first; route to that node for consistency.
-	session.releaseCapability(capability)
-
-	session, err = s.pickSessionForNodeAndCapability(resolvedNodeID, capability)
-	if err == nil {
-		return session, reservationID, nil
-	}
-	if !errors.Is(err, ErrNoCapabilityWorker) {
-		s.clearTerminalSessionRouteReservation(normalizedTerminalSessionID, resolvedNodeID, reservationID)
-		return nil, 0, err
-	}
-
-	// The reserved route became stale before we could acquire it; clear and retry once.
-	s.clearTerminalSessionRoute(normalizedTerminalSessionID, resolvedNodeID)
-
-	session, err = s.pickSessionForCapability(capability, ownerID)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	resolvedNodeID, reservationID = s.reserveTerminalSessionRoute(normalizedTerminalSessionID, session.nodeID, now)
-	if resolvedNodeID == session.nodeID {
-		return session, reservationID, nil
-	}
-
-	session.releaseCapability(capability)
-	session, err = s.pickSessionForNodeAndCapability(resolvedNodeID, capability)
-	if err != nil {
-		if errors.Is(err, ErrNoCapabilityWorker) {
-			s.clearTerminalSessionRoute(normalizedTerminalSessionID, resolvedNodeID)
-		} else {
-			s.clearTerminalSessionRouteReservation(normalizedTerminalSessionID, resolvedNodeID, reservationID)
+	for reserveAttempt := 0; reserveAttempt < 2; reserveAttempt++ {
+		session, err := s.pickSessionForCapability(capability, ownerID, options)
+		if err != nil {
+			return nil, 0, err
 		}
-		return nil, 0, err
+
+		resolvedNodeID, reservationID := s.reserveTerminalSessionRoute(normalizedTerminalSessionID, session.nodeID, now)
+		if resolvedNodeID == session.nodeID {
+			return session, reservationID, nil
+		}
+
+		// Another request reserved this session first; follow that node for consistency.
+		session.releaseCapability(capability)
+		if isNodeExcluded(resolvedNodeID, options.excludedNodeIDs) {
+			if reservationID != 0 {
+				s.clearTerminalSessionRouteReservation(normalizedTerminalSessionID, resolvedNodeID, reservationID)
+			}
+			return nil, 0, errTerminalSessionRetryRouteConflict
+		}
+
+		session, err = s.pickSessionForNodeAndCapability(resolvedNodeID, capability)
+		if err == nil {
+			return session, reservationID, nil
+		}
+		if !errors.Is(err, ErrNoCapabilityWorker) {
+			s.clearTerminalSessionRouteReservation(normalizedTerminalSessionID, resolvedNodeID, reservationID)
+			return nil, 0, err
+		}
+
+		// The reserved route became stale before acquisition. Clear it and retry once.
+		s.clearTerminalSessionRoute(normalizedTerminalSessionID, resolvedNodeID)
 	}
-	return session, reservationID, nil
+	return nil, 0, ErrNoCapabilityWorker
+}
+
+func isNodeExcluded(nodeID string, excludedNodeIDs map[string]struct{}) bool {
+	if len(excludedNodeIDs) == 0 {
+		return false
+	}
+	_, excluded := excludedNodeIDs[strings.TrimSpace(nodeID)]
+	return excluded
 }
 
 func (s *RegistryService) pickSessionForNodeAndCapability(nodeID string, capability string) (*activeSession, error) {
@@ -310,25 +450,41 @@ func (s *RegistryService) pickSessionForNodeAndCapability(nodeID string, capabil
 	return session, nil
 }
 
-func (s *RegistryService) pickSessionForCapability(capability string, ownerID string) (*activeSession, error) {
+func (s *RegistryService) pickSessionForCapability(
+	capability string,
+	ownerID string,
+	options sessionPickOptions,
+) (*activeSession, error) {
 	nodeIDs := s.listOnlineNodeIDsForCapability(capability, ownerID)
 	if len(nodeIDs) == 0 {
 		return nil, ErrNoCapabilityWorker
 	}
 
-	start := int(atomic.AddUint64(&s.roundRobin, 1) - 1)
+	const (
+		capacityGroupKnownAvailable = iota
+		capacityGroupUnknown
+		capacityGroupReportedFull
+		capacityGroupCount
+	)
 	type candidate struct {
-		session  *activeSession
-		inflight int
+		session          *activeSession
+		inflight         int
+		terminalCapacity terminalSessionCapacitySnapshot
 	}
-	minInflight := int(^uint(0) >> 1)
-	preferred := make([]candidate, 0, len(nodeIDs))
-	fallback := make([]candidate, 0, len(nodeIDs))
+
+	start := int(atomic.AddUint64(&s.roundRobin, 1) - 1)
+	groups := make([][]candidate, capacityGroupCount)
 	hasSession := false
+	capacityAware := normalizeCapability(capability) == taskCapabilityTerminalExec &&
+		options.terminalSessionIntent == terminalSessionIntentKnownNew
 
 	for i := 0; i < len(nodeIDs); i++ {
 		index := (start + i) % len(nodeIDs)
-		session := s.getSession(nodeIDs[index])
+		nodeID := nodeIDs[index]
+		if isNodeExcluded(nodeID, options.excludedNodeIDs) {
+			continue
+		}
+		session := s.getSession(nodeID)
 		if session == nil || !session.hasCapability(capability) {
 			continue
 		}
@@ -337,37 +493,52 @@ func (s *RegistryService) pickSessionForCapability(capability string, ownerID st
 		if !ok || inflight >= maxInflight {
 			continue
 		}
-		cand := candidate{session: session, inflight: inflight}
-		if inflight < minInflight {
-			minInflight = inflight
-			preferred = preferred[:0]
-			preferred = append(preferred, cand)
-		} else if inflight == minInflight {
-			preferred = append(preferred, cand)
-		} else {
-			fallback = append(fallback, cand)
+
+		terminalCapacity := session.terminalSessionCapacitySnapshot()
+		group := capacityGroupKnownAvailable
+		if capacityAware {
+			switch {
+			case !terminalCapacity.known:
+				group = capacityGroupUnknown
+			case terminalCapacity.maxActiveSessions > 0 &&
+				terminalCapacity.activeSessionCount >= terminalCapacity.maxActiveSessions:
+				group = capacityGroupReportedFull
+			}
+		}
+		groups[group] = append(groups[group], candidate{
+			session:          session,
+			inflight:         inflight,
+			terminalCapacity: terminalCapacity,
+		})
+	}
+
+	for groupIndex, candidates := range groups {
+		sort.SliceStable(candidates, func(i, j int) bool {
+			return candidates[i].inflight < candidates[j].inflight
+		})
+		for _, candidate := range candidates {
+			if !candidate.session.tryAcquireCapability(capability) {
+				continue
+			}
+			if capacityAware && groupIndex < capacityGroupReportedFull {
+				for _, skipped := range groups[capacityGroupReportedFull] {
+					slog.Debug(
+						"terminal capacity candidate skipped",
+						"task_id", options.taskID,
+						"node_id", skipped.session.nodeID,
+						"active_session_count", skipped.terminalCapacity.activeSessionCount,
+						"max_active_sessions", skipped.terminalCapacity.maxActiveSessions,
+					)
+				}
+			}
+			return candidate.session, nil
 		}
 	}
 
-	if len(preferred) == 0 {
-		if hasSession {
-			return nil, ErrNoWorkerCapacity
-		}
-		return nil, ErrNoCapabilityWorker
+	if hasSession {
+		return nil, ErrNoWorkerCapacity
 	}
-
-	for i := 0; i < len(preferred); i++ {
-		session := preferred[i].session
-		if session.tryAcquireCapability(capability) {
-			return session, nil
-		}
-	}
-	for _, cand := range fallback {
-		if cand.session.tryAcquireCapability(capability) {
-			return cand.session, nil
-		}
-	}
-	return nil, ErrNoWorkerCapacity
+	return nil, ErrNoCapabilityWorker
 }
 
 func (s *RegistryService) listOnlineNodeIDsForCapability(capability string, ownerID string) []string {
@@ -455,11 +626,19 @@ type CapabilityInflightEntry struct {
 	MaxInflight int
 }
 
+// TerminalSessionCapacityInflightEntry describes whether a worker declared a
+// terminal session limit and, when known, its configured maximum.
+type TerminalSessionCapacityInflightEntry struct {
+	Known             bool
+	MaxActiveSessions int
+}
+
 // WorkerInflightSnapshot holds the inflight snapshot for a single worker.
 type WorkerInflightSnapshot struct {
-	NodeID             string
-	ActiveSessionCount int
-	Capabilities       []CapabilityInflightEntry
+	NodeID                  string
+	ActiveSessionCount      int
+	TerminalSessionCapacity TerminalSessionCapacityInflightEntry
+	Capabilities            []CapabilityInflightEntry
 }
 
 // InflightStats returns inflight data for all active sessions.
@@ -485,10 +664,15 @@ func (s *RegistryService) InflightStats() []WorkerInflightSnapshot {
 				MaxInflight: c.maxInflight,
 			}
 		}
+		capacity := session.terminalSessionCapacitySnapshot()
 		out = append(out, WorkerInflightSnapshot{
 			NodeID:             session.nodeID,
-			ActiveSessionCount: int(session.activeSessionCount()),
-			Capabilities:       entries,
+			ActiveSessionCount: capacity.activeSessionCount,
+			TerminalSessionCapacity: TerminalSessionCapacityInflightEntry{
+				Known:             capacity.known,
+				MaxActiveSessions: capacity.maxActiveSessions,
+			},
+			Capabilities: entries,
 		})
 	}
 	return out

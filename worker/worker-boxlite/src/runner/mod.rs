@@ -32,11 +32,17 @@ pub enum RunnerError {
     #[error("{0}")]
     Message(String),
     #[error(transparent)]
-    Status(#[from] tonic::Status),
+    Status(Box<tonic::Status>),
     #[error(transparent)]
     Transport(#[from] tonic::transport::Error),
     #[error("worker cancelled")]
     Cancelled,
+}
+
+impl From<tonic::Status> for RunnerError {
+    fn from(status: tonic::Status) -> Self {
+        Self::Status(Box::new(status))
+    }
 }
 
 impl RunnerError {
@@ -55,6 +61,7 @@ pub async fn run(shutdown: CancellationToken, cfg: Config) -> Result<(), RunnerE
     if cfg.worker_secret.trim().is_empty() {
         return Err(RunnerError::Message("WORKER_SECRET is required".to_owned()));
     }
+    validate_terminal_max_active_sessions(cfg.terminal_max_active_sessions)?;
 
     tracing::info!(
         image = %cfg.python_exec_image,
@@ -108,6 +115,17 @@ pub async fn shutdown() {
     shutdown_shared_terminal_sessions().await;
 }
 
+pub(crate) fn validate_terminal_max_active_sessions(
+    max_active_sessions: u32,
+) -> Result<(), RunnerError> {
+    if max_active_sessions > i32::MAX as u32 {
+        return Err(RunnerError::Message(
+            "WORKER_TERMINAL_MAX_ACTIVE_SESSIONS must be between 0 and 2147483647".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn next_reconnect_delay(current: Duration) -> Duration {
     if current.is_zero() {
         return INITIAL_RECONNECT_DELAY;
@@ -144,6 +162,12 @@ pub(crate) fn duration_from_server(seconds: i32, fallback: Duration) -> Duration
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terminal_capacity_config_must_fit_protocol() {
+        assert!(validate_terminal_max_active_sessions(i32::MAX as u32).is_ok());
+        assert!(validate_terminal_max_active_sessions(i32::MAX as u32 + 1).is_err());
+    }
 
     #[test]
     fn next_reconnect_delay_caps_at_maximum() {

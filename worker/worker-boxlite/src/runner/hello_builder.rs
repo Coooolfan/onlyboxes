@@ -1,14 +1,25 @@
 use std::collections::HashMap;
 
 use crate::config::Config;
-use crate::proto::registryv1::{CapabilityDeclaration, ConnectHello};
+use crate::proto::registryv1::{CapabilityDeclaration, ConnectHello, TerminalSessionCapacity};
 
 use super::{
-    ECHO_CAPABILITY_NAME, PYTHON_EXEC_CAPABILITY_DECLARED, TERMINAL_EXEC_CAPABILITY_DECLARED,
+    validate_terminal_max_active_sessions, RunnerError, ECHO_CAPABILITY_NAME,
+    PYTHON_EXEC_CAPABILITY_DECLARED, TERMINAL_EXEC_CAPABILITY_DECLARED,
     TERMINAL_RESOURCE_CAPABILITY_DECLARED,
 };
 
-pub(crate) fn build_hello(cfg: &Config) -> ConnectHello {
+pub(crate) fn build_hello(
+    cfg: &Config,
+    active_session_count: i32,
+) -> Result<ConnectHello, RunnerError> {
+    validate_terminal_max_active_sessions(cfg.terminal_max_active_sessions)?;
+    if active_session_count < 0 {
+        return Err(RunnerError::Message(
+            "terminal active session count must be non-negative".to_owned(),
+        ));
+    }
+
     let node_name = if cfg.node_name.trim().is_empty() {
         let suffix = cfg.worker_id.chars().take(8).collect::<String>();
         format!("worker-boxlite-{suffix}")
@@ -21,7 +32,7 @@ pub(crate) fn build_hello(cfg: &Config) -> ConnectHello {
         labels.insert(key.clone(), value.clone());
     }
 
-    ConnectHello {
+    Ok(ConnectHello {
         node_id: cfg.worker_id.clone(),
         node_name,
         executor_kind: cfg.executor_kind.clone(),
@@ -46,7 +57,11 @@ pub(crate) fn build_hello(cfg: &Config) -> ConnectHello {
             },
         ],
         worker_secret: cfg.worker_secret.clone(),
-    }
+        terminal_session_capacity: Some(TerminalSessionCapacity {
+            max_active_sessions: cfg.terminal_max_active_sessions as i32,
+            active_session_count,
+        }),
+    })
 }
 
 #[cfg(test)]
@@ -95,13 +110,34 @@ mod tests {
     }
 
     #[test]
-    fn build_hello_contains_expected_capabilities() {
-        let hello = build_hello(&test_config());
+    fn build_hello_contains_expected_capabilities_and_capacity() {
+        let mut cfg = test_config();
+        cfg.terminal_max_active_sessions = 12;
+        let hello = build_hello(&cfg, 7).expect("build hello");
         assert_eq!(hello.node_name, "worker-boxlite-worker-1");
         assert_eq!(hello.capabilities.len(), 4);
         assert_eq!(hello.capabilities[0].name, "echo");
         assert_eq!(hello.capabilities[1].name, "pythonExec");
         assert_eq!(hello.capabilities[2].name, "terminalExec");
         assert_eq!(hello.capabilities[3].name, "terminalResource");
+        let capacity = hello
+            .terminal_session_capacity
+            .expect("terminal capacity declaration");
+        assert_eq!(capacity.max_active_sessions, 12);
+        assert_eq!(capacity.active_session_count, 7);
+    }
+
+    #[test]
+    fn build_hello_advertises_explicit_unlimited_capacity() {
+        let hello = build_hello(&test_config(), 0).expect("build hello");
+        let capacity = hello
+            .terminal_session_capacity
+            .expect("terminal capacity declaration");
+        assert_eq!(capacity.max_active_sessions, 0);
+    }
+
+    #[test]
+    fn build_hello_rejects_invalid_active_count() {
+        assert!(build_hello(&test_config(), -1).is_err());
     }
 }

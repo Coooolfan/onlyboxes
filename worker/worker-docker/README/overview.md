@@ -23,9 +23,11 @@ Required identity:
 These values are returned by `console` when calling `POST /api/v1/workers` (startup command response).
 `WORKER_SECRET` is only returned once at creation time; if lost, delete and recreate the worker in dashboard/API.
 
-Version report:
+Version and capacity report:
 - worker registers `version` in `ConnectHello`.
-- the only source is the binary embedded build version (`dev` when not injected); it cannot be overridden at runtime.
+- every Hello, including reconnects, contains `terminal_session_capacity` with configured `max_active_sessions` and the manager's current reservation count, so console does not wait for the first heartbeat before scheduling.
+- heartbeat continues to report the latest `active_session_count`.
+- the only version source is the binary embedded build version (`dev` when not injected); it cannot be overridden at runtime.
 
 Capability behavior:
 - `worker-docker` hardcodes capability declarations to `echo`, `pythonExec`, `terminalExec`, and `terminalResource`.
@@ -125,7 +127,7 @@ Capability concurrency:
 - `WORKER_TERMINAL_EXEC_MAX_INFLIGHT`: maximum concurrent terminalExec commands (default `4`)
 - `WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT`: maximum concurrent terminalResource commands (default `4`)
 - `WORKER_TERMINAL_SESSION_MAX_INFLIGHT`: maximum concurrent commands per terminal session, counting `terminalExec` and `terminalResource` together (default `1`)
-- `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS`: maximum active terminal sessions managed by this worker; `0` means unlimited (default `0`)
+- `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS`: maximum active terminal sessions managed by this worker; `0` means unlimited (default `0`). Values above `2147483647` are rejected before the reconnect loop because the protocol field is `int32`.
 - invalid negative `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS` values fall back to `0`; invalid non-positive inflight values fall back to their defaults.
 
 Recommended setting:

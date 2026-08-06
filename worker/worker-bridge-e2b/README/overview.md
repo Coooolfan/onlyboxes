@@ -150,7 +150,8 @@ worker 在 hello 中声明以下四项能力：
 ## 会话与心跳
 
 - hello 声明 `echo`、`pythonExec`、`terminalExec`、`terminalResource`，每项都有独立的 `max_inflight`。
-- heartbeat 报告 `active_session_count`。
+- 每次连接和重连的 Hello 都通过 `terminal_session_capacity` 上报配置的 `max_active_sessions` 与 manager 当前 reservation 数，console 无需等待首个 heartbeat 即可获得容量快照。
+- heartbeat 持续报告最新 `active_session_count`。
 - worker 容忍一次 heartbeat ack 超时，连续两次超时后重连。
 - session 被 console 替换并返回 `FailedPrecondition` 时立即进入重连流程。
 - 其余断线使用最长 `15` 秒的指数退避。

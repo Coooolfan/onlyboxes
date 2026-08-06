@@ -80,7 +80,7 @@ envd 成功返回响应头后，命令执行与文件流遵循 console 下发的
 | `WORKER_TERMINAL_EXPORT_MAX_BYTES` | `terminal_export_max_bytes` | `0` | 非负整数；`0` 表示不限制导出大小 |
 | `WORKER_TERMINAL_EXPORT_MODE` | `terminal_export_mode` | `sandbox` | `worker`：文件流经 worker；`sandbox`：E2B 沙箱使用 `python3` 直接上传 |
 | `WORKER_TERMINAL_SESSION_MAX_INFLIGHT` | `terminal_session_max_inflight` | `128` | 正整数；同一 session 内 `terminalExec` 与 `terminalResource` 共享的并发上限 |
-| `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS` | `terminal_max_active_sessions` | `0` | 非负整数；`0` 表示不限当前 worker 进程管理的 session 数量；创建中、销毁中和 E2B cleanup 中的 session 也计入 |
+| `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS` | `terminal_max_active_sessions` | `0` | 非负整数且不超过 `2147483647`；`0` 表示不限当前 worker 进程管理的 session 数量；创建中、销毁中和 E2B cleanup 中的 session 也计入；超出协议范围会在重连循环前终止启动 |
 
 ## 能力并发
 
@@ -101,6 +101,6 @@ envd 成功返回响应头后，命令执行与文件流遵循 console 下发的
 | `WORKER_LOG_FORMAT` | `log_format` | `json` | `json`、`text` |
 | `WORKER_LOG_ADD_SOURCE` | `log_add_source` | `false` | 是否记录源码位置；布尔值接受 `1/0`、`true/false`、`yes/no`、`on/off` |
 
-正整数、百分比、枚举或布尔值无效时使用该项默认值。`WORKER_TERMINAL_EXPORT_MAX_BYTES` 和 `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS` 均接受非负整数；负数或非法值分别回退为 `0`。无效的 `WORKER_TERMINAL_EXPORT_MODE` 回退为 `sandbox`。
+正整数、百分比、枚举或布尔值无效时使用该项默认值。`WORKER_TERMINAL_EXPORT_MAX_BYTES` 和 `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS` 均接受非负整数；负数或非法值分别回退为 `0`，但 `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS` 超过 `2147483647` 时会因无法编码到协议字段而终止启动。无效的 `WORKER_TERMINAL_EXPORT_MODE` 回退为 `sandbox`。
 
 配置文件中包含 worker secret 或 E2B API Key 时，应设置为仅运行用户可读，并且不要提交到版本库。可复制根目录的 [`config.example.toml`](../config.example.toml) 作为起点。

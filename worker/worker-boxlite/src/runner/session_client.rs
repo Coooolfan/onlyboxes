@@ -34,7 +34,7 @@ async fn run_session_with_builder(
     command_result_builder: Arc<dyn CommandResultBuilder>,
 ) -> Result<(), RunnerError> {
     let (outbound_tx, outbound_rx) = mpsc::channel(64);
-    let hello = build_hello(cfg);
+    let hello = build_hello(cfg, shared_active_session_count().await)?;
     outbound_tx
         .send(ConnectRequest {
             payload: Some(connect_request::Payload::Hello(hello.clone())),
@@ -174,7 +174,7 @@ async fn receiver_loop(
                 return;
             }
             Err(status) => {
-                report_session_error(&session_err_tx, RunnerError::Status(status)).await;
+                report_session_error(&session_err_tx, RunnerError::from(status)).await;
                 return;
             }
         }
@@ -306,7 +306,7 @@ where
         result = tokio::time::timeout(timeout, future) => {
             match result {
                 Ok(Ok(value)) => Ok(value),
-                Ok(Err(status)) => Err(RunnerError::Status(status)),
+                Ok(Err(status)) => Err(RunnerError::from(status)),
                 Err(_) => Err(RunnerError::Message("receive timed out".to_owned())),
             }
         }
@@ -630,6 +630,12 @@ mod tests {
         assert_eq!(hello.node_id, cfg.worker_id);
         assert_eq!(hello.worker_secret, cfg.worker_secret);
         assert_eq!(hello.executor_kind, "boxlite");
+        let terminal_capacity = hello
+            .terminal_session_capacity
+            .as_ref()
+            .expect("terminal capacity declaration");
+        assert_eq!(terminal_capacity.max_active_sessions, 0);
+        assert_eq!(terminal_capacity.active_session_count, 0);
 
         let capabilities = hello
             .capabilities

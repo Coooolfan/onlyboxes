@@ -10,6 +10,14 @@ import (
 )
 
 func buildHello(cfg config.Config) (*registryv1.ConnectHello, error) {
+	if err := validateTerminalMaxActiveSessions(cfg.TerminalMaxActiveSessions); err != nil {
+		return nil, err
+	}
+	activeSessionCount := activeSessionCountFn()
+	if activeSessionCount < 0 {
+		return nil, fmt.Errorf("terminal active session count must be non-negative")
+	}
+
 	nodeName := strings.TrimSpace(cfg.NodeName)
 	if nodeName == "" {
 		suffix := cfg.WorkerID
@@ -26,6 +34,10 @@ func buildHello(cfg config.Config) (*registryv1.ConnectHello, error) {
 		Labels:       cfg.Labels,
 		Version:      buildinfo.Version,
 		WorkerSecret: cfg.WorkerSecret,
+		TerminalSessionCapacity: &registryv1.TerminalSessionCapacity{
+			MaxActiveSessions:  int32(cfg.TerminalMaxActiveSessions),
+			ActiveSessionCount: activeSessionCount,
+		},
 		Capabilities: []*registryv1.CapabilityDeclaration{
 			{
 				Name:        echoCapabilityName,

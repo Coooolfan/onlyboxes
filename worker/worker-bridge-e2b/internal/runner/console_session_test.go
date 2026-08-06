@@ -37,6 +37,7 @@ func TestConsoleSessionContract(t *testing.T) {
 
 	cfg := consoleTestConfig()
 	cfg.ConsoleGRPCTarget = listener.Addr().String()
+	cfg.TerminalMaxActiveSessions = 9
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	connected, err := runSessionWithStatus(ctx, cfg)
@@ -48,6 +49,49 @@ func TestConsoleSessionContract(t *testing.T) {
 	}
 	if atomic.LoadInt32(&service.commandResults) != 1 {
 		t.Fatalf("expected one command result")
+	}
+}
+
+func TestBuildHelloAdvertisesExplicitUnlimitedTerminalCapacity(t *testing.T) {
+	hello, err := buildHello(consoleTestConfig())
+	if err != nil {
+		t.Fatalf("buildHello failed: %v", err)
+	}
+	capacity := hello.GetTerminalSessionCapacity()
+	if capacity == nil || capacity.GetMaxActiveSessions() != 0 {
+		t.Fatalf("expected explicit unlimited terminal capacity, got %#v", capacity)
+	}
+}
+
+func TestValidateTerminalMaxActiveSessionsRejectsProtocolOverflow(t *testing.T) {
+	if err := validateTerminalMaxActiveSessions(int(maxProtocolInt32)); err != nil {
+		t.Fatalf("expected max protocol value to be valid: %v", err)
+	}
+	if err := validateTerminalMaxActiveSessions(int(maxProtocolInt32 + 1)); err == nil {
+		t.Fatal("expected protocol overflow to be rejected")
+	}
+}
+
+func TestRunRejectsTerminalCapacityOutsideProtocolRange(t *testing.T) {
+	cfg := consoleTestConfig()
+	cfg.E2BAPIKey = "api-key"
+	cfg.E2BPythonTemplate = "python-template"
+	cfg.E2BTerminalTemplate = "terminal-template"
+	cfg.TerminalMaxActiveSessions = int(maxProtocolInt32 + 1)
+
+	err := Run(context.Background(), cfg)
+	if err == nil || !strings.Contains(err.Error(), "WORKER_TERMINAL_MAX_ACTIVE_SESSIONS") {
+		t.Fatalf("expected terminal capacity validation error, got %v", err)
+	}
+}
+
+func TestBuildHelloRejectsNegativeActiveSessionCount(t *testing.T) {
+	originalActiveSessionCount := activeSessionCountFn
+	activeSessionCountFn = func() int32 { return -1 }
+	t.Cleanup(func() { activeSessionCountFn = originalActiveSessionCount })
+
+	if _, err := buildHello(consoleTestConfig()); err == nil {
+		t.Fatal("expected negative active session count to be rejected")
 	}
 }
 
@@ -236,6 +280,10 @@ func (s *consoleContractService) Connect(stream grpc.BidiStreamingServer[registr
 		if capabilities[name] != 4 {
 			return status.Errorf(codes.InvalidArgument, "invalid capability %s", name)
 		}
+	}
+	capacity := hello.GetTerminalSessionCapacity()
+	if capacity == nil || capacity.GetMaxActiveSessions() != 9 || capacity.GetActiveSessionCount() != 3 {
+		return status.Errorf(codes.InvalidArgument, "invalid terminal session capacity: %#v", capacity)
 	}
 	if err := stream.Send(&registryv1.ConnectResponse{
 		Payload: &registryv1.ConnectResponse_ConnectAck{

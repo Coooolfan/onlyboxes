@@ -18,6 +18,13 @@ const (
 	taskOwnerScopeInvalidPayloadMessage = "session_id owner mismatch"
 )
 
+type terminalSessionIntent uint8
+
+const (
+	terminalSessionIntentUnknown terminalSessionIntent = iota
+	terminalSessionIntentKnownNew
+)
+
 type terminalExecScopedPayload struct {
 	Command         string `json:"command"`
 	SessionID       string `json:"session_id,omitempty"`
@@ -75,6 +82,20 @@ func unscopeTerminalSessionID(ownerID string, scopedSessionID string) (string, b
 		return "", false
 	}
 	return externalSessionID, true
+}
+
+func terminalSessionIntentForTaskInput(capability string, inputJSON []byte) terminalSessionIntent {
+	if normalizeCapability(capability) != taskCapabilityTerminalExec || len(inputJSON) == 0 {
+		return terminalSessionIntentUnknown
+	}
+	payload := terminalExecScopedPayload{}
+	if err := json.Unmarshal(inputJSON, &payload); err != nil {
+		return terminalSessionIntentUnknown
+	}
+	if strings.TrimSpace(payload.SessionID) == "" {
+		return terminalSessionIntentKnownNew
+	}
+	return terminalSessionIntentUnknown
 }
 
 func (s *RegistryService) scopeTaskInputByOwner(capability string, ownerID string, inputJSON []byte) ([]byte, error) {
