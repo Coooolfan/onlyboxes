@@ -763,7 +763,8 @@ Worker 类型：`normal`（对应 `worker-docker`/`worker-boxlite`）、`worker-
 | `400` | `invalid_payload` | 请求参数非法 |
 | `404` | `session_not_found` | session_id 不存在且 `create_if_missing=false` |
 | `409` | `session_busy` | 会话被另一请求占用，或任务已取消 |
-| `429` | — | 无可用并发容量 |
+| `429` | `no_capacity` | 选中的 worker 对应 capability 并发额度耗尽 |
+| `429` | `session_capacity_exceeded` | 选中的 sandbox worker 已达到 `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS`；已有 session 仍可使用，但本次请求无法创建新 session |
 | `503` | — | 无可用 worker |
 | `504` | — | 执行超时 |
 | `502` | — | 其他执行失败 |
@@ -965,7 +966,7 @@ Task 适合需要异步执行或结果轮询的场景。所有权按 token 对�
 | `200` | 任务成功完成 |
 | `409` | 任务已被取消 |
 | `504` | 任务执行超时 |
-| `429` | 失败，`error.code=no_capacity` |
+| `429` | 失败，`error.code=no_capacity` 或 `error.code=session_capacity_exceeded` |
 | `503` | 失败，`error.code=no_worker` |
 | `502` | 失败（其他 error code） |
 

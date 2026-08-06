@@ -194,6 +194,14 @@ Executes a shell command inside a persistent terminal session, with state preser
 }
 ```
 
+**Concurrency and capacity errors:**
+
+- `session_busy` means the per-session concurrency limit has been reached.
+- `no_capacity` means the worker-wide capability concurrency quota has been exhausted.
+- `session_capacity_exceeded` means the selected worker has reached `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS` while creating a new session; existing sessions remain usable.
+
+These conditions are returned as MCP tool errors with `isError: true`, and the error text retains the corresponding error code. They are not JSON-RPC protocol-level errors.
+
 ---
 
 ### `computerUse`
@@ -364,6 +372,7 @@ Output fields depend on the `CONSOLE_EXPORT_RETURN_SCHEMA` environment variable:
 | Input validation failure | JSON-RPC error `-32602 invalid params` |
 | `computerUse` account has no `worker-sys` | JSON-RPC error `-32010` with `data.error_code="WORKER_SYS_REQUIRED"` |
 | `computerUse` account has a registered but offline `worker-sys` | JSON-RPC error `-32011` with `data.error_code="WORKER_SYS_OFFLINE"` |
+| `terminalExec` reaches `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS` while creating a session | Returned as MCP tool error content with `isError: true`; the text contains `session_capacity_exceeded` |
 | Tool execution error (timeout, no_worker, etc.) | Returned as MCP tool error content (`isError: true`); not a protocol-level error |
 
 ---

@@ -121,6 +121,8 @@ WORKER_TERMINAL_EXEC_MAX_PROCESSES=1024
 WORKER_TERMINAL_SESSION_MAX_INFLIGHT=8
 WORKER_TERMINAL_EXEC_MAX_INFLIGHT=16
 WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT=8
+# Set a positive value based on the worker host's resource budget; 0 means unlimited.
+WORKER_TERMINAL_MAX_ACTIVE_SESSIONS=0
 ```
 
 | Variable | Default | Recommended | Description |
@@ -132,8 +134,11 @@ WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT=8
 | `WORKER_TERMINAL_SESSION_MAX_INFLIGHT` | `1` | `8` | Combined concurrent `terminalExec` and `terminalResource` operations allowed in one session |
 | `WORKER_TERMINAL_EXEC_MAX_INFLIGHT` | `4` | `16` | Worker-wide concurrent `terminalExec` operations |
 | `WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT` | `4` | `8` | Worker-wide concurrent `terminalResource` operations |
+| `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS` | `0` (unlimited) | Set from the worker host's capacity | Maximum terminal sessions managed by this worker process; existing sessions remain usable at capacity, while new sessions return `session_capacity_exceeded` |
 
 LobeHub runs commands and file operations concurrently in one session, so the default limit of `1` may return `409 session_busy`. Requests must satisfy both the per-session and worker-wide limits.
+
+There is no universal recommendation for `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS`. In production, set a positive value based on the memory and CPU budget available to terminal containers; with the current recommended `2048 MiB` per session, a conservative starting point is `floor(available memory / 2048 MiB)`, leaving headroom for the host and other capabilities. `0` means unlimited and is best avoided indefinitely on production workers with a defined resource budget.
 
 Pull the image before starting the worker so the first session is not blocked on the image download:
 

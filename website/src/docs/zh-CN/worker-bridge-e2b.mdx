@@ -59,6 +59,7 @@ console_grpc_target = "console.internal:50051"
 e2b_api_key = "..."
 e2b_python_template = "python-template"
 e2b_terminal_template = "terminal-template"
+terminal_max_active_sessions = 0
 
 [labels]
 region = "cn"
@@ -103,6 +104,9 @@ region = "cn"
 | `WORKER_TERMINAL_EXPORT_MAX_BYTES` | 否 | `0`（无限制） | 导出文件大小上限 |
 | `WORKER_TERMINAL_EXPORT_MODE` | 否 | `sandbox` | `sandbox` 由 E2B 直接上传；`worker` 由 worker 转发文件 |
 | `WORKER_TERMINAL_SESSION_MAX_INFLIGHT` | 否 | `128` | 单个 session 允许的并发操作数 |
+| `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS` | 否 | `0`（无限制） | 当前 worker 进程管理的 terminal session 数量上限 |
+
+`WORKER_TERMINAL_MAX_ACTIVE_SESSIONS` 与单 session 和 capability 并发上限相互独立。`0` 表示不限制；正数会统计创建中、可用、销毁中以及 E2B cleanup 进行中的 session。容量已满时已有 session 仍可使用，新建 session 返回 `429 session_capacity_exceeded`。该限制只作用于当前 worker 进程，不是同一 E2B API Key 下所有 worker 的全局配额；负数或非法值回退为 `0`。
 
 终端命令共享沙箱文件系统，但每次调用都在独立的 `/bin/bash -l -c` 进程中执行，不会在调用之间保留当前目录、shell 变量或进程环境。
 

@@ -49,6 +49,7 @@ id = "wk_..."
 secret = "..."
 console_grpc_target = "console.internal:50051"
 terminal_exec_boxlite_image = "coolfan1024/onlyboxes-runtime:default"
+terminal_max_active_sessions = 0
 
 [labels]
 region = "cn"
@@ -100,10 +101,13 @@ region = "cn"
 | `WORKER_TERMINAL_EXEC_MAX_INFLIGHT` | 否 | `4` | terminalExec 最大并发数 |
 | `WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT` | 否 | `4` | terminalResource 最大并发数 |
 | `WORKER_TERMINAL_SESSION_MAX_INFLIGHT` | 否 | `1` | 单个 terminal session 的最大并发数；terminalExec 与 terminalResource 共享 |
+| `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS` | 否 | `0`（无限制） | 当前 worker 进程管理的 terminal session 数量上限 |
 
 `WORKER_TERMINAL_EXEC_MAX_INFLIGHT` 和 `WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT` 分别限制整个 worker 上对应能力的并发数，二者相互独立，没有额外的 worker 全局合计上限。`WORKER_TERMINAL_SESSION_MAX_INFLIGHT` 则限制单个 `session_id`，并将 terminalExec 与 terminalResource 合并计数。请求必须同时满足对应能力上限和 session 上限。
 
-例如将 terminalExec 和 terminalResource 上限都设为 `10`、session 上限设为 `2` 时，整个 worker 最多可同时处理 10 个 terminalExec 和 10 个 terminalResource，但任一 session 内两类操作合计不能超过 2。超出 session 上限返回 `409 session_busy`，对应能力的 worker 级容量耗尽则返回 `429 no_capacity`。
+`WORKER_TERMINAL_MAX_ACTIVE_SESSIONS` 是独立的 session 数量上限。`0` 表示不限制；正数会统计创建中、可用、销毁中以及 Box cleanup 进行中的 session。容量已满时已有 session 仍可使用，新建 session 返回 `429 session_capacity_exceeded`。负数或非法值回退为 `0`。
+
+例如将 terminalExec 和 terminalResource 上限都设为 `10`、单 session 上限设为 `2` 时，整个 worker 最多可同时处理 10 个 terminalExec 和 10 个 terminalResource，但任一 session 内两类操作合计不能超过 2。超出单 session 上限返回 `409 session_busy`，对应能力的 worker 级并发额度耗尽返回 `429 no_capacity`，新建 session 时 session 数量上限耗尽返回 `429 session_capacity_exceeded`。
 
 ### 终端租约
 

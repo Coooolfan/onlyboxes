@@ -49,6 +49,7 @@ id = "wk_..."
 secret = "..."
 console_grpc_target = "console.internal:50051"
 terminal_exec_boxlite_image = "coolfan1024/onlyboxes-runtime:default"
+terminal_max_active_sessions = 0
 
 [labels]
 region = "us"
@@ -100,10 +101,13 @@ The default terminal image is a general execution image with Python 3, Node.js 2
 | `WORKER_TERMINAL_EXEC_MAX_INFLIGHT` | No | `4` | Max concurrent terminalExec commands |
 | `WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT` | No | `4` | Max concurrent terminalResource commands |
 | `WORKER_TERMINAL_SESSION_MAX_INFLIGHT` | No | `1` | Max concurrent operations in one terminal session; shared by terminalExec and terminalResource |
+| `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS` | No | `0` (unlimited) | Maximum terminal sessions managed by this worker process |
 
 `WORKER_TERMINAL_EXEC_MAX_INFLIGHT` and `WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT` independently limit their respective capabilities across the worker; there is no additional aggregate worker-wide limit. `WORKER_TERMINAL_SESSION_MAX_INFLIGHT` applies to one `session_id` and counts terminalExec and terminalResource together. A request must satisfy both its capability limit and the session limit.
 
-For example, with both capability limits set to `10` and the session limit set to `2`, the worker can process up to 10 terminalExec and 10 terminalResource operations at once, while any one session can run at most two operations in total. Exceeding the session limit returns `409 session_busy`; exhausting the worker-level capacity for a capability returns `429 no_capacity`.
+`WORKER_TERMINAL_MAX_ACTIVE_SESSIONS` is a separate session-count limit. `0` leaves the count unlimited; a positive value counts sessions that are being created, ready, being destroyed, or undergoing Box cleanup. Existing sessions remain usable when the limit is full, while a new session returns `429 session_capacity_exceeded`. Negative or invalid values fall back to `0`.
+
+For example, with both capability limits set to `10` and the per-session limit set to `2`, the worker can process up to 10 terminalExec and 10 terminalResource operations at once, while any one session can run at most two operations in total. Exceeding the per-session limit returns `409 session_busy`; exhausting a capability's worker-wide concurrency returns `429 no_capacity`; exhausting the session-count limit while creating a session returns `429 session_capacity_exceeded`.
 
 ### Terminal lease
 

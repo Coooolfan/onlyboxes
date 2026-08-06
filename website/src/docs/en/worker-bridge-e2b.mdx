@@ -59,6 +59,7 @@ console_grpc_target = "console.internal:50051"
 e2b_api_key = "..."
 e2b_python_template = "python-template"
 e2b_terminal_template = "terminal-template"
+terminal_max_active_sessions = 0
 
 [labels]
 region = "us"
@@ -103,6 +104,9 @@ See the [annotated configuration template](https://github.com/Coooolfan/onlyboxe
 | `WORKER_TERMINAL_EXPORT_MAX_BYTES` | No | `0` (unlimited) | Maximum exported file size |
 | `WORKER_TERMINAL_EXPORT_MODE` | No | `sandbox` | `sandbox` uploads directly from E2B; `worker` proxies file bytes |
 | `WORKER_TERMINAL_SESSION_MAX_INFLIGHT` | No | `128` | Concurrent operations allowed in one session |
+| `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS` | No | `0` (unlimited) | Maximum terminal sessions managed by this worker process |
+
+`WORKER_TERMINAL_MAX_ACTIVE_SESSIONS` is independent of the per-session and capability concurrency limits. `0` leaves the count unlimited; a positive value counts sessions that are being created, ready, being destroyed, or undergoing E2B cleanup. Existing sessions remain usable when the limit is full, while a new session returns `429 session_capacity_exceeded`. The limit applies only to this worker process, not to all workers sharing an E2B API key; negative or invalid values fall back to `0`.
 
 Terminal commands share the sandbox filesystem but run in separate `/bin/bash -l -c` processes. They do not preserve the current directory, shell variables, or process environment between calls.
 

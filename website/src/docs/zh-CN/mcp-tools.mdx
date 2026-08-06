@@ -194,6 +194,14 @@ Accept: application/json, text/event-stream
 }
 ```
 
+**并发与容量错误：**
+
+- `session_busy` 表示单个 session 内的并发上限已达到。
+- `no_capacity` 表示 worker 级 capability 并发额度耗尽。
+- `session_capacity_exceeded` 表示新建 session 时选中的 worker 已达到 `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS`；已有 session 仍可使用。
+
+这些情况会作为 MCP 工具错误返回，响应中的 `isError` 为 `true`，错误文本会保留对应错误码；它们不是 JSON-RPC 协议层错误。
+
 ---
 
 ### `computerUse`
@@ -364,6 +372,7 @@ unsupported mime type: <mime>; expected image/*
 | 参数校验失败 | JSON-RPC 错误 `-32602 invalid params` |
 | `computerUse` 调用账号没有 `worker-sys` | JSON-RPC 错误 `-32010`，`data.error_code="WORKER_SYS_REQUIRED"` |
 | `computerUse` 调用账号已注册 `worker-sys` 但不在线 | JSON-RPC 错误 `-32011`，`data.error_code="WORKER_SYS_OFFLINE"` |
+| `terminalExec` 新建 session 时达到 `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS` | 作为 MCP 工具错误内容返回，`isError: true`，文本包含 `session_capacity_exceeded` |
 | 工具执行异常（超时、no_worker 等） | 作为 MCP 工具错误内容返回（`isError: true`），不是协议层错误 |
 
 ---

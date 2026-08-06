@@ -763,7 +763,8 @@ Executes a shell command inside a persistent terminal session, supporting state 
 | `400` | `invalid_payload` | Invalid request parameters |
 | `404` | `session_not_found` | `session_id` not found and `create_if_missing=false` |
 | `409` | `session_busy` | Session occupied by another request, or task cancelled |
-| `429` | — | No available concurrency capacity |
+| `429` | `no_capacity` | The selected worker has exhausted the capability's concurrency quota |
+| `429` | `session_capacity_exceeded` | The selected sandbox worker has reached `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS`; existing sessions remain usable, but this request cannot create a new session |
 | `503` | — | No available worker |
 | `504` | — | Execution timed out |
 | `502` | — | Other execution failure |
@@ -965,7 +966,7 @@ Tasks are suited for asynchronous execution or polling workflows. Ownership is s
 | `200` | Task succeeded |
 | `409` | Task was cancelled |
 | `504` | Task timed out |
-| `429` | Failed, `error.code=no_capacity` |
+| `429` | Failed, `error.code=no_capacity` or `error.code=session_capacity_exceeded` |
 | `503` | Failed, `error.code=no_worker` |
 | `502` | Failed (other error code) |
 

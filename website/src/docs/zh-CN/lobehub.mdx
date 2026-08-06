@@ -121,6 +121,8 @@ WORKER_TERMINAL_EXEC_MAX_PROCESSES=1024
 WORKER_TERMINAL_SESSION_MAX_INFLIGHT=8
 WORKER_TERMINAL_EXEC_MAX_INFLIGHT=16
 WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT=8
+# 按 worker 宿主机容量设置正数；0 表示不限制。
+WORKER_TERMINAL_MAX_ACTIVE_SESSIONS=0
 ```
 
 | 变量 | 默认值 | 推荐值 | 说明 |
@@ -132,6 +134,7 @@ WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT=8
 | `WORKER_TERMINAL_SESSION_MAX_INFLIGHT` | `1` | `8` | 单个会话中 `terminalExec` 与 `terminalResource` 合计允许的并发操作数 |
 | `WORKER_TERMINAL_EXEC_MAX_INFLIGHT` | `4` | `16` | 整个 worker 同时执行的 `terminalExec` 操作数 |
 | `WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT` | `4` | `8` | 整个 worker 同时执行的 `terminalResource` 操作数 |
+| `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS` | `0`（无限制） | 按 worker 宿主机容量设置 | 当前 worker 进程管理的 terminal session 数量上限；容量满时已有 session 仍可用，新建 session 返回 `session_capacity_exceeded` |
 
 LobeHub 会在同一会话中并发执行命令和文件操作，保持默认上限 `1` 可能触发 `409 session_busy`。请求必须同时满足单会话和 worker 级上限。
 
