@@ -8,6 +8,10 @@ import (
 type terminalSessionRoute struct {
 	NodeID         string
 	LastUsedUnixMs int64
+	// ReservationID is non-zero only while the first dispatch is provisional.
+	// A successful result confirms the route by clearing it.
+	ReservationID   uint64
+	ProvisionalUses uint64
 }
 
 func (s *RegistryService) bindTerminalSessionRoute(sessionID string, nodeID string, now time.Time) {
@@ -36,8 +40,10 @@ func (s *RegistryService) bindTerminalSessionRoute(sessionID string, nodeID stri
 	}
 
 	s.terminalSessionToNode[normalizedSessionID] = terminalSessionRoute{
-		NodeID:         normalizedNodeID,
-		LastUsedUnixMs: nowUnixMs,
+		NodeID:          normalizedNodeID,
+		LastUsedUnixMs:  nowUnixMs,
+		ReservationID:   0,
+		ProvisionalUses: 0,
 	}
 	index := s.terminalNodeToSessionIDIndex[normalizedNodeID]
 	if index == nil {
@@ -47,14 +53,14 @@ func (s *RegistryService) bindTerminalSessionRoute(sessionID string, nodeID stri
 	index[normalizedSessionID] = struct{}{}
 }
 
-func (s *RegistryService) reserveTerminalSessionRoute(sessionID string, preferredNodeID string, now time.Time) (string, bool) {
+func (s *RegistryService) reserveTerminalSessionRoute(sessionID string, preferredNodeID string, now time.Time) (string, uint64) {
 	if s == nil {
-		return "", false
+		return "", 0
 	}
 	normalizedSessionID := strings.TrimSpace(sessionID)
 	normalizedNodeID := strings.TrimSpace(preferredNodeID)
 	if normalizedSessionID == "" || normalizedNodeID == "" {
-		return "", false
+		return "", 0
 	}
 
 	nowUnixMs := routeNowUnixMs(now)
@@ -64,13 +70,25 @@ func (s *RegistryService) reserveTerminalSessionRoute(sessionID string, preferre
 	existing, exists := s.terminalSessionToNode[normalizedSessionID]
 	if exists {
 		existing.LastUsedUnixMs = nowUnixMs
+		reservationID := uint64(0)
+		if existing.ReservationID != 0 {
+			existing.ProvisionalUses++
+			reservationID = existing.ReservationID
+		}
 		s.terminalSessionToNode[normalizedSessionID] = existing
-		return existing.NodeID, false
+		return existing.NodeID, reservationID
 	}
 
+	s.terminalRouteReservationSeq++
+	if s.terminalRouteReservationSeq == 0 {
+		s.terminalRouteReservationSeq++
+	}
+	reservationID := s.terminalRouteReservationSeq
 	s.terminalSessionToNode[normalizedSessionID] = terminalSessionRoute{
-		NodeID:         normalizedNodeID,
-		LastUsedUnixMs: nowUnixMs,
+		NodeID:          normalizedNodeID,
+		LastUsedUnixMs:  nowUnixMs,
+		ReservationID:   reservationID,
+		ProvisionalUses: 1,
 	}
 	index := s.terminalNodeToSessionIDIndex[normalizedNodeID]
 	if index == nil {
@@ -78,7 +96,71 @@ func (s *RegistryService) reserveTerminalSessionRoute(sessionID string, preferre
 		s.terminalNodeToSessionIDIndex[normalizedNodeID] = index
 	}
 	index[normalizedSessionID] = struct{}{}
-	return normalizedNodeID, true
+	return normalizedNodeID, reservationID
+}
+
+// claimTerminalSessionRoute refreshes a route and joins its provisional
+// reservation when the first dispatch has not completed yet.
+func (s *RegistryService) claimTerminalSessionRoute(sessionID string, now time.Time) (string, uint64, bool) {
+	if s == nil {
+		return "", 0, false
+	}
+	normalizedSessionID := strings.TrimSpace(sessionID)
+	if normalizedSessionID == "" {
+		return "", 0, false
+	}
+
+	nowUnixMs := routeNowUnixMs(now)
+	s.terminalRoutesMu.Lock()
+	defer s.terminalRoutesMu.Unlock()
+
+	route, ok := s.terminalSessionToNode[normalizedSessionID]
+	if !ok || strings.TrimSpace(route.NodeID) == "" {
+		return "", 0, false
+	}
+	route.LastUsedUnixMs = nowUnixMs
+	reservationID := uint64(0)
+	if route.ReservationID != 0 {
+		route.ProvisionalUses++
+		reservationID = route.ReservationID
+	}
+	s.terminalSessionToNode[normalizedSessionID] = route
+	return route.NodeID, reservationID, true
+}
+
+// confirmTerminalSessionRoute confirms a provisional route only when the
+// dispatch still owns the current reservation. A zero reservation ID may only
+// refresh an already-confirmed route on the same node.
+func (s *RegistryService) confirmTerminalSessionRoute(
+	sessionID string,
+	expectedNodeID string,
+	reservationID uint64,
+	now time.Time,
+) bool {
+	if s == nil {
+		return false
+	}
+	normalizedSessionID := strings.TrimSpace(sessionID)
+	normalizedNodeID := strings.TrimSpace(expectedNodeID)
+	if normalizedSessionID == "" || normalizedNodeID == "" {
+		return false
+	}
+
+	nowUnixMs := routeNowUnixMs(now)
+	s.terminalRoutesMu.Lock()
+	defer s.terminalRoutesMu.Unlock()
+
+	route, ok := s.terminalSessionToNode[normalizedSessionID]
+	if !ok || route.NodeID != normalizedNodeID || route.ReservationID != reservationID {
+		return false
+	}
+	route.LastUsedUnixMs = nowUnixMs
+	if reservationID != 0 {
+		route.ReservationID = 0
+		route.ProvisionalUses = 0
+	}
+	s.terminalSessionToNode[normalizedSessionID] = route
+	return true
 }
 
 // touchTerminalSessionRoute returns the mapped node and refreshes LastUsedUnixMs.
@@ -104,6 +186,33 @@ func (s *RegistryService) touchTerminalSessionRoute(sessionID string, now time.T
 	return route.NodeID, true
 }
 
+// clearTerminalSessionRouteReservation releases one provisional dispatch. The
+// route is removed only after every dispatch sharing the reservation failed.
+func (s *RegistryService) clearTerminalSessionRouteReservation(sessionID string, expectedNodeID string, reservationID uint64) {
+	if s == nil || reservationID == 0 {
+		return
+	}
+	normalizedSessionID := strings.TrimSpace(sessionID)
+	normalizedNodeID := strings.TrimSpace(expectedNodeID)
+	if normalizedSessionID == "" || normalizedNodeID == "" {
+		return
+	}
+
+	s.terminalRoutesMu.Lock()
+	defer s.terminalRoutesMu.Unlock()
+
+	route, ok := s.terminalSessionToNode[normalizedSessionID]
+	if !ok || route.NodeID != normalizedNodeID || route.ReservationID != reservationID {
+		return
+	}
+	if route.ProvisionalUses > 1 {
+		route.ProvisionalUses--
+		s.terminalSessionToNode[normalizedSessionID] = route
+		return
+	}
+	s.deleteTerminalSessionRouteLocked(normalizedSessionID, route)
+}
+
 func (s *RegistryService) clearTerminalSessionRoute(sessionID string, expectedNodeID string) {
 	if s == nil {
 		return
@@ -125,12 +234,16 @@ func (s *RegistryService) clearTerminalSessionRoute(sessionID string, expectedNo
 		return
 	}
 
-	delete(s.terminalSessionToNode, normalizedSessionID)
+	s.deleteTerminalSessionRouteLocked(normalizedSessionID, route)
+}
+
+func (s *RegistryService) deleteTerminalSessionRouteLocked(sessionID string, route terminalSessionRoute) {
+	delete(s.terminalSessionToNode, sessionID)
 	index := s.terminalNodeToSessionIDIndex[route.NodeID]
 	if index == nil {
 		return
 	}
-	delete(index, normalizedSessionID)
+	delete(index, sessionID)
 	if len(index) == 0 {
 		delete(s.terminalNodeToSessionIDIndex, route.NodeID)
 	}

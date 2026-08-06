@@ -26,6 +26,7 @@ const (
 	computerUseCapability           = "computerUse"
 	terminalExecSessionNotFoundCode = "session_not_found"
 	terminalExecSessionBusyCode     = "session_busy"
+	terminalExecSessionCapacityCode = "session_capacity_exceeded"
 	terminalExecInvalidPayloadCode  = "invalid_payload"
 	terminalTaskNoWorkerCode        = "no_worker"
 	terminalTaskNoCapacityCode      = "no_capacity"
@@ -317,6 +318,8 @@ func mapTerminalTaskFailure(task grpcserver.TaskSnapshot) (int, string) {
 		return http.StatusNotFound, message
 	case terminalExecSessionBusyCode:
 		return http.StatusConflict, message
+	case terminalExecSessionCapacityCode:
+		return http.StatusTooManyRequests, message
 	case terminalTaskNoWorkerCode:
 		return http.StatusServiceUnavailable, "no online worker supports requested capability"
 	case terminalTaskNoCapacityCode:

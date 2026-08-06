@@ -1124,6 +1124,263 @@ func TestDispatchCommandTerminalSessionNotFoundClearsRoute(t *testing.T) {
 	}
 }
 
+func TestDispatchCommandTerminalSessionCapacityOnlyClearsNewRoute(t *testing.T) {
+	tests := []struct {
+		name             string
+		prebindRoute     bool
+		wantRoutePresent bool
+	}{
+		{name: "new_route_is_cleared", wantRoutePresent: false},
+		{name: "existing_route_is_retained", prebindRoute: true, wantRoutePresent: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, 60*time.Second)
+			now := time.Unix(1_700_000_300, 0)
+			svc.nowFn = func() time.Time { return now }
+
+			hello := &registryv1.ConnectHello{
+				NodeId:       "node-1",
+				Capabilities: []*registryv1.CapabilityDeclaration{{Name: taskCapabilityTerminalExec}},
+			}
+			if err := svc.store.Upsert(hello, "worker-session-1", now); err != nil {
+				t.Fatalf("seed store upsert failed: %v", err)
+			}
+			session := newActiveSession("node-1", "worker-session-1", hello)
+			svc.swapSession(session)
+			if tc.prebindRoute {
+				svc.bindTerminalSessionRoute("session-full", "node-1", now)
+			}
+
+			go func() {
+				response := <-session.commandOutbound
+				dispatch := response.GetCommandDispatch()
+				if dispatch == nil {
+					return
+				}
+				session.resolvePending(&registryv1.CommandResult{
+					CommandId: dispatch.GetCommandId(),
+					Error: &registryv1.CommandError{
+						Code:    terminalSessionCapacityExceededCode,
+						Message: "terminal session capacity exceeded",
+					},
+					CompletedUnixMs: now.UnixMilli(),
+				})
+			}()
+
+			payloadJSON, err := json.Marshal(terminalExecScopedPayload{
+				Command:         "uname -a",
+				SessionID:       "session-full",
+				CreateIfMissing: true,
+			})
+			if err != nil {
+				t.Fatalf("marshal payload failed: %v", err)
+			}
+
+			outcome, dispatchErr := svc.dispatchCommand(context.Background(), taskCapabilityTerminalExec, payloadJSON, 2*time.Second, "owner-a", nil)
+			if dispatchErr != nil {
+				t.Fatalf("dispatch command failed: %v", dispatchErr)
+			}
+			var commandErr *CommandExecutionError
+			if !errors.As(outcome.err, &commandErr) {
+				t.Fatalf("expected CommandExecutionError, got %v", outcome.err)
+			}
+			if commandErr.Code != terminalSessionCapacityExceededCode {
+				t.Fatalf("expected %q code, got %q", terminalSessionCapacityExceededCode, commandErr.Code)
+			}
+			_, routePresent := svc.touchTerminalSessionRoute("session-full", now.Add(time.Second))
+			if routePresent != tc.wantRoutePresent {
+				t.Fatalf("route presence: got %t want %t", routePresent, tc.wantRoutePresent)
+			}
+		})
+	}
+}
+
+func TestDispatchCommandTerminalSessionCapacityDoesNotClearConcurrentProvisionalRoute(t *testing.T) {
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, 60*time.Second)
+	now := time.Unix(1_700_000_350, 0)
+	svc.nowFn = func() time.Time { return now }
+
+	hello := &registryv1.ConnectHello{
+		NodeId: "node-1",
+		Capabilities: []*registryv1.CapabilityDeclaration{{
+			Name:        taskCapabilityTerminalExec,
+			MaxInflight: 2,
+		}},
+	}
+	if err := svc.store.Upsert(hello, "worker-session-1", now); err != nil {
+		t.Fatalf("seed store upsert failed: %v", err)
+	}
+	session := newActiveSession("node-1", "worker-session-1", hello)
+	svc.swapSession(session)
+
+	payload := func(command string) []byte {
+		t.Helper()
+		encoded, err := json.Marshal(terminalExecScopedPayload{
+			Command:         command,
+			SessionID:       "session-shared",
+			CreateIfMissing: true,
+		})
+		if err != nil {
+			t.Fatalf("marshal payload failed: %v", err)
+		}
+		return encoded
+	}
+	firstPayload := payload("first")
+	secondPayload := payload("second")
+	type dispatchResult struct {
+		outcome commandOutcome
+		err     error
+	}
+	firstDone := make(chan dispatchResult, 1)
+	secondDone := make(chan dispatchResult, 1)
+
+	go func() {
+		outcome, err := svc.dispatchCommand(context.Background(), taskCapabilityTerminalExec, firstPayload, 2*time.Second, "owner-a", nil)
+		firstDone <- dispatchResult{outcome: outcome, err: err}
+	}()
+	firstDispatch := (<-session.commandOutbound).GetCommandDispatch()
+	if firstDispatch == nil {
+		t.Fatal("expected first command dispatch")
+	}
+
+	go func() {
+		outcome, err := svc.dispatchCommand(context.Background(), taskCapabilityTerminalExec, secondPayload, 2*time.Second, "owner-a", nil)
+		secondDone <- dispatchResult{outcome: outcome, err: err}
+	}()
+	secondDispatch := (<-session.commandOutbound).GetCommandDispatch()
+	if secondDispatch == nil {
+		t.Fatal("expected second command dispatch")
+	}
+
+	session.resolvePending(&registryv1.CommandResult{
+		CommandId: firstDispatch.GetCommandId(),
+		Error: &registryv1.CommandError{
+			Code:    terminalSessionCapacityExceededCode,
+			Message: "terminal session capacity exceeded",
+		},
+		CompletedUnixMs: now.UnixMilli(),
+	})
+	first := <-firstDone
+	if first.err != nil || !isSessionCapacityCommandError(first.outcome.err) {
+		t.Fatalf("unexpected first result: outcome=%v err=%v", first.outcome.err, first.err)
+	}
+	if nodeID, ok := svc.touchTerminalSessionRoute("session-shared", now.Add(time.Second)); !ok || nodeID != "node-1" {
+		t.Fatalf("capacity rollback cleared an in-flight route: node=%q ok=%t", nodeID, ok)
+	}
+
+	session.resolvePending(&registryv1.CommandResult{
+		CommandId:       secondDispatch.GetCommandId(),
+		PayloadJson:     []byte(`{"session_id":"session-shared"}`),
+		CompletedUnixMs: now.UnixMilli(),
+	})
+	second := <-secondDone
+	if second.err != nil || second.outcome.err != nil {
+		t.Fatalf("unexpected second result: outcome=%v err=%v", second.outcome.err, second.err)
+	}
+
+	svc.terminalRoutesMu.RLock()
+	route := svc.terminalSessionToNode["session-shared"]
+	svc.terminalRoutesMu.RUnlock()
+	if route.NodeID != "node-1" || route.ReservationID != 0 || route.ProvisionalUses != 0 {
+		t.Fatalf("successful concurrent dispatch did not confirm route: %#v", route)
+	}
+}
+
+func TestTerminalSessionRouteReservationWaitsForAllProvisionalUses(t *testing.T) {
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, 60*time.Second)
+	now := time.Unix(1_700_000_375, 0)
+
+	_, reservationID := svc.reserveTerminalSessionRoute("session-shared", "node-1", now)
+	nodeID, joinedReservationID, ok := svc.claimTerminalSessionRoute("session-shared", now.Add(time.Second))
+	if !ok || nodeID != "node-1" || reservationID == 0 || joinedReservationID != reservationID {
+		t.Fatalf("failed to join provisional route: node=%q reservation=%d joined=%d ok=%t", nodeID, reservationID, joinedReservationID, ok)
+	}
+
+	svc.clearTerminalSessionRouteReservation("session-shared", "node-1", reservationID)
+	if _, ok := svc.touchTerminalSessionRoute("session-shared", now.Add(2*time.Second)); !ok {
+		t.Fatal("first rollback cleared a route still used by another dispatch")
+	}
+
+	svc.clearTerminalSessionRouteReservation("session-shared", "node-1", joinedReservationID)
+	if _, ok := svc.touchTerminalSessionRoute("session-shared", now.Add(3*time.Second)); ok {
+		t.Fatal("last rollback did not clear provisional route")
+	}
+}
+
+func TestTerminalSessionRouteReservationRollbackDoesNotClearConfirmedRoute(t *testing.T) {
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, 60*time.Second)
+	now := time.Unix(1_700_000_400, 0)
+
+	nodeID, reservationID := svc.reserveTerminalSessionRoute("session-confirmed", "node-1", now)
+	if nodeID != "node-1" || reservationID == 0 {
+		t.Fatalf("expected a provisional route, got node=%q reservation=%d", nodeID, reservationID)
+	}
+
+	// A concurrent request can complete first and confirm the shared route.
+	svc.bindTerminalSessionRoute("session-confirmed", "node-1", now.Add(time.Second))
+	svc.clearTerminalSessionRouteReservation("session-confirmed", "node-1", reservationID)
+
+	if gotNodeID, ok := svc.touchTerminalSessionRoute("session-confirmed", now.Add(2*time.Second)); !ok || gotNodeID != "node-1" {
+		t.Fatalf("late capacity rollback cleared a confirmed route: node=%q ok=%t", gotNodeID, ok)
+	}
+}
+
+func TestTerminalSessionRouteReservationRejectsStaleABAToken(t *testing.T) {
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, 60*time.Second)
+	now := time.Unix(1_700_000_450, 0)
+
+	_, firstReservationID := svc.reserveTerminalSessionRoute("session-aba", "node-1", now)
+	svc.clearTerminalSessionRoute("session-aba", "node-1")
+	_, secondReservationID := svc.reserveTerminalSessionRoute("session-aba", "node-1", now.Add(time.Second))
+	if firstReservationID == 0 || secondReservationID == 0 || firstReservationID == secondReservationID {
+		t.Fatalf("expected distinct route reservation IDs, first=%d second=%d", firstReservationID, secondReservationID)
+	}
+
+	svc.clearTerminalSessionRouteReservation("session-aba", "node-1", firstReservationID)
+	if gotNodeID, ok := svc.touchTerminalSessionRoute("session-aba", now.Add(2*time.Second)); !ok || gotNodeID != "node-1" {
+		t.Fatalf("stale ABA rollback cleared a newer reservation: node=%q ok=%t", gotNodeID, ok)
+	}
+
+	svc.clearTerminalSessionRouteReservation("session-aba", "node-1", secondReservationID)
+	if _, ok := svc.touchTerminalSessionRoute("session-aba", now.Add(3*time.Second)); ok {
+		t.Fatal("current route reservation was not cleared")
+	}
+}
+
+func TestTerminalSessionRouteConfirmationRejectsStaleABAToken(t *testing.T) {
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, 60*time.Second)
+	now := time.Unix(1_700_000_475, 0)
+
+	_, firstReservationID := svc.reserveTerminalSessionRoute("session-confirm-aba", "node-1", now)
+	svc.clearTerminalSessionRoute("session-confirm-aba", "node-1")
+	_, secondReservationID := svc.reserveTerminalSessionRoute("session-confirm-aba", "node-1", now.Add(time.Second))
+	if firstReservationID == 0 || secondReservationID == 0 || firstReservationID == secondReservationID {
+		t.Fatalf("expected distinct route reservation IDs, first=%d second=%d", firstReservationID, secondReservationID)
+	}
+
+	if svc.confirmTerminalSessionRoute("session-confirm-aba", "node-1", firstReservationID, now.Add(2*time.Second)) {
+		t.Fatal("stale reservation unexpectedly confirmed a newer route")
+	}
+	svc.terminalRoutesMu.RLock()
+	route := svc.terminalSessionToNode["session-confirm-aba"]
+	svc.terminalRoutesMu.RUnlock()
+	if route.ReservationID != secondReservationID || route.ProvisionalUses != 1 {
+		t.Fatalf("stale confirmation changed newer reservation: %#v", route)
+	}
+
+	if !svc.confirmTerminalSessionRoute("session-confirm-aba", "node-1", secondReservationID, now.Add(3*time.Second)) {
+		t.Fatal("current reservation was not confirmed")
+	}
+	svc.terminalRoutesMu.RLock()
+	route = svc.terminalSessionToNode["session-confirm-aba"]
+	svc.terminalRoutesMu.RUnlock()
+	if route.NodeID != "node-1" || route.ReservationID != 0 || route.ProvisionalUses != 0 {
+		t.Fatalf("current confirmation did not stabilize route: %#v", route)
+	}
+}
+
 func TestPruneExpiredTerminalSessionRoutes(t *testing.T) {
 	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, 60*time.Second)
 	svc.terminalRouteTTL = 1000 * time.Millisecond

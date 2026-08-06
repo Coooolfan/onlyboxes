@@ -1812,7 +1812,22 @@ func TestMCPToolCallBackendErrorsAsToolErrors(t *testing.T) {
 			return "", grpcserver.ErrNoEchoWorker
 		},
 		submitTask: func(ctx context.Context, req grpcserver.SubmitTaskRequest) (grpcserver.SubmitTaskResult, error) {
-			if req.Capability == terminalExecCapabilityName || req.Capability == terminalResourceCapabilityName || req.Capability == computerUseCapabilityName {
+			if req.Capability == terminalExecCapabilityName {
+				return grpcserver.SubmitTaskResult{
+					Task: grpcserver.TaskSnapshot{
+						TaskID:       "task-3",
+						Capability:   req.Capability,
+						Status:       grpcserver.TaskStatusFailed,
+						ErrorCode:    terminalExecSessionCapacityCode,
+						ErrorMessage: "terminal session capacity exceeded",
+						CreatedAt:    now,
+						UpdatedAt:    now,
+						DeadlineAt:   now.Add(60 * time.Second),
+					},
+					Completed: true,
+				}, nil
+			}
+			if req.Capability == terminalResourceCapabilityName || req.Capability == computerUseCapabilityName {
 				return grpcserver.SubmitTaskResult{
 					Task: grpcserver.TaskSnapshot{
 						TaskID:       "task-3",
@@ -1850,7 +1865,7 @@ func TestMCPToolCallBackendErrorsAsToolErrors(t *testing.T) {
 	assertMCPToolError(t, pythonPayload, "execution_failed: pythonExec execution failed: docker is unavailable")
 
 	terminalPayload := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"terminalExec","arguments":{"command":"pwd","session_id":"missing"}}}`)
-	assertMCPToolError(t, terminalPayload, terminalExecSessionNotFoundCode+": session not found")
+	assertMCPToolError(t, terminalPayload, terminalExecSessionCapacityCode+": terminal session capacity exceeded")
 
 	resourcePayload := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"readImage","arguments":{"session_id":"missing","file_path":"/workspace/a.txt"}}}`)
 	assertMCPToolError(t, resourcePayload, terminalExecSessionNotFoundCode+": session not found")

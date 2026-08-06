@@ -62,6 +62,7 @@ type RegistryService struct {
 	terminalRoutesMu             sync.RWMutex
 	terminalSessionToNode        map[string]terminalSessionRoute
 	terminalNodeToSessionIDIndex map[string]map[string]struct{}
+	terminalRouteReservationSeq  uint64
 	terminalRouteTTL             time.Duration
 	lastTerminalRoutePruneUnixMs atomic.Int64
 

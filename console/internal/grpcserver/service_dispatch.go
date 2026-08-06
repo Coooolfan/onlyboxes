@@ -15,7 +15,10 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const terminalSessionNotFoundCode = "session_not_found"
+const (
+	terminalSessionNotFoundCode         = "session_not_found"
+	terminalSessionCapacityExceededCode = "session_capacity_exceeded"
+)
 
 type CommandExecutionError struct {
 	Code    string
@@ -103,26 +106,37 @@ func (s *RegistryService) dispatchCommand(
 	defer cancel()
 
 	terminalSessionID := terminalSessionIDFromPayload(capability, payloadJSON)
-	session, terminalRouteCreated, err := s.pickSessionForDispatch(capability, ownerID, terminalSessionID)
+	session, terminalRouteReservationID, err := s.pickSessionForDispatch(capability, ownerID, terminalSessionID)
 	if err != nil {
 		return commandOutcome{}, err
+	}
+	rollbackTerminalRouteReservation := func() {
+		if terminalRouteReservationID != 0 && terminalSessionID != "" {
+			s.clearTerminalSessionRouteReservation(terminalSessionID, session.nodeID, terminalRouteReservationID)
+		}
+	}
+	confirmTerminalRoute := func() {
+		if terminalSessionID != "" {
+			s.confirmTerminalSessionRoute(
+				terminalSessionID,
+				session.nodeID,
+				terminalRouteReservationID,
+				s.nowFn(),
+			)
+		}
 	}
 
 	commandID, err := s.newCommandIDFn()
 	if err != nil {
 		session.releaseCapability(capability)
-		if terminalRouteCreated && terminalSessionID != "" {
-			s.clearTerminalSessionRoute(terminalSessionID, session.nodeID)
-		}
+		rollbackTerminalRouteReservation()
 		return commandOutcome{}, status.Error(codes.Internal, "failed to create command_id")
 	}
 
 	resultCh, err := session.registerPending(commandID, capability)
 	if err != nil {
 		session.releaseCapability(capability)
-		if terminalRouteCreated && terminalSessionID != "" {
-			s.clearTerminalSessionRoute(terminalSessionID, session.nodeID)
-		}
+		rollbackTerminalRouteReservation()
 		return commandOutcome{}, err
 	}
 	// Always release pending state, even when enqueue succeeds and the caller
@@ -143,9 +157,7 @@ func (s *RegistryService) dispatchCommand(
 	}
 
 	if err := session.enqueueCommand(commandCtx, dispatch); err != nil {
-		if terminalRouteCreated && terminalSessionID != "" {
-			s.clearTerminalSessionRoute(terminalSessionID, session.nodeID)
-		}
+		rollbackTerminalRouteReservation()
 		if errors.Is(err, context.DeadlineExceeded) {
 			return commandOutcome{}, context.DeadlineExceeded
 		}
@@ -166,50 +178,65 @@ func (s *RegistryService) dispatchCommand(
 
 	select {
 	case <-commandCtx.Done():
+		if terminalRouteReservationID != 0 && terminalSessionID != "" {
+			// The dispatch reached the worker stream, so cancellation does not
+			// prove that session creation failed.
+			confirmTerminalRoute()
+		}
 		if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
 			return commandOutcome{}, context.DeadlineExceeded
 		}
 		return commandOutcome{}, context.Canceled
 	case outcome, ok := <-resultCh:
 		if !ok {
-			if terminalRouteCreated && terminalSessionID != "" {
-				s.clearTerminalSessionRoute(terminalSessionID, session.nodeID)
-			}
+			rollbackTerminalRouteReservation()
 			return commandOutcome{}, status.Error(codes.Unavailable, "worker session closed before command result")
 		}
 		if outcome.err == nil && terminalSessionID != "" {
-			s.bindTerminalSessionRoute(terminalSessionID, session.nodeID, s.nowFn())
+			confirmTerminalRoute()
 		}
-		if outcome.err != nil && terminalSessionID != "" && isSessionNotFoundCommandError(outcome.err) {
-			s.clearTerminalSessionRoute(terminalSessionID, session.nodeID)
+		if outcome.err != nil && terminalSessionID != "" {
+			if isSessionNotFoundCommandError(outcome.err) {
+				if terminalRouteReservationID != 0 {
+					rollbackTerminalRouteReservation()
+				} else {
+					s.clearTerminalSessionRoute(terminalSessionID, session.nodeID)
+				}
+			} else if isSessionCapacityCommandError(outcome.err) {
+				rollbackTerminalRouteReservation()
+			} else if terminalRouteReservationID != 0 {
+				// Other execution errors do not prove that session creation failed.
+				confirmTerminalRoute()
+			}
 		}
 		return outcome, nil
 	}
 }
 
-func (s *RegistryService) pickSessionForDispatch(capability string, ownerID string, terminalSessionID string) (*activeSession, bool, error) {
+func (s *RegistryService) pickSessionForDispatch(capability string, ownerID string, terminalSessionID string) (*activeSession, uint64, error) {
 	normalizedTerminalSessionID := strings.TrimSpace(terminalSessionID)
 	if normalizedTerminalSessionID == "" {
 		session, err := s.pickSessionForCapability(capability, ownerID)
-		return session, false, err
+		return session, 0, err
 	}
 	now := s.nowFn()
 	s.maybePruneTerminalSessionRoutes(now)
 
-	nodeID, ok := s.touchTerminalSessionRoute(normalizedTerminalSessionID, now)
+	nodeID, reservationID, ok := s.claimTerminalSessionRoute(normalizedTerminalSessionID, now)
 	if !ok {
 		return s.tryReserveAndPickTerminalSession(capability, ownerID, normalizedTerminalSessionID, now)
 	}
 
 	session, err := s.pickSessionForNodeAndCapability(nodeID, capability)
 	if err == nil {
-		return session, false, nil
+		return session, reservationID, nil
 	}
 	if errors.Is(err, ErrNoCapabilityWorker) {
 		s.clearTerminalSessionRoute(normalizedTerminalSessionID, nodeID)
 		return s.tryReserveAndPickTerminalSession(capability, ownerID, normalizedTerminalSessionID, now)
 	}
-	return nil, false, err
+	s.clearTerminalSessionRouteReservation(normalizedTerminalSessionID, nodeID, reservationID)
+	return nil, 0, err
 }
 
 func (s *RegistryService) tryReserveAndPickTerminalSession(
@@ -217,15 +244,15 @@ func (s *RegistryService) tryReserveAndPickTerminalSession(
 	ownerID string,
 	normalizedTerminalSessionID string,
 	now time.Time,
-) (*activeSession, bool, error) {
+) (*activeSession, uint64, error) {
 	session, err := s.pickSessionForCapability(capability, ownerID)
 	if err != nil {
-		return nil, false, err
+		return nil, 0, err
 	}
 
-	resolvedNodeID, created := s.reserveTerminalSessionRoute(normalizedTerminalSessionID, session.nodeID, now)
+	resolvedNodeID, reservationID := s.reserveTerminalSessionRoute(normalizedTerminalSessionID, session.nodeID, now)
 	if resolvedNodeID == session.nodeID {
-		return session, created, nil
+		return session, reservationID, nil
 	}
 
 	// Another request reserved this session first; route to that node for consistency.
@@ -233,10 +260,11 @@ func (s *RegistryService) tryReserveAndPickTerminalSession(
 
 	session, err = s.pickSessionForNodeAndCapability(resolvedNodeID, capability)
 	if err == nil {
-		return session, false, nil
+		return session, reservationID, nil
 	}
 	if !errors.Is(err, ErrNoCapabilityWorker) {
-		return nil, false, err
+		s.clearTerminalSessionRouteReservation(normalizedTerminalSessionID, resolvedNodeID, reservationID)
+		return nil, 0, err
 	}
 
 	// The reserved route became stale before we could acquire it; clear and retry once.
@@ -244,20 +272,25 @@ func (s *RegistryService) tryReserveAndPickTerminalSession(
 
 	session, err = s.pickSessionForCapability(capability, ownerID)
 	if err != nil {
-		return nil, false, err
+		return nil, 0, err
 	}
 
-	resolvedNodeID, created = s.reserveTerminalSessionRoute(normalizedTerminalSessionID, session.nodeID, now)
+	resolvedNodeID, reservationID = s.reserveTerminalSessionRoute(normalizedTerminalSessionID, session.nodeID, now)
 	if resolvedNodeID == session.nodeID {
-		return session, created, nil
+		return session, reservationID, nil
 	}
 
 	session.releaseCapability(capability)
 	session, err = s.pickSessionForNodeAndCapability(resolvedNodeID, capability)
 	if err != nil {
-		return nil, false, err
+		if errors.Is(err, ErrNoCapabilityWorker) {
+			s.clearTerminalSessionRoute(normalizedTerminalSessionID, resolvedNodeID)
+		} else {
+			s.clearTerminalSessionRouteReservation(normalizedTerminalSessionID, resolvedNodeID, reservationID)
+		}
+		return nil, 0, err
 	}
-	return session, false, nil
+	return session, reservationID, nil
 }
 
 func (s *RegistryService) pickSessionForNodeAndCapability(nodeID string, capability string) (*activeSession, error) {
@@ -362,11 +395,19 @@ func normalizeCapability(capability string) string {
 }
 
 func isSessionNotFoundCommandError(err error) bool {
+	return isCommandErrorCode(err, terminalSessionNotFoundCode)
+}
+
+func isSessionCapacityCommandError(err error) bool {
+	return isCommandErrorCode(err, terminalSessionCapacityExceededCode)
+}
+
+func isCommandErrorCode(err error, code string) bool {
 	var commandErr *CommandExecutionError
 	if !errors.As(err, &commandErr) {
 		return false
 	}
-	return strings.EqualFold(strings.TrimSpace(commandErr.Code), terminalSessionNotFoundCode)
+	return strings.EqualFold(strings.TrimSpace(commandErr.Code), code)
 }
 
 func terminalSessionIDFromPayload(capability string, payload []byte) string {

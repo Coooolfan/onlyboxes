@@ -190,7 +190,7 @@ func mapTaskTerminalStatusToHTTP(task grpcserver.TaskSnapshot) int {
 		return http.StatusConflict
 	case grpcserver.TaskStatusFailed:
 		switch task.ErrorCode {
-		case "no_capacity":
+		case "no_capacity", terminalExecSessionCapacityCode:
 			return http.StatusTooManyRequests
 		case "no_worker":
 			return http.StatusServiceUnavailable

@@ -303,6 +303,16 @@ func TestGetTask(t *testing.T) {
 	}
 }
 
+func TestMapTaskTerminalStatusToHTTPSessionCapacity(t *testing.T) {
+	task := grpcserver.TaskSnapshot{
+		Status:    grpcserver.TaskStatusFailed,
+		ErrorCode: terminalExecSessionCapacityCode,
+	}
+	if got := mapTaskTerminalStatusToHTTP(task); got != http.StatusTooManyRequests {
+		t.Fatalf("expected 429, got %d", got)
+	}
+}
+
 func TestCancelTaskTerminalConflict(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, &fakeTaskDispatcher{
