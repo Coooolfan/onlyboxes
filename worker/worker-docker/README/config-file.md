@@ -28,12 +28,15 @@ The loaded config file path is reported once at startup via the `config file loa
 
 See `config.example.toml` in the worker root for a full annotated template.
 
+`terminal_max_active_sessions` maps to `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS`. `0` keeps the existing unlimited behavior; a positive value limits terminal sessions managed by this worker. Creating sessions, ready sessions, sessions waiting for in-flight commands to drain, and backend cleanup in progress all consume capacity.
+
 ```toml
 id = "wk_..."
 secret = "..."
 console_grpc_target = "console.internal:50051"
 heartbeat_interval_sec = 5
 terminal_exec_docker_image = "coolfan1024/onlyboxes-runtime:default"
+terminal_max_active_sessions = 0
 log_level = "info"
 
 [labels]

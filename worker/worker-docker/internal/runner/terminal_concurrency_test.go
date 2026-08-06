@@ -232,6 +232,9 @@ func TestTerminalSessionReadinessGateBlocksUntilContainerExists(t *testing.T) {
 		}
 	}
 	mu.Unlock()
+	if got := manager.ActiveSessionCount(); got != 1 {
+		t.Fatalf("concurrent creation should use one reservation, got %d", got)
+	}
 
 	close(createGate)
 	if err := <-creatorDone; err != nil {
@@ -409,6 +412,9 @@ func TestTerminalSessionDeferredDestroyKeepsSiblingAlive(t *testing.T) {
 		t.Fatalf("container removed while a sibling command was still in flight")
 	}
 	mu.Unlock()
+	if got := manager.ActiveSessionCount(); got != 1 {
+		t.Fatalf("destroying session should keep its reservation, got %d", got)
+	}
 
 	close(siblingRelease)
 	select {
@@ -434,6 +440,9 @@ func TestTerminalSessionDeferredDestroyKeepsSiblingAlive(t *testing.T) {
 	manager.mu.Unlock()
 	if stillPresent {
 		t.Fatalf("destroyed session should have been dropped")
+	}
+	if got := manager.ActiveSessionCount(); got != 0 {
+		t.Fatalf("drained destroying session leaked capacity: %d", got)
 	}
 }
 

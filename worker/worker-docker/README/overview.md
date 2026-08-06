@@ -56,6 +56,8 @@ Capability behavior:
   - missing `session_id` creates a new container/session automatically.
   - unknown `session_id` returns `session_not_found`, unless `create_if_missing=true`.
   - concurrent commands on the same `session_id` are capped by `WORKER_TERMINAL_SESSION_MAX_INFLIGHT` (default `1`); exceeding the cap returns `session_busy`.
+  - new sessions are capped by `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS` (`0` means unlimited); exceeding a positive cap returns `session_capacity_exceeded` without creating a container. Existing sessions remain usable while the cap is full.
+  - creating, ready, destroying, and container-cleanup-in-progress sessions all consume session capacity.
   - lease extension is monotonic: shorter `lease_ttl_sec` does not reduce current expiry.
 - `terminalExec` session concurrency:
   - `WORKER_TERMINAL_SESSION_MAX_INFLIGHT` counts `terminalExec` and `terminalResource` commands together, so both can run at once in one session once it is above `1`.
@@ -106,6 +108,7 @@ Defaults:
 - terminalExec memory / cpus / max processes: `256 MiB` / `1.0` / `128`
 - terminal lease min/max/default: `60s` / `1800s` / `60s`
 - terminal output limit: `1048576` bytes per stream (`stdout`/`stderr`)
+- terminal max active sessions: unlimited (`0`)
 - capability max_inflight: `4` per capability
 - log level: `info`
 - log format: `json`
@@ -122,7 +125,8 @@ Capability concurrency:
 - `WORKER_TERMINAL_EXEC_MAX_INFLIGHT`: maximum concurrent terminalExec commands (default `4`)
 - `WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT`: maximum concurrent terminalResource commands (default `4`)
 - `WORKER_TERMINAL_SESSION_MAX_INFLIGHT`: maximum concurrent commands per terminal session, counting `terminalExec` and `terminalResource` together (default `1`)
-- invalid values (non-positive integers) fall back to the default.
+- `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS`: maximum active terminal sessions managed by this worker; `0` means unlimited (default `0`)
+- invalid negative `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS` values fall back to `0`; invalid non-positive inflight values fall back to their defaults.
 
 Recommended setting:
 - `WORKER_CALL_TIMEOUT_SEC >= 2 * WORKER_HEARTBEAT_INTERVAL_SEC`

@@ -62,6 +62,29 @@ func TestLoadKeepsExplicitCallTimeout(t *testing.T) {
 	}
 }
 
+func TestLoadTerminalMaxActiveSessions(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  int
+	}{
+		{name: "default", value: "", want: 0},
+		{name: "unlimited", value: "0", want: 0},
+		{name: "finite", value: "12", want: 12},
+		{name: "negative_falls_back", value: "-1", want: 0},
+		{name: "invalid_falls_back", value: "many", want: 0},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("WORKER_TERMINAL_MAX_ACTIVE_SESSIONS", tc.value)
+			if got := Load().TerminalMaxActiveSessions; got != tc.want {
+				t.Fatalf("expected terminal max active sessions %d, got %d", tc.want, got)
+			}
+		})
+	}
+}
+
 func TestLoadUsesDefaultLogConfig(t *testing.T) {
 	t.Setenv("WORKER_LOG_LEVEL", "")
 	t.Setenv("WORKER_LOG_FORMAT", "")

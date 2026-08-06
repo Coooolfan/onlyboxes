@@ -23,6 +23,7 @@ const (
 	terminalExecJanitorInterval    = 5 * time.Second
 	terminalExecNoSessionMessage   = "session not found"
 	terminalExecBusyMessage        = "session is busy"
+	terminalExecCapacityMessage    = "terminal session capacity exceeded"
 	terminalExecNotReadyMessage    = "terminal executor is unavailable"
 
 	// defaultTerminalSessionMaxInflight keeps one command per session, matching
@@ -31,9 +32,10 @@ const (
 )
 
 const (
-	terminalExecCodeSessionNotFound = "session_not_found"
-	terminalExecCodeSessionBusy     = "session_busy"
-	terminalExecCodeInvalidPayload  = "invalid_payload"
+	terminalExecCodeSessionNotFound         = "session_not_found"
+	terminalExecCodeSessionBusy             = "session_busy"
+	terminalExecCodeSessionCapacityExceeded = "session_capacity_exceeded"
+	terminalExecCodeInvalidPayload          = "invalid_payload"
 )
 
 type terminalExecPayload struct {
@@ -101,8 +103,9 @@ type terminalSession struct {
 	// ready is closed once container creation finished; initErr carries the
 	// outcome. Callers that did not create the session must wait on it before
 	// touching the container.
-	ready   chan struct{}
-	initErr error
+	ready            chan struct{}
+	initErr          error
+	capacityReserved bool
 }
 
 type terminalSessionManagerConfig struct {
@@ -118,25 +121,33 @@ type terminalSessionManagerConfig struct {
 	// SessionMaxInflight caps concurrent commands per session. Defaults to 1,
 	// which preserves the original strictly serial behaviour.
 	SessionMaxInflight int
+	// MaxActiveSessions caps terminal sandbox reservations across all sessions.
+	// Zero preserves the existing unlimited behaviour.
+	MaxActiveSessions int
 }
 
 type terminalSessionManager struct {
 	mu       sync.Mutex
 	sessions map[string]*terminalSession
 
-	leaseMinSec        int
-	leaseMaxSec        int
-	leaseDefaultSec    int
-	outputLimitBytes   int
-	exportMaxBytes     int
-	dockerImage        string
-	memoryLimit        string
-	cpuLimit           string
-	pidsLimit          int
-	sessionMaxInflight int
+	leaseMinSec               int
+	leaseMaxSec               int
+	leaseDefaultSec           int
+	outputLimitBytes          int
+	exportMaxBytes            int
+	dockerImage               string
+	memoryLimit               string
+	cpuLimit                  string
+	pidsLimit                 int
+	sessionMaxInflight        int
+	maxActiveSessions         int
+	activeSessionReservations int
 
 	stopCh    chan struct{}
 	doneCh    chan struct{}
+	createWG  sync.WaitGroup
+	cleanupWG sync.WaitGroup
+	closed    bool
 	closeOnce sync.Once
 }
 
@@ -148,14 +159,7 @@ func (m *terminalSessionManager) ActiveSessionCount() int32 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	count := int32(0)
-	for _, session := range m.sessions {
-		if session == nil || session.destroying {
-			continue
-		}
-		count++
-	}
-	return count
+	return int32(m.activeSessionReservations)
 }
 
 func newTerminalSessionManager(cfg terminalSessionManagerConfig) *terminalSessionManager {
@@ -210,6 +214,10 @@ func newTerminalSessionManager(cfg terminalSessionManagerConfig) *terminalSessio
 	if sessionMaxInflight <= 0 {
 		sessionMaxInflight = defaultTerminalSessionMaxInflight
 	}
+	maxActiveSessions := cfg.MaxActiveSessions
+	if maxActiveSessions < 0 {
+		maxActiveSessions = 0
+	}
 
 	manager := &terminalSessionManager{
 		sessions:           make(map[string]*terminalSession),
@@ -223,6 +231,7 @@ func newTerminalSessionManager(cfg terminalSessionManagerConfig) *terminalSessio
 		cpuLimit:           cpuLimit,
 		pidsLimit:          pidsLimit,
 		sessionMaxInflight: sessionMaxInflight,
+		maxActiveSessions:  maxActiveSessions,
 		stopCh:             make(chan struct{}),
 		doneCh:             make(chan struct{}),
 	}
@@ -236,8 +245,12 @@ func (m *terminalSessionManager) Close() {
 	}
 
 	m.closeOnce.Do(func() {
+		m.mu.Lock()
+		m.closed = true
+		m.mu.Unlock()
 		close(m.stopCh)
 		<-m.doneCh
+		m.createWG.Wait()
 
 		m.mu.Lock()
 		sessions := make([]*terminalSession, 0, len(m.sessions))
@@ -250,8 +263,9 @@ func (m *terminalSessionManager) Close() {
 		m.sessions = make(map[string]*terminalSession)
 		m.mu.Unlock()
 
+		m.cleanupWG.Wait()
 		for _, session := range sessions {
-			m.forceRemoveContainer(session.containerName)
+			m.cleanupSession(session)
 		}
 	})
 }
@@ -386,12 +400,13 @@ func (m *terminalSessionManager) cleanupExpiredSessions() {
 			continue
 		}
 		expired = append(expired, session)
+		m.cleanupWG.Add(1)
 		delete(m.sessions, sessionID)
 	}
 	m.mu.Unlock()
 
 	for _, session := range expired {
-		m.forceRemoveContainer(session.containerName)
+		m.cleanupTrackedSession(session)
 	}
 }
 
@@ -404,6 +419,10 @@ func (m *terminalSessionManager) claimSession(
 ) (*terminalSession, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if m.closed {
+		return nil, false, newTerminalExecError("execution_failed", terminalExecNotReadyMessage)
+	}
 
 	if sessionID == "" {
 		session, err := m.newSessionLocked(uuid.NewString(), leaseTarget)
@@ -433,19 +452,29 @@ func (m *terminalSessionManager) claimSession(
 }
 
 func (m *terminalSessionManager) newSessionLocked(sessionID string, leaseTarget time.Time) (*terminalSession, error) {
+	if m.maxActiveSessions > 0 && m.activeSessionReservations >= m.maxActiveSessions {
+		return nil, newTerminalExecError(
+			terminalExecCodeSessionCapacityExceeded,
+			terminalExecCapacityMessage,
+		)
+	}
+
 	containerName, err := newTerminalExecContainerName()
 	if err != nil {
 		return nil, fmt.Errorf("allocate terminal container name: %w", err)
 	}
 
 	session := &terminalSession{
-		sessionID:      sessionID,
-		containerName:  containerName,
-		leaseExpiresAt: leaseTarget,
-		inflight:       1,
-		ready:          make(chan struct{}),
+		sessionID:        sessionID,
+		containerName:    containerName,
+		leaseExpiresAt:   leaseTarget,
+		inflight:         1,
+		ready:            make(chan struct{}),
+		capacityReserved: true,
 	}
 	m.sessions[sessionID] = session
+	m.activeSessionReservations++
+	m.createWG.Add(1)
 	return session, nil
 }
 
@@ -454,6 +483,7 @@ func (m *terminalSessionManager) newSessionLocked(sessionID string, leaseTarget 
 // the container exists, so no command runs against a half-built session.
 func (m *terminalSessionManager) awaitSessionReady(ctx context.Context, session *terminalSession, created bool) error {
 	if created {
+		defer m.createWG.Done()
 		err := m.createAndStartContainer(ctx, session.containerName)
 		session.initErr = err
 		close(session.ready)
@@ -499,15 +529,16 @@ func (m *terminalSessionManager) releaseSession(sessionID string) (time.Time, bo
 		session.inflight--
 	}
 	leaseExpiresAt := session.leaseExpiresAt
-	containerName := ""
+	var retired *terminalSession
 	if session.destroying && session.inflight == 0 {
 		delete(m.sessions, sessionID)
-		containerName = session.containerName
+		m.cleanupWG.Add(1)
+		retired = session
 	}
 	m.mu.Unlock()
 
-	if containerName != "" {
-		m.forceRemoveContainer(containerName)
+	if retired != nil {
+		m.cleanupTrackedSession(retired)
 	}
 	return leaseExpiresAt, true
 }
@@ -531,15 +562,45 @@ func (m *terminalSessionManager) releaseAndDestroySession(sessionID string) {
 	if session.inflight > 0 {
 		session.inflight--
 	}
-	containerName := ""
+	var retired *terminalSession
 	if session.inflight == 0 {
 		delete(m.sessions, sessionID)
-		containerName = session.containerName
+		m.cleanupWG.Add(1)
+		retired = session
 	}
 	m.mu.Unlock()
 
-	if containerName != "" {
-		m.forceRemoveContainer(containerName)
+	if retired != nil {
+		m.cleanupTrackedSession(retired)
+	}
+}
+
+func (m *terminalSessionManager) cleanupTrackedSession(session *terminalSession) {
+	defer m.cleanupWG.Done()
+	m.cleanupSession(session)
+}
+
+func (m *terminalSessionManager) cleanupSession(session *terminalSession) {
+	if session == nil {
+		return
+	}
+	m.forceRemoveContainer(session.containerName)
+	m.releaseCapacityReservation(session)
+}
+
+func (m *terminalSessionManager) releaseCapacityReservation(session *terminalSession) {
+	if session == nil {
+		return
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !session.capacityReserved {
+		return
+	}
+	session.capacityReserved = false
+	if m.activeSessionReservations > 0 {
+		m.activeSessionReservations--
 	}
 }
 

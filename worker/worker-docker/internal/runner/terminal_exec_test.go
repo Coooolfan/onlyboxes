@@ -79,21 +79,33 @@ func TestBuildCommandResultTerminalExecSessionErrors(t *testing.T) {
 		runTerminalExec = originalRunTerminalExec
 	})
 
-	runTerminalExec = func(_ context.Context, _ terminalExecRequest) (terminalExecRunResult, error) {
-		return terminalExecRunResult{}, newTerminalExecError(terminalExecCodeSessionNotFound, terminalExecNoSessionMessage)
+	tests := []struct {
+		name    string
+		code    string
+		message string
+	}{
+		{name: "not_found", code: terminalExecCodeSessionNotFound, message: terminalExecNoSessionMessage},
+		{name: "capacity", code: terminalExecCodeSessionCapacityExceeded, message: terminalExecCapacityMessage},
 	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			runTerminalExec = func(_ context.Context, _ terminalExecRequest) (terminalExecRunResult, error) {
+				return terminalExecRunResult{}, newTerminalExecError(tc.code, tc.message)
+			}
 
-	req := buildCommandResult(&registryv1.CommandDispatch{
-		CommandId:   "cmd-term-2",
-		Capability:  "terminalExec",
-		PayloadJson: []byte(`{"command":"echo hello","session_id":"missing"}`),
-	})
-	result := req.GetCommandResult()
-	if result == nil || result.GetError() == nil {
-		t.Fatalf("expected error result, got %#v", result)
-	}
-	if result.GetError().GetCode() != terminalExecCodeSessionNotFound {
-		t.Fatalf("expected code=%s, got %s", terminalExecCodeSessionNotFound, result.GetError().GetCode())
+			req := buildCommandResult(&registryv1.CommandDispatch{
+				CommandId:   "cmd-term-" + tc.name,
+				Capability:  "terminalExec",
+				PayloadJson: []byte(`{"command":"echo hello","session_id":"missing"}`),
+			})
+			result := req.GetCommandResult()
+			if result == nil || result.GetError() == nil {
+				t.Fatalf("expected error result, got %#v", result)
+			}
+			if result.GetError().GetCode() != tc.code || result.GetError().GetMessage() != tc.message {
+				t.Fatalf("unexpected command error: %#v", result.GetError())
+			}
+		})
 	}
 }
 
@@ -313,6 +325,9 @@ func TestTerminalSessionManagerTimeoutReleasesSession(t *testing.T) {
 
 	if len(calls) < 3 {
 		t.Fatalf("expected create/start/exec/rm docker calls, got %#v", calls)
+	}
+	if got := manager.ActiveSessionCount(); got != 0 {
+		t.Fatalf("timed out session leaked capacity: %d", got)
 	}
 }
 

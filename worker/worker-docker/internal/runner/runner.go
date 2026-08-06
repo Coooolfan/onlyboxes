@@ -64,6 +64,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 		CPULimit:           cfg.TerminalExecCPULimit,
 		PidsLimit:          cfg.TerminalExecPidsLimit,
 		SessionMaxInflight: cfg.TerminalSessionMaxInflight,
+		MaxActiveSessions:  cfg.TerminalMaxActiveSessions,
 	})
 	pythonRunner := newPythonExecRunner(
 		cfg.PythonExecDockerImage,
@@ -97,11 +98,13 @@ func Run(ctx context.Context, cfg config.Config) error {
 		terminalManager.dockerImage,
 	)
 	logging.Infof(
-		"terminalExec configured: lease_min_sec=%d lease_max_sec=%d lease_default_sec=%d output_limit_bytes=%d",
+		"terminalExec configured: lease_min_sec=%d lease_max_sec=%d lease_default_sec=%d output_limit_bytes=%d session_max_inflight=%d max_active_sessions=%d",
 		terminalManager.leaseMinSec,
 		terminalManager.leaseMaxSec,
 		terminalManager.leaseDefaultSec,
 		terminalManager.outputLimitBytes,
+		terminalManager.sessionMaxInflight,
+		terminalManager.maxActiveSessions,
 	)
 
 	reconnectDelay := initialReconnectDelay

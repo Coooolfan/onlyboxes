@@ -27,6 +27,7 @@ secret = "s3cret"
 heartbeat_interval_sec = 7
 python_exec_memory_mib = 512
 terminal_exec_docker_image = "debian:bookworm-slim"
+terminal_max_active_sessions = 9
 log_level = "debug"
 log_add_source = true
 
@@ -57,6 +58,9 @@ description = "gpu,shared"
 	}
 	if cfg.TerminalExecDockerImage != "debian:bookworm-slim" {
 		t.Fatalf("unexpected terminal image %q", cfg.TerminalExecDockerImage)
+	}
+	if cfg.TerminalMaxActiveSessions != 9 {
+		t.Fatalf("unexpected terminal max active sessions %d", cfg.TerminalMaxActiveSessions)
 	}
 	if cfg.LogLevel != "debug" || !cfg.LogAddSource {
 		t.Fatalf("unexpected log config %q/%t", cfg.LogLevel, cfg.LogAddSource)

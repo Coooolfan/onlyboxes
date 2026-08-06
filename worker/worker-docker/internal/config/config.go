@@ -8,27 +8,28 @@ import (
 )
 
 const (
-	defaultConsoleTarget            = "127.0.0.1:50051"
-	defaultHeartbeatInterval        = 5
-	defaultHeartbeatJitter          = 20
-	defaultExecutorKind             = "docker"
-	defaultPythonExecImage          = "ghcr.io/astral-sh/uv:python3.12-bookworm-slim"
-	defaultPythonExecMemoryMiB      = 256
-	defaultPythonExecCPULimit       = "1.0"
-	defaultPythonExecMaxProcesses   = 128
-	defaultTerminalExecImage        = "coolfan1024/onlyboxes-runtime:default"
-	defaultTerminalExecMemoryMiB    = 256
-	defaultTerminalExecCPULimit     = "1.0"
-	defaultTerminalExecMaxProcesses = 128
-	defaultTerminalLeaseMin         = 60
-	defaultTerminalLeaseMax         = 1800
-	defaultTerminalLeaseTTL         = 60
-	defaultTerminalOutputMax        = 1024 * 1024
-	defaultTerminalSessionInflight  = 1
-	defaultLogLevel                 = "info"
-	defaultLogFormat                = "json"
-	defaultLogAddSource             = false
-	defaultMaxInflight              = 4
+	defaultConsoleTarget             = "127.0.0.1:50051"
+	defaultHeartbeatInterval         = 5
+	defaultHeartbeatJitter           = 20
+	defaultExecutorKind              = "docker"
+	defaultPythonExecImage           = "ghcr.io/astral-sh/uv:python3.12-bookworm-slim"
+	defaultPythonExecMemoryMiB       = 256
+	defaultPythonExecCPULimit        = "1.0"
+	defaultPythonExecMaxProcesses    = 128
+	defaultTerminalExecImage         = "coolfan1024/onlyboxes-runtime:default"
+	defaultTerminalExecMemoryMiB     = 256
+	defaultTerminalExecCPULimit      = "1.0"
+	defaultTerminalExecMaxProcesses  = 128
+	defaultTerminalLeaseMin          = 60
+	defaultTerminalLeaseMax          = 1800
+	defaultTerminalLeaseTTL          = 60
+	defaultTerminalOutputMax         = 1024 * 1024
+	defaultTerminalSessionInflight   = 1
+	defaultTerminalMaxActiveSessions = 0
+	defaultLogLevel                  = "info"
+	defaultLogFormat                 = "json"
+	defaultLogAddSource              = false
+	defaultMaxInflight               = 4
 )
 
 type Config struct {
@@ -57,6 +58,7 @@ type Config struct {
 	TerminalOutputLimitBytes    int
 	TerminalExportMaxBytes      int
 	TerminalSessionMaxInflight  int
+	TerminalMaxActiveSessions   int
 	EchoMaxInflight             int
 	PythonExecMaxInflight       int
 	TerminalExecMaxInflight     int
@@ -110,6 +112,7 @@ func Load() Config {
 		TerminalOutputLimitBytes:    terminalOutputLimitBytes,
 		TerminalExportMaxBytes:      terminalExportMaxBytes,
 		TerminalSessionMaxInflight:  src.positiveInt("WORKER_TERMINAL_SESSION_MAX_INFLIGHT", defaultTerminalSessionInflight),
+		TerminalMaxActiveSessions:   src.nonNegativeInt("WORKER_TERMINAL_MAX_ACTIVE_SESSIONS", defaultTerminalMaxActiveSessions),
 		EchoMaxInflight:             src.positiveInt("WORKER_ECHO_MAX_INFLIGHT", defaultMaxInflight),
 		PythonExecMaxInflight:       src.positiveInt("WORKER_PYTHON_EXEC_MAX_INFLIGHT", defaultMaxInflight),
 		TerminalExecMaxInflight:     src.positiveInt("WORKER_TERMINAL_EXEC_MAX_INFLIGHT", defaultMaxInflight),
@@ -135,6 +138,18 @@ func (s source) positiveInt(key string, defaultValue int) int {
 	}
 	parsed, err := strconv.Atoi(value)
 	if err != nil || parsed <= 0 {
+		return defaultValue
+	}
+	return parsed
+}
+
+func (s source) nonNegativeInt(key string, defaultValue int) int {
+	value := strings.TrimSpace(s.get(key))
+	if value == "" {
+		return defaultValue
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < 0 {
 		return defaultValue
 	}
 	return parsed
