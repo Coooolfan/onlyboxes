@@ -101,6 +101,7 @@ worker 在 hello 中声明以下四项能力：
 - lease 只会延长，不会被较短的 TTL 缩短；worker 同步调用 E2B timeout API，避免本地 lease 长于 E2B 沙箱寿命。
 - 单 session 并发由 `WORKER_TERMINAL_SESSION_MAX_INFLIGHT` 控制，并与 `terminalResource` 共用。
 - 达到并发上限返回 `session_busy`。
+- 新建 terminal session 受 `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS` 限制（`0` 表示不限），超出正数上限返回 `session_capacity_exceeded`；容量已满时已有 session 仍可执行。创建中、可用、销毁中和 E2B cleanup 进行中的 session 都计入容量；该限制只适用于当前 worker 进程。
 - 创建中的 session 会阻塞后续调用，所有等待者共享创建结果。
 - 某个命令超时会把 session 标记为待销毁；已有并发命令继续完成，最后一个调用退出后才销毁沙箱。
 - 空闲 session 到期后由 janitor 销毁；worker 正常退出时销毁所有仍管理的沙箱。

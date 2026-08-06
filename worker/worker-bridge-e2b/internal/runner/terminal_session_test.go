@@ -32,6 +32,7 @@ type fakeE2BBackend struct {
 	runFn      func(context.Context, *e2b.Sandbox, string, int) (e2b.CommandResult, error)
 	readFn     func(context.Context, *e2b.Sandbox, string, int64) (e2b.File, error)
 	openFn     func(context.Context, *e2b.Sandbox, string) (e2b.FileReader, error)
+	killFn     func(context.Context, string) error
 }
 
 func (f *fakeE2BBackend) Create(ctx context.Context, template string, timeout int) (*e2b.Sandbox, error) {
@@ -54,7 +55,10 @@ func (f *fakeE2BBackend) SetTimeout(ctx context.Context, sandboxID string, timeo
 	return nil
 }
 
-func (f *fakeE2BBackend) Kill(_ context.Context, sandboxID string) error {
+func (f *fakeE2BBackend) Kill(ctx context.Context, sandboxID string) error {
+	if f.killFn != nil {
+		return f.killFn(ctx, sandboxID)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.killed++
@@ -107,6 +111,339 @@ func newTestTerminalManager(backend e2bBackend, maxInflight int) *terminalSessio
 		ExportMode:         terminalExportModeWorker,
 		SessionMaxInflight: maxInflight,
 	})
+}
+
+func newTestTerminalManagerWithCapacity(backend e2bBackend, maxInflight, maxActiveSessions int) *terminalSessionManager {
+	return newTerminalSessionManager(terminalSessionManagerConfig{
+		Backend:            backend,
+		Template:           "terminal-template",
+		LeaseMinSec:        1,
+		LeaseMaxSec:        60,
+		LeaseDefaultSec:    10,
+		OutputLimitBytes:   1024,
+		ExportMode:         terminalExportModeWorker,
+		SessionMaxInflight: maxInflight,
+		MaxActiveSessions:  maxActiveSessions,
+	})
+}
+
+func TestTerminalSessionCapacityRejectsNewButAllowsExisting(t *testing.T) {
+	t.Parallel()
+	backend := &fakeE2BBackend{}
+	backend.runFn = func(_ context.Context, _ *e2b.Sandbox, command string, _ int) (e2b.CommandResult, error) {
+		if strings.Contains(command, "mimetypes.guess_type") {
+			return e2b.CommandResult{Stdout: `{"mime_type":"text/plain","size_bytes":5}`}, nil
+		}
+		return e2b.CommandResult{Stdout: command, ExitCode: 0}, nil
+	}
+	manager := newTestTerminalManagerWithCapacity(backend, 2, 2)
+	defer manager.Close()
+
+	for _, sessionID := range []string{"session-a", "session-b"} {
+		if _, err := manager.Execute(context.Background(), terminalExecRequest{
+			Command:         "seed",
+			SessionID:       sessionID,
+			CreateIfMissing: true,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := manager.ActiveSessionCount(); got != 2 {
+		t.Fatalf("expected active session count 2, got %d", got)
+	}
+
+	if _, err := manager.Execute(context.Background(), terminalExecRequest{
+		Command:         "overflow",
+		SessionID:       "session-c",
+		CreateIfMissing: true,
+	}); terminalErrorCode(err) != terminalExecCodeSessionCapacityExceeded {
+		t.Fatalf("expected session_capacity_exceeded, got %v", err)
+	}
+	backend.mu.Lock()
+	created := backend.created
+	backend.mu.Unlock()
+	if created != 2 {
+		t.Fatalf("capacity rejection reached E2B Create: got %d create calls", created)
+	}
+	if _, err := manager.Execute(context.Background(), terminalExecRequest{
+		Command:   "missing",
+		SessionID: "missing",
+	}); terminalErrorCode(err) != terminalExecCodeSessionNotFound {
+		t.Fatalf("expected session_not_found for non-creating lookup, got %v", err)
+	}
+	if _, err := manager.Execute(context.Background(), terminalExecRequest{
+		Command:   "reuse",
+		SessionID: "session-a",
+	}); err != nil {
+		t.Fatalf("existing session should remain usable at capacity: %v", err)
+	}
+	resource, err := manager.ResolveResource(context.Background(), terminalResourceRequest{
+		SessionID: "session-a",
+		FilePath:  "/workspace/a.txt",
+		Action:    terminalResourceActionValidate,
+	})
+	if err != nil {
+		t.Fatalf("existing session resource should remain usable at capacity: %v", err)
+	}
+	if resource.SizeBytes != 5 {
+		t.Fatalf("unexpected resource result: %#v", resource)
+	}
+}
+
+func TestTerminalSessionCapacityZeroIsUnlimited(t *testing.T) {
+	t.Parallel()
+	backend := &fakeE2BBackend{}
+	manager := newTestTerminalManagerWithCapacity(backend, 1, 0)
+
+	for _, sessionID := range []string{"one", "two", "three"} {
+		if _, err := manager.Execute(context.Background(), terminalExecRequest{
+			Command:         "seed",
+			SessionID:       sessionID,
+			CreateIfMissing: true,
+		}); err != nil {
+			t.Fatalf("unlimited create %s: %v", sessionID, err)
+		}
+	}
+	if got := manager.ActiveSessionCount(); got != 3 {
+		t.Fatalf("expected three active sessions, got %d", got)
+	}
+	backend.mu.Lock()
+	created := backend.created
+	backend.mu.Unlock()
+	if created != 3 {
+		t.Fatalf("expected three E2B Create calls, got %d", created)
+	}
+
+	manager.Close()
+	if got := manager.ActiveSessionCount(); got != 0 {
+		t.Fatalf("close leaked capacity: %d", got)
+	}
+}
+
+func TestTerminalSessionCapacityCountsCreatingAndReleasesCreateFailure(t *testing.T) {
+	t.Parallel()
+	createStarted := make(chan struct{}, 1)
+	createRelease := make(chan struct{})
+	var createMu sync.Mutex
+	createCalls := 0
+	failNext := false
+	backend := &fakeE2BBackend{}
+	backend.createFn = func(ctx context.Context, _ string, _ int) (*e2b.Sandbox, error) {
+		createMu.Lock()
+		createCalls++
+		call := createCalls
+		shouldFail := failNext
+		failNext = false
+		createMu.Unlock()
+		if call == 1 {
+			createStarted <- struct{}{}
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-createRelease:
+			}
+		}
+		if shouldFail {
+			return nil, errors.New("create failed")
+		}
+		return &e2b.Sandbox{ID: "sandbox-custom-" + strconv.Itoa(call), Domain: "test"}, nil
+	}
+	manager := newTestTerminalManagerWithCapacity(backend, 1, 1)
+
+	creatorDone := make(chan error, 1)
+	go func() {
+		_, err := manager.Execute(context.Background(), terminalExecRequest{
+			Command:         "create",
+			SessionID:       "creating",
+			CreateIfMissing: true,
+		})
+		creatorDone <- err
+	}()
+	select {
+	case <-createStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for E2B create")
+	}
+	if got := manager.ActiveSessionCount(); got != 1 {
+		t.Fatalf("creating session should consume capacity, got %d", got)
+	}
+	if _, err := manager.Execute(context.Background(), terminalExecRequest{
+		Command:         "overflow",
+		SessionID:       "second",
+		CreateIfMissing: true,
+	}); terminalErrorCode(err) != terminalExecCodeSessionCapacityExceeded {
+		t.Fatalf("expected capacity error while create is pending, got %v", err)
+	}
+	close(createRelease)
+	if err := <-creatorDone; err != nil {
+		t.Fatalf("creator failed: %v", err)
+	}
+	manager.releaseAndDestroySession("creating")
+	if got := manager.ActiveSessionCount(); got != 0 {
+		t.Fatalf("destroyed session should release capacity, got %d", got)
+	}
+
+	createMu.Lock()
+	failNext = true
+	createMu.Unlock()
+	if _, err := manager.Execute(context.Background(), terminalExecRequest{Command: "failed"}); err == nil {
+		t.Fatal("expected E2B create failure")
+	}
+	if got := manager.ActiveSessionCount(); got != 0 {
+		t.Fatalf("failed create leaked capacity, got %d", got)
+	}
+	manager.Close()
+}
+
+func TestTerminalSessionCapacityHeldUntilE2BKillReturns(t *testing.T) {
+	t.Parallel()
+	killStarted := make(chan struct{}, 1)
+	killRelease := make(chan struct{})
+	backend := &fakeE2BBackend{}
+	backend.killFn = func(ctx context.Context, _ string) error {
+		select {
+		case killStarted <- struct{}{}:
+		default:
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-killRelease:
+			return nil
+		}
+	}
+	manager := newTestTerminalManagerWithCapacity(backend, 1, 1)
+
+	if _, err := manager.Execute(context.Background(), terminalExecRequest{
+		Command:         "seed",
+		SessionID:       "expired",
+		CreateIfMissing: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	manager.mu.Lock()
+	manager.sessions["expired"].confirmedLeaseExpiresAt = time.Now().Add(-time.Second)
+	manager.mu.Unlock()
+
+	cleanupDone := make(chan struct{})
+	go func() {
+		manager.cleanupExpiredSessions()
+		close(cleanupDone)
+	}()
+	select {
+	case <-killStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for E2B Kill")
+	}
+	if got := manager.ActiveSessionCount(); got != 1 {
+		t.Fatalf("cleanup-in-progress session should consume capacity, got %d", got)
+	}
+	if _, err := manager.Execute(context.Background(), terminalExecRequest{
+		Command:         "overflow",
+		SessionID:       "replacement",
+		CreateIfMissing: true,
+	}); terminalErrorCode(err) != terminalExecCodeSessionCapacityExceeded {
+		t.Fatalf("expected capacity error during Kill, got %v", err)
+	}
+
+	closeDone := make(chan struct{})
+	go func() {
+		manager.Close()
+		close(closeDone)
+	}()
+	select {
+	case <-closeDone:
+		t.Fatal("close returned while E2B Kill was still running")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(killRelease)
+	select {
+	case <-cleanupDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for E2B cleanup")
+	}
+	select {
+	case <-closeDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for close")
+	}
+	if got := manager.ActiveSessionCount(); got != 0 {
+		t.Fatalf("cleanup should release capacity, got %d", got)
+	}
+}
+
+func TestTerminalSessionCapacityReleasedAfterE2BKillFailure(t *testing.T) {
+	t.Parallel()
+	backend := &fakeE2BBackend{}
+	backend.killFn = func(context.Context, string) error {
+		return errors.New("E2B Kill unavailable")
+	}
+	manager := newTestTerminalManagerWithCapacity(backend, 1, 1)
+	defer manager.Close()
+
+	if _, err := manager.Execute(context.Background(), terminalExecRequest{
+		Command:         "seed",
+		SessionID:       "cleanup-failure",
+		CreateIfMissing: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	manager.mu.Lock()
+	manager.sessions["cleanup-failure"].confirmedLeaseExpiresAt = time.Now().Add(-time.Second)
+	manager.mu.Unlock()
+	manager.cleanupExpiredSessions()
+
+	if got := manager.ActiveSessionCount(); got != 0 {
+		t.Fatalf("Kill failure retained capacity: %d", got)
+	}
+	if _, err := manager.Execute(context.Background(), terminalExecRequest{
+		Command:         "replacement",
+		SessionID:       "replacement",
+		CreateIfMissing: true,
+	}); err != nil {
+		t.Fatalf("capacity was not reusable after Kill failure: %v", err)
+	}
+}
+
+func TestTerminalSessionExpiredReplacementTransfersCapacitySlot(t *testing.T) {
+	t.Parallel()
+	backend := &fakeE2BBackend{}
+	manager := newTestTerminalManagerWithCapacity(backend, 1, 1)
+	defer manager.Close()
+
+	first, err := manager.Execute(context.Background(), terminalExecRequest{
+		Command:         "seed",
+		SessionID:       "reused",
+		CreateIfMissing: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.mu.Lock()
+	manager.sessions[first.SessionID].confirmedLeaseExpiresAt = time.Now().Add(-time.Second)
+	manager.mu.Unlock()
+
+	replacement, err := manager.Execute(context.Background(), terminalExecRequest{
+		Command:         "replacement",
+		SessionID:       first.SessionID,
+		CreateIfMissing: true,
+	})
+	if err != nil {
+		t.Fatalf("expired replacement should reuse its capacity slot: %v", err)
+	}
+	if !replacement.Created {
+		t.Fatalf("expected replacement to create a new sandbox: %#v", replacement)
+	}
+	if got := manager.ActiveSessionCount(); got != 1 {
+		t.Fatalf("expected one transferred slot, got %d", got)
+	}
+	backend.mu.Lock()
+	created, killed := backend.created, backend.killed
+	backend.mu.Unlock()
+	if created != 2 || killed != 1 {
+		t.Fatalf("expected old sandbox killed before replacement create, created=%d killed=%d", created, killed)
+	}
 }
 
 func TestTerminalSessionCreatesReusesAndExtendsE2BLease(t *testing.T) {
@@ -630,6 +967,9 @@ func TestTerminalSessionCreationGateSharesOneSandbox(t *testing.T) {
 		t.Fatalf("command ran before sandbox creation completed")
 	}
 	runMu.Unlock()
+	if got := manager.ActiveSessionCount(); got != 1 {
+		t.Fatalf("concurrent creation should use one reservation, got %d", got)
+	}
 	close(createRelease)
 	for range 2 {
 		if err := <-errs; err != nil {
@@ -696,6 +1036,9 @@ func TestTimedOutCommandDoesNotKillConcurrentSibling(t *testing.T) {
 	if killedWhileSiblingRunning != 0 {
 		t.Fatalf("sandbox was killed while sibling command was running")
 	}
+	if got := manager.ActiveSessionCount(); got != 1 {
+		t.Fatalf("destroying session should keep its reservation, got %d", got)
+	}
 	if _, err := manager.Execute(context.Background(), terminalExecRequest{
 		Command:   "new-command",
 		SessionID: seed.SessionID,
@@ -712,6 +1055,9 @@ func TestTimedOutCommandDoesNotKillConcurrentSibling(t *testing.T) {
 		defer backend.mu.Unlock()
 		return backend.killed == 1
 	}, "sandbox was not killed after sibling drained")
+	if got := manager.ActiveSessionCount(); got != 0 {
+		t.Fatalf("drained destroying session leaked capacity: %d", got)
+	}
 }
 
 func TestTimeoutDuringLeaseSyncAlsoWaitsForSiblingBeforeCleanup(t *testing.T) {
@@ -774,6 +1120,41 @@ func TestTimeoutDuringLeaseSyncAlsoWaitsForSiblingBeforeCleanup(t *testing.T) {
 		defer backend.mu.Unlock()
 		return backend.killed == 1
 	}, "sandbox was not cleaned after sibling drained")
+}
+
+func TestTerminalResourceTimeoutReleasesCapacity(t *testing.T) {
+	t.Parallel()
+	backend := &fakeE2BBackend{}
+	manager := newTestTerminalManagerWithCapacity(backend, 1, 1)
+	defer manager.Close()
+
+	seed, err := manager.Execute(context.Background(), terminalExecRequest{
+		Command:         "seed",
+		SessionID:       "resource-timeout",
+		CreateIfMissing: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend.runFn = func(context.Context, *e2b.Sandbox, string, int) (e2b.CommandResult, error) {
+		return e2b.CommandResult{}, context.DeadlineExceeded
+	}
+	if _, err := manager.ResolveResource(context.Background(), terminalResourceRequest{
+		SessionID: seed.SessionID,
+		FilePath:  "/workspace/file.txt",
+		Action:    terminalResourceActionRead,
+	}); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected resource deadline exceeded, got %v", err)
+	}
+	if got := manager.ActiveSessionCount(); got != 0 {
+		t.Fatalf("resource timeout leaked capacity: %d", got)
+	}
+	backend.mu.Lock()
+	killed := backend.killed
+	backend.mu.Unlock()
+	if killed != 1 {
+		t.Fatalf("resource timeout should kill one sandbox, got %d", killed)
+	}
 }
 
 func TestTerminalResourceValidateReadAndExport(t *testing.T) {

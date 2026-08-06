@@ -37,6 +37,9 @@ terminal_output_limit_bytes = 1048576
 terminal_export_max_bytes = 0
 # worker streams files through this process; sandbox uploads directly from E2B.
 terminal_export_mode = "sandbox"
+# Maximum active terminal sessions managed by this worker process.
+# 0 means unlimited.
+terminal_max_active_sessions = 0
 terminal_session_max_inflight = 128
 
 echo_max_inflight = 128

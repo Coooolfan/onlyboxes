@@ -29,6 +29,7 @@ e2b_api_key = "test-api-key"
 e2b_python_template = "python-template"
 e2b_terminal_template = "terminal-template"
 e2b_request_timeout_sec = 12
+terminal_max_active_sessions = 7
 terminal_export_mode = "sandbox"
 log_level = "debug"
 log_add_source = true
@@ -67,6 +68,9 @@ description = "gpu,shared"
 	if cfg.TerminalExportMode != "sandbox" {
 		t.Fatalf("unexpected terminal export mode %q", cfg.TerminalExportMode)
 	}
+	if cfg.TerminalMaxActiveSessions != 7 {
+		t.Fatalf("unexpected terminal max active sessions %d", cfg.TerminalMaxActiveSessions)
+	}
 	if cfg.LogLevel != "debug" || !cfg.LogAddSource {
 		t.Fatalf("unexpected log config %q/%t", cfg.LogLevel, cfg.LogAddSource)
 	}
@@ -84,6 +88,9 @@ func TestCloudDefaultsAndTerminalExportMode(t *testing.T) {
 	}
 	if got := cfg.TerminalSessionMaxInflight; got != defaultTerminalSessionInflight {
 		t.Fatalf("expected default terminal session max inflight %d, got %d", defaultTerminalSessionInflight, got)
+	}
+	if got := cfg.TerminalMaxActiveSessions; got != defaultTerminalMaxActiveSessions {
+		t.Fatalf("expected default terminal max active sessions %d, got %d", defaultTerminalMaxActiveSessions, got)
 	}
 	if cfg.TerminalLeaseMaxSec != defaultTerminalLeaseMax ||
 		cfg.TerminalLeaseDefaultSec != defaultTerminalLeaseTTL ||
@@ -111,6 +118,21 @@ func TestCloudDefaultsAndTerminalExportMode(t *testing.T) {
 	t.Setenv("WORKER_TERMINAL_EXPORT_MODE", "WORKER")
 	if got := Load().TerminalExportMode; got != "worker" {
 		t.Fatalf("expected case-insensitive worker mode, got %q", got)
+	}
+}
+
+func TestLoadParsesTerminalMaxActiveSessions(t *testing.T) {
+	t.Setenv("WORKER_TERMINAL_MAX_ACTIVE_SESSIONS", "0")
+	if got := Load().TerminalMaxActiveSessions; got != 0 {
+		t.Fatalf("expected zero to mean unlimited, got %d", got)
+	}
+	t.Setenv("WORKER_TERMINAL_MAX_ACTIVE_SESSIONS", "12")
+	if got := Load().TerminalMaxActiveSessions; got != 12 {
+		t.Fatalf("expected finite max active sessions 12, got %d", got)
+	}
+	t.Setenv("WORKER_TERMINAL_MAX_ACTIVE_SESSIONS", "-1")
+	if got := Load().TerminalMaxActiveSessions; got != defaultTerminalMaxActiveSessions {
+		t.Fatalf("expected invalid value to fall back to %d, got %d", defaultTerminalMaxActiveSessions, got)
 	}
 }
 

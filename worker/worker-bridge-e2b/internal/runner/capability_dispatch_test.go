@@ -113,6 +113,27 @@ func TestAllCapabilityDispatchersEncodeResults(t *testing.T) {
 	}
 }
 
+func TestTerminalCapacityErrorPreservedInCommandResult(t *testing.T) {
+	originalTerminal := runTerminalExec
+	t.Cleanup(func() { runTerminalExec = originalTerminal })
+	runTerminalExec = func(context.Context, terminalExecRequest) (terminalExecRunResult, error) {
+		return terminalExecRunResult{}, newTerminalExecError(
+			terminalExecCodeSessionCapacityExceeded,
+			terminalExecCapacityMessage,
+		)
+	}
+
+	request := buildCommandResultWithContext(context.Background(), &registryv1.CommandDispatch{
+		CommandId:   "capacity",
+		Capability:  "terminalExec",
+		PayloadJson: []byte(`{"command":"pwd","session_id":"new","create_if_missing":true}`),
+	})
+	errorResult := request.GetCommandResult().GetError()
+	if errorResult.GetCode() != terminalExecCodeSessionCapacityExceeded || errorResult.GetMessage() != terminalExecCapacityMessage {
+		t.Fatalf("unexpected command error: %#v", errorResult)
+	}
+}
+
 func TestExpiredDispatchDoesNotInvokeTool(t *testing.T) {
 	originalTerminal := runTerminalExec
 	t.Cleanup(func() { runTerminalExec = originalTerminal })

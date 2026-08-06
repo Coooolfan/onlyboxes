@@ -17,8 +17,22 @@ import (
 
 type recordingE2BBackend struct {
 	e2bBackend
-	mu      sync.Mutex
-	killIDs []string
+	mu          sync.Mutex
+	createCalls int
+	killIDs     []string
+}
+
+func (b *recordingE2BBackend) Create(ctx context.Context, template string, timeoutSec int) (*e2b.Sandbox, error) {
+	b.mu.Lock()
+	b.createCalls++
+	b.mu.Unlock()
+	return b.e2bBackend.Create(ctx, template, timeoutSec)
+}
+
+func (b *recordingE2BBackend) createCount() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.createCalls
 }
 
 func (b *recordingE2BBackend) Kill(ctx context.Context, sandboxID string) error {
@@ -35,6 +49,75 @@ func (b *recordingE2BBackend) killCount() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return len(b.killIDs)
+}
+
+func TestIntegrationTerminalSessionCapacityLifecycle(t *testing.T) {
+	backend, template := liveTerminalBackend(t)
+	manager := newTerminalSessionManager(terminalSessionManagerConfig{
+		Backend:            backend,
+		Template:           template,
+		LeaseMinSec:        1,
+		LeaseMaxSec:        120,
+		LeaseDefaultSec:    60,
+		OutputLimitBytes:   1024,
+		SessionMaxInflight: 1,
+		MaxActiveSessions:  1,
+	})
+	defer manager.Close()
+
+	first, err := manager.Execute(context.Background(), terminalExecRequest{
+		Command:         "printf first-live",
+		SessionID:       "capacity-live-first",
+		CreateIfMissing: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Stdout != "first-live" || manager.ActiveSessionCount() != 1 || backend.createCount() != 1 {
+		t.Fatalf("unexpected first session state: result=%#v active=%d creates=%d", first, manager.ActiveSessionCount(), backend.createCount())
+	}
+
+	_, err = manager.Execute(context.Background(), terminalExecRequest{
+		Command:         "printf overflow",
+		SessionID:       "capacity-live-overflow",
+		CreateIfMissing: true,
+	})
+	if terminalErrorCode(err) != terminalExecCodeSessionCapacityExceeded || err.Error() != terminalExecCapacityMessage {
+		t.Fatalf("expected session capacity error, got %v", err)
+	}
+	if backend.createCount() != 1 {
+		t.Fatalf("capacity rejection reached E2B Create: calls=%d", backend.createCount())
+	}
+
+	reused, err := manager.Execute(context.Background(), terminalExecRequest{
+		Command:   "printf reused-live",
+		SessionID: first.SessionID,
+	})
+	if err != nil || reused.Stdout != "reused-live" {
+		t.Fatalf("existing session failed while full: result=%#v err=%v", reused, err)
+	}
+
+	manager.releaseAndDestroySession(first.SessionID)
+	if manager.ActiveSessionCount() != 0 || backend.killCount() != 1 {
+		t.Fatalf("first cleanup did not release capacity: active=%d kills=%d", manager.ActiveSessionCount(), backend.killCount())
+	}
+
+	replacement, err := manager.Execute(context.Background(), terminalExecRequest{
+		Command:         "printf replacement-live",
+		SessionID:       "capacity-live-replacement",
+		CreateIfMissing: true,
+	})
+	if err != nil || replacement.Stdout != "replacement-live" {
+		t.Fatalf("replacement session failed: result=%#v err=%v", replacement, err)
+	}
+	if manager.ActiveSessionCount() != 1 || backend.createCount() != 2 {
+		t.Fatalf("unexpected replacement state: active=%d creates=%d", manager.ActiveSessionCount(), backend.createCount())
+	}
+
+	manager.Close()
+	if manager.ActiveSessionCount() != 0 || backend.killCount() != 2 {
+		t.Fatalf("close did not release replacement: active=%d kills=%d", manager.ActiveSessionCount(), backend.killCount())
+	}
 }
 
 func TestIntegrationTerminalSessionConcurrentExecAndResources(t *testing.T) {

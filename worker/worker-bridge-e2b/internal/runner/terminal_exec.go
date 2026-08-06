@@ -20,6 +20,7 @@ const (
 	terminalExecCleanupTimeout        = 10 * time.Second
 	terminalExecNoSessionMessage      = "session not found"
 	terminalExecBusyMessage           = "session is busy"
+	terminalExecCapacityMessage       = "terminal session capacity exceeded"
 	terminalExecNotReadyMessage       = "terminal executor is unavailable"
 	defaultTerminalLeaseMinSec        = 60
 	defaultTerminalLeaseMaxSec        = 1800
@@ -29,9 +30,10 @@ const (
 )
 
 const (
-	terminalExecCodeSessionNotFound = "session_not_found"
-	terminalExecCodeSessionBusy     = "session_busy"
-	terminalExecCodeInvalidPayload  = "invalid_payload"
+	terminalExecCodeSessionNotFound         = "session_not_found"
+	terminalExecCodeSessionBusy             = "session_busy"
+	terminalExecCodeSessionCapacityExceeded = "session_capacity_exceeded"
+	terminalExecCodeInvalidPayload          = "invalid_payload"
 )
 
 type terminalExecPayload struct {
@@ -91,6 +93,7 @@ type terminalSession struct {
 	leaseSyncMu             sync.Mutex
 	inflight                int
 	destroying              bool
+	capacityReserved        bool
 	ready                   chan struct{}
 	initErr                 error
 }
@@ -105,27 +108,31 @@ type terminalSessionManagerConfig struct {
 	ExportMaxBytes     int
 	ExportMode         string
 	SessionMaxInflight int
+	MaxActiveSessions  int
 	// JanitorInterval is test-only tuning in practice; zero selects the
 	// production interval.
 	JanitorInterval time.Duration
 }
 
 type terminalSessionManager struct {
-	mu       sync.Mutex
-	sessions map[string]*terminalSession
-	closed   bool
-	createWG sync.WaitGroup
+	mu        sync.Mutex
+	sessions  map[string]*terminalSession
+	closed    bool
+	createWG  sync.WaitGroup
+	cleanupWG sync.WaitGroup
 
-	backend            e2bBackend
-	template           string
-	leaseMinSec        int
-	leaseMaxSec        int
-	leaseDefaultSec    int
-	outputLimitBytes   int
-	exportMaxBytes     int
-	exportMode         string
-	sessionMaxInflight int
-	janitorInterval    time.Duration
+	backend                   e2bBackend
+	template                  string
+	leaseMinSec               int
+	leaseMaxSec               int
+	leaseDefaultSec           int
+	outputLimitBytes          int
+	exportMaxBytes            int
+	exportMode                string
+	sessionMaxInflight        int
+	maxActiveSessions         int
+	activeSessionReservations int
+	janitorInterval           time.Duration
 
 	stopCh    chan struct{}
 	doneCh    chan struct{}
@@ -157,6 +164,10 @@ func newTerminalSessionManager(cfg terminalSessionManagerConfig) *terminalSessio
 	if maxInflight <= 0 {
 		maxInflight = defaultTerminalSessionMaxInflight
 	}
+	maxActiveSessions := cfg.MaxActiveSessions
+	if maxActiveSessions < 0 {
+		maxActiveSessions = 0
+	}
 	janitorInterval := cfg.JanitorInterval
 	if janitorInterval <= 0 {
 		janitorInterval = terminalExecJanitorInterval
@@ -172,6 +183,7 @@ func newTerminalSessionManager(cfg terminalSessionManagerConfig) *terminalSessio
 		exportMaxBytes:     cfg.ExportMaxBytes,
 		exportMode:         normalizeTerminalExportMode(cfg.ExportMode),
 		sessionMaxInflight: maxInflight,
+		maxActiveSessions:  maxActiveSessions,
 		janitorInterval:    janitorInterval,
 		stopCh:             make(chan struct{}),
 		doneCh:             make(chan struct{}),
@@ -196,13 +208,7 @@ func (m *terminalSessionManager) ActiveSessionCount() int32 {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var count int32
-	for _, session := range m.sessions {
-		if session != nil && !session.destroying {
-			count++
-		}
-	}
-	return count
+	return int32(m.activeSessionReservations)
 }
 
 func (m *terminalSessionManager) Execute(ctx context.Context, req terminalExecRequest) (terminalExecRunResult, error) {
@@ -279,6 +285,11 @@ func (m *terminalSessionManager) resolveLeaseDuration(value *int) (time.Duration
 	return time.Duration(seconds) * time.Second, nil
 }
 
+type retiredTerminalSession struct {
+	sandbox          *e2b.Sandbox
+	capacityReserved bool
+}
+
 func (m *terminalSessionManager) claimSession(sessionID string, leaseTarget time.Time, createIfMissing bool) (*terminalSession, bool, error) {
 	m.mu.Lock()
 	if m.closed {
@@ -286,22 +297,42 @@ func (m *terminalSessionManager) claimSession(sessionID string, leaseTarget time
 		return nil, false, newTerminalExecError("execution_failed", terminalExecNotReadyMessage)
 	}
 	if sessionID == "" {
-		session := m.newSessionLocked(uuid.NewString(), leaseTarget)
+		session, err := m.newSessionLocked(uuid.NewString(), leaseTarget)
 		m.mu.Unlock()
-		return session, true, nil
+		return session, true, err
 	}
 	if existing, ok := m.sessions[sessionID]; ok && existing != nil && !existing.destroying {
 		if existing.inflight == 0 && !existing.confirmedLeaseExpiresAt.After(time.Now()) {
-			delete(m.sessions, sessionID)
-			expiredSandbox := existing.sandbox
+			oldCapacityReserved := existing.capacityReserved
 			if !createIfMissing {
+				delete(m.sessions, sessionID)
+				m.cleanupWG.Add(1)
+				retired := retiredTerminalSession{
+					sandbox:          existing.sandbox,
+					capacityReserved: oldCapacityReserved,
+				}
 				m.mu.Unlock()
-				m.killSandbox(expiredSandbox)
+				m.cleanupTrackedRetiredSession(retired)
 				return nil, false, newTerminalExecError(terminalExecCodeSessionNotFound, terminalExecNoSessionMessage)
 			}
-			session := m.newSessionLocked(sessionID, leaseTarget)
+			if !oldCapacityReserved && !m.capacityAvailableLocked() {
+				m.mu.Unlock()
+				return nil, false, newTerminalExecError(
+					terminalExecCodeSessionCapacityExceeded,
+					terminalExecCapacityMessage,
+				)
+			}
+			delete(m.sessions, sessionID)
+			m.cleanupWG.Add(1)
+			retired := retiredTerminalSession{
+				sandbox:          existing.sandbox,
+				capacityReserved: false,
+			}
+			session := m.newSessionWithReservationLocked(sessionID, leaseTarget, true, !oldCapacityReserved)
 			m.mu.Unlock()
-			m.killSandbox(expiredSandbox)
+			// The replacement inherits the old slot, so the old sandbox must be
+			// cleaned before the new remote sandbox is created.
+			m.cleanupTrackedRetiredSession(retired)
 			return session, true, nil
 		}
 		if existing.inflight >= m.sessionMaxInflight {
@@ -320,20 +351,43 @@ func (m *terminalSessionManager) claimSession(sessionID string, leaseTarget time
 		m.mu.Unlock()
 		return nil, false, newTerminalExecError(terminalExecCodeSessionNotFound, terminalExecNoSessionMessage)
 	}
-	session := m.newSessionLocked(sessionID, leaseTarget)
+	session, err := m.newSessionLocked(sessionID, leaseTarget)
 	m.mu.Unlock()
-	return session, true, nil
+	return session, true, err
 }
 
-func (m *terminalSessionManager) newSessionLocked(sessionID string, leaseTarget time.Time) *terminalSession {
+func (m *terminalSessionManager) capacityAvailableLocked() bool {
+	return m.maxActiveSessions <= 0 || m.activeSessionReservations < m.maxActiveSessions
+}
+
+func (m *terminalSessionManager) newSessionLocked(sessionID string, leaseTarget time.Time) (*terminalSession, error) {
+	if !m.capacityAvailableLocked() {
+		return nil, newTerminalExecError(
+			terminalExecCodeSessionCapacityExceeded,
+			terminalExecCapacityMessage,
+		)
+	}
+	return m.newSessionWithReservationLocked(sessionID, leaseTarget, true, true), nil
+}
+
+func (m *terminalSessionManager) newSessionWithReservationLocked(
+	sessionID string,
+	leaseTarget time.Time,
+	capacityReserved bool,
+	incrementReservation bool,
+) *terminalSession {
 	m.createWG.Add(1)
 	session := &terminalSession{
 		sessionID:             sessionID,
 		desiredLeaseExpiresAt: leaseTarget,
 		inflight:              1,
+		capacityReserved:      capacityReserved,
 		ready:                 make(chan struct{}),
 	}
 	m.sessions[sessionID] = session
+	if capacityReserved && incrementReservation {
+		m.activeSessionReservations++
+	}
 	return session
 }
 
@@ -418,6 +472,22 @@ func secondsUntil(target time.Time) int {
 	return seconds
 }
 
+func (m *terminalSessionManager) cleanupTrackedRetiredSession(session retiredTerminalSession) {
+	defer m.cleanupWG.Done()
+	m.cleanupRetiredSession(session)
+}
+
+func (m *terminalSessionManager) cleanupRetiredSession(session retiredTerminalSession) {
+	m.killSandbox(session.sandbox)
+	if session.capacityReserved {
+		m.mu.Lock()
+		if m.activeSessionReservations > 0 {
+			m.activeSessionReservations--
+		}
+		m.mu.Unlock()
+	}
+}
+
 func (m *terminalSessionManager) releaseSession(sessionID string) (time.Time, bool) {
 	m.mu.Lock()
 	session, ok := m.sessions[sessionID]
@@ -429,14 +499,18 @@ func (m *terminalSessionManager) releaseSession(sessionID string) (time.Time, bo
 		session.inflight--
 	}
 	expires := session.confirmedLeaseExpiresAt
-	var sandbox *e2b.Sandbox
+	var retired *retiredTerminalSession
 	if session.destroying && session.inflight == 0 {
 		delete(m.sessions, sessionID)
-		sandbox = session.sandbox
+		m.cleanupWG.Add(1)
+		retired = &retiredTerminalSession{
+			sandbox:          session.sandbox,
+			capacityReserved: session.capacityReserved,
+		}
 	}
 	m.mu.Unlock()
-	if sandbox != nil {
-		m.killSandbox(sandbox)
+	if retired != nil {
+		m.cleanupTrackedRetiredSession(*retired)
 	}
 	return expires, true
 }
@@ -452,14 +526,18 @@ func (m *terminalSessionManager) releaseAndDestroySession(sessionID string) {
 	if session.inflight > 0 {
 		session.inflight--
 	}
-	var sandbox *e2b.Sandbox
+	var retired *retiredTerminalSession
 	if session.inflight == 0 {
 		delete(m.sessions, sessionID)
-		sandbox = session.sandbox
+		m.cleanupWG.Add(1)
+		retired = &retiredTerminalSession{
+			sandbox:          session.sandbox,
+			capacityReserved: session.capacityReserved,
+		}
 	}
 	m.mu.Unlock()
-	if sandbox != nil {
-		m.killSandbox(sandbox)
+	if retired != nil {
+		m.cleanupTrackedRetiredSession(*retired)
 	}
 }
 
@@ -479,20 +557,22 @@ func (m *terminalSessionManager) janitorLoop() {
 
 func (m *terminalSessionManager) cleanupExpiredSessions() {
 	now := time.Now()
-	var expired []*e2b.Sandbox
+	var expired []retiredTerminalSession
 	m.mu.Lock()
 	for id, session := range m.sessions {
 		if session == nil || session.destroying || session.inflight > 0 || session.confirmedLeaseExpiresAt.After(now) {
 			continue
 		}
 		delete(m.sessions, id)
-		if session.sandbox != nil {
-			expired = append(expired, session.sandbox)
-		}
+		m.cleanupWG.Add(1)
+		expired = append(expired, retiredTerminalSession{
+			sandbox:          session.sandbox,
+			capacityReserved: session.capacityReserved,
+		})
 	}
 	m.mu.Unlock()
-	for _, sandbox := range expired {
-		m.killSandbox(sandbox)
+	for _, session := range expired {
+		m.cleanupTrackedRetiredSession(session)
 	}
 }
 
@@ -508,16 +588,20 @@ func (m *terminalSessionManager) Close() {
 		<-m.doneCh
 		m.createWG.Wait()
 		m.mu.Lock()
-		var sandboxes []*e2b.Sandbox
+		var sessions []retiredTerminalSession
 		for _, session := range m.sessions {
-			if session != nil && session.sandbox != nil {
-				sandboxes = append(sandboxes, session.sandbox)
+			if session != nil {
+				sessions = append(sessions, retiredTerminalSession{
+					sandbox:          session.sandbox,
+					capacityReserved: session.capacityReserved,
+				})
 			}
 		}
 		m.sessions = map[string]*terminalSession{}
 		m.mu.Unlock()
-		for _, sandbox := range sandboxes {
-			m.killSandbox(sandbox)
+		m.cleanupWG.Wait()
+		for _, session := range sessions {
+			m.cleanupRetiredSession(session)
 		}
 	})
 }

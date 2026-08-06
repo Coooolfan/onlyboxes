@@ -70,6 +70,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 		ExportMaxBytes:     cfg.TerminalExportMaxBytes,
 		ExportMode:         cfg.TerminalExportMode,
 		SessionMaxInflight: cfg.TerminalSessionMaxInflight,
+		MaxActiveSessions:  cfg.TerminalMaxActiveSessions,
 	})
 	pythonRunner := newPythonExecRunner(
 		backend,
@@ -95,12 +96,14 @@ func Run(ctx context.Context, cfg config.Config) error {
 	logging.Infof("pythonExec configured: backend=e2b template=%s", cfg.E2BPythonTemplate)
 	logging.Infof("terminalExec configured: backend=e2b template=%s", cfg.E2BTerminalTemplate)
 	logging.Infof(
-		"terminalExec configured: lease_min_sec=%d lease_max_sec=%d lease_default_sec=%d output_limit_bytes=%d export_mode=%s",
+		"terminalExec configured: lease_min_sec=%d lease_max_sec=%d lease_default_sec=%d output_limit_bytes=%d export_mode=%s session_max_inflight=%d max_active_sessions=%d",
 		terminalManager.leaseMinSec,
 		terminalManager.leaseMaxSec,
 		terminalManager.leaseDefaultSec,
 		terminalManager.outputLimitBytes,
 		terminalManager.exportMode,
+		terminalManager.sessionMaxInflight,
+		terminalManager.maxActiveSessions,
 	)
 
 	reconnectDelay := initialReconnectDelay

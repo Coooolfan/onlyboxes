@@ -8,26 +8,27 @@ import (
 )
 
 const (
-	defaultConsoleTarget           = "127.0.0.1:50051"
-	defaultHeartbeatInterval       = 5
-	defaultHeartbeatJitter         = 20
-	defaultExecutorKind            = "e2b"
-	defaultE2BAPIURL               = "https://api.e2b.app"
-	defaultE2BDomain               = "e2b.app"
-	defaultE2BRequestTimeout       = 60
-	defaultE2BPythonTimeout        = 300
-	defaultTerminalLeaseMin        = 60
-	defaultTerminalLeaseMax        = 1800
-	defaultTerminalLeaseTTL        = 300
-	defaultTerminalOutputMax       = 1024 * 1024
-	defaultTerminalExportMode      = "sandbox"
-	defaultTerminalSessionInflight = 128
-	defaultLogLevel                = "info"
-	defaultLogFormat               = "json"
-	defaultEchoMaxInflight         = 128
-	defaultPythonExecMaxInflight   = 32
-	defaultTerminalExecMaxInflight = 64
-	defaultResourceMaxInflight     = 128
+	defaultConsoleTarget             = "127.0.0.1:50051"
+	defaultHeartbeatInterval         = 5
+	defaultHeartbeatJitter           = 20
+	defaultExecutorKind              = "e2b"
+	defaultE2BAPIURL                 = "https://api.e2b.app"
+	defaultE2BDomain                 = "e2b.app"
+	defaultE2BRequestTimeout         = 60
+	defaultE2BPythonTimeout          = 300
+	defaultTerminalLeaseMin          = 60
+	defaultTerminalLeaseMax          = 1800
+	defaultTerminalLeaseTTL          = 300
+	defaultTerminalOutputMax         = 1024 * 1024
+	defaultTerminalExportMode        = "sandbox"
+	defaultTerminalSessionInflight   = 128
+	defaultTerminalMaxActiveSessions = 0
+	defaultLogLevel                  = "info"
+	defaultLogFormat                 = "json"
+	defaultEchoMaxInflight           = 128
+	defaultPythonExecMaxInflight     = 32
+	defaultTerminalExecMaxInflight   = 64
+	defaultResourceMaxInflight       = 128
 )
 
 type Config struct {
@@ -57,6 +58,7 @@ type Config struct {
 	TerminalExportMaxBytes      int
 	TerminalExportMode          string
 	TerminalSessionMaxInflight  int
+	TerminalMaxActiveSessions   int
 	EchoMaxInflight             int
 	PythonExecMaxInflight       int
 	TerminalExecMaxInflight     int
@@ -121,6 +123,7 @@ func Load() Config {
 		TerminalExportMaxBytes:      src.nonNegativeInt("WORKER_TERMINAL_EXPORT_MAX_BYTES", 0),
 		TerminalExportMode:          src.terminalExportMode("WORKER_TERMINAL_EXPORT_MODE", defaultTerminalExportMode),
 		TerminalSessionMaxInflight:  src.positiveInt("WORKER_TERMINAL_SESSION_MAX_INFLIGHT", defaultTerminalSessionInflight),
+		TerminalMaxActiveSessions:   src.nonNegativeInt("WORKER_TERMINAL_MAX_ACTIVE_SESSIONS", defaultTerminalMaxActiveSessions),
 		EchoMaxInflight:             src.positiveInt("WORKER_ECHO_MAX_INFLIGHT", defaultEchoMaxInflight),
 		PythonExecMaxInflight:       src.positiveInt("WORKER_PYTHON_EXEC_MAX_INFLIGHT", defaultPythonExecMaxInflight),
 		TerminalExecMaxInflight:     src.positiveInt("WORKER_TERMINAL_EXEC_MAX_INFLIGHT", defaultTerminalExecMaxInflight),
