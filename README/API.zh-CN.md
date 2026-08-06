@@ -569,8 +569,10 @@ Worker 类型：
 - `409` `session_busy` 或任务被取消
   - `session_busy` 表示请求超出了单 session 的并发上限。worker 默认每个 session 只允许一条命令，需由 worker 调大 `WORKER_TERMINAL_SESSION_MAX_INFLIGHT` 才能在同一 `session_id` 上并发执行。
   - `terminalExec` 与 `terminalResource` 共用该单 session 上限。
-- `429` 无可用并发容量
-  - 与 `session_busy` 是不同层级的配额：`no_capacity` 表示 worker 级的该能力配额耗尽，而非单个 session 的上限。
+- `429` 无可用并发容量或 terminal session 容量
+  - `no_capacity` 表示 worker 级的该能力配额耗尽，而非单个 session 的上限。
+  - `session_capacity_exceeded` 表示选中的 sandbox worker 已达到 `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS`；已有 session 仍可使用，但本次请求无法创建新 session。
+  - 这与 `session_busy` 不同，后者表示单个 session 内的命令并发上限已达到。
 - `503` 无可用 worker
 - `504` 超时
 - `502` 其他执行失败
@@ -702,7 +704,7 @@ Task 所有权按账号隔离（由 token 对应账号决定）。
 - `200` 任务完成且成功
 - `409` 任务完成且被取消
 - `504` 任务完成且超时
-- `429` 任务完成失败且 `error.code=no_capacity`
+- `429` 任务完成失败且 `error.code=no_capacity` 或 `error.code=session_capacity_exceeded`
 - `503` 任务完成失败且 `error.code=no_worker`
 - `502` 任务完成失败（其他错误码）
 

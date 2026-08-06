@@ -567,8 +567,10 @@ Errors:
 - `409` `session_busy` or canceled
   - `session_busy` means the request exceeded the per-session concurrency limit. Workers default to one command per session; the worker must raise `WORKER_TERMINAL_SESSION_MAX_INFLIGHT` to allow concurrent commands on one `session_id`.
   - `terminalExec` and `terminalResource` share that per-session limit.
-- `429` no worker capacity
-  - a different limit from `session_busy`: `no_capacity` means the worker-level quota for the capability is exhausted, not a single session's.
+- `429` no worker capacity or terminal session capacity
+  - `no_capacity` means the worker-level quota for the capability is exhausted, not a single session's.
+  - `session_capacity_exceeded` means the selected sandbox worker has reached `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS`; existing sessions remain usable, but this request could not create a new session.
+  - these are separate from `session_busy`, which means the per-session command limit was reached.
 - `503` no compatible worker
 - `504` timeout
 - `502` unexpected execution failure
@@ -700,7 +702,7 @@ Possible responses:
 - `200` completed succeeded
 - `409` completed canceled
 - `504` completed timeout
-- `429` completed failed with `error.code=no_capacity`
+- `429` completed failed with `error.code=no_capacity` or `error.code=session_capacity_exceeded`
 - `503` completed failed with `error.code=no_worker`
 - `502` completed failed (other error codes)
 
