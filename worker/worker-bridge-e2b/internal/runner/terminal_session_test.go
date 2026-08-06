@@ -746,12 +746,10 @@ func TestTerminalSessionJanitorAutomaticallyKillsExpiredSandbox(t *testing.T) {
 
 	waitForCondition(t, time.Second, func() bool {
 		backend.mu.Lock()
-		defer backend.mu.Unlock()
-		return backend.killed == 1
-	}, "janitor did not kill expired E2B sandbox")
-	if manager.ActiveSessionCount() != 0 {
-		t.Fatalf("expired session still counted as active")
-	}
+		killed := backend.killed
+		backend.mu.Unlock()
+		return killed == 1 && manager.ActiveSessionCount() == 0
+	}, "janitor did not kill expired E2B sandbox and release its capacity")
 	if _, err := manager.Execute(context.Background(), terminalExecRequest{
 		Command:   "after-expiry",
 		SessionID: created.SessionID,
@@ -1052,12 +1050,10 @@ func TestTimedOutCommandDoesNotKillConcurrentSibling(t *testing.T) {
 	}
 	waitForCondition(t, time.Second, func() bool {
 		backend.mu.Lock()
-		defer backend.mu.Unlock()
-		return backend.killed == 1
-	}, "sandbox was not killed after sibling drained")
-	if got := manager.ActiveSessionCount(); got != 0 {
-		t.Fatalf("drained destroying session leaked capacity: %d", got)
-	}
+		killed := backend.killed
+		backend.mu.Unlock()
+		return killed == 1 && manager.ActiveSessionCount() == 0
+	}, "sandbox cleanup did not finish after sibling drained")
 }
 
 func TestTimeoutDuringLeaseSyncAlsoWaitsForSiblingBeforeCleanup(t *testing.T) {
