@@ -26,6 +26,12 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("CONSOLE_EXPORT_FILE_DOWNLOAD_PRESIGN_TTL_SEC", "")
 	t.Setenv("CONSOLE_ENABLE_REGISTRATION", "")
 	t.Setenv("CONSOLE_MCP_TOKEN_QUERY_PARAM", "")
+	t.Setenv("CONSOLE_PROXY_ENABLED", "")
+	t.Setenv("CONSOLE_PROXY_PUBLIC_BASE_DOMAIN", "")
+	t.Setenv("CONSOLE_PROXY_INTERNAL_AUTH_TOKEN", "")
+	t.Setenv("CONSOLE_PROXY_ALLOWED_WORKER_CIDRS", "")
+	t.Setenv("CONSOLE_PROXY_ALLOWED_WORKER_PORTS", "")
+	t.Setenv("CONSOLE_PROXY_ROUTE_TTL_SEC", "")
 	t.Setenv("CONSOLE_LOG_LEVEL", "")
 	t.Setenv("CONSOLE_LOG_FORMAT", "")
 	t.Setenv("CONSOLE_LOG_ADD_SOURCE", "")
@@ -73,6 +79,15 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.MCPTokenQueryParam != defaultMCPTokenQueryParam {
 		t.Fatalf("expected MCPTokenQueryParam=%q, got %q", defaultMCPTokenQueryParam, cfg.MCPTokenQueryParam)
 	}
+	if cfg.ProxyEnabled || cfg.ProxyPublicBaseDomain != "" || cfg.ProxyInternalAuthToken != "" || len(cfg.ProxyAllowedWorkerCIDRs) != 0 {
+		t.Fatalf("expected proxy disabled by default, got %#v", cfg)
+	}
+	if len(cfg.ProxyAllowedWorkerPorts) != 1 || cfg.ProxyAllowedWorkerPorts[0] != defaultProxyWorkerPort {
+		t.Fatalf("unexpected default proxy worker ports: %#v", cfg.ProxyAllowedWorkerPorts)
+	}
+	if cfg.ProxyRouteTTL != time.Duration(defaultProxyRouteTTLSec)*time.Second {
+		t.Fatalf("unexpected proxy route TTL: %s", cfg.ProxyRouteTTL)
+	}
 	if cfg.LogLevel != defaultLogLevel {
 		t.Fatalf("expected LogLevel=%q, got %q", defaultLogLevel, cfg.LogLevel)
 	}
@@ -103,6 +118,12 @@ func TestLoadReadsDashboardCredentialsAndDurations(t *testing.T) {
 	t.Setenv("CONSOLE_EXPORT_FILE_DOWNLOAD_PRESIGN_TTL_SEC", "900")
 	t.Setenv("CONSOLE_ENABLE_REGISTRATION", "true")
 	t.Setenv("CONSOLE_MCP_TOKEN_QUERY_PARAM", "access_token")
+	t.Setenv("CONSOLE_PROXY_ENABLED", "true")
+	t.Setenv("CONSOLE_PROXY_PUBLIC_BASE_DOMAIN", "Public-Preview.Example.COM")
+	t.Setenv("CONSOLE_PROXY_INTERNAL_AUTH_TOKEN", "internal-proxy-secret")
+	t.Setenv("CONSOLE_PROXY_ALLOWED_WORKER_CIDRS", "10.0.0.0/8, 2001:db8::/32, invalid,10.0.0.0/8")
+	t.Setenv("CONSOLE_PROXY_ALLOWED_WORKER_PORTS", "8091, 18091,invalid,8091")
+	t.Setenv("CONSOLE_PROXY_ROUTE_TTL_SEC", "3600")
 	t.Setenv("CONSOLE_LOG_LEVEL", "debug")
 	t.Setenv("CONSOLE_LOG_FORMAT", "text")
 	t.Setenv("CONSOLE_LOG_ADD_SOURCE", "true")
@@ -162,6 +183,18 @@ func TestLoadReadsDashboardCredentialsAndDurations(t *testing.T) {
 	if cfg.MCPTokenQueryParam != "access_token" {
 		t.Fatalf("expected MCPTokenQueryParam access_token, got %q", cfg.MCPTokenQueryParam)
 	}
+	if !cfg.ProxyEnabled || cfg.ProxyPublicBaseDomain != "public-preview.example.com" || cfg.ProxyInternalAuthToken != "internal-proxy-secret" {
+		t.Fatalf("unexpected proxy config: %#v", cfg)
+	}
+	if len(cfg.ProxyAllowedWorkerCIDRs) != 2 || cfg.ProxyAllowedWorkerCIDRs[0].String() != "10.0.0.0/8" || cfg.ProxyAllowedWorkerCIDRs[1].String() != "2001:db8::/32" {
+		t.Fatalf("unexpected proxy worker CIDRs: %#v", cfg.ProxyAllowedWorkerCIDRs)
+	}
+	if len(cfg.ProxyAllowedWorkerPorts) != 2 || cfg.ProxyAllowedWorkerPorts[0] != 8091 || cfg.ProxyAllowedWorkerPorts[1] != 18091 {
+		t.Fatalf("unexpected proxy worker ports: %#v", cfg.ProxyAllowedWorkerPorts)
+	}
+	if cfg.ProxyRouteTTL != time.Hour {
+		t.Fatalf("expected proxy route TTL 1h, got %s", cfg.ProxyRouteTTL)
+	}
 	if cfg.LogLevel != "debug" {
 		t.Fatalf("expected LogLevel=debug, got %q", cfg.LogLevel)
 	}
@@ -179,6 +212,7 @@ func TestLoadFallsBackForInvalidNumericEnv(t *testing.T) {
 	t.Setenv("CONSOLE_HEARTBEAT_INTERVAL_SEC", "0")
 	t.Setenv("CONSOLE_EXPORT_FILE_UPLOAD_PRESIGN_TTL_SEC", "0")
 	t.Setenv("CONSOLE_EXPORT_FILE_DOWNLOAD_PRESIGN_TTL_SEC", "not-a-number")
+	t.Setenv("CONSOLE_PROXY_ROUTE_TTL_SEC", "0")
 
 	cfg := Load()
 	if cfg.OfflineTTL != time.Duration(defaultOfflineTTLSec)*time.Second {
@@ -195,6 +229,17 @@ func TestLoadFallsBackForInvalidNumericEnv(t *testing.T) {
 	}
 	if cfg.ExportFileDownloadTTL != time.Duration(defaultExportDownloadTTLSec)*time.Second {
 		t.Fatalf("expected default export download ttl, got %s", cfg.ExportFileDownloadTTL)
+	}
+	if cfg.ProxyRouteTTL != time.Duration(defaultProxyRouteTTLSec)*time.Second {
+		t.Fatalf("expected default proxy route TTL, got %s", cfg.ProxyRouteTTL)
+	}
+}
+
+func TestParseProxyWorkerPortsFailsClosedForExplicitInvalidList(t *testing.T) {
+	for _, raw := range []string{"invalid,0,65536", `["8091"]`, "[]"} {
+		if ports := parsePortList(raw); len(ports) != 0 {
+			t.Fatalf("expected invalid explicit port list %q to yield no allowed ports, got %#v", raw, ports)
+		}
 	}
 }
 

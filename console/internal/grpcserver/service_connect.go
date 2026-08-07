@@ -71,6 +71,9 @@ func (s *RegistryService) Connect(stream grpc.BidiStreamingServer[registryv1.Con
 	}
 
 	session := newActiveSessionAt(hello.GetNodeId(), sessionID, hello, now)
+	if err := s.configureSessionProxy(session, hello, workerSecret); err != nil {
+		return status.Errorf(codes.InvalidArgument, "invalid proxy endpoint: %v", err)
+	}
 	logTerminalSessionCapacityInvariant(session.nodeID, session.terminalSessionCapacitySnapshot())
 	replaced := s.swapSession(session)
 	if replaced != nil {

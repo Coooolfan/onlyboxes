@@ -30,6 +30,13 @@ The console service hosts:
     - max one per account
     - only `computerUse` and `readImage` capabilities are accepted
     - `computerUse.max_inflight` and `readImage.max_inflight` are both forced to `1`
+- public preview route APIs (dashboard cookie/API key/JIT auth):
+  - `POST /api/v1/proxy-routes` creates an anonymous preview URL for an owned terminal session and port.
+  - `GET /api/v1/proxy-routes` lists only the current account's in-memory routes.
+  - `DELETE /api/v1/proxy-routes/:route_key` deletes only the current account's route; cross-account access returns `404`.
+  - routes default to 24 hours, are capped at 7 days, use 128-bit DNS-safe keys, and are lost on Console restart.
+  - `GET /internal/v1/proxy/resolve` is Nginx-only, protected by `CONSOLE_PROXY_INTERNAL_AUTH_TOKEN`, and returns the active Worker endpoint plus a 15-second Route Token.
+  - proxy traffic is anonymous and never carries Dashboard credentials; anyone holding the preview URL can access it.
 - command APIs (execution, bearer token required):
   - `POST /api/v1/commands/echo` for blocking echo command execution.
   - `POST /api/v1/commands/terminal` for blocking terminal command execution over `terminalExec` capability.
@@ -195,6 +202,8 @@ Security warning (high risk):
 - place console HTTP (`:8089`) and gRPC (`:50051`) behind a reverse proxy/gateway and enforce TLS for all external traffic.
 - `worker_secret` is sent in `ConnectHello`; on untrusted networks it can still be observed in transit when plaintext is enabled.
 - deploy only on trusted private networks or encrypted tunnels; do not expose gRPC directly to the public internet.
+- when public preview is enabled, allow Nginx alone to reach Worker proxy ports and keep `CONSOLE_PROXY_INTERNAL_AUTH_TOKEN` secret.
+- every `obx.proxy_endpoint` IP must match `CONSOLE_PROXY_ALLOWED_WORKER_CIDRS`; Console rejects out-of-policy Worker registration.
 - fully mitigating this risk requires TLS/mTLS support (not implemented in this release).
 
 Credential behavior:
@@ -213,6 +222,8 @@ Defaults:
 - SQLite busy timeout: `5000ms`
 - Task retention: `30 days`
 - Registration enabled: `false` (`CONSOLE_ENABLE_REGISTRATION`)
+- Public preview proxy enabled: `false` (`CONSOLE_PROXY_ENABLED`)
+- Public preview route TTL: `86400s`
 
 Dashboard account behavior:
 - dashboard accounts are persisted in SQLite table `accounts`.
@@ -275,6 +286,12 @@ Persistence config:
 - `CONSOLE_JIT_SIGNING_KEY`: optional HMAC key for JIT bearer tokens; when configured, valid JIT tokens can authenticate MCP and execution APIs without a `trusted_tokens` entry
 - `CONSOLE_DASHBOARD_JIT_SIGNING_KEY`: optional HMAC key for dashboard JIT bearer tokens; when configured, valid dashboard JIT tokens can authenticate selected dashboard APIs without a cookie session or console API key
 - `CONSOLE_MCP_TOKEN_QUERY_PARAM`: query parameter name for `/mcp` URL token fallback (default `token`)
+- `CONSOLE_PROXY_ENABLED`: enables route management and Nginx resolve endpoints (default `false`)
+- `CONSOLE_PROXY_PUBLIC_BASE_DOMAIN`: wildcard preview base domain
+- `CONSOLE_PROXY_INTERNAL_AUTH_TOKEN`: Nginx-to-Console shared secret
+- `CONSOLE_PROXY_ALLOWED_WORKER_CIDRS`: CIDR allowlist for advertised Worker proxy IPs
+- `CONSOLE_PROXY_ALLOWED_WORKER_PORTS`: port allowlist for advertised Worker proxy endpoints (default `8091`)
+- `CONSOLE_PROXY_ROUTE_TTL_SEC`: in-memory preview route TTL (default `86400`, maximum `604800`)
 
 Logging config:
 - `CONSOLE_LOG_LEVEL`: `debug|info|warn|error` (default `info`)

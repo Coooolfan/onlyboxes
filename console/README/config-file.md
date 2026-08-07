@@ -31,6 +31,17 @@ The loaded config file path is reported once at startup via the `config file loa
 
 Secrets such as `dashboard_password`, `hash_key`, `jit_signing_key` and `export_file_sk` are better supplied through environment variables; keep the config file out of version control when they are inlined.
 
+Public preview proxy configuration:
+
+- `CONSOLE_PROXY_ENABLED`: enable route APIs and Worker proxy registration (default `false`).
+- `CONSOLE_PROXY_PUBLIC_BASE_DOMAIN`: wildcard preview base domain, for example `public-preview.example.com`.
+- `CONSOLE_PROXY_INTERNAL_AUTH_TOKEN`: shared only with Nginx for `/internal/v1/proxy/resolve`; treat it as a secret.
+- `CONSOLE_PROXY_ALLOWED_WORKER_CIDRS`: comma-separated CIDRs or a TOML array. Every advertised Worker proxy IP must match one entry.
+- `CONSOLE_PROXY_ALLOWED_WORKER_PORTS`: comma-separated ports or a TOML array (default `8091`). Every advertised Worker proxy port must match one entry.
+- `CONSOLE_PROXY_ROUTE_TTL_SEC`: in-memory route lifetime (default `86400`, maximum `604800`).
+
+When proxy is enabled, base domain, internal token, at least one allowed Worker CIDR, and at least one valid allowed Worker port are required. See `docs/nginx/README.md` for deployment and `docs/nginx/public-preview.conf.example` for the Nginx data-plane configuration.
+
 See `config.example.toml` in the console root for a full annotated template.
 
 ```toml

@@ -1,0 +1,78 @@
+# Place these maps in the http {} block.
+map $http_upgrade $onlyboxes_connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+map $host $onlyboxes_preview_host_valid {
+    # Keep this domain in sync with server_name below.
+    default 0;
+    "~^[a-z2-7]{26}\.public-preview\.example\.com$" 1;
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name *.public-preview.example.com;
+
+    # Wildcard DNS and a matching wildcard certificate are required.
+    ssl_certificate     /etc/nginx/tls/public-preview.fullchain.pem;
+    ssl_certificate_key /etc/nginx/tls/public-preview.key;
+
+    client_max_body_size 1g;
+
+    if ($onlyboxes_preview_host_valid = 0) {
+        return 403;
+    }
+
+    location = /_onlyboxes_proxy_resolve {
+        internal;
+
+        proxy_pass http://127.0.0.1:8089/internal/v1/proxy/resolve;
+        proxy_method GET;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+
+        proxy_set_header X-Onlyboxes-Internal-Token "replace-with-console-proxy-internal-token";
+        proxy_set_header X-Original-Host $host;
+
+        # Preview application credentials never participate in Console auth.
+        proxy_set_header Authorization "";
+        proxy_set_header Cookie "";
+    }
+
+    location / {
+        auth_request /_onlyboxes_proxy_resolve;
+        auth_request_set $onlyboxes_upstream $upstream_http_x_onlyboxes_upstream;
+        auth_request_set $onlyboxes_route_token $upstream_http_x_onlyboxes_route_token;
+
+        proxy_http_version 1.1;
+        proxy_pass http://$onlyboxes_upstream;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Request-ID $request_id;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $onlyboxes_connection_upgrade;
+
+        # Always replace client-supplied internal headers.
+        proxy_set_header X-Onlyboxes-Route-Token $onlyboxes_route_token;
+        proxy_set_header X-Onlyboxes-Upstream "";
+        proxy_set_header X-Onlyboxes-Internal-Token "";
+        proxy_set_header X-Original-Host "";
+
+        # Stream uploads, SSE, and upgraded connections without disk buffering.
+        proxy_request_buffering off;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 1h;
+        proxy_send_timeout 1h;
+
+        proxy_hide_header X-Onlyboxes-Route-Token;
+        proxy_hide_header X-Onlyboxes-Upstream;
+        proxy_hide_header X-Onlyboxes-Internal-Token;
+        proxy_hide_header X-Original-Host;
+    }
+}

@@ -26,6 +26,7 @@ const (
 	defaultTerminalOutputMax         = 1024 * 1024
 	defaultTerminalSessionInflight   = 1
 	defaultTerminalMaxActiveSessions = 0
+	defaultProxyListenAddr           = ":8091"
 	defaultLogLevel                  = "info"
 	defaultLogFormat                 = "json"
 	defaultLogAddSource              = false
@@ -63,6 +64,9 @@ type Config struct {
 	PythonExecMaxInflight       int
 	TerminalExecMaxInflight     int
 	TerminalResourceMaxInflight int
+	ProxyEnabled                bool
+	ProxyListenAddr             string
+	ProxyAdvertiseAddr          string
 	LogLevel                    string
 	LogFormat                   string
 	LogAddSource                bool
@@ -117,6 +121,9 @@ func Load() Config {
 		PythonExecMaxInflight:       src.positiveInt("WORKER_PYTHON_EXEC_MAX_INFLIGHT", defaultMaxInflight),
 		TerminalExecMaxInflight:     src.positiveInt("WORKER_TERMINAL_EXEC_MAX_INFLIGHT", defaultMaxInflight),
 		TerminalResourceMaxInflight: src.positiveInt("WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT", defaultMaxInflight),
+		ProxyEnabled:                src.boolValue("WORKER_PROXY_ENABLED", false),
+		ProxyListenAddr:             strings.TrimSpace(src.stringValue("WORKER_PROXY_LISTEN_ADDR", defaultProxyListenAddr)),
+		ProxyAdvertiseAddr:          strings.TrimSpace(src.get("WORKER_PROXY_ADVERTISE_ADDR")),
 		LogLevel:                    src.logLevel("WORKER_LOG_LEVEL", defaultLogLevel),
 		LogFormat:                   src.logFormat("WORKER_LOG_FORMAT", defaultLogFormat),
 		LogAddSource:                src.boolValue("WORKER_LOG_ADD_SOURCE", defaultLogAddSource),

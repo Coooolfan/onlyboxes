@@ -28,6 +28,7 @@ Onlyboxes has these auth paths:
   - `/api/v1/console/accounts*`
   - `/api/v1/console/tokens*`
   - `/api/v1/workers*` (role-scoped worker routes)
+  - `/api/v1/proxy-routes*` (account-scoped public preview routes)
 - Session TTL is 12 hours in-memory; console restart invalidates all sessions.
 
 ### 1.2 Access Token (Bearer)
@@ -497,6 +498,62 @@ Always returns `410 Gone`:
   "error": "worker secret is returned only when creating the worker; delete and recreate to get a new startup command"
 }
 ```
+
+### 5.7 Public Preview Routes
+
+These management APIs accept Dashboard cookie, Console API key, or Dashboard JIT authentication. Routes are account-scoped and stored in memory.
+
+`POST /api/v1/proxy-routes`
+
+```json
+{
+  "session_id": "sess_xxx",
+  "port": 8080
+}
+```
+
+Success `201`:
+
+```json
+{
+  "route_key": "ceirceirceirceirceirceirce",
+  "session_id": "sess_xxx",
+  "port": 8080,
+  "url": "https://ceirceirceirceirceirceirce.public-preview.example.com",
+  "created_at": "2026-02-21T00:00:00Z",
+  "expires_at": "2026-02-22T00:00:00Z"
+}
+```
+
+Rules and errors:
+
+- `session_id` must belong to the current account and have a confirmed route to an online proxy-enabled `worker-docker`.
+- `port` must be `1..65535`.
+- route keys contain 128 random bits encoded as 26 lowercase Base32 characters.
+- each account can hold at most 100 active routes.
+- default route TTL is `86400` seconds, can be changed with `CONSOLE_PROXY_ROUTE_TTL_SEC`, and cannot exceed `604800` seconds (7 days).
+- `400` invalid body, session ID, or port.
+- `404` session route not found.
+- `429` account route limit reached.
+- `503` the session's Worker has no available proxy endpoint.
+
+`GET /api/v1/proxy-routes`
+
+Success `200` returns the current account's routes:
+
+```json
+{
+  "items": [],
+  "total": 0
+}
+```
+
+`DELETE /api/v1/proxy-routes/:route_key`
+
+- `204` deleted.
+- `404` missing, expired, or owned by another account.
+
+The returned preview URL is anonymous: anyone holding it can access the Sandbox service without an Onlyboxes Cookie or Bearer token. Nginx resolves every new HTTP request through the protected internal Console endpoint and receives a fresh 15-second Route Token for the Worker hop. Token expiry does not end an accepted HTTP/SSE/WebSocket connection. Route access does not renew the Sandbox lease. Console restart invalidates all routes.
 
 ## 6. Execution Command APIs (Bearer Token)
 
@@ -1001,5 +1058,7 @@ Console responds with:
 - deploy `worker-sys` only on dedicated hosts with strict OS-level access controls.
 - Put console HTTP (`:8089`) and gRPC (`:50051`) behind a reverse proxy/gateway and enforce TLS for external access.
 - Keep gRPC endpoint private and tunnel/encrypt traffic in production.
+- Public preview requires wildcard DNS/TLS, the deployment guide in `docs/nginx/README.md`, the Nginx configuration in `docs/nginx/public-preview.conf.example`, and network ACLs that allow only Nginx to reach Worker proxy ports.
+- Keep `CONSOLE_PROXY_INTERNAL_AUTH_TOKEN` secret and restrict `CONSOLE_PROXY_ALLOWED_WORKER_CIDRS` / `CONSOLE_PROXY_ALLOWED_WORKER_PORTS` to actual Worker ingress endpoints.
 - Token plaintext and `WORKER_SECRET` are one-time return values.
 - `GET /api/v1/console/tokens/:token_id/value` and `GET /api/v1/workers/:node_id/startup-command` are intentionally `410 Gone`.

@@ -85,6 +85,34 @@ func TestLoadTerminalMaxActiveSessions(t *testing.T) {
 	}
 }
 
+func TestLoadProxyConfig(t *testing.T) {
+	t.Setenv("WORKER_PROXY_ENABLED", "true")
+	t.Setenv("WORKER_PROXY_LISTEN_ADDR", "127.0.0.1:18091")
+	t.Setenv("WORKER_PROXY_ADVERTISE_ADDR", "10.0.0.5:18091")
+
+	cfg := Load()
+	if !cfg.ProxyEnabled {
+		t.Fatalf("expected proxy enabled")
+	}
+	if cfg.ProxyListenAddr != "127.0.0.1:18091" || cfg.ProxyAdvertiseAddr != "10.0.0.5:18091" {
+		t.Fatalf("unexpected proxy config: listen=%q advertise=%q", cfg.ProxyListenAddr, cfg.ProxyAdvertiseAddr)
+	}
+}
+
+func TestLoadProxyDefaults(t *testing.T) {
+	t.Setenv("WORKER_PROXY_ENABLED", "")
+	t.Setenv("WORKER_PROXY_LISTEN_ADDR", "")
+	t.Setenv("WORKER_PROXY_ADVERTISE_ADDR", "")
+
+	cfg := Load()
+	if cfg.ProxyEnabled {
+		t.Fatalf("expected proxy disabled by default")
+	}
+	if cfg.ProxyListenAddr != defaultProxyListenAddr || cfg.ProxyAdvertiseAddr != "" {
+		t.Fatalf("unexpected proxy defaults: listen=%q advertise=%q", cfg.ProxyListenAddr, cfg.ProxyAdvertiseAddr)
+	}
+}
+
 func TestLoadUsesDefaultLogConfig(t *testing.T) {
 	t.Setenv("WORKER_LOG_LEVEL", "")
 	t.Setenv("WORKER_LOG_FORMAT", "")
