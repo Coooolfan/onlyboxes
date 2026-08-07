@@ -15,6 +15,8 @@ const (
 	Prefix             = "obx_route_v1."
 	HeaderName         = "X-Onlyboxes-Route-Token"
 	ProxyEndpointLabel = "obx.proxy_endpoint"
+	ProxyDirectLabel   = "obx.proxy_direct"
+	ProxyDirectE2B     = "e2b"
 	keyDerivationLabel = "onlyboxes/proxy-route/v1"
 	maxTokenLength     = 4096
 )

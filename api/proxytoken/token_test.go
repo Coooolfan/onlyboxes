@@ -37,6 +37,26 @@ func TestSignAndVerify(t *testing.T) {
 	}
 }
 
+func TestSignMatchesCrossLanguageVector(t *testing.T) {
+	key, err := DeriveKey("worker-secret")
+	if err != nil {
+		t.Fatalf("derive key: %v", err)
+	}
+	token, err := Sign(key, Claims{
+		WorkerID:        "worker-a",
+		SessionID:       "obx:owner:session",
+		Port:            8080,
+		ExpiresAtUnixMs: 4_102_444_800_000,
+	})
+	if err != nil {
+		t.Fatalf("sign token: %v", err)
+	}
+	const want = "obx_route_v1.eyJ3b3JrZXJfaWQiOiJ3b3JrZXItYSIsInNlc3Npb25faWQiOiJvYng6b3duZXI6c2Vzc2lvbiIsInBvcnQiOjgwODAsImV4cCI6NDEwMjQ0NDgwMDAwMH0.Ed5xO4kv0pF1fEyvuqn33UVFDJbZF_z_8tpX7ChTvlk"
+	if token != want {
+		t.Fatalf("unexpected token:\nwant %s\n got %s", want, token)
+	}
+}
+
 func TestVerifyRejectsTamperingAndWrongWorkerKey(t *testing.T) {
 	keyA, err := DeriveKey("worker-secret-a")
 	if err != nil {
