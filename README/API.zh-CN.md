@@ -576,6 +576,7 @@ Worker 类型：
 
 - `400` 请求参数非法或 `invalid_payload`
 - `404` `session_not_found`
+- `503` `session_unavailable`：session 绑定的 Worker 离线或重启后正在核对资源；客户端应使用同一 `session_id` 重试，Console 不会将其改派。
 - `409` `session_busy` 或任务被取消
   - `session_busy` 表示请求超出了单 session 的并发上限。worker 默认每个 session 只允许一条命令，需由 worker 调大 `WORKER_TERMINAL_SESSION_MAX_INFLIGHT` 才能在同一 `session_id` 上并发执行。
   - `terminalExec` 与 `terminalResource` 共用该单 session 上限。
