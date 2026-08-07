@@ -11,11 +11,14 @@ use tonic::transport::{Channel, ClientTlsConfig, Endpoint};
 
 use crate::config::Config;
 use crate::proto::registryv1::{
-    connect_request, connect_response, worker_registry_service_client::WorkerRegistryServiceClient,
-    CommandDispatch, ConnectRequest, ConnectResponse, HeartbeatAck, HeartbeatFrame,
+    connect_request, connect_response, terminal_session_recovery_result,
+    worker_registry_service_client::WorkerRegistryServiceClient, CommandDispatch, ConnectRequest,
+    ConnectResponse, HeartbeatAck, HeartbeatFrame, TerminalSessionRecoveryReport,
 };
 
-use super::terminal_session_manager::shared_active_session_count;
+use super::terminal_session_manager::{
+    shared_active_session_count, shared_recover_terminal_sessions,
+};
 use super::{
     build_command_result, build_hello, command_dispatch_summary_for_log, duration_from_server,
     RunnerError,
@@ -65,6 +68,63 @@ async fn run_session_with_builder(
             "connect_ack.session_id is required".to_owned(),
         ));
     }
+
+    let recovery_results = tokio::select! {
+        _ = shutdown.cancelled() => return Err(RunnerError::Message("worker shutdown during terminal session recovery".to_owned())),
+        result = tokio::time::timeout(
+            cfg.call_timeout,
+            shared_recover_terminal_sessions(cfg, &ack.terminal_session_recovery_candidates),
+        ) => result.map_err(|_| RunnerError::Message("terminal session recovery deadline exceeded".to_owned()))?,
+    };
+    outbound_tx
+        .send(ConnectRequest {
+            payload: Some(connect_request::Payload::TerminalSessionRecoveryReport(
+                TerminalSessionRecoveryReport {
+                    results: recovery_results.clone(),
+                },
+            )),
+        })
+        .await
+        .map_err(|_| {
+            RunnerError::Message("send terminal session recovery report failed".to_owned())
+        })?;
+    let recovery_ack = recv_with_timeout(shutdown.clone(), cfg.call_timeout, inbound.message())
+        .await?
+        .ok_or_else(|| {
+            RunnerError::Message("stream closed before terminal session recovery ack".to_owned())
+        })?;
+    if !matches!(
+        recovery_ack.payload,
+        Some(connect_response::Payload::TerminalSessionRecoveryAck(_))
+    ) {
+        return Err(RunnerError::Message(
+            "unexpected response while waiting for terminal session recovery ack".to_owned(),
+        ));
+    }
+
+    tracing::info!(
+        executor_kind = "boxlite",
+        candidates = recovery_results.len(),
+        recovered = recovery_results
+            .iter()
+            .filter(|result| {
+                result.status == terminal_session_recovery_result::Status::Recovered as i32
+            })
+            .count(),
+        missing = recovery_results
+            .iter()
+            .filter(|result| {
+                result.status == terminal_session_recovery_result::Status::Missing as i32
+            })
+            .count(),
+        invalid = recovery_results
+            .iter()
+            .filter(|result| {
+                result.status == terminal_session_recovery_result::Status::Invalid as i32
+            })
+            .count(),
+        "terminal session recovery acknowledged"
+    );
 
     let heartbeat_interval =
         duration_from_server(ack.heartbeat_interval_sec, cfg.heartbeat_interval);
@@ -341,6 +401,7 @@ mod tests {
         connect_request as test_connect_request, connect_response as test_connect_response,
         CommandDispatch as TestCommandDispatch, CommandResult, ConnectAck, ConnectHello,
         ConnectRequest as TestConnectRequest, ConnectResponse, HeartbeatAck, HeartbeatFrame,
+        TerminalSessionRecoveryAck,
     };
 
     use super::*;
@@ -444,12 +505,33 @@ mod tests {
                     payload: Some(test_connect_response::Payload::ConnectAck(ConnectAck {
                         session_id: TEST_SESSION_ID.to_owned(),
                         heartbeat_interval_sec: shared.heartbeat_interval_sec,
+                        terminal_session_recovery_candidates: Vec::new(),
                     })),
                 }))
                 .await
                 .map_err(|_| Status::internal("failed to enqueue connect ack"))?;
 
             tokio::spawn(async move {
+                match inbound.message().await {
+                    Ok(Some(frame))
+                        if matches!(
+                            frame.payload,
+                            Some(test_connect_request::Payload::TerminalSessionRecoveryReport(_))
+                        ) => {}
+                    _ => return,
+                }
+                if response_tx
+                    .send(Ok(ConnectResponse {
+                        payload: Some(test_connect_response::Payload::TerminalSessionRecoveryAck(
+                            TerminalSessionRecoveryAck {},
+                        )),
+                    }))
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+
                 for dispatch in &shared.dispatches {
                     if response_tx
                         .send(Ok(ConnectResponse {
@@ -487,7 +569,11 @@ mod tests {
                             Some(test_connect_request::Payload::CommandResult(result)) => {
                                 let _ = shared.command_result_tx.send(result);
                             }
-                            Some(test_connect_request::Payload::Hello(_)) | None => return,
+                            Some(test_connect_request::Payload::Hello(_))
+                            | Some(test_connect_request::Payload::TerminalSessionRecoveryReport(
+                                _,
+                            ))
+                            | None => return,
                         },
                         Ok(None) | Err(_) => return,
                     }
@@ -556,11 +642,17 @@ mod tests {
             worker_secret: "secret".to_owned(),
             heartbeat_interval: Duration::from_millis(25),
             heartbeat_jitter_pct: 0,
-            call_timeout: Duration::from_millis(25),
+            call_timeout: Duration::from_millis(250),
             node_name: "worker-boxlite-test".to_owned(),
             executor_kind: "boxlite".to_owned(),
             labels: BTreeMap::new(),
-            boxlite_home: String::new(),
+            boxlite_home: std::env::temp_dir()
+                .join(format!(
+                    "onlyboxes-worker-boxlite-session-client-tests-{}",
+                    std::process::id()
+                ))
+                .to_string_lossy()
+                .into_owned(),
             python_exec_image: "ghcr.io/astral-sh/uv:python3.12-bookworm-slim".to_owned(),
             python_exec_memory_mib: 256,
             python_exec_cpus: 1,

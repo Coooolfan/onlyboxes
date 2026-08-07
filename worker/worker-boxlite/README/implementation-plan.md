@@ -732,7 +732,7 @@ struct MockLiteBox { ... }
 - [ ] gRPC 握手流程（Fake gRPC Server via tonic）
 - [ ] 心跳容忍（单次超时恢复）
 - [ ] 心跳失败（双次超时触发重连）
-- [ ] 优雅关闭清理所有 VM
+- [ ] 优雅关闭清理一次性 VM，并保留可恢复的 detached terminal VM
 
 ### 7.3 集成测试
 
