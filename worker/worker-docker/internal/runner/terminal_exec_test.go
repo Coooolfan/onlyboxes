@@ -476,13 +476,16 @@ func TestNewTerminalSessionManagerUsesConfiguredResourceLimits(t *testing.T) {
 }
 
 func TestTerminalExecDockerCreateArgs(t *testing.T) {
-	got := terminalExecDockerCreateArgs("container-a", "python:slim", "256m", "1.0", 128)
+	containerName := terminalSessionResourceName("session-a")
+	got := terminalExecDockerCreateArgs(containerName, "python:slim", "256m", "1.0", 128)
 	want := []string{
 		"create",
-		"--name", "container-a",
+		"--name", containerName,
 		"--label", pythonExecManagedLabel,
 		"--label", terminalExecCapabilityLabel,
 		"--label", pythonExecRuntimeLabel,
+		"--label", terminalExecSessionLabelKey + "=" + terminalSessionIDHash("session-a"),
+		"--label", terminalExecSchemaLabelKey + "=" + terminalExecSchemaVersion,
 		"--memory", "256m",
 		"--cpus", "1.0",
 		"--pids-limit", "128",

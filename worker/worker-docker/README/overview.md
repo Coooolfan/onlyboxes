@@ -70,8 +70,9 @@ Capability behavior:
 - `terminalExec` cleanup behavior:
   - command timeout/cancel marks the session for destruction and stops it accepting new commands; the container is removed once in-flight commands drain, so one command's timeout does not kill its siblings.
   - idle sessions are reaped after lease expiry by an internal janitor loop; a session with in-flight commands is never reaped.
-  - worker shutdown force-removes all managed terminal containers.
-  - `SIGINT`/`SIGTERM` (for example Ctrl+C) performs best-effort cleanup; `SIGKILL`/process crash does not guarantee cleanup.
+  - terminal containers use deterministic `onlyboxes-terminal-v1-<sha256(session_id)>` names plus schema/session-hash labels and are preserved when the worker exits.
+  - after reconnect, the worker reconciles Console candidates before accepting commands, restarts stopped containers, restores the exact lease, and removes local Onlyboxes terminal orphans that Console no longer recognizes.
+  - lease expiry, explicit destruction, unsafe command timeout, and invalid resource identity still remove the container; one-shot `pythonExec` containers remain per-call resources.
 - `terminalExec` result uses JSON payload:
   - `{"session_id":"...","created":true,"stdout":"...","stderr":"...","exit_code":0,"stdout_truncated":false,"stderr_truncated":false,"lease_expires_unix_ms":...}`
 - output truncation:

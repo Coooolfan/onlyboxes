@@ -69,6 +69,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 		PidsLimit:          cfg.TerminalExecPidsLimit,
 		SessionMaxInflight: cfg.TerminalSessionMaxInflight,
 		MaxActiveSessions:  cfg.TerminalMaxActiveSessions,
+		PreserveOnClose:    true,
 	})
 	pythonRunner := newPythonExecRunner(
 		cfg.PythonExecDockerImage,
@@ -84,11 +85,14 @@ func Run(ctx context.Context, cfg config.Config) error {
 	runTerminalResource = terminalManager.ResolveResource
 	originalActiveSessionCountFn := activeSessionCountFn
 	activeSessionCountFn = terminalManager.ActiveSessionCount
+	originalRecoverTerminalSessionsFn := recoverTerminalSessionsFn
+	recoverTerminalSessionsFn = terminalManager.Recover
 	defer func() {
 		runPythonExec = originalRunPythonExec
 		runTerminalExec = originalRunTerminalExec
 		runTerminalResource = originalRunTerminalResource
 		activeSessionCountFn = originalActiveSessionCountFn
+		recoverTerminalSessionsFn = originalRecoverTerminalSessionsFn
 		terminalManager.Close()
 	}()
 
