@@ -20,19 +20,43 @@ import (
 )
 
 type fakeE2BBackend struct {
-	mu         sync.Mutex
-	created    int
-	killed     int
-	killedIDs  []string
-	timeouts   []int
-	runStarted chan struct{}
-	runRelease chan struct{}
-	createFn   func(context.Context, string, int) (*e2b.Sandbox, error)
-	timeoutFn  func(context.Context, string, int) error
-	runFn      func(context.Context, *e2b.Sandbox, string, int) (e2b.CommandResult, error)
-	readFn     func(context.Context, *e2b.Sandbox, string, int64) (e2b.File, error)
-	openFn     func(context.Context, *e2b.Sandbox, string) (e2b.FileReader, error)
-	killFn     func(context.Context, string) error
+	mu                   sync.Mutex
+	created              int
+	killed               int
+	killedIDs            []string
+	timeouts             []int
+	runStarted           chan struct{}
+	runRelease           chan struct{}
+	createFn             func(context.Context, string, int) (*e2b.Sandbox, error)
+	createWithMetadataFn func(context.Context, string, int, map[string]string) (*e2b.Sandbox, error)
+	listFn               func(context.Context, map[string]string) ([]e2b.SandboxInfo, error)
+	connectFn            func(context.Context, string, int) (*e2b.Sandbox, error)
+	timeoutFn            func(context.Context, string, int) error
+	runFn                func(context.Context, *e2b.Sandbox, string, int) (e2b.CommandResult, error)
+	readFn               func(context.Context, *e2b.Sandbox, string, int64) (e2b.File, error)
+	openFn               func(context.Context, *e2b.Sandbox, string) (e2b.FileReader, error)
+	killFn               func(context.Context, string) error
+}
+
+func (f *fakeE2BBackend) CreateWithMetadata(ctx context.Context, template string, timeout int, metadata map[string]string) (*e2b.Sandbox, error) {
+	if f.createWithMetadataFn != nil {
+		return f.createWithMetadataFn(ctx, template, timeout, metadata)
+	}
+	return f.Create(ctx, template, timeout)
+}
+
+func (f *fakeE2BBackend) List(ctx context.Context, metadata map[string]string) ([]e2b.SandboxInfo, error) {
+	if f.listFn != nil {
+		return f.listFn(ctx, metadata)
+	}
+	return nil, nil
+}
+
+func (f *fakeE2BBackend) Connect(ctx context.Context, sandboxID string, timeout int) (*e2b.Sandbox, error) {
+	if f.connectFn != nil {
+		return f.connectFn(ctx, sandboxID, timeout)
+	}
+	return &e2b.Sandbox{ID: sandboxID, Domain: "test", AccessToken: "fresh-token"}, nil
 }
 
 func (f *fakeE2BBackend) Create(ctx context.Context, template string, timeout int) (*e2b.Sandbox, error) {

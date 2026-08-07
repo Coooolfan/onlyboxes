@@ -75,6 +75,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 		ExportMode:         cfg.TerminalExportMode,
 		SessionMaxInflight: cfg.TerminalSessionMaxInflight,
 		MaxActiveSessions:  cfg.TerminalMaxActiveSessions,
+		PreserveOnClose:    true,
 	})
 	pythonRunner := newPythonExecRunner(
 		backend,
@@ -89,11 +90,14 @@ func Run(ctx context.Context, cfg config.Config) error {
 	runTerminalResource = terminalManager.ResolveResource
 	originalActiveSessionCountFn := activeSessionCountFn
 	activeSessionCountFn = terminalManager.ActiveSessionCount
+	originalRecoverTerminalSessionsFn := recoverTerminalSessionsFn
+	recoverTerminalSessionsFn = terminalManager.Recover
 	defer func() {
 		runPythonExec = originalRunPythonExec
 		runTerminalExec = originalRunTerminalExec
 		runTerminalResource = originalRunTerminalResource
 		activeSessionCountFn = originalActiveSessionCountFn
+		recoverTerminalSessionsFn = originalRecoverTerminalSessionsFn
 		terminalManager.Close()
 	}()
 

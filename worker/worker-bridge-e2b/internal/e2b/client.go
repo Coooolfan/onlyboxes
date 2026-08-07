@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -51,6 +52,13 @@ type Sandbox struct {
 	Domain      string
 	EnvdVersion string
 	AccessToken string
+}
+
+type SandboxInfo struct {
+	ID          string            `json:"sandboxID"`
+	State       string            `json:"state"`
+	EnvdVersion string            `json:"envdVersion"`
+	Metadata    map[string]string `json:"metadata"`
 }
 
 type CommandResult struct {
@@ -129,6 +137,10 @@ func NewClient(cfg Config) (*Client, error) {
 }
 
 func (c *Client) Create(ctx context.Context, template string, timeoutSec int) (*Sandbox, error) {
+	return c.CreateWithMetadata(ctx, template, timeoutSec, map[string]string{"onlyboxes.worker": "worker-bridge-e2b"})
+}
+
+func (c *Client) CreateWithMetadata(ctx context.Context, template string, timeoutSec int, metadata map[string]string) (*Sandbox, error) {
 	template = strings.TrimSpace(template)
 	if template == "" {
 		return nil, errors.New("E2B template is required")
@@ -150,7 +162,7 @@ func (c *Client) Create(ctx context.Context, template string, timeoutSec int) (*
 		AutoPause:           false,
 		Secure:              true,
 		AllowInternetAccess: true,
-		Metadata:            map[string]string{"onlyboxes.worker": "worker-bridge-e2b"},
+		Metadata:            cloneMetadata(metadata),
 		EnvVars:             map[string]string{},
 	}
 	var response struct {
@@ -175,6 +187,70 @@ func (c *Client) Create(ctx context.Context, template string, timeoutSec int) (*
 		EnvdVersion: response.EnvdVersion,
 		AccessToken: response.EnvdAccessToken,
 	}, nil
+}
+
+func (c *Client) List(ctx context.Context, metadata map[string]string) ([]SandboxInfo, error) {
+	query := url.Values{}
+	if len(metadata) > 0 {
+		keys := make([]string, 0, len(metadata))
+		for key := range metadata {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		parts := make([]string, 0, len(keys))
+		for _, key := range keys {
+			parts = append(parts, url.QueryEscape(key)+"="+url.QueryEscape(metadata[key]))
+		}
+		query.Set("metadata", strings.Join(parts, "&"))
+	}
+	path := "/sandboxes"
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var response []SandboxInfo
+	if err := c.controlJSON(ctx, http.MethodGet, path, nil, &response); err != nil {
+		return nil, err
+	}
+	return response, nil
+}
+
+func (c *Client) Connect(ctx context.Context, sandboxID string, timeoutSec int) (*Sandbox, error) {
+	if timeoutSec <= 0 {
+		return nil, errors.New("E2B sandbox timeout must be positive")
+	}
+	var response struct {
+		SandboxID       string  `json:"sandboxID"`
+		EnvdVersion     string  `json:"envdVersion"`
+		EnvdAccessToken string  `json:"envdAccessToken"`
+		Domain          *string `json:"domain"`
+	}
+	path := "/sandboxes/" + url.PathEscape(strings.TrimSpace(sandboxID)) + "/connect"
+	err := c.controlJSON(ctx, http.MethodPost, path, struct {
+		Timeout int `json:"timeout"`
+	}{Timeout: timeoutSec}, &response)
+	if isHTTPStatus(err, http.StatusNotFound) {
+		return nil, fmt.Errorf("%w: %v", ErrSandboxNotFound, err)
+	}
+	if err != nil {
+		return nil, err
+	}
+	domain := c.domain
+	if response.Domain != nil && strings.TrimSpace(*response.Domain) != "" {
+		domain = strings.TrimSpace(*response.Domain)
+	}
+	id := strings.TrimSpace(response.SandboxID)
+	if id == "" {
+		id = strings.TrimSpace(sandboxID)
+	}
+	return &Sandbox{ID: id, Domain: domain, EnvdVersion: response.EnvdVersion, AccessToken: response.EnvdAccessToken}, nil
+}
+
+func cloneMetadata(metadata map[string]string) map[string]string {
+	out := make(map[string]string, len(metadata))
+	for key, value := range metadata {
+		out[key] = value
+	}
+	return out
 }
 
 func (c *Client) SetTimeout(ctx context.Context, sandboxID string, timeoutSec int) error {

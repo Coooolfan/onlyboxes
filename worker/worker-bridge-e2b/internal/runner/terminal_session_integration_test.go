@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
 	"github.com/onlyboxes/onlyboxes/worker/worker-bridge-e2b/internal/e2b"
 )
 
@@ -27,6 +29,26 @@ func (b *recordingE2BBackend) Create(ctx context.Context, template string, timeo
 	b.createCalls++
 	b.mu.Unlock()
 	return b.e2bBackend.Create(ctx, template, timeoutSec)
+}
+
+func (b *recordingE2BBackend) CreateWithMetadata(
+	ctx context.Context,
+	template string,
+	timeoutSec int,
+	metadata map[string]string,
+) (*e2b.Sandbox, error) {
+	b.mu.Lock()
+	b.createCalls++
+	b.mu.Unlock()
+	return b.e2bBackend.(e2bRecoveryBackend).CreateWithMetadata(ctx, template, timeoutSec, metadata)
+}
+
+func (b *recordingE2BBackend) List(ctx context.Context, metadata map[string]string) ([]e2b.SandboxInfo, error) {
+	return b.e2bBackend.(e2bRecoveryBackend).List(ctx, metadata)
+}
+
+func (b *recordingE2BBackend) Connect(ctx context.Context, sandboxID string, timeoutSec int) (*e2b.Sandbox, error) {
+	return b.e2bBackend.(e2bRecoveryBackend).Connect(ctx, sandboxID, timeoutSec)
 }
 
 func (b *recordingE2BBackend) createCount() int {
@@ -332,6 +354,104 @@ func TestIntegrationJanitorExpiresTerminalSession(t *testing.T) {
 		SessionID: session.SessionID,
 	}); terminalErrorCode(err) != terminalExecCodeSessionNotFound {
 		t.Fatalf("expired session still accepted commands: %v", err)
+	}
+}
+
+func TestIntegrationTerminalSessionRecoversAcrossManagerRestart(t *testing.T) {
+	backend, template := liveTerminalBackend(t)
+	manager := newTerminalSessionManager(terminalSessionManagerConfig{
+		Backend:            backend,
+		Template:           template,
+		LeaseMinSec:        1,
+		LeaseMaxSec:        120,
+		LeaseDefaultSec:    60,
+		OutputLimitBytes:   1024,
+		SessionMaxInflight: 1,
+		MaxActiveSessions:  1,
+		PreserveOnClose:    true,
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	sessionID := fmt.Sprintf("integration:e2b-manager-recovery-%d", time.Now().UnixNano())
+	leaseTTL := 90
+	created, err := manager.Execute(ctx, terminalExecRequest{
+		Command:         "printf manager-recovery-ok > /tmp/onlyboxes-manager-recovery.txt",
+		SessionID:       sessionID,
+		CreateIfMissing: true,
+		LeaseTTLSec:     &leaseTTL,
+	})
+	if err != nil {
+		manager.Close()
+		t.Fatal(err)
+	}
+	if !created.Created || created.SessionID != sessionID {
+		manager.Close()
+		t.Fatalf("unexpected created session: %#v", created)
+	}
+	manager.mu.Lock()
+	sandboxID := manager.sessions[sessionID].sandbox.ID
+	manager.mu.Unlock()
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cleanupCancel()
+		_ = backend.Kill(cleanupCtx, sandboxID)
+	})
+
+	manager.Close()
+	if backend.killCount() != 0 {
+		t.Fatalf("preserving manager killed sandbox during restart: kills=%d", backend.killCount())
+	}
+
+	recoveredManager := newTerminalSessionManager(terminalSessionManagerConfig{
+		Backend:            backend,
+		Template:           template,
+		LeaseMinSec:        1,
+		LeaseMaxSec:        120,
+		LeaseDefaultSec:    60,
+		OutputLimitBytes:   1024,
+		SessionMaxInflight: 1,
+		MaxActiveSessions:  1,
+	})
+	defer recoveredManager.Close()
+	results := recoveredManager.Recover(ctx, []*registryv1.TerminalSessionRecoveryCandidate{{
+		SessionId:          sessionID,
+		LeaseExpiresUnixMs: created.LeaseExpiresUnixMS,
+	}})
+	if len(results) != 1 || results[0].GetStatus() != registryv1.TerminalSessionRecoveryResult_RECOVERED {
+		t.Fatalf("unexpected recovery results: %#v", results)
+	}
+	if recoveredManager.ActiveSessionCount() != 1 {
+		t.Fatalf("recovery did not restore capacity reservation: active=%d", recoveredManager.ActiveSessionCount())
+	}
+	recoveredManager.mu.Lock()
+	recovered := recoveredManager.sessions[sessionID]
+	if recovered == nil {
+		recoveredManager.mu.Unlock()
+		t.Fatal("recovered session is not registered")
+	}
+	gotLeaseExpiresUnixMS := recovered.confirmedLeaseExpiresAt.UnixMilli()
+	gotSandboxID := recovered.sandbox.ID
+	gotInflight := recovered.inflight
+	recoveredManager.mu.Unlock()
+	if gotLeaseExpiresUnixMS != created.LeaseExpiresUnixMS {
+		t.Fatalf("recovery changed lease: got=%d want=%d", gotLeaseExpiresUnixMS, created.LeaseExpiresUnixMS)
+	}
+	if gotSandboxID != sandboxID || gotInflight != 0 {
+		t.Fatalf("unexpected recovered state: sandbox=%q inflight=%d", gotSandboxID, gotInflight)
+	}
+
+	reused, err := recoveredManager.Execute(ctx, terminalExecRequest{
+		Command:   "cat /tmp/onlyboxes-manager-recovery.txt",
+		SessionID: sessionID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reused.Created || reused.Stdout != "manager-recovery-ok" || reused.SessionID != sessionID {
+		t.Fatalf("unexpected recovered execution: %#v", reused)
+	}
+	if backend.createCount() != 1 {
+		t.Fatalf("recovered execution created a second sandbox: creates=%d", backend.createCount())
 	}
 }
 

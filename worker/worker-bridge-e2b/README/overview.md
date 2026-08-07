@@ -104,7 +104,9 @@ worker 在 hello 中声明以下四项能力：
 - 新建 terminal session 受 `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS` 限制（`0` 表示不限），超出正数上限返回 `session_capacity_exceeded`；容量已满时已有 session 仍可执行。创建中、可用、销毁中和 E2B cleanup 进行中的 session 都计入容量；该限制只适用于当前 worker 进程。
 - 创建中的 session 会阻塞后续调用，所有等待者共享创建结果。
 - 某个命令超时会把 session 标记为待销毁；已有并发命令继续完成，最后一个调用退出后才销毁沙箱。
-- 空闲 session 到期后由 janitor 销毁；worker 正常退出时销毁所有仍管理的沙箱。
+- terminal sandbox 在通用 `onlyboxes.worker` metadata 上增加 `onlyboxes.session_id_hash` 与 `onlyboxes.schema_version`；worker 正常退出时保留尚未过期的 terminal sandbox，`pythonExec` 仍按次销毁。
+- worker 重连 Console 后先按 candidate metadata 精确查询 sandbox，再通过 E2B connect API 重新取得 envd access token；恢复完成前不接收命令，恢复不会改变 Console 保存的 lease。
+- 空闲 session 到期后由 janitor 销毁；E2B 账号中不属于本次 Console candidates 的 sandbox 不会被扫描或删除，由各自远端 timeout 回收。
 
 每个命令由独立的 `/bin/bash -l -c` 进程执行，因此共享文件系统，但不共享 cwd、shell 变量或当前进程环境。
 

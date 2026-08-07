@@ -106,6 +106,9 @@ func (s *liveAllCapabilityService) Connect(stream grpc.BidiStreamingServer[regis
 	}); err != nil {
 		return err
 	}
+	if err := acceptEmptyRecovery(stream); err != nil {
+		return err
+	}
 	if err := s.waitForHeartbeat(stream); err != nil {
 		return err
 	}

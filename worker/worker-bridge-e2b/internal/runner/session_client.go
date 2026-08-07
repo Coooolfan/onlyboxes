@@ -65,6 +65,25 @@ func runSessionWithStatus(ctx context.Context, cfg config.Config) (bool, error) 
 	}
 
 	heartbeatInterval := durationFromServer(ack.GetHeartbeatIntervalSec(), cfg.HeartbeatInterval)
+	recoveryResults, err := recoverTerminalSessionsWithTimeout(ctx, cfg.CallTimeout, ack.GetTerminalSessionRecoveryCandidates())
+	if err != nil {
+		return true, fmt.Errorf("recover terminal sessions: %w", err)
+	}
+	if err := stream.Send(&registryv1.ConnectRequest{
+		Payload: &registryv1.ConnectRequest_TerminalSessionRecoveryReport{
+			TerminalSessionRecoveryReport: &registryv1.TerminalSessionRecoveryReport{Results: recoveryResults},
+		},
+	}); err != nil {
+		return true, fmt.Errorf("send terminal session recovery report: %w", err)
+	}
+	recoveryResp, err := recvWithTimeout(ctx, cfg.CallTimeout, stream.Recv)
+	if err != nil {
+		return true, fmt.Errorf("recv terminal session recovery ack: %w", err)
+	}
+	if recoveryResp.GetTerminalSessionRecoveryAck() == nil {
+		return true, fmt.Errorf("unexpected response while waiting for terminal session recovery ack")
+	}
+	logTerminalRecoverySummary(recoveryResults)
 	logging.Infof("worker connected: node_id=%s node_name=%s session_id=%s", hello.GetNodeId(), hello.GetNodeName(), sessionID)
 
 	sessionCtx, cancel := context.WithCancel(ctx)
@@ -78,6 +97,41 @@ func runSessionWithStatus(ctx context.Context, cfg config.Config) (bool, error) 
 	go receiverLoop(sessionCtx, stream, outbound, heartbeatAckCh, sessionErrCh)
 
 	return true, heartbeatLoop(sessionCtx, outbound, heartbeatAckCh, sessionErrCh, cfg, sessionID, heartbeatInterval)
+}
+
+func recoverTerminalSessionsWithTimeout(
+	ctx context.Context,
+	timeout time.Duration,
+	candidates []*registryv1.TerminalSessionRecoveryCandidate,
+) ([]*registryv1.TerminalSessionRecoveryResult, error) {
+	recoveryCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	resultCh := make(chan []*registryv1.TerminalSessionRecoveryResult, 1)
+	go func() {
+		resultCh <- recoverTerminalSessionsFn(recoveryCtx, candidates)
+	}()
+	select {
+	case <-recoveryCtx.Done():
+		return nil, recoveryCtx.Err()
+	case results := <-resultCh:
+		return results, nil
+	}
+}
+
+func logTerminalRecoverySummary(results []*registryv1.TerminalSessionRecoveryResult) {
+	counts := map[registryv1.TerminalSessionRecoveryResult_Status]int{}
+	for _, result := range results {
+		if result != nil {
+			counts[result.GetStatus()]++
+		}
+	}
+	logging.Infof(
+		"terminal session recovery completed: candidates=%d recovered=%d missing=%d invalid=%d",
+		len(results),
+		counts[registryv1.TerminalSessionRecoveryResult_RECOVERED],
+		counts[registryv1.TerminalSessionRecoveryResult_MISSING],
+		counts[registryv1.TerminalSessionRecoveryResult_INVALID],
+	)
 }
 
 func dial(ctx context.Context, cfg config.Config) (*grpc.ClientConn, error) {

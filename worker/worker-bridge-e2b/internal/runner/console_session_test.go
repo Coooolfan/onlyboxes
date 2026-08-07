@@ -17,6 +17,19 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+func TestTerminalRecoveryTimesOutBeforeWorkerBecomesReady(t *testing.T) {
+	original := recoverTerminalSessionsFn
+	t.Cleanup(func() { recoverTerminalSessionsFn = original })
+	recoverTerminalSessionsFn = func(ctx context.Context, _ []*registryv1.TerminalSessionRecoveryCandidate) []*registryv1.TerminalSessionRecoveryResult {
+		<-ctx.Done()
+		return nil
+	}
+	_, err := recoverTerminalSessionsWithTimeout(context.Background(), 10*time.Millisecond, nil)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected recovery deadline, got %v", err)
+	}
+}
+
 func TestConsoleSessionContract(t *testing.T) {
 	originalActiveSessionCount := activeSessionCountFn
 	activeSessionCountFn = func() int32 { return 3 }
@@ -217,6 +230,9 @@ func (s *allCapabilityContractService) Connect(stream grpc.BidiStreamingServer[r
 	}); err != nil {
 		return err
 	}
+	if err := acceptEmptyRecovery(stream); err != nil {
+		return err
+	}
 	firstHeartbeat, err := stream.Recv()
 	if err != nil || firstHeartbeat.GetHeartbeat() == nil {
 		return status.Error(codes.InvalidArgument, "heartbeat required")
@@ -295,6 +311,9 @@ func (s *consoleContractService) Connect(stream grpc.BidiStreamingServer[registr
 	}); err != nil {
 		return err
 	}
+	if err := acceptEmptyRecovery(stream); err != nil {
+		return err
+	}
 
 	heartbeatFrame, err := stream.Recv()
 	if err != nil {
@@ -343,4 +362,19 @@ func (s *consoleContractService) Connect(stream grpc.BidiStreamingServer[registr
 			return status.Error(codes.FailedPrecondition, "session replaced")
 		}
 	}
+}
+
+func acceptEmptyRecovery(stream grpc.BidiStreamingServer[registryv1.ConnectRequest, registryv1.ConnectResponse]) error {
+	req, err := stream.Recv()
+	if err != nil {
+		return err
+	}
+	if req.GetTerminalSessionRecoveryReport() == nil {
+		return status.Error(codes.InvalidArgument, "terminal session recovery report required")
+	}
+	return stream.Send(&registryv1.ConnectResponse{
+		Payload: &registryv1.ConnectResponse_TerminalSessionRecoveryAck{
+			TerminalSessionRecoveryAck: &registryv1.TerminalSessionRecoveryAck{},
+		},
+	})
 }

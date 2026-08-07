@@ -2,6 +2,8 @@ package runner
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -27,6 +29,11 @@ const (
 	defaultTerminalLeaseSec           = 300
 	defaultTerminalOutputLimitBytes   = 1024 * 1024
 	defaultTerminalSessionMaxInflight = 128
+	terminalSessionWorkerMetadataKey  = "onlyboxes.worker"
+	terminalSessionWorkerMetadata     = "worker-bridge-e2b"
+	terminalSessionMetadataKey        = "onlyboxes.session_id_hash"
+	terminalSessionSchemaKey          = "onlyboxes.schema_version"
+	terminalSessionSchemaVersion      = "1"
 )
 
 const (
@@ -109,6 +116,7 @@ type terminalSessionManagerConfig struct {
 	ExportMode         string
 	SessionMaxInflight int
 	MaxActiveSessions  int
+	PreserveOnClose    bool
 	// JanitorInterval is test-only tuning in practice; zero selects the
 	// production interval.
 	JanitorInterval time.Duration
@@ -133,6 +141,7 @@ type terminalSessionManager struct {
 	maxActiveSessions         int
 	activeSessionReservations int
 	janitorInterval           time.Duration
+	preserveOnClose           bool
 
 	stopCh    chan struct{}
 	doneCh    chan struct{}
@@ -185,6 +194,7 @@ func newTerminalSessionManager(cfg terminalSessionManagerConfig) *terminalSessio
 		sessionMaxInflight: maxInflight,
 		maxActiveSessions:  maxActiveSessions,
 		janitorInterval:    janitorInterval,
+		preserveOnClose:    cfg.PreserveOnClose,
 		stopCh:             make(chan struct{}),
 		doneCh:             make(chan struct{}),
 	}
@@ -398,7 +408,13 @@ func (m *terminalSessionManager) awaitSessionReady(ctx context.Context, session 
 		leaseExpiresAt := session.desiredLeaseExpiresAt
 		m.mu.Unlock()
 		timeout := secondsUntil(leaseExpiresAt)
-		sandbox, err := m.backend.Create(ctx, m.template, timeout)
+		var sandbox *e2b.Sandbox
+		var err error
+		if recoveryBackend, ok := m.backend.(e2bRecoveryBackend); ok {
+			sandbox, err = recoveryBackend.CreateWithMetadata(ctx, m.template, timeout, terminalSessionMetadata(session.sessionID))
+		} else {
+			sandbox, err = m.backend.Create(ctx, m.template, timeout)
+		}
 		m.mu.Lock()
 		session.sandbox = sandbox
 		session.initErr = err
@@ -601,9 +617,30 @@ func (m *terminalSessionManager) Close() {
 		m.mu.Unlock()
 		m.cleanupWG.Wait()
 		for _, session := range sessions {
+			if m.preserveOnClose {
+				m.mu.Lock()
+				if session.capacityReserved && m.activeSessionReservations > 0 {
+					m.activeSessionReservations--
+				}
+				m.mu.Unlock()
+				continue
+			}
 			m.cleanupRetiredSession(session)
 		}
 	})
+}
+
+func terminalSessionIDHash(sessionID string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(sessionID)))
+	return hex.EncodeToString(sum[:])
+}
+
+func terminalSessionMetadata(sessionID string) map[string]string {
+	return map[string]string{
+		terminalSessionWorkerMetadataKey: terminalSessionWorkerMetadata,
+		terminalSessionMetadataKey:       terminalSessionIDHash(sessionID),
+		terminalSessionSchemaKey:         terminalSessionSchemaVersion,
+	}
 }
 
 func (m *terminalSessionManager) killSandbox(sandbox *e2b.Sandbox) {
