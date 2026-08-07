@@ -1,5 +1,6 @@
 mod capability_executor;
 mod hello_builder;
+mod sandbox_proxy;
 mod session_client;
 pub(crate) mod terminal_session_manager;
 
@@ -20,6 +21,7 @@ pub(crate) const TERMINAL_EXEC_CAPABILITY_NAME: &str = "terminalexec";
 pub(crate) const TERMINAL_EXEC_CAPABILITY_DECLARED: &str = "terminalExec";
 pub(crate) const TERMINAL_RESOURCE_CAPABILITY_NAME: &str = "terminalresource";
 pub(crate) const TERMINAL_RESOURCE_CAPABILITY_DECLARED: &str = "terminalResource";
+pub(crate) const PROXY_ENDPOINT_LABEL: &str = "obx.proxy_endpoint";
 
 pub(crate) use capability_executor::build_command_result;
 pub(crate) use capability_executor::command_dispatch_summary_for_log;
@@ -62,6 +64,19 @@ pub async fn run(shutdown: CancellationToken, cfg: Config) -> Result<(), RunnerE
         return Err(RunnerError::Message("WORKER_SECRET is required".to_owned()));
     }
     validate_terminal_max_active_sessions(cfg.terminal_max_active_sessions)?;
+    sandbox_proxy::validate_config(&cfg)?;
+
+    let terminal_manager = terminal_session_manager::shared_terminal_session_manager(&cfg);
+    let mut proxy_task = if cfg.proxy_enabled {
+        let shutdown = shutdown.clone();
+        let cfg = cfg.clone();
+        let manager = terminal_manager.clone();
+        Some(tokio::spawn(async move {
+            sandbox_proxy::run(shutdown, cfg, manager).await
+        }))
+    } else {
+        None
+    };
 
     tracing::info!(
         image = %cfg.python_exec_image,
@@ -90,7 +105,16 @@ pub async fn run(shutdown: CancellationToken, cfg: Config) -> Result<(), RunnerE
             return Err(RunnerError::Cancelled);
         }
 
-        match run_session(shutdown.clone(), &cfg).await {
+        let session_result = if let Some(task) = proxy_task.as_mut() {
+            tokio::select! {
+                result = run_session(shutdown.clone(), &cfg) => result,
+                result = task => return result.map_err(|err| RunnerError::Message(format!("sandbox proxy task failed: {err}")))?,
+            }
+        } else {
+            run_session(shutdown.clone(), &cfg).await
+        };
+
+        match session_result {
             Ok(()) => return Ok(()),
             Err(RunnerError::Cancelled) => return Err(RunnerError::Cancelled),
             Err(err) => {
