@@ -170,7 +170,11 @@ func (h *WorkerHandler) writeTaskSubmitError(c *gin.Context, err error) {
 	case errors.Is(err, grpcserver.ErrNoWorkerCapacity):
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": "no online worker capacity for requested capability"})
 	case errors.As(err, &commandErr):
-		c.JSON(http.StatusBadGateway, gin.H{"error": commandErr.Error()})
+		if strings.EqualFold(strings.TrimSpace(commandErr.Code), terminalExecSessionUnavailableCode) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": commandErr.Error()})
+		} else {
+			c.JSON(http.StatusBadGateway, gin.H{"error": commandErr.Error()})
+		}
 	case errors.Is(err, context.DeadlineExceeded):
 		c.JSON(http.StatusGatewayTimeout, gin.H{"error": "task timed out"})
 	case status.Code(err) == codes.InvalidArgument:
@@ -192,7 +196,7 @@ func mapTaskTerminalStatusToHTTP(task grpcserver.TaskSnapshot) int {
 		switch task.ErrorCode {
 		case "no_capacity", terminalExecSessionCapacityCode:
 			return http.StatusTooManyRequests
-		case "no_worker":
+		case "no_worker", terminalExecSessionUnavailableCode:
 			return http.StatusServiceUnavailable
 		default:
 			return http.StatusBadGateway

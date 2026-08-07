@@ -13,24 +13,25 @@ import (
 )
 
 const (
-	defaultEchoTimeoutMS            = 5000
-	minEchoTimeoutMS                = 1
-	maxEchoTimeoutMS                = 60000
-	defaultTerminalTimeoutMS        = defaultTaskTimeoutMS
-	minTerminalTimeoutMS            = 1
-	maxTerminalTimeoutMS            = maxTaskTimeoutMS
-	defaultComputerUseTimeoutMS     = defaultTaskTimeoutMS
-	minComputerUseTimeoutMS         = 1
-	maxComputerUseTimeoutMS         = maxTaskTimeoutMS
-	terminalExecCapability          = "terminalExec"
-	computerUseCapability           = "computerUse"
-	terminalExecSessionNotFoundCode = "session_not_found"
-	terminalExecSessionBusyCode     = "session_busy"
-	terminalExecSessionCapacityCode = "session_capacity_exceeded"
-	terminalExecInvalidPayloadCode  = "invalid_payload"
-	terminalTaskNoWorkerCode        = "no_worker"
-	terminalTaskNoCapacityCode      = "no_capacity"
-	terminalTaskTimeoutCode         = "timeout"
+	defaultEchoTimeoutMS               = 5000
+	minEchoTimeoutMS                   = 1
+	maxEchoTimeoutMS                   = 60000
+	defaultTerminalTimeoutMS           = defaultTaskTimeoutMS
+	minTerminalTimeoutMS               = 1
+	maxTerminalTimeoutMS               = maxTaskTimeoutMS
+	defaultComputerUseTimeoutMS        = defaultTaskTimeoutMS
+	minComputerUseTimeoutMS            = 1
+	maxComputerUseTimeoutMS            = maxTaskTimeoutMS
+	terminalExecCapability             = "terminalExec"
+	computerUseCapability              = "computerUse"
+	terminalExecSessionNotFoundCode    = "session_not_found"
+	terminalExecSessionBusyCode        = "session_busy"
+	terminalExecSessionCapacityCode    = "session_capacity_exceeded"
+	terminalExecSessionUnavailableCode = "session_unavailable"
+	terminalExecInvalidPayloadCode     = "invalid_payload"
+	terminalTaskNoWorkerCode           = "no_worker"
+	terminalTaskNoCapacityCode         = "no_capacity"
+	terminalTaskTimeoutCode            = "timeout"
 )
 
 type EchoDispatcher interface {
@@ -320,6 +321,8 @@ func mapTerminalTaskFailure(task grpcserver.TaskSnapshot) (int, string) {
 		return http.StatusConflict, message
 	case terminalExecSessionCapacityCode:
 		return http.StatusTooManyRequests, message
+	case terminalExecSessionUnavailableCode:
+		return http.StatusServiceUnavailable, message
 	case terminalTaskNoWorkerCode:
 		return http.StatusServiceUnavailable, "no online worker supports requested capability"
 	case terminalTaskNoCapacityCode:

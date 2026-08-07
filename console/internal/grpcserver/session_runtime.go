@@ -36,14 +36,22 @@ type terminalSessionCapacitySnapshot struct {
 }
 
 type activeSession struct {
-	nodeID    string
-	sessionID string
+	nodeID       string
+	sessionID    string
+	executorKind string
+	connectedAt  time.Time
 
 	capabilitiesMu sync.Mutex
 	capabilities   map[string]*sessionCapability
 
 	terminalCapacityMu sync.RWMutex
 	terminalCapacity   terminalSessionCapacitySnapshot
+
+	recoveryMu         sync.RWMutex
+	recoveryRequired   bool
+	recoveryComplete   bool
+	recoveryCandidates map[string]int64
+	recoveryResults    map[string]registryv1.TerminalSessionRecoveryResult_Status
 
 	controlOutbound chan *registryv1.ConnectResponse
 	commandOutbound chan *registryv1.ConnectResponse
@@ -57,19 +65,30 @@ type activeSession struct {
 }
 
 func newActiveSession(nodeID string, sessionID string, hello *registryv1.ConnectHello) *activeSession {
-	return newActiveSessionAt(nodeID, sessionID, hello, time.Now())
+	session := newActiveSessionAt(nodeID, sessionID, hello, time.Now())
+	// This convenience constructor is used by already-established in-process
+	// sessions in tests. Real Connect sessions use newActiveSessionAt and must
+	// complete the recovery handshake before becoming ready.
+	session.markRecoveryComplete()
+	return session
 }
 
 func newActiveSessionAt(nodeID string, sessionID string, hello *registryv1.ConnectHello, observedAt time.Time) *activeSession {
 	session := &activeSession{
-		nodeID:          nodeID,
-		sessionID:       sessionID,
-		capabilities:    capabilitiesFromHello(hello),
-		controlOutbound: make(chan *registryv1.ConnectResponse, controlOutboundBufferSize),
-		commandOutbound: make(chan *registryv1.ConnectResponse, commandOutboundBufferSize),
-		done:            make(chan struct{}),
-		pending:         make(map[string]*pendingCommand),
+		nodeID:             nodeID,
+		sessionID:          sessionID,
+		executorKind:       strings.TrimSpace(hello.GetExecutorKind()),
+		connectedAt:        observedAt,
+		capabilities:       capabilitiesFromHello(hello),
+		controlOutbound:    make(chan *registryv1.ConnectResponse, controlOutboundBufferSize),
+		commandOutbound:    make(chan *registryv1.ConnectResponse, commandOutboundBufferSize),
+		done:               make(chan struct{}),
+		pending:            make(map[string]*pendingCommand),
+		recoveryCandidates: make(map[string]int64),
+		recoveryResults:    make(map[string]registryv1.TerminalSessionRecoveryResult_Status),
 	}
+	_, session.recoveryRequired = session.capabilities[taskCapabilityTerminalExec]
+	session.recoveryComplete = !session.recoveryRequired
 	if capacity := hello.GetTerminalSessionCapacity(); capacity != nil {
 		session.terminalCapacity = terminalSessionCapacitySnapshot{
 			known:              true,
@@ -79,6 +98,95 @@ func newActiveSessionAt(nodeID string, sessionID string, hello *registryv1.Conne
 		}
 	}
 	return session
+}
+
+func (s *activeSession) setRecoveryCandidates(candidates []*registryv1.TerminalSessionRecoveryCandidate) {
+	if s == nil {
+		return
+	}
+	s.recoveryMu.Lock()
+	defer s.recoveryMu.Unlock()
+	s.recoveryCandidates = make(map[string]int64, len(candidates))
+	for _, candidate := range candidates {
+		if candidate == nil {
+			continue
+		}
+		sessionID := strings.TrimSpace(candidate.GetSessionId())
+		if sessionID == "" {
+			continue
+		}
+		s.recoveryCandidates[sessionID] = candidate.GetLeaseExpiresUnixMs()
+	}
+}
+
+func (s *activeSession) recoveryCandidateSnapshot() map[string]int64 {
+	if s == nil {
+		return nil
+	}
+	s.recoveryMu.RLock()
+	defer s.recoveryMu.RUnlock()
+	out := make(map[string]int64, len(s.recoveryCandidates))
+	for sessionID, lease := range s.recoveryCandidates {
+		out[sessionID] = lease
+	}
+	return out
+}
+
+func (s *activeSession) markRecoveryComplete() {
+	if s == nil {
+		return
+	}
+	s.recoveryMu.Lock()
+	s.recoveryComplete = true
+	s.recoveryMu.Unlock()
+}
+
+func (s *activeSession) setRecoveryResults(results map[string]registryv1.TerminalSessionRecoveryResult_Status) {
+	if s == nil {
+		return
+	}
+	s.recoveryMu.Lock()
+	defer s.recoveryMu.Unlock()
+	s.recoveryResults = make(map[string]registryv1.TerminalSessionRecoveryResult_Status, len(results))
+	for sessionID, status := range results {
+		s.recoveryResults[sessionID] = status
+	}
+}
+
+func (s *activeSession) matchesRecoveryResults(report *registryv1.TerminalSessionRecoveryReport) bool {
+	if s == nil || report == nil {
+		return false
+	}
+	s.recoveryMu.RLock()
+	defer s.recoveryMu.RUnlock()
+	if len(report.GetResults()) != len(s.recoveryResults) {
+		return false
+	}
+	seen := make(map[string]struct{}, len(report.GetResults()))
+	for _, result := range report.GetResults() {
+		if result == nil {
+			return false
+		}
+		sessionID := strings.TrimSpace(result.GetSessionId())
+		status, ok := s.recoveryResults[sessionID]
+		if !ok || status != result.GetStatus() {
+			return false
+		}
+		if _, duplicate := seen[sessionID]; duplicate {
+			return false
+		}
+		seen[sessionID] = struct{}{}
+	}
+	return true
+}
+
+func (s *activeSession) isReady() bool {
+	if s == nil {
+		return false
+	}
+	s.recoveryMu.RLock()
+	defer s.recoveryMu.RUnlock()
+	return !s.recoveryRequired || s.recoveryComplete
 }
 
 func (s *activeSession) hasCapability(capability string) bool {

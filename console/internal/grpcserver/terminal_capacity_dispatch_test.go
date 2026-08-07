@@ -33,6 +33,7 @@ func addTerminalCapacityTestWorker(
 		t.Fatalf("upsert worker %s: %v", nodeID, err)
 	}
 	session := newActiveSessionAt(nodeID, "worker-session-"+nodeID, hello, now)
+	session.markRecoveryComplete()
 	svc.swapSession(session)
 	return session
 }

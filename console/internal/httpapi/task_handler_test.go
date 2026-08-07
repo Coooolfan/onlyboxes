@@ -313,6 +313,16 @@ func TestMapTaskTerminalStatusToHTTPSessionCapacity(t *testing.T) {
 	}
 }
 
+func TestMapTaskTerminalStatusToHTTPSessionUnavailable(t *testing.T) {
+	task := grpcserver.TaskSnapshot{
+		Status:    grpcserver.TaskStatusFailed,
+		ErrorCode: terminalExecSessionUnavailableCode,
+	}
+	if got := mapTaskTerminalStatusToHTTP(task); got != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", got)
+	}
+}
+
 func TestCancelTaskTerminalConflict(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, &fakeTaskDispatcher{

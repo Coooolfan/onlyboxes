@@ -1,8 +1,12 @@
 package grpcserver
 
 import (
+	"log/slog"
+	"sort"
 	"strings"
 	"time"
+
+	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
 )
 
 type routeReservationReleaseResult int
@@ -14,13 +18,23 @@ const (
 )
 
 type terminalSessionRoute struct {
-	NodeID         string
-	LastUsedUnixMs int64
+	NodeID             string
+	LastUsedUnixMs     int64
+	LeaseExpiresUnixMs int64
+	RecoveryState      terminalSessionRecoveryState
 	// ReservationID is non-zero only while the first dispatch is provisional.
 	// A successful result confirms the route by clearing it.
 	ReservationID   uint64
 	ProvisionalUses uint64
 }
+
+type terminalSessionRecoveryState uint8
+
+const (
+	terminalSessionRecoveryReady terminalSessionRecoveryState = iota
+	terminalSessionRecoveryUnavailable
+	terminalSessionRecoveryReconciling
+)
 
 func (s *RegistryService) bindTerminalSessionRoute(sessionID string, nodeID string, now time.Time) {
 	if s == nil {
@@ -50,6 +64,7 @@ func (s *RegistryService) bindTerminalSessionRoute(sessionID string, nodeID stri
 	s.terminalSessionToNode[normalizedSessionID] = terminalSessionRoute{
 		NodeID:          normalizedNodeID,
 		LastUsedUnixMs:  nowUnixMs,
+		RecoveryState:   terminalSessionRecoveryReady,
 		ReservationID:   0,
 		ProvisionalUses: 0,
 	}
@@ -95,6 +110,7 @@ func (s *RegistryService) reserveTerminalSessionRoute(sessionID string, preferre
 	s.terminalSessionToNode[normalizedSessionID] = terminalSessionRoute{
 		NodeID:          normalizedNodeID,
 		LastUsedUnixMs:  nowUnixMs,
+		RecoveryState:   terminalSessionRecoveryReady,
 		ReservationID:   reservationID,
 		ProvisionalUses: 1,
 	}
@@ -194,6 +210,197 @@ func (s *RegistryService) touchTerminalSessionRoute(sessionID string, now time.T
 	return route.NodeID, true
 }
 
+func (s *RegistryService) updateTerminalSessionRouteLease(sessionID string, expectedNodeID string, leaseExpiresUnixMs int64, now time.Time) bool {
+	if s == nil || leaseExpiresUnixMs <= 0 {
+		return false
+	}
+	normalizedSessionID := strings.TrimSpace(sessionID)
+	normalizedNodeID := strings.TrimSpace(expectedNodeID)
+	if normalizedSessionID == "" || normalizedNodeID == "" {
+		return false
+	}
+
+	s.terminalRoutesMu.Lock()
+	defer s.terminalRoutesMu.Unlock()
+	route, ok := s.terminalSessionToNode[normalizedSessionID]
+	if !ok || route.NodeID != normalizedNodeID || route.ReservationID != 0 {
+		return false
+	}
+	route.LeaseExpiresUnixMs = leaseExpiresUnixMs
+	route.LastUsedUnixMs = routeNowUnixMs(now)
+	route.RecoveryState = terminalSessionRecoveryReady
+	s.terminalSessionToNode[normalizedSessionID] = route
+	return true
+}
+
+func (s *RegistryService) terminalSessionRouteSnapshot(sessionID string, now time.Time) (terminalSessionRoute, bool) {
+	if s == nil {
+		return terminalSessionRoute{}, false
+	}
+	normalizedSessionID := strings.TrimSpace(sessionID)
+	if normalizedSessionID == "" {
+		return terminalSessionRoute{}, false
+	}
+	nowUnixMs := routeNowUnixMs(now)
+	s.terminalRoutesMu.Lock()
+	defer s.terminalRoutesMu.Unlock()
+	route, ok := s.terminalSessionToNode[normalizedSessionID]
+	if !ok {
+		return terminalSessionRoute{}, false
+	}
+	if route.LeaseExpiresUnixMs > 0 && route.LeaseExpiresUnixMs <= nowUnixMs {
+		s.deleteTerminalSessionRouteLocked(normalizedSessionID, route)
+		return terminalSessionRoute{}, false
+	}
+	return route, true
+}
+
+func (s *RegistryService) beginTerminalSessionRecovery(nodeID string, now time.Time) []*registryv1.TerminalSessionRecoveryCandidate {
+	if s == nil {
+		return nil
+	}
+	normalizedNodeID := strings.TrimSpace(nodeID)
+	if normalizedNodeID == "" {
+		return nil
+	}
+	nowUnixMs := routeNowUnixMs(now)
+	s.terminalRoutesMu.Lock()
+	defer s.terminalRoutesMu.Unlock()
+	index := s.terminalNodeToSessionIDIndex[normalizedNodeID]
+	candidates := make([]*registryv1.TerminalSessionRecoveryCandidate, 0, len(index))
+	for sessionID := range index {
+		route, ok := s.terminalSessionToNode[sessionID]
+		if !ok || route.NodeID != normalizedNodeID {
+			continue
+		}
+		leaseExpiresUnixMs := route.LeaseExpiresUnixMs
+		if leaseExpiresUnixMs <= 0 && s.terminalRouteTTL > 0 {
+			leaseExpiresUnixMs = route.LastUsedUnixMs + s.terminalRouteTTL.Milliseconds()
+		}
+		if route.ReservationID != 0 || leaseExpiresUnixMs <= nowUnixMs {
+			s.deleteTerminalSessionRouteLocked(sessionID, route)
+			continue
+		}
+		route.LeaseExpiresUnixMs = leaseExpiresUnixMs
+		route.RecoveryState = terminalSessionRecoveryReconciling
+		s.terminalSessionToNode[sessionID] = route
+		candidates = append(candidates, &registryv1.TerminalSessionRecoveryCandidate{
+			SessionId:          sessionID,
+			LeaseExpiresUnixMs: leaseExpiresUnixMs,
+		})
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].GetSessionId() < candidates[j].GetSessionId() })
+	return candidates
+}
+
+func (s *RegistryService) markTerminalSessionRoutesUnavailable(nodeID string) int {
+	if s == nil {
+		return 0
+	}
+	normalizedNodeID := strings.TrimSpace(nodeID)
+	if normalizedNodeID == "" {
+		return 0
+	}
+	s.terminalRoutesMu.Lock()
+	defer s.terminalRoutesMu.Unlock()
+	unavailable := 0
+	for sessionID := range s.terminalNodeToSessionIDIndex[normalizedNodeID] {
+		route, ok := s.terminalSessionToNode[sessionID]
+		if !ok || route.NodeID != normalizedNodeID {
+			continue
+		}
+		if route.ReservationID != 0 {
+			s.deleteTerminalSessionRouteLocked(sessionID, route)
+			continue
+		}
+		route.RecoveryState = terminalSessionRecoveryUnavailable
+		s.terminalSessionToNode[sessionID] = route
+		unavailable++
+	}
+	return unavailable
+}
+
+func (s *RegistryService) applyTerminalSessionRecoveryReport(session *activeSession, report *registryv1.TerminalSessionRecoveryReport, now time.Time) error {
+	if s == nil || session == nil || report == nil {
+		return nil
+	}
+	candidates := session.recoveryCandidateSnapshot()
+	results := make(map[string]registryv1.TerminalSessionRecoveryResult_Status, len(report.GetResults()))
+	for _, result := range report.GetResults() {
+		if result == nil {
+			continue
+		}
+		sessionID := strings.TrimSpace(result.GetSessionId())
+		if _, ok := candidates[sessionID]; !ok {
+			return &terminalRecoveryValidationError{message: "recovery result is not a candidate"}
+		}
+		if _, duplicate := results[sessionID]; duplicate {
+			return &terminalRecoveryValidationError{message: "duplicate recovery result"}
+		}
+		status := result.GetStatus()
+		if status != registryv1.TerminalSessionRecoveryResult_RECOVERED && status != registryv1.TerminalSessionRecoveryResult_MISSING && status != registryv1.TerminalSessionRecoveryResult_INVALID {
+			return &terminalRecoveryValidationError{message: "invalid recovery status"}
+		}
+		results[sessionID] = status
+	}
+	if len(results) != len(candidates) {
+		return &terminalRecoveryValidationError{message: "recovery report must cover every candidate"}
+	}
+
+	nowUnixMs := routeNowUnixMs(now)
+	recovered := 0
+	failures := 0
+	s.terminalRoutesMu.Lock()
+	for sessionID := range candidates {
+		if route, ok := s.terminalSessionToNode[sessionID]; ok && route.NodeID != session.nodeID {
+			s.terminalRoutesMu.Unlock()
+			return &terminalRecoveryValidationError{message: "recovery candidate no longer belongs to worker"}
+		}
+	}
+	for sessionID, leaseExpiresUnixMs := range candidates {
+		route, ok := s.terminalSessionToNode[sessionID]
+		if !ok || route.NodeID != session.nodeID {
+			continue
+		}
+		status := results[sessionID]
+		if status != registryv1.TerminalSessionRecoveryResult_RECOVERED || (leaseExpiresUnixMs > 0 && leaseExpiresUnixMs <= nowUnixMs) {
+			s.deleteTerminalSessionRouteLocked(sessionID, route)
+			failures++
+			continue
+		}
+		route.RecoveryState = terminalSessionRecoveryReady
+		route.LastUsedUnixMs = nowUnixMs
+		s.terminalSessionToNode[sessionID] = route
+		recovered++
+	}
+	unavailable := s.countTerminalSessionRoutesByStateLocked(terminalSessionRecoveryUnavailable)
+	s.terminalRoutesMu.Unlock()
+	session.setRecoveryResults(results)
+	slog.Info(
+		"terminal session recovery metrics",
+		"executor_kind", session.executorKind,
+		"recovery_duration_ms", now.Sub(session.connectedAt).Milliseconds(),
+		"recovered_session_count", recovered,
+		"recovery_failures", failures,
+		"unavailable_route_count", unavailable,
+	)
+	return nil
+}
+
+func (s *RegistryService) countTerminalSessionRoutesByStateLocked(state terminalSessionRecoveryState) int {
+	count := 0
+	for _, route := range s.terminalSessionToNode {
+		if route.RecoveryState == state && route.ReservationID == 0 {
+			count++
+		}
+	}
+	return count
+}
+
+type terminalRecoveryValidationError struct{ message string }
+
+func (e *terminalRecoveryValidationError) Error() string { return e.message }
+
 // clearTerminalSessionRouteReservation releases one provisional dispatch. The
 // route is removed only after every dispatch sharing the reservation failed.
 func (s *RegistryService) clearTerminalSessionRouteReservation(sessionID string, expectedNodeID string, reservationID uint64) routeReservationReleaseResult {
@@ -258,40 +465,11 @@ func (s *RegistryService) deleteTerminalSessionRouteLocked(sessionID string, rou
 	}
 }
 
-func (s *RegistryService) clearTerminalSessionRoutesByNode(nodeID string) {
-	if s == nil {
-		return
-	}
-	normalizedNodeID := strings.TrimSpace(nodeID)
-	if normalizedNodeID == "" {
-		return
-	}
-
-	s.terminalRoutesMu.Lock()
-	defer s.terminalRoutesMu.Unlock()
-
-	index := s.terminalNodeToSessionIDIndex[normalizedNodeID]
-	if index == nil {
-		return
-	}
-	for sessionID := range index {
-		route, ok := s.terminalSessionToNode[sessionID]
-		if !ok || route.NodeID != normalizedNodeID {
-			continue
-		}
-		delete(s.terminalSessionToNode, sessionID)
-	}
-	delete(s.terminalNodeToSessionIDIndex, normalizedNodeID)
-}
-
 func (s *RegistryService) pruneExpiredTerminalSessionRoutes(now time.Time) int {
 	if s == nil {
 		return 0
 	}
 	ttl := s.terminalRouteTTL
-	if ttl <= 0 {
-		return 0
-	}
 	nowUnixMs := routeNowUnixMs(now)
 	expireBefore := nowUnixMs - ttl.Milliseconds()
 
@@ -300,7 +478,11 @@ func (s *RegistryService) pruneExpiredTerminalSessionRoutes(now time.Time) int {
 	defer s.terminalRoutesMu.Unlock()
 
 	for sessionID, route := range s.terminalSessionToNode {
-		if route.LastUsedUnixMs > expireBefore {
+		if route.LeaseExpiresUnixMs > 0 {
+			if route.LeaseExpiresUnixMs > nowUnixMs {
+				continue
+			}
+		} else if ttl <= 0 || route.LastUsedUnixMs > expireBefore {
 			continue
 		}
 		delete(s.terminalSessionToNode, sessionID)
