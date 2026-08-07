@@ -45,9 +45,42 @@ func buildCommandResultWithContext(baseCtx context.Context, dispatch *registryv1
 		return buildTerminalExecCommandResult(baseCtx, commandID, dispatch)
 	case terminalResourceCapabilityName:
 		return buildTerminalResourceCommandResult(baseCtx, commandID, dispatch)
+	case terminalProxyCapabilityName:
+		return buildTerminalProxyCommandResult(baseCtx, commandID, dispatch)
 	default:
 		return commandErrorResult(commandID, "unsupported_capability", fmt.Sprintf("capability %q is not supported", dispatch.GetCapability()))
 	}
+}
+
+type terminalProxyPayload struct {
+	SessionID string `json:"session_id"`
+	Port      int    `json:"port"`
+}
+
+func buildTerminalProxyCommandResult(baseCtx context.Context, commandID string, dispatch *registryv1.CommandDispatch) *registryv1.ConnectRequest {
+	var decoded terminalProxyPayload
+	if err := json.Unmarshal(dispatch.GetPayloadJson(), &decoded); err != nil || strings.TrimSpace(decoded.SessionID) == "" || decoded.Port < 1 || decoded.Port > 65535 {
+		return commandErrorResult(commandID, terminalExecCodeInvalidPayload, "terminalProxy requires session_id and a port between 1 and 65535")
+	}
+	commandCtx := baseCtx
+	if commandCtx == nil {
+		commandCtx = context.Background()
+	}
+	result, err := runTerminalProxy(commandCtx, decoded.SessionID, decoded.Port, time.Now())
+	if err != nil {
+		var terminalErr *terminalExecError
+		if errors.As(err, &terminalErr) {
+			return commandErrorResult(commandID, terminalErr.Code(), terminalErr.Error())
+		}
+		return commandErrorResult(commandID, "execution_failed", fmt.Sprintf("terminalProxy resolution failed: %v", err))
+	}
+	payload, err := json.Marshal(result)
+	if err != nil {
+		return commandErrorResult(commandID, "encode_failed", "failed to encode terminalProxy payload")
+	}
+	return &registryv1.ConnectRequest{Payload: &registryv1.ConnectRequest_CommandResult{CommandResult: &registryv1.CommandResult{
+		CommandId: commandID, PayloadJson: payload, CompletedUnixMs: time.Now().UnixMilli(),
+	}}}
 }
 
 func buildEchoCommandResult(commandID string, dispatch *registryv1.CommandDispatch) *registryv1.ConnectRequest {
@@ -306,4 +339,8 @@ func runTerminalExecUnavailable(context.Context, terminalExecRequest) (terminalE
 
 func runTerminalResourceUnavailable(context.Context, terminalResourceRequest) (terminalResourceRunResult, error) {
 	return terminalResourceRunResult{}, newTerminalExecError("execution_failed", terminalExecNotReadyMessage)
+}
+
+func runTerminalProxyUnavailable(context.Context, string, int, time.Time) (terminalProxyRunResult, error) {
+	return terminalProxyRunResult{}, newTerminalExecError("execution_failed", terminalExecNotReadyMessage)
 }

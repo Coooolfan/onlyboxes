@@ -63,6 +63,7 @@ type Config struct {
 	PythonExecMaxInflight       int
 	TerminalExecMaxInflight     int
 	TerminalResourceMaxInflight int
+	ProxyEnabled                bool
 	LogLevel                    string
 	LogFormat                   string
 	LogAddSource                bool
@@ -128,6 +129,7 @@ func Load() Config {
 		PythonExecMaxInflight:       src.positiveInt("WORKER_PYTHON_EXEC_MAX_INFLIGHT", defaultPythonExecMaxInflight),
 		TerminalExecMaxInflight:     src.positiveInt("WORKER_TERMINAL_EXEC_MAX_INFLIGHT", defaultTerminalExecMaxInflight),
 		TerminalResourceMaxInflight: src.positiveInt("WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT", defaultResourceMaxInflight),
+		ProxyEnabled:                src.boolValue("WORKER_PROXY_ENABLED", false),
 		LogLevel:                    src.logLevel("WORKER_LOG_LEVEL", defaultLogLevel),
 		LogFormat:                   src.logFormat("WORKER_LOG_FORMAT", defaultLogFormat),
 		LogAddSource:                src.boolValue("WORKER_LOG_ADD_SOURCE", false),

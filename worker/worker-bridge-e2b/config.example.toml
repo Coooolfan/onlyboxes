@@ -47,6 +47,9 @@ python_exec_max_inflight = 32
 terminal_exec_max_inflight = 64
 terminal_resource_max_inflight = 128
 
+# Public preview: Console resolves each request to the E2B sandbox origin.
+proxy_enabled = false
+
 log_level = "info"
 log_format = "json"
 log_add_source = false

@@ -15,13 +15,15 @@ import (
 )
 
 const (
-	minHeartbeatInterval         = 1 * time.Second
-	initialReconnectDelay        = 1 * time.Second
-	maxReconnectDelay            = 15 * time.Second
-	maxProtocolInt32             = int64(1<<31 - 1)
-	echoCapabilityName           = "echo"
-	pythonExecCapabilityName     = "pythonexec"
-	pythonExecCapabilityDeclared = "pythonExec"
+	minHeartbeatInterval            = 1 * time.Second
+	initialReconnectDelay           = 1 * time.Second
+	maxReconnectDelay               = 15 * time.Second
+	maxProtocolInt32                = int64(1<<31 - 1)
+	echoCapabilityName              = "echo"
+	pythonExecCapabilityName        = "pythonexec"
+	pythonExecCapabilityDeclared    = "pythonExec"
+	terminalProxyCapabilityName     = "terminalproxy"
+	terminalProxyCapabilityDeclared = "terminalProxy"
 )
 
 var waitReconnect = waitReconnectDelay
@@ -31,6 +33,7 @@ var runPythonExec = func(context.Context, string) (pythonExecRunResult, error) {
 }
 var runTerminalExec = runTerminalExecUnavailable
 var runTerminalResource = runTerminalResourceUnavailable
+var runTerminalProxy = runTerminalProxyUnavailable
 var activeSessionCountFn = func() int32 { return 0 }
 
 func Run(ctx context.Context, cfg config.Config) error {
@@ -54,11 +57,12 @@ func Run(ctx context.Context, cfg config.Config) error {
 	}
 
 	backend, err := e2b.NewClient(e2b.Config{
-		APIKey:         cfg.E2BAPIKey,
-		APIURL:         cfg.E2BAPIURL,
-		Domain:         cfg.E2BDomain,
-		SandboxURL:     cfg.E2BSandboxURL,
-		RequestTimeout: cfg.E2BRequestTimeout,
+		APIKey:                cfg.E2BAPIKey,
+		APIURL:                cfg.E2BAPIURL,
+		Domain:                cfg.E2BDomain,
+		SandboxURL:            cfg.E2BSandboxURL,
+		RequestTimeout:        cfg.E2BRequestTimeout,
+		RestrictPublicTraffic: cfg.ProxyEnabled,
 	})
 	if err != nil {
 		return fmt.Errorf("configure E2B client: %w", err)
@@ -87,12 +91,15 @@ func Run(ctx context.Context, cfg config.Config) error {
 	runTerminalExec = terminalManager.Execute
 	originalRunTerminalResource := runTerminalResource
 	runTerminalResource = terminalManager.ResolveResource
+	originalRunTerminalProxy := runTerminalProxy
+	runTerminalProxy = terminalManager.ResolveProxy
 	originalActiveSessionCountFn := activeSessionCountFn
 	activeSessionCountFn = terminalManager.ActiveSessionCount
 	defer func() {
 		runPythonExec = originalRunPythonExec
 		runTerminalExec = originalRunTerminalExec
 		runTerminalResource = originalRunTerminalResource
+		runTerminalProxy = originalRunTerminalProxy
 		activeSessionCountFn = originalActiveSessionCountFn
 		terminalManager.Close()
 	}()

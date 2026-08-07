@@ -11,6 +11,7 @@ import (
 	"time"
 
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
+	"github.com/onlyboxes/onlyboxes/api/proxytoken"
 	"github.com/onlyboxes/onlyboxes/worker/worker-bridge-e2b/internal/config"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -60,6 +61,27 @@ func TestBuildHelloAdvertisesExplicitUnlimitedTerminalCapacity(t *testing.T) {
 	capacity := hello.GetTerminalSessionCapacity()
 	if capacity == nil || capacity.GetMaxActiveSessions() != 0 {
 		t.Fatalf("expected explicit unlimited terminal capacity, got %#v", capacity)
+	}
+}
+
+func TestBuildHelloAdvertisesE2BDirectProxy(t *testing.T) {
+	cfg := consoleTestConfig()
+	cfg.ProxyEnabled = true
+	hello, err := buildHello(cfg)
+	if err != nil {
+		t.Fatalf("buildHello failed: %v", err)
+	}
+	if hello.GetLabels()[proxytoken.ProxyDirectLabel] != proxytoken.ProxyDirectE2B {
+		t.Fatalf("missing E2B direct proxy label: %#v", hello.GetLabels())
+	}
+	found := false
+	for _, capability := range hello.GetCapabilities() {
+		if capability.GetName() == terminalProxyCapabilityDeclared {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("missing terminalProxy capability")
 	}
 }
 
