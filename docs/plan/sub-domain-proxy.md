@@ -13,7 +13,7 @@ https://<routeKey>.public-preview.example.com
 本期仅支持：
 
 - 单 Console；
-- `worker-docker` 与 Linux Docker Engine；
+- `worker-docker`、`worker-boxlite` 与 `worker-bridge-e2b`；
 - HTTP、SSE、WebSocket；
 - Worker 固定代理端口，不映射随机宿主机端口；
 - 代理访问不续租，lease 到期后销毁 Sandbox 并断开连接；
@@ -25,8 +25,8 @@ https://<routeKey>.public-preview.example.com
 Browser
   -> Nginx（按 Host 提取 routeKey）
   -> Console 内部子请求（解析 Session、Worker、Port）
-  -> Nginx 携带短期 Route Token 请求 Worker 固定端口
-  -> Worker 转发到对应 Sandbox IP:Port
+  -> Docker/Boxlite：Nginx 携带短期 Route Token 请求 Worker 固定端口，再转发到 Sandbox
+  -> E2B：Console 向 Worker 查询 sandbox origin，Nginx 携带内部 traffic token 直连 E2B
 ```
 
 浏览器始终只访问公开子域，不接触 Worker 地址、Session ID 或 Route Token。
@@ -65,7 +65,7 @@ X-Onlyboxes-Upstream: 10.0.2.15:8091
 X-Onlyboxes-Route-Token: <token>
 ```
 
-Console 不判断 Worker 本地 lease；Session 是否仍存在由 Worker 最终确认。Console 根据当前 Worker 连接签发 Route Token。
+Console 不判断 Worker 本地 lease；Session 是否仍存在由 Worker 最终确认。Console 根据当前 Docker/Boxlite Worker 连接签发 Route Token；E2B 每次 resolve 都通过内部 `terminalProxy` capability 返回当前 sandbox origin。
 
 ## Route Token
 

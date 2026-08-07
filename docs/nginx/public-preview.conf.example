@@ -21,6 +21,9 @@ server {
 
     client_max_body_size 1g;
 
+    # Replace these with the recursive resolvers used by this deployment.
+    resolver 1.1.1.1 1.0.0.1 valid=30s ipv6=off;
+
     if ($onlyboxes_preview_host_valid = 0) {
         return 403;
     }
@@ -44,12 +47,20 @@ server {
     location / {
         auth_request /_onlyboxes_proxy_resolve;
         auth_request_set $onlyboxes_upstream $upstream_http_x_onlyboxes_upstream;
+        auth_request_set $onlyboxes_upstream_host $upstream_http_x_onlyboxes_upstream_host;
         auth_request_set $onlyboxes_route_token $upstream_http_x_onlyboxes_route_token;
+        auth_request_set $onlyboxes_upstream_traffic_token $upstream_http_x_onlyboxes_upstream_traffic_token;
 
         proxy_http_version 1.1;
-        proxy_pass http://$onlyboxes_upstream;
+        # Console returns either a Worker URL or the E2B sandbox origin.
+        proxy_pass $onlyboxes_upstream;
 
-        proxy_set_header Host $host;
+        proxy_set_header Host $onlyboxes_upstream_host;
+        proxy_ssl_server_name on;
+        proxy_ssl_name $onlyboxes_upstream_host;
+        proxy_ssl_verify on;
+        proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+        proxy_ssl_verify_depth 3;
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Host $host;
         proxy_set_header X-Forwarded-Proto $scheme;
@@ -59,6 +70,7 @@ server {
 
         # Always replace client-supplied internal headers.
         proxy_set_header X-Onlyboxes-Route-Token $onlyboxes_route_token;
+        proxy_set_header e2b-traffic-access-token $onlyboxes_upstream_traffic_token;
         proxy_set_header X-Onlyboxes-Upstream "";
         proxy_set_header X-Onlyboxes-Internal-Token "";
         proxy_set_header X-Original-Host "";
@@ -72,7 +84,10 @@ server {
 
         proxy_hide_header X-Onlyboxes-Route-Token;
         proxy_hide_header X-Onlyboxes-Upstream;
+        proxy_hide_header X-Onlyboxes-Upstream-Host;
+        proxy_hide_header X-Onlyboxes-Upstream-Traffic-Token;
         proxy_hide_header X-Onlyboxes-Internal-Token;
         proxy_hide_header X-Original-Host;
+        proxy_hide_header e2b-traffic-access-token;
     }
 }

@@ -58,7 +58,7 @@ http {
         location = /internal/v1/proxy/resolve {
             if (\$http_x_onlyboxes_internal_token != "replace-with-console-proxy-internal-token") { return 401; }
             if (\$http_x_original_host != "$preview_host") { return 403; }
-            add_header X-Onlyboxes-Upstream "$worker_ip:8091" always;
+            add_header X-Onlyboxes-Upstream "http://$worker_ip:8091" always;
             add_header X-Onlyboxes-Route-Token "route-token-from-console" always;
             return 204;
         }

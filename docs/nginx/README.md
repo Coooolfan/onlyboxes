@@ -1,6 +1,6 @@
 # Public preview deployment
 
-本功能仅支持单 Console、`worker-docker` 和 Linux Docker Engine。Nginx 示例按 `1.26` 验证。公开 URL 是匿名能力链接，routeKey 等同于访问凭据。
+本功能支持单 Console 以及 `worker-docker`、`worker-boxlite`、`worker-bridge-e2b`。Nginx 示例按 `1.26` 验证。公开 URL 是匿名能力链接，routeKey 等同于访问凭据。
 
 ## 网络要求
 
@@ -11,6 +11,7 @@
 | Internet | Nginx | `443/tcp` | 公开预览 |
 | Nginx | Console | Console HTTP 端口 | `auth_request` |
 | Nginx | Worker | 固定代理端口，默认 `8091/tcp` | Sandbox 流量 |
+| Nginx | E2B sandbox origin | `443/tcp` | E2B 公开预览数据面 |
 | Worker | Console | Console gRPC 端口 | Worker 注册与命令 |
 
 Console HTTP 端口和 Worker 代理端口不得直接暴露给 Internet。Worker 代理入口只允许 Nginx 来源，Console 的 `/internal/v1/proxy/resolve` 也应只允许 Nginx 所在网络访问。
@@ -34,17 +35,19 @@ openssl rand -hex 32
 ```bash
 CONSOLE_PROXY_ENABLED=true
 CONSOLE_PROXY_PUBLIC_BASE_DOMAIN=public-preview.example.com
+CONSOLE_PROXY_PUBLIC_SCHEME=https
 CONSOLE_PROXY_INTERNAL_AUTH_TOKEN=<nginx-console-secret>
 CONSOLE_PROXY_ALLOWED_WORKER_CIDRS=10.20.0.0/16
 CONSOLE_PROXY_ALLOWED_WORKER_PORTS=8091
+CONSOLE_PROXY_ALLOWED_DIRECT_DOMAINS=e2b.app
 CONSOLE_PROXY_ROUTE_TTL_SEC=86400
 ```
 
-CIDR 和端口 allowlist 必须只包含 Nginx 实际可达的 Worker 入口。Console 只接受单播 IP endpoint，不接受主机名、loopback、unspecified 或 allowlist 外地址。Route TTL 最大为 `604800` 秒（7 天），超出时 Console 拒绝启动。
+CIDR 和端口 allowlist 必须只包含 Nginx 实际可达的 Worker 入口。`CONSOLE_PROXY_PUBLIC_SCHEME` 仅接受 `http` 或 `https`，生产环境应使用默认值 `https`；可信的本地开发入口可显式设置为 `http`。Console 只接受单播 IP endpoint，不接受主机名、loopback、unspecified 或 allowlist 外地址。Route TTL 最大为 `604800` 秒（7 天），超出时 Console 拒绝启动。
 
 ## 3. Worker
 
-在 Linux Docker host 上配置每个 `worker-docker`：
+Docker worker：
 
 ```bash
 WORKER_PROXY_ENABLED=true
@@ -53,6 +56,16 @@ WORKER_PROXY_ADVERTISE_ADDR=10.20.1.15:8091
 ```
 
 listen 与 advertise 端口必须相同，advertise IP 必须可由 Nginx 直接访问并匹配 Console allowlist。Worker 启动时创建或验证 `onlyboxes-sandbox` bridge，并要求 `com.docker.network.bridge.enable_icc=false`。Docker daemon 必须启用自己的 iptables/nftables 防火墙管理；禁止使用会绕过 bridge 隔离的 `iptables=false` 或等价配置。代理 listener 启动失败时 Worker 不会向 Console 注册。
+
+Boxlite worker 使用同样的三个变量，并额外配置创建 VM 时要映射的 guest 端口：
+
+```bash
+WORKER_PROXY_SANDBOX_PORTS=3000,8080
+```
+
+每个 VM 的实际 host 映射只绑定随机 loopback 端口；未列出的 guest port 无法创建公开 route 数据面连接。
+
+E2B worker 只需设置 `WORKER_PROXY_ENABLED=true`。它不监听数据面端口；Console 通过 worker 内部能力解析 E2B origin，Nginx 随后直接访问 E2B。E2B sandbox 禁止无 token 公网流量，traffic token 只在 Console 与 Nginx 的内部响应头中传递。
 
 ## 4. Nginx
 
@@ -65,7 +78,7 @@ nginx -t
 nginx -s reload
 ```
 
-Nginx 从 Console 接收的 upstream 必须保持为 IP 加端口；不要从客户端 Header 构造 `proxy_pass`。示例会覆盖客户端提供的 Onlyboxes 内部 Header，同时保留 Sandbox 应用自己的 `Authorization` 和 Cookie。
+Nginx 从 Console 接收完整 upstream URL：Docker/Boxlite 指向 allowlist 内 Worker，E2B 指向当前 sandbox origin。不要从客户端 Header 构造 `proxy_pass`。示例会覆盖客户端提供的 Onlyboxes/E2B 内部 Header，同时保留 Sandbox 应用自己的 `Authorization` 和 Cookie。部署时将示例中的公共 DNS resolver 替换为环境使用的递归 resolver，并确认 `proxy_ssl_trusted_certificate` 指向系统 CA bundle；E2B TLS 校验不得关闭。
 
 ## 5. Smoke test
 
