@@ -527,8 +527,9 @@ Success `201`:
 
 Rules and errors:
 
-- `session_id` must belong to the current account and have a confirmed route to an online proxy-enabled `worker-docker`.
+- `session_id` must belong to the current account and have a confirmed route to an online proxy-enabled Docker, Boxlite, or E2B Worker.
 - `port` must be `1..65535`.
+- route URLs use `CONSOLE_PROXY_PUBLIC_SCHEME` (`https` by default) and `CONSOLE_PROXY_PUBLIC_BASE_DOMAIN`; use `http` only for trusted local development.
 - route keys contain 128 random bits encoded as 26 lowercase Base32 characters.
 - each account can hold at most 100 active routes.
 - default route TTL is `86400` seconds, can be changed with `CONSOLE_PROXY_ROUTE_TTL_SEC`, and cannot exceed `604800` seconds (7 days).
@@ -553,7 +554,7 @@ Success `200` returns the current account's routes:
 - `204` deleted.
 - `404` missing, expired, or owned by another account.
 
-The returned preview URL is anonymous: anyone holding it can access the Sandbox service without an Onlyboxes Cookie or Bearer token. Nginx resolves every new HTTP request through the protected internal Console endpoint and receives a fresh 15-second Route Token for the Worker hop. Token expiry does not end an accepted HTTP/SSE/WebSocket connection. Route access does not renew the Sandbox lease. Console restart invalidates all routes.
+The returned preview URL is anonymous: anyone holding it can access the Sandbox service without an Onlyboxes Cookie or Bearer token. Nginx resolves every new HTTP request through the protected internal Console endpoint. Docker and Boxlite receive a fresh 15-second Route Token for the Worker hop; E2B returns the current sandbox origin and an internal traffic token so the data path is browser → Nginx → E2B. Token expiry does not end an accepted HTTP/SSE/WebSocket connection. Route access does not renew the Sandbox lease. Console restart invalidates all routes.
 
 ## 6. Execution Command APIs (Bearer Token)
 
@@ -1060,5 +1061,6 @@ Console responds with:
 - Keep gRPC endpoint private and tunnel/encrypt traffic in production.
 - Public preview requires wildcard DNS/TLS, the deployment guide in `docs/nginx/README.md`, the Nginx configuration in `docs/nginx/public-preview.conf.example`, and network ACLs that allow only Nginx to reach Worker proxy ports.
 - Keep `CONSOLE_PROXY_INTERNAL_AUTH_TOKEN` secret and restrict `CONSOLE_PROXY_ALLOWED_WORKER_CIDRS` / `CONSOLE_PROXY_ALLOWED_WORKER_PORTS` to actual Worker ingress endpoints.
+- Restrict `CONSOLE_PROXY_ALLOWED_DIRECT_DOMAINS` to the E2B domains used by the deployment (default `e2b.app`).
 - Token plaintext and `WORKER_SECRET` are one-time return values.
 - `GET /api/v1/console/tokens/:token_id/value` and `GET /api/v1/workers/:node_id/startup-command` are intentionally `410 Gone`.

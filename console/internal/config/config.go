@@ -22,49 +22,53 @@ const (
 	defaultMCPTokenQueryParam   = "token"
 	defaultProxyRouteTTLSec     = 24 * 60 * 60
 	defaultProxyWorkerPort      = 8091
+	defaultProxyPublicScheme    = "https"
+	defaultProxyDirectDomain    = "e2b.app"
 	defaultLogLevel             = "info"
 	defaultLogFormat            = "json"
 	defaultLogAddSource         = false
 )
 
 type Config struct {
-	ConfigFile              string
-	HTTPAddr                string
-	GRPCAddr                string
-	OfflineTTL              time.Duration
-	ReplayWindow            time.Duration
-	HeartbeatIntervalSec    int32
-	DashboardUsername       string
-	DashboardPassword       string
-	InitialAdminAPIKey      string
-	JITSigningKey           string
-	DashboardJITSigningKey  string
-	DBPath                  string
-	DBBusyTimeoutMS         int
-	HashKey                 string
-	TaskRetentionDays       int
-	ExportFileEndpoint      string
-	ExportFileRegion        string
-	ExportFileBucketName    string
-	ExportFilePrefix        string
-	ExportFileAK            string
-	ExportFileSK            string
-	ExportFileUploadTTL     time.Duration
-	ExportFileDownloadTTL   time.Duration
-	ExportReturnSchema      string
-	EnableRegistration      bool
-	HiddenTools             map[string]bool
-	MCPTokenQueryParam      string
-	MCPToolOverrides        map[string]MCPToolOverride
-	ProxyEnabled            bool
-	ProxyPublicBaseDomain   string
-	ProxyInternalAuthToken  string
-	ProxyAllowedWorkerCIDRs []netip.Prefix
-	ProxyAllowedWorkerPorts []uint16
-	ProxyRouteTTL           time.Duration
-	LogLevel                string
-	LogFormat               string
-	LogAddSource            bool
+	ConfigFile                string
+	HTTPAddr                  string
+	GRPCAddr                  string
+	OfflineTTL                time.Duration
+	ReplayWindow              time.Duration
+	HeartbeatIntervalSec      int32
+	DashboardUsername         string
+	DashboardPassword         string
+	InitialAdminAPIKey        string
+	JITSigningKey             string
+	DashboardJITSigningKey    string
+	DBPath                    string
+	DBBusyTimeoutMS           int
+	HashKey                   string
+	TaskRetentionDays         int
+	ExportFileEndpoint        string
+	ExportFileRegion          string
+	ExportFileBucketName      string
+	ExportFilePrefix          string
+	ExportFileAK              string
+	ExportFileSK              string
+	ExportFileUploadTTL       time.Duration
+	ExportFileDownloadTTL     time.Duration
+	ExportReturnSchema        string
+	EnableRegistration        bool
+	HiddenTools               map[string]bool
+	MCPTokenQueryParam        string
+	MCPToolOverrides          map[string]MCPToolOverride
+	ProxyEnabled              bool
+	ProxyPublicBaseDomain     string
+	ProxyPublicScheme         string
+	ProxyInternalAuthToken    string
+	ProxyAllowedWorkerCIDRs   []netip.Prefix
+	ProxyAllowedWorkerPorts   []uint16
+	ProxyAllowedDirectDomains []string
+	ProxyRouteTTL             time.Duration
+	LogLevel                  string
+	LogFormat                 string
+	LogAddSource              bool
 }
 
 // MCPToolOverride holds optional env-driven overrides for a single MCP tool's
@@ -99,43 +103,45 @@ func Load() Config {
 	proxyRouteTTLSec := src.positiveInt("CONSOLE_PROXY_ROUTE_TTL_SEC", defaultProxyRouteTTLSec)
 
 	return Config{
-		ConfigFile:              src.Path(),
-		HTTPAddr:                src.stringValue("CONSOLE_HTTP_ADDR", defaultHTTPAddr),
-		GRPCAddr:                src.stringValue("CONSOLE_GRPC_ADDR", defaultGRPCAddr),
-		OfflineTTL:              time.Duration(offlineTTLSec) * time.Second,
-		ReplayWindow:            time.Duration(replayWindowSec) * time.Second,
-		HeartbeatIntervalSec:    int32(heartbeatIntervalSec),
-		DashboardUsername:       src.get("CONSOLE_DASHBOARD_USERNAME"),
-		DashboardPassword:       src.get("CONSOLE_DASHBOARD_PASSWORD"),
-		InitialAdminAPIKey:      src.get("CONSOLE_INITIAL_ADMIN_API_KEY"),
-		JITSigningKey:           src.get("CONSOLE_JIT_SIGNING_KEY"),
-		DashboardJITSigningKey:  src.get("CONSOLE_DASHBOARD_JIT_SIGNING_KEY"),
-		DBPath:                  src.stringValue("CONSOLE_DB_PATH", defaultDBPath),
-		DBBusyTimeoutMS:         dbBusyTimeoutMS,
-		HashKey:                 src.get("CONSOLE_HASH_KEY"),
-		TaskRetentionDays:       taskRetentionDays,
-		ExportFileEndpoint:      strings.TrimSpace(src.get("CONSOLE_EXPORT_FILE_ENDPOINT")),
-		ExportFileRegion:        strings.TrimSpace(src.get("CONSOLE_EXPORT_FILE_REGION")),
-		ExportFileBucketName:    strings.TrimSpace(src.get("CONSOLE_EXPORT_FILE_BUCKET_NAME")),
-		ExportFilePrefix:        strings.TrimSpace(src.get("CONSOLE_EXPORT_FILE_EXPORT_PREFIX")),
-		ExportFileAK:            strings.TrimSpace(src.get("CONSOLE_EXPORT_FILE_AK")),
-		ExportFileSK:            strings.TrimSpace(src.get("CONSOLE_EXPORT_FILE_SK")),
-		ExportFileUploadTTL:     time.Duration(exportUploadTTLSec) * time.Second,
-		ExportFileDownloadTTL:   time.Duration(exportDownloadTTLSec) * time.Second,
-		ExportReturnSchema:      src.exportReturnSchema("CONSOLE_EXPORT_RETURN_SCHEMA"),
-		EnableRegistration:      src.boolValue("CONSOLE_ENABLE_REGISTRATION", false),
-		HiddenTools:             src.stringSet("CONSOLE_HIDDEN_TOOLS"),
-		MCPTokenQueryParam:      src.trimmedStringValue("CONSOLE_MCP_TOKEN_QUERY_PARAM", defaultMCPTokenQueryParam),
-		MCPToolOverrides:        src.mcpToolOverrides(),
-		ProxyEnabled:            src.boolValue("CONSOLE_PROXY_ENABLED", false),
-		ProxyPublicBaseDomain:   strings.TrimSpace(strings.ToLower(src.get("CONSOLE_PROXY_PUBLIC_BASE_DOMAIN"))),
-		ProxyInternalAuthToken:  strings.TrimSpace(src.get("CONSOLE_PROXY_INTERNAL_AUTH_TOKEN")),
-		ProxyAllowedWorkerCIDRs: parseCIDRList(src.get("CONSOLE_PROXY_ALLOWED_WORKER_CIDRS")),
-		ProxyAllowedWorkerPorts: parsePortList(src.get("CONSOLE_PROXY_ALLOWED_WORKER_PORTS")),
-		ProxyRouteTTL:           time.Duration(proxyRouteTTLSec) * time.Second,
-		LogLevel:                src.logLevel("CONSOLE_LOG_LEVEL", defaultLogLevel),
-		LogFormat:               src.logFormat("CONSOLE_LOG_FORMAT", defaultLogFormat),
-		LogAddSource:            src.boolValue("CONSOLE_LOG_ADD_SOURCE", defaultLogAddSource),
+		ConfigFile:                src.Path(),
+		HTTPAddr:                  src.stringValue("CONSOLE_HTTP_ADDR", defaultHTTPAddr),
+		GRPCAddr:                  src.stringValue("CONSOLE_GRPC_ADDR", defaultGRPCAddr),
+		OfflineTTL:                time.Duration(offlineTTLSec) * time.Second,
+		ReplayWindow:              time.Duration(replayWindowSec) * time.Second,
+		HeartbeatIntervalSec:      int32(heartbeatIntervalSec),
+		DashboardUsername:         src.get("CONSOLE_DASHBOARD_USERNAME"),
+		DashboardPassword:         src.get("CONSOLE_DASHBOARD_PASSWORD"),
+		InitialAdminAPIKey:        src.get("CONSOLE_INITIAL_ADMIN_API_KEY"),
+		JITSigningKey:             src.get("CONSOLE_JIT_SIGNING_KEY"),
+		DashboardJITSigningKey:    src.get("CONSOLE_DASHBOARD_JIT_SIGNING_KEY"),
+		DBPath:                    src.stringValue("CONSOLE_DB_PATH", defaultDBPath),
+		DBBusyTimeoutMS:           dbBusyTimeoutMS,
+		HashKey:                   src.get("CONSOLE_HASH_KEY"),
+		TaskRetentionDays:         taskRetentionDays,
+		ExportFileEndpoint:        strings.TrimSpace(src.get("CONSOLE_EXPORT_FILE_ENDPOINT")),
+		ExportFileRegion:          strings.TrimSpace(src.get("CONSOLE_EXPORT_FILE_REGION")),
+		ExportFileBucketName:      strings.TrimSpace(src.get("CONSOLE_EXPORT_FILE_BUCKET_NAME")),
+		ExportFilePrefix:          strings.TrimSpace(src.get("CONSOLE_EXPORT_FILE_EXPORT_PREFIX")),
+		ExportFileAK:              strings.TrimSpace(src.get("CONSOLE_EXPORT_FILE_AK")),
+		ExportFileSK:              strings.TrimSpace(src.get("CONSOLE_EXPORT_FILE_SK")),
+		ExportFileUploadTTL:       time.Duration(exportUploadTTLSec) * time.Second,
+		ExportFileDownloadTTL:     time.Duration(exportDownloadTTLSec) * time.Second,
+		ExportReturnSchema:        src.exportReturnSchema("CONSOLE_EXPORT_RETURN_SCHEMA"),
+		EnableRegistration:        src.boolValue("CONSOLE_ENABLE_REGISTRATION", false),
+		HiddenTools:               src.stringSet("CONSOLE_HIDDEN_TOOLS"),
+		MCPTokenQueryParam:        src.trimmedStringValue("CONSOLE_MCP_TOKEN_QUERY_PARAM", defaultMCPTokenQueryParam),
+		MCPToolOverrides:          src.mcpToolOverrides(),
+		ProxyEnabled:              src.boolValue("CONSOLE_PROXY_ENABLED", false),
+		ProxyPublicBaseDomain:     strings.TrimSpace(strings.ToLower(src.get("CONSOLE_PROXY_PUBLIC_BASE_DOMAIN"))),
+		ProxyPublicScheme:         strings.ToLower(src.trimmedStringValue("CONSOLE_PROXY_PUBLIC_SCHEME", defaultProxyPublicScheme)),
+		ProxyInternalAuthToken:    strings.TrimSpace(src.get("CONSOLE_PROXY_INTERNAL_AUTH_TOKEN")),
+		ProxyAllowedWorkerCIDRs:   parseCIDRList(src.get("CONSOLE_PROXY_ALLOWED_WORKER_CIDRS")),
+		ProxyAllowedWorkerPorts:   parsePortList(src.get("CONSOLE_PROXY_ALLOWED_WORKER_PORTS")),
+		ProxyAllowedDirectDomains: parseDomainList(src.trimmedStringValue("CONSOLE_PROXY_ALLOWED_DIRECT_DOMAINS", defaultProxyDirectDomain)),
+		ProxyRouteTTL:             time.Duration(proxyRouteTTLSec) * time.Second,
+		LogLevel:                  src.logLevel("CONSOLE_LOG_LEVEL", defaultLogLevel),
+		LogFormat:                 src.logFormat("CONSOLE_LOG_FORMAT", defaultLogFormat),
+		LogAddSource:              src.boolValue("CONSOLE_LOG_ADD_SOURCE", defaultLogAddSource),
 	}
 }
 
@@ -288,6 +294,30 @@ func parsePortList(raw string) []uint16 {
 		return nil
 	}
 	return ports
+}
+
+func parseDomainList(raw string) []string {
+	value := strings.TrimSpace(raw)
+	items := strings.Split(value, ",")
+	if strings.HasPrefix(value, "[") {
+		if err := json.Unmarshal([]byte(value), &items); err != nil {
+			return nil
+		}
+	}
+	result := make([]string, 0, len(items))
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		domain := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(item)), ".")
+		if domain == "" || strings.ContainsAny(domain, "/:@?#*") {
+			continue
+		}
+		if _, exists := seen[domain]; exists {
+			continue
+		}
+		seen[domain] = struct{}{}
+		result = append(result, domain)
+	}
+	return result
 }
 
 func normalizeToolKey(value string) string {

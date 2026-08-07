@@ -28,6 +28,7 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("CONSOLE_MCP_TOKEN_QUERY_PARAM", "")
 	t.Setenv("CONSOLE_PROXY_ENABLED", "")
 	t.Setenv("CONSOLE_PROXY_PUBLIC_BASE_DOMAIN", "")
+	t.Setenv("CONSOLE_PROXY_PUBLIC_SCHEME", "")
 	t.Setenv("CONSOLE_PROXY_INTERNAL_AUTH_TOKEN", "")
 	t.Setenv("CONSOLE_PROXY_ALLOWED_WORKER_CIDRS", "")
 	t.Setenv("CONSOLE_PROXY_ALLOWED_WORKER_PORTS", "")
@@ -82,8 +83,14 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.ProxyEnabled || cfg.ProxyPublicBaseDomain != "" || cfg.ProxyInternalAuthToken != "" || len(cfg.ProxyAllowedWorkerCIDRs) != 0 {
 		t.Fatalf("expected proxy disabled by default, got %#v", cfg)
 	}
+	if cfg.ProxyPublicScheme != defaultProxyPublicScheme {
+		t.Fatalf("expected default proxy public scheme %q, got %q", defaultProxyPublicScheme, cfg.ProxyPublicScheme)
+	}
 	if len(cfg.ProxyAllowedWorkerPorts) != 1 || cfg.ProxyAllowedWorkerPorts[0] != defaultProxyWorkerPort {
 		t.Fatalf("unexpected default proxy worker ports: %#v", cfg.ProxyAllowedWorkerPorts)
+	}
+	if len(cfg.ProxyAllowedDirectDomains) != 1 || cfg.ProxyAllowedDirectDomains[0] != defaultProxyDirectDomain {
+		t.Fatalf("unexpected default direct proxy domains: %#v", cfg.ProxyAllowedDirectDomains)
 	}
 	if cfg.ProxyRouteTTL != time.Duration(defaultProxyRouteTTLSec)*time.Second {
 		t.Fatalf("unexpected proxy route TTL: %s", cfg.ProxyRouteTTL)
@@ -120,9 +127,11 @@ func TestLoadReadsDashboardCredentialsAndDurations(t *testing.T) {
 	t.Setenv("CONSOLE_MCP_TOKEN_QUERY_PARAM", "access_token")
 	t.Setenv("CONSOLE_PROXY_ENABLED", "true")
 	t.Setenv("CONSOLE_PROXY_PUBLIC_BASE_DOMAIN", "Public-Preview.Example.COM")
+	t.Setenv("CONSOLE_PROXY_PUBLIC_SCHEME", "HTTP")
 	t.Setenv("CONSOLE_PROXY_INTERNAL_AUTH_TOKEN", "internal-proxy-secret")
 	t.Setenv("CONSOLE_PROXY_ALLOWED_WORKER_CIDRS", "10.0.0.0/8, 2001:db8::/32, invalid,10.0.0.0/8")
 	t.Setenv("CONSOLE_PROXY_ALLOWED_WORKER_PORTS", "8091, 18091,invalid,8091")
+	t.Setenv("CONSOLE_PROXY_ALLOWED_DIRECT_DOMAINS", "e2b.app, Sandbox.Example.COM.,invalid/path,e2b.app")
 	t.Setenv("CONSOLE_PROXY_ROUTE_TTL_SEC", "3600")
 	t.Setenv("CONSOLE_LOG_LEVEL", "debug")
 	t.Setenv("CONSOLE_LOG_FORMAT", "text")
@@ -183,7 +192,7 @@ func TestLoadReadsDashboardCredentialsAndDurations(t *testing.T) {
 	if cfg.MCPTokenQueryParam != "access_token" {
 		t.Fatalf("expected MCPTokenQueryParam access_token, got %q", cfg.MCPTokenQueryParam)
 	}
-	if !cfg.ProxyEnabled || cfg.ProxyPublicBaseDomain != "public-preview.example.com" || cfg.ProxyInternalAuthToken != "internal-proxy-secret" {
+	if !cfg.ProxyEnabled || cfg.ProxyPublicBaseDomain != "public-preview.example.com" || cfg.ProxyPublicScheme != "http" || cfg.ProxyInternalAuthToken != "internal-proxy-secret" {
 		t.Fatalf("unexpected proxy config: %#v", cfg)
 	}
 	if len(cfg.ProxyAllowedWorkerCIDRs) != 2 || cfg.ProxyAllowedWorkerCIDRs[0].String() != "10.0.0.0/8" || cfg.ProxyAllowedWorkerCIDRs[1].String() != "2001:db8::/32" {
@@ -191,6 +200,9 @@ func TestLoadReadsDashboardCredentialsAndDurations(t *testing.T) {
 	}
 	if len(cfg.ProxyAllowedWorkerPorts) != 2 || cfg.ProxyAllowedWorkerPorts[0] != 8091 || cfg.ProxyAllowedWorkerPorts[1] != 18091 {
 		t.Fatalf("unexpected proxy worker ports: %#v", cfg.ProxyAllowedWorkerPorts)
+	}
+	if len(cfg.ProxyAllowedDirectDomains) != 2 || cfg.ProxyAllowedDirectDomains[0] != "e2b.app" || cfg.ProxyAllowedDirectDomains[1] != "sandbox.example.com" {
+		t.Fatalf("unexpected direct proxy domains: %#v", cfg.ProxyAllowedDirectDomains)
 	}
 	if cfg.ProxyRouteTTL != time.Hour {
 		t.Fatalf("expected proxy route TTL 1h, got %s", cfg.ProxyRouteTTL)

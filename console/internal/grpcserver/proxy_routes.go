@@ -1,10 +1,13 @@
 package grpcserver
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/netip"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +17,8 @@ import (
 )
 
 const proxyRouteTokenTTL = 15 * time.Second
+
+const proxyDirectResolveTimeout = 5 * time.Second
 
 var (
 	ErrProxySessionNotFound   = errors.New("proxy session not found")
@@ -26,17 +31,20 @@ type ProxySessionTarget struct {
 }
 
 type ProxyAuthorization struct {
-	Upstream string
-	Token    string
+	Upstream     string
+	UpstreamHost string
+	Token        string
+	TrafficToken string
 }
 
-func (s *RegistryService) ConfigureProxy(enabled bool, allowedWorkerCIDRs []netip.Prefix, allowedWorkerPorts []uint16) {
+func (s *RegistryService) ConfigureProxy(enabled bool, allowedWorkerCIDRs []netip.Prefix, allowedWorkerPorts []uint16, allowedDirectDomains []string) {
 	if s == nil {
 		return
 	}
 	s.proxyEnabled = enabled
 	s.proxyAllowedWorkerCIDRs = append([]netip.Prefix(nil), allowedWorkerCIDRs...)
 	s.proxyAllowedWorkerPorts = append([]uint16(nil), allowedWorkerPorts...)
+	s.proxyAllowedDirectDomains = append([]string(nil), allowedDirectDomains...)
 }
 
 func (s *RegistryService) configureSessionProxy(
@@ -49,6 +57,20 @@ func (s *RegistryService) configureSessionProxy(
 	}
 
 	rawEndpoint := strings.TrimSpace(hello.GetLabels()[proxytoken.ProxyEndpointLabel])
+	rawDirect := strings.ToLower(strings.TrimSpace(hello.GetLabels()[proxytoken.ProxyDirectLabel]))
+	if rawEndpoint != "" && rawDirect != "" {
+		return errors.New("worker cannot advertise both proxy endpoint and direct proxy mode")
+	}
+	if rawDirect != "" {
+		if rawDirect != proxytoken.ProxyDirectE2B {
+			return errors.New("unsupported direct proxy mode")
+		}
+		if !session.hasCapability(taskCapabilityTerminalProxy) {
+			return errors.New("direct proxy worker must declare terminalProxy capability")
+		}
+		session.proxyDirect = rawDirect
+		return nil
+	}
 	if rawEndpoint == "" {
 		return nil
 	}
@@ -129,6 +151,7 @@ func (s *RegistryService) ResolveProxySession(ownerID string, externalSessionID 
 }
 
 func (s *RegistryService) AuthorizeProxyRoute(
+	ctx context.Context,
 	workerID string,
 	scopedSessionID string,
 	port int,
@@ -158,6 +181,9 @@ func (s *RegistryService) AuthorizeProxyRoute(
 	if !sessionSupportsProxy(session) {
 		return ProxyAuthorization{}, ErrProxyWorkerUnavailable
 	}
+	if session.proxyDirect != "" {
+		return s.authorizeDirectProxyRoute(ctx, session, scopedSessionID, port)
+	}
 	expiresAt := now.Add(proxyRouteTokenTTL)
 	if routeExpiresAt.Before(expiresAt) {
 		expiresAt = routeExpiresAt
@@ -172,9 +198,79 @@ func (s *RegistryService) AuthorizeProxyRoute(
 		return ProxyAuthorization{}, fmt.Errorf("sign proxy route token: %w", err)
 	}
 	return ProxyAuthorization{
-		Upstream: session.proxyEndpoint,
+		Upstream: "http://" + session.proxyEndpoint,
 		Token:    token,
 	}, nil
+}
+
+type directProxyResolvePayload struct {
+	SessionID string `json:"session_id"`
+	Port      int    `json:"port"`
+}
+
+type directProxyResolveResult struct {
+	URL          string `json:"url"`
+	TrafficToken string `json:"traffic_token,omitempty"`
+}
+
+func (s *RegistryService) authorizeDirectProxyRoute(ctx context.Context, session *activeSession, scopedSessionID string, port int) (ProxyAuthorization, error) {
+	payload, err := json.Marshal(directProxyResolvePayload{SessionID: scopedSessionID, Port: port})
+	if err != nil {
+		return ProxyAuthorization{}, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	commandCtx, cancel := context.WithTimeout(ctx, proxyDirectResolveTimeout)
+	defer cancel()
+
+	picked, err := s.pickSessionForNodeAndCapability(session.nodeID, taskCapabilityTerminalProxy)
+	if err != nil {
+		return ProxyAuthorization{}, ErrProxyWorkerUnavailable
+	}
+	attempt, err := s.dispatchCommandAttempt(commandCtx, taskCapabilityTerminalProxy, payload, "", picked, 0, nil)
+	if err != nil {
+		return ProxyAuthorization{}, ErrProxyWorkerUnavailable
+	}
+	if attempt.outcome.err != nil {
+		if isSessionNotFoundCommandError(attempt.outcome.err) {
+			return ProxyAuthorization{}, ErrProxySessionNotFound
+		}
+		return ProxyAuthorization{}, ErrProxyWorkerUnavailable
+	}
+	var resolved directProxyResolveResult
+	if err := json.Unmarshal(attempt.outcome.payloadJSON, &resolved); err != nil {
+		return ProxyAuthorization{}, ErrProxyWorkerUnavailable
+	}
+	upstream := strings.TrimSpace(resolved.URL)
+	parsed, err := validateDirectProxyURL(upstream, s.proxyAllowedDirectDomains)
+	if err != nil {
+		return ProxyAuthorization{}, ErrProxyWorkerUnavailable
+	}
+	return ProxyAuthorization{Upstream: upstream, UpstreamHost: parsed.Host, TrafficToken: strings.TrimSpace(resolved.TrafficToken)}, nil
+}
+
+func validateDirectProxyURL(raw string, allowedDomains []string) (*url.URL, error) {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.Port() != "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return nil, errors.New("direct proxy URL must be an HTTPS origin")
+	}
+	if parsed.Path != "" && parsed.Path != "/" {
+		return nil, errors.New("direct proxy URL must not contain a path")
+	}
+	hostname := strings.ToLower(parsed.Hostname())
+	allowed := false
+	for _, domain := range allowedDomains {
+		domain = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(domain)), ".")
+		if domain != "" && strings.HasSuffix(hostname, "."+domain) {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		return nil, errors.New("direct proxy URL is outside allowed domains")
+	}
+	return parsed, nil
 }
 
 func (s *RegistryService) proxyTerminalSessionWorker(scopedSessionID string, now time.Time) (string, bool) {
@@ -201,6 +297,6 @@ func (s *RegistryService) proxyTerminalSessionWorker(scopedSessionID string, now
 func sessionSupportsProxy(session *activeSession) bool {
 	return session != nil &&
 		session.hasCapability(taskCapabilityTerminalExec) &&
-		strings.TrimSpace(session.proxyEndpoint) != "" &&
-		len(session.routeTokenKey) > 0
+		((strings.TrimSpace(session.proxyEndpoint) != "" && len(session.routeTokenKey) > 0) ||
+			(strings.TrimSpace(session.proxyDirect) != "" && session.hasCapability(taskCapabilityTerminalProxy)))
 }

@@ -35,7 +35,7 @@ The console service hosts:
   - `GET /api/v1/proxy-routes` lists only the current account's in-memory routes.
   - `DELETE /api/v1/proxy-routes/:route_key` deletes only the current account's route; cross-account access returns `404`.
   - routes default to 24 hours, are capped at 7 days, use 128-bit DNS-safe keys, and are lost on Console restart.
-  - `GET /internal/v1/proxy/resolve` is Nginx-only, protected by `CONSOLE_PROXY_INTERNAL_AUTH_TOKEN`, and returns the active Worker endpoint plus a 15-second Route Token.
+  - `GET /internal/v1/proxy/resolve` is Nginx-only and protected by `CONSOLE_PROXY_INTERNAL_AUTH_TOKEN`. Docker/Boxlite return a Worker URL plus a 15-second Route Token; E2B is resolved through its internal Worker capability and returns the current sandbox origin plus traffic token.
   - proxy traffic is anonymous and never carries Dashboard credentials; anyone holding the preview URL can access it.
 - command APIs (execution, bearer token required):
   - `POST /api/v1/commands/echo` for blocking echo command execution.
@@ -288,9 +288,11 @@ Persistence config:
 - `CONSOLE_MCP_TOKEN_QUERY_PARAM`: query parameter name for `/mcp` URL token fallback (default `token`)
 - `CONSOLE_PROXY_ENABLED`: enables route management and Nginx resolve endpoints (default `false`)
 - `CONSOLE_PROXY_PUBLIC_BASE_DOMAIN`: wildcard preview base domain
+- `CONSOLE_PROXY_PUBLIC_SCHEME`: route URL scheme, `http` or `https` (default `https`)
 - `CONSOLE_PROXY_INTERNAL_AUTH_TOKEN`: Nginx-to-Console shared secret
 - `CONSOLE_PROXY_ALLOWED_WORKER_CIDRS`: CIDR allowlist for advertised Worker proxy IPs
 - `CONSOLE_PROXY_ALLOWED_WORKER_PORTS`: port allowlist for advertised Worker proxy endpoints (default `8091`)
+- `CONSOLE_PROXY_ALLOWED_DIRECT_DOMAINS`: domain suffix allowlist for E2B direct origins (default `e2b.app`)
 - `CONSOLE_PROXY_ROUTE_TTL_SEC`: in-memory preview route TTL (default `86400`, maximum `604800`)
 
 Logging config:

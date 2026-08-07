@@ -529,8 +529,9 @@ Worker 类型：
 
 规则与错误：
 
-- `session_id` 必须属于当前账号，并且已有一条指向在线、已启用代理的 `worker-docker` 的确认路由。
+- `session_id` 必须属于当前账号，并且已有一条指向在线、已启用代理的 Docker、Boxlite 或 E2B Worker 的确认路由。
 - `port` 范围为 `1..65535`。
+- route URL 由 `CONSOLE_PROXY_PUBLIC_SCHEME`（默认 `https`）和 `CONSOLE_PROXY_PUBLIC_BASE_DOMAIN` 组成；仅在可信的本地开发环境使用 `http`。
 - routeKey 使用 128 bit 随机数编码为 26 位小写 Base32。
 - 每个账号最多保留 100 条有效 route。
 - route 默认 TTL 为 `86400` 秒，可通过 `CONSOLE_PROXY_ROUTE_TTL_SEC` 修改，最大为 `604800` 秒（7 天）。
@@ -555,7 +556,7 @@ Worker 类型：
 - `204` 删除成功。
 - `404` route 不存在、已过期或属于其他账号。
 
-返回的预览 URL 是匿名地址：任何持有者都能访问 Sandbox 服务，不需要 Onlyboxes Cookie 或 Bearer Token。每个新 HTTP 请求都由 Nginx 调用受保护的 Console 内部接口解析，并取得用于 Worker 链路的全新 15 秒 Route Token。Token 过期不会终止已接受的 HTTP/SSE/WebSocket 连接。访问 route 不会续租 Sandbox lease。Console 重启会使全部 route 失效。
+返回的预览 URL 是匿名地址：任何持有者都能访问 Sandbox 服务，不需要 Onlyboxes Cookie 或 Bearer Token。每个新 HTTP 请求都由 Nginx 调用受保护的 Console 内部接口解析。Docker 与 Boxlite 链路取得全新 15 秒 Route Token；E2B 链路取得当前 sandbox origin 与内部 traffic token，数据面为“用户 → Nginx → E2B”。Token 过期不会终止已接受的 HTTP/SSE/WebSocket 连接。访问 route 不会续租 Sandbox lease。Console 重启会使全部 route 失效。
 
 ## 6. 命令执行 API（Bearer Token 鉴权）
 
@@ -1062,5 +1063,6 @@ Console 回包：
 - 生产环境应将 gRPC 端口保持内网并通过隧道/链路加密。
 - 公开预览需要 wildcard DNS/TLS、`docs/nginx/README.md` 部署说明、`docs/nginx/public-preview.conf.example` 中的 Nginx 配置，以及只允许 Nginx 访问 Worker 代理端口的网络 ACL。
 - 必须妥善保管 `CONSOLE_PROXY_INTERNAL_AUTH_TOKEN`，并将 `CONSOLE_PROXY_ALLOWED_WORKER_CIDRS` / `CONSOLE_PROXY_ALLOWED_WORKER_PORTS` 收窄到真实 Worker 入口。
+- 必须将 `CONSOLE_PROXY_ALLOWED_DIRECT_DOMAINS` 收窄到部署实际使用的 E2B 域名（默认 `e2b.app`）。
 - Token 明文与 `WORKER_SECRET` 仅在创建时返回一次。
 - `GET /api/v1/console/tokens/:token_id/value` 与 `GET /api/v1/workers/:node_id/startup-command` 设计为永久 `410 Gone`。

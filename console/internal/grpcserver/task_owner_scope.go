@@ -14,6 +14,7 @@ const (
 	taskRequestScopeSeparator           = "\x00"
 	taskCapabilityTerminalExec          = "terminalexec"
 	taskCapabilityTerminalResource      = "terminalresource"
+	taskCapabilityTerminalProxy         = "terminalproxy"
 	taskOwnerScopeInvalidPayloadCode    = "invalid_payload"
 	taskOwnerScopeInvalidPayloadMessage = "session_id owner mismatch"
 )

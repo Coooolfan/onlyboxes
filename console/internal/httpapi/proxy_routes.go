@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -20,20 +21,22 @@ import (
 )
 
 const (
-	proxyInternalAuthHeader  = "X-Onlyboxes-Internal-Token"
-	proxyOriginalHostHeader  = "X-Original-Host"
-	proxyUpstreamHeader      = "X-Onlyboxes-Upstream"
-	proxyRouteKeyBytes       = 16
-	proxyRouteKeyLength      = 26
-	proxyBaseDomainMaxBytes  = 253 - 1 - proxyRouteKeyLength
-	proxyRouteCreateAttempts = 8
-	proxyRouteMaxPerOwner    = 100
-	proxyRouteMaxTTL         = 7 * 24 * time.Hour
+	proxyInternalAuthHeader         = "X-Onlyboxes-Internal-Token"
+	proxyOriginalHostHeader         = "X-Original-Host"
+	proxyUpstreamHeader             = "X-Onlyboxes-Upstream"
+	proxyUpstreamHostHeader         = "X-Onlyboxes-Upstream-Host"
+	proxyUpstreamTrafficTokenHeader = "X-Onlyboxes-Upstream-Traffic-Token"
+	proxyRouteKeyBytes              = 16
+	proxyRouteKeyLength             = 26
+	proxyBaseDomainMaxBytes         = 253 - 1 - proxyRouteKeyLength
+	proxyRouteCreateAttempts        = 8
+	proxyRouteMaxPerOwner           = 100
+	proxyRouteMaxTTL                = 7 * 24 * time.Hour
 )
 
 type ProxyRouteResolver interface {
 	ResolveProxySession(ownerID string, externalSessionID string, now time.Time) (grpcserver.ProxySessionTarget, error)
-	AuthorizeProxyRoute(workerID string, scopedSessionID string, port int, routeExpiresAt time.Time, now time.Time) (grpcserver.ProxyAuthorization, error)
+	AuthorizeProxyRoute(ctx context.Context, workerID string, scopedSessionID string, port int, routeExpiresAt time.Time, now time.Time) (grpcserver.ProxyAuthorization, error)
 }
 
 type proxyRouteRecord struct {
@@ -50,6 +53,7 @@ type proxyRouteRecord struct {
 type ProxyRouteHandler struct {
 	resolver      ProxyRouteResolver
 	baseDomain    string
+	publicScheme  string
 	internalToken string
 	routeTTL      time.Duration
 	nowFn         func() time.Time
@@ -81,6 +85,7 @@ type listProxyRoutesResponse struct {
 func NewProxyRouteHandler(
 	resolver ProxyRouteResolver,
 	baseDomain string,
+	publicScheme string,
 	internalToken string,
 	routeTTL time.Duration,
 ) (*ProxyRouteHandler, error) {
@@ -88,6 +93,10 @@ func NewProxyRouteHandler(
 		return nil, errors.New("proxy route resolver is required")
 	}
 	normalizedDomain, err := normalizeProxyBaseDomain(baseDomain)
+	if err != nil {
+		return nil, err
+	}
+	normalizedScheme, err := normalizeProxyPublicScheme(publicScheme)
 	if err != nil {
 		return nil, err
 	}
@@ -101,6 +110,7 @@ func NewProxyRouteHandler(
 	return &ProxyRouteHandler{
 		resolver:      resolver,
 		baseDomain:    normalizedDomain,
+		publicScheme:  normalizedScheme,
 		internalToken: internalToken,
 		routeTTL:      routeTTL,
 		nowFn:         time.Now,
@@ -207,6 +217,7 @@ func (h *ProxyRouteHandler) Resolve(c *gin.Context) {
 		return
 	}
 	authorization, err := h.resolver.AuthorizeProxyRoute(
+		c.Request.Context(),
 		record.WorkerID,
 		record.ScopedSessionID,
 		record.Port,
@@ -222,7 +233,17 @@ func (h *ProxyRouteHandler) Resolve(c *gin.Context) {
 		return
 	}
 	c.Header(proxyUpstreamHeader, authorization.Upstream)
-	c.Header(proxytoken.HeaderName, authorization.Token)
+	upstreamHost := strings.TrimSpace(authorization.UpstreamHost)
+	if upstreamHost == "" {
+		upstreamHost = strings.TrimSpace(c.GetHeader(proxyOriginalHostHeader))
+	}
+	c.Header(proxyUpstreamHostHeader, upstreamHost)
+	if authorization.Token != "" {
+		c.Header(proxytoken.HeaderName, authorization.Token)
+	}
+	if authorization.TrafficToken != "" {
+		c.Header(proxyUpstreamTrafficTokenHeader, authorization.TrafficToken)
+	}
 	c.Status(http.StatusNoContent)
 }
 
@@ -323,7 +344,7 @@ func (h *ProxyRouteHandler) routeResponse(record proxyRouteRecord) proxyRouteRes
 		RouteKey:  record.RouteKey,
 		SessionID: record.SessionID,
 		Port:      record.Port,
-		URL:       "https://" + record.RouteKey + "." + h.baseDomain,
+		URL:       h.publicScheme + "://" + record.RouteKey + "." + h.baseDomain,
 		CreatedAt: record.CreatedAt,
 		ExpiresAt: record.ExpiresAt,
 	}
@@ -409,6 +430,14 @@ func normalizeProxyBaseDomain(value string) (string, error) {
 		}
 	}
 	return domain, nil
+}
+
+func normalizeProxyPublicScheme(value string) (string, error) {
+	scheme := strings.ToLower(strings.TrimSpace(value))
+	if scheme != "http" && scheme != "https" {
+		return "", errors.New("proxy public scheme must be http or https")
+	}
+	return scheme, nil
 }
 
 func secureStringEqual(provided string, expected string) bool {

@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/base32"
 	"encoding/json"
 	"net/http"
@@ -32,7 +33,7 @@ func (s *proxyRouteResolverStub) ResolveProxySession(ownerID string, _ string, _
 	return s.target, s.resolveErr
 }
 
-func (s *proxyRouteResolverStub) AuthorizeProxyRoute(workerID string, scopedSessionID string, port int, _ time.Time, _ time.Time) (grpcserver.ProxyAuthorization, error) {
+func (s *proxyRouteResolverStub) AuthorizeProxyRoute(_ context.Context, workerID string, scopedSessionID string, port int, _ time.Time, _ time.Time) (grpcserver.ProxyAuthorization, error) {
 	s.authorizedWorkerID = workerID
 	s.authorizedSessionID = scopedSessionID
 	s.authorizedPort = port
@@ -93,6 +94,28 @@ func TestProxyRouteManagementOwnerIsolation(t *testing.T) {
 	router.ServeHTTP(resolveDeletedResponse, resolveDeleted)
 	if resolveDeletedResponse.Code != http.StatusForbidden {
 		t.Fatalf("deleted route resolve expected 403, got %d", resolveDeletedResponse.Code)
+	}
+}
+
+func TestProxyRouteConfiguredHTTPURL(t *testing.T) {
+	now := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
+	resolver := &proxyRouteResolverStub{
+		target: grpcserver.ProxySessionTarget{
+			WorkerID:        "worker-1",
+			ScopedSessionID: "obx:owner-a:session-a",
+		},
+	}
+	handler, err := NewProxyRouteHandler(resolver, "public-preview.localhost", "http", "nginx-secret", time.Hour)
+	if err != nil {
+		t.Fatalf("new localhost proxy route handler: %v", err)
+	}
+	handler.nowFn = func() time.Time { return now }
+	handler.randomReader = bytes.NewReader(bytes.Repeat([]byte{0x11}, proxyRouteKeyBytes*proxyRouteCreateAttempts))
+
+	created := createProxyRouteForTest(t, newProxyRouteTestRouter(handler), "owner-a", `{"session_id":"session-a","port":8080}`)
+	wantURL := "http://" + created.RouteKey + ".public-preview.localhost"
+	if created.URL != wantURL {
+		t.Fatalf("unexpected localhost public URL %q, want %q", created.URL, wantURL)
 	}
 }
 
@@ -204,8 +227,9 @@ func TestProxyRouteInternalResolve(t *testing.T) {
 			ScopedSessionID: "obx:owner-a:session-a",
 		},
 		authorization: grpcserver.ProxyAuthorization{
-			Upstream: "10.0.2.15:8091",
-			Token:    "signed-route-token",
+			Upstream:     "https://3000-sandbox.e2b.app",
+			UpstreamHost: "3000-sandbox.e2b.app",
+			TrafficToken: "traffic-secret",
 		},
 	}
 	handler := newProxyRouteHandlerForTest(t, resolver, now, time.Minute)
@@ -239,7 +263,10 @@ func TestProxyRouteInternalResolve(t *testing.T) {
 	if resolveResponse.Code != http.StatusNoContent {
 		t.Fatalf("resolve expected 204, got %d body=%s", resolveResponse.Code, resolveResponse.Body.String())
 	}
-	if resolveResponse.Header().Get(proxyUpstreamHeader) != resolver.authorization.Upstream || resolveResponse.Header().Get(proxytoken.HeaderName) != resolver.authorization.Token {
+	if resolveResponse.Header().Get(proxyUpstreamHeader) != resolver.authorization.Upstream ||
+		resolveResponse.Header().Get(proxyUpstreamHostHeader) != resolver.authorization.UpstreamHost ||
+		resolveResponse.Header().Get(proxyUpstreamTrafficTokenHeader) != resolver.authorization.TrafficToken ||
+		resolveResponse.Header().Get(proxytoken.HeaderName) != "" {
 		t.Fatalf("unexpected resolve headers %#v", resolveResponse.Header())
 	}
 	if resolver.authorizedWorkerID != "worker-1" || resolver.authorizedSessionID != "obx:owner-a:session-a" || resolver.authorizedPort != 3000 {
@@ -261,24 +288,29 @@ func TestNewProxyRouteHandlerRejectsInvalidConfiguration(t *testing.T) {
 	resolver := &proxyRouteResolverStub{}
 	tooLongDomain := strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "." + strings.Repeat("d", 35)
 	for _, domain := range []string{"", "localhost", "https://preview.example.com", "*.preview.example.com", "-bad.example.com", tooLongDomain} {
-		if _, err := NewProxyRouteHandler(resolver, domain, "secret", time.Hour); err == nil {
+		if _, err := NewProxyRouteHandler(resolver, domain, "https", "secret", time.Hour); err == nil {
 			t.Fatalf("expected invalid domain %q to fail", domain)
 		}
 	}
-	if _, err := NewProxyRouteHandler(resolver, "preview.example.com", "", time.Hour); err == nil {
+	for _, scheme := range []string{"", "ftp"} {
+		if _, err := NewProxyRouteHandler(resolver, "preview.example.com", scheme, "secret", time.Hour); err == nil {
+			t.Fatalf("expected invalid public scheme %q to fail", scheme)
+		}
+	}
+	if _, err := NewProxyRouteHandler(resolver, "preview.example.com", "https", "", time.Hour); err == nil {
 		t.Fatalf("expected missing internal token to fail")
 	}
-	if _, err := NewProxyRouteHandler(resolver, "preview.example.com", "secret", 0); err == nil {
+	if _, err := NewProxyRouteHandler(resolver, "preview.example.com", "https", "secret", 0); err == nil {
 		t.Fatalf("expected invalid route TTL to fail")
 	}
-	if _, err := NewProxyRouteHandler(resolver, "preview.example.com", "secret", proxyRouteMaxTTL+time.Second); err == nil {
+	if _, err := NewProxyRouteHandler(resolver, "preview.example.com", "https", "secret", proxyRouteMaxTTL+time.Second); err == nil {
 		t.Fatalf("expected route TTL above maximum to fail")
 	}
 }
 
 func newProxyRouteHandlerForTest(t *testing.T, resolver ProxyRouteResolver, now time.Time, ttl time.Duration) *ProxyRouteHandler {
 	t.Helper()
-	handler, err := NewProxyRouteHandler(resolver, "public-preview.example.com", "nginx-secret", ttl)
+	handler, err := NewProxyRouteHandler(resolver, "public-preview.example.com", "https", "nginx-secret", ttl)
 	if err != nil {
 		t.Fatalf("new proxy route handler: %v", err)
 	}

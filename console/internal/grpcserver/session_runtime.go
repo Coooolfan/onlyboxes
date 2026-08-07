@@ -41,6 +41,7 @@ type activeSession struct {
 
 	proxyEndpoint string
 	routeTokenKey []byte
+	proxyDirect   string
 
 	capabilitiesMu sync.Mutex
 	capabilities   map[string]*sessionCapability

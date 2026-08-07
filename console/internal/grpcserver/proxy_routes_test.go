@@ -1,6 +1,8 @@
 package grpcserver
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"net/netip"
 	"testing"
@@ -8,13 +10,73 @@ import (
 
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
 	"github.com/onlyboxes/onlyboxes/api/proxytoken"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
+
+func TestDirectProxyAuthorizationResolvesE2BOriginThroughWorker(t *testing.T) {
+	now := time.UnixMilli(1_730_000_000_000)
+	service := NewRegistryService(nil, nil, 5, 15, time.Minute)
+	service.nowFn = func() time.Time { return now }
+	service.ConfigureProxy(true, nil, nil, []string{"e2b.app"})
+	hello := &registryv1.ConnectHello{
+		NodeId:       "worker-e2b",
+		Labels:       map[string]string{proxytoken.ProxyDirectLabel: proxytoken.ProxyDirectE2B},
+		Capabilities: []*registryv1.CapabilityDeclaration{{Name: taskCapabilityTerminalExec}, {Name: taskCapabilityTerminalProxy, MaxInflight: 4}},
+	}
+	session := newActiveSessionAt("worker-e2b", "connection-e2b", hello, now)
+	if err := service.configureSessionProxy(session, hello, "worker-secret"); err != nil {
+		t.Fatalf("configure direct proxy: %v", err)
+	}
+	service.swapSession(session)
+	scopedSessionID := scopeTerminalSessionID("owner-a", "session-a")
+	service.bindTerminalSessionRoute(scopedSessionID, "worker-e2b", now)
+
+	resultCh := make(chan struct {
+		authorization ProxyAuthorization
+		err           error
+	}, 1)
+	go func() {
+		authorization, err := service.AuthorizeProxyRoute(context.Background(), "worker-e2b", scopedSessionID, 8080, now.Add(time.Hour), now)
+		resultCh <- struct {
+			authorization ProxyAuthorization
+			err           error
+		}{authorization, err}
+	}()
+	dispatch := (<-session.commandOutbound).GetCommandDispatch()
+	var request directProxyResolvePayload
+	if err := json.Unmarshal(dispatch.GetPayloadJson(), &request); err != nil {
+		t.Fatalf("decode direct resolve payload: %v", err)
+	}
+	if request.SessionID != scopedSessionID || request.Port != 8080 || normalizeCapability(dispatch.GetCapability()) != taskCapabilityTerminalProxy {
+		t.Fatalf("unexpected direct resolve dispatch: %#v capability=%q", request, dispatch.GetCapability())
+	}
+	payload, _ := json.Marshal(directProxyResolveResult{URL: "https://8080-sandbox.e2b.app", TrafficToken: "traffic-secret"})
+	session.resolvePending(&registryv1.CommandResult{CommandId: dispatch.GetCommandId(), PayloadJson: payload})
+	result := <-resultCh
+	if result.err != nil {
+		t.Fatalf("authorize direct proxy: %v", result.err)
+	}
+	if result.authorization.Upstream != "https://8080-sandbox.e2b.app" || result.authorization.UpstreamHost != "8080-sandbox.e2b.app" || result.authorization.TrafficToken != "traffic-secret" || result.authorization.Token != "" {
+		t.Fatalf("unexpected direct authorization: %#v", result.authorization)
+	}
+}
+
+func TestDirectProxyCapabilityCannotBeSubmittedAsUserTask(t *testing.T) {
+	service := NewRegistryService(nil, nil, 5, 15, time.Minute)
+	_, err := service.SubmitTask(context.Background(), SubmitTaskRequest{
+		OwnerID: "owner-a", Capability: "terminalProxy", InputJSON: []byte(`{"session_id":"other-owner-session","port":8080}`),
+	})
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("expected internal capability rejection, got %v", err)
+	}
+}
 
 func TestProxySessionResolveAndAuthorize(t *testing.T) {
 	now := time.UnixMilli(1_730_000_000_000)
 	service := NewRegistryService(nil, nil, 5, 15, time.Minute)
 	service.nowFn = func() time.Time { return now }
-	service.ConfigureProxy(true, []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}, []uint16{8091})
+	service.ConfigureProxy(true, []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}, []uint16{8091}, []string{"e2b.app"})
 
 	hello := &registryv1.ConnectHello{
 		NodeId: "worker-1",
@@ -41,11 +103,11 @@ func TestProxySessionResolveAndAuthorize(t *testing.T) {
 
 	routeExpiresAt := now.Add(time.Hour)
 	authorizeAt := now.Add(10 * time.Second)
-	authorization, err := service.AuthorizeProxyRoute("worker-1", scopedSessionID, 8080, routeExpiresAt, authorizeAt)
+	authorization, err := service.AuthorizeProxyRoute(context.Background(), "worker-1", scopedSessionID, 8080, routeExpiresAt, authorizeAt)
 	if err != nil {
 		t.Fatalf("authorize proxy route: %v", err)
 	}
-	if authorization.Upstream != "10.0.2.15:8091" {
+	if authorization.Upstream != "http://10.0.2.15:8091" {
 		t.Fatalf("unexpected upstream %q", authorization.Upstream)
 	}
 	key, err := proxytoken.DeriveKey("worker-secret")
@@ -73,7 +135,7 @@ func TestProxyAuthorizationIsBoundedByRouteExpiry(t *testing.T) {
 	now := time.UnixMilli(1_730_000_000_000)
 	service, scopedSessionID := newProxyRegistryServiceForTest(t, now)
 	routeExpiresAt := now.Add(3 * time.Second)
-	authorization, err := service.AuthorizeProxyRoute("worker-1", scopedSessionID, 3000, routeExpiresAt, now)
+	authorization, err := service.AuthorizeProxyRoute(context.Background(), "worker-1", scopedSessionID, 3000, routeExpiresAt, now)
 	if err != nil {
 		t.Fatalf("authorize proxy route: %v", err)
 	}
@@ -94,12 +156,12 @@ func TestProxySessionRejectsOwnerMismatchAndUnavailableWorker(t *testing.T) {
 	if _, err := service.ResolveProxySession("owner-b", "session-a", now); !errors.Is(err, ErrProxySessionNotFound) {
 		t.Fatalf("expected owner mismatch rejection, got %v", err)
 	}
-	if _, err := service.AuthorizeProxyRoute("worker-2", scopedSessionID, 8080, now.Add(time.Minute), now); !errors.Is(err, ErrProxySessionNotFound) {
+	if _, err := service.AuthorizeProxyRoute(context.Background(), "worker-2", scopedSessionID, 8080, now.Add(time.Minute), now); !errors.Is(err, ErrProxySessionNotFound) {
 		t.Fatalf("expected worker mismatch rejection, got %v", err)
 	}
 
 	service.removeSession(service.getSession("worker-1"))
-	if _, err := service.AuthorizeProxyRoute("worker-1", scopedSessionID, 8080, now.Add(time.Minute), now); !errors.Is(err, ErrProxyWorkerUnavailable) && !errors.Is(err, ErrProxySessionNotFound) {
+	if _, err := service.AuthorizeProxyRoute(context.Background(), "worker-1", scopedSessionID, 8080, now.Add(time.Minute), now); !errors.Is(err, ErrProxyWorkerUnavailable) && !errors.Is(err, ErrProxySessionNotFound) {
 		t.Fatalf("expected offline worker rejection, got %v", err)
 	}
 }
@@ -140,11 +202,28 @@ func TestNormalizeAllowedProxyEndpoint(t *testing.T) {
 	}
 }
 
+func TestValidateDirectProxyURLRestrictsDomain(t *testing.T) {
+	parsed, err := validateDirectProxyURL("https://8080-sandbox.e2b.app", []string{"e2b.app"})
+	if err != nil || parsed.Hostname() != "8080-sandbox.e2b.app" {
+		t.Fatalf("expected E2B origin to pass: parsed=%v err=%v", parsed, err)
+	}
+	for _, raw := range []string{
+		"http://8080-sandbox.e2b.app",
+		"https://e2b.app.attacker.test",
+		"https://8080-sandbox.e2b.app/path",
+		"https://user@8080-sandbox.e2b.app",
+	} {
+		if _, err := validateDirectProxyURL(raw, []string{"e2b.app"}); err == nil {
+			t.Fatalf("expected direct origin %q to be rejected", raw)
+		}
+	}
+}
+
 func newProxyRegistryServiceForTest(t *testing.T, now time.Time) (*RegistryService, string) {
 	t.Helper()
 	service := NewRegistryService(nil, nil, 5, 15, time.Minute)
 	service.nowFn = func() time.Time { return now }
-	service.ConfigureProxy(true, []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}, []uint16{8091})
+	service.ConfigureProxy(true, []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}, []uint16{8091}, []string{"e2b.app"})
 	hello := &registryv1.ConnectHello{
 		NodeId:       "worker-1",
 		Labels:       map[string]string{proxytoken.ProxyEndpointLabel: "10.0.2.15:8091"},
