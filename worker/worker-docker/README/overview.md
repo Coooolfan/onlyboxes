@@ -69,7 +69,7 @@ Capability behavior:
   - a session that has not finished creating its container makes concurrent callers wait; if creation fails they all receive the same error.
 - `terminalExec` cleanup behavior:
   - command timeout/cancel marks the session for destruction and stops it accepting new commands; the container is removed once in-flight commands drain, so one command's timeout does not kill its siblings.
-  - idle sessions are reaped after lease expiry by an internal janitor loop; a session with in-flight commands is never reaped.
+  - lease expiry is a hard boundary: a per-session deadline timer removes the session even when commands are in flight, cancels active proxy requests, and force-removes the container; the janitor remains a cleanup fallback.
   - terminal containers use deterministic `onlyboxes-terminal-v1-<sha256(session_id)>` names plus schema/session-hash labels and are preserved when the worker exits.
   - after reconnect, the worker reconciles Console candidates before accepting commands, restarts stopped containers, restores the exact lease, and removes local Onlyboxes terminal orphans that Console no longer recognizes.
   - lease expiry, explicit destruction, unsafe command timeout, and invalid resource identity still remove the container; one-shot `pythonExec` containers remain per-call resources.
@@ -99,6 +99,14 @@ Capability behavior:
   - `file_not_found`
   - `path_is_directory`
   - `file_too_large`
+- public preview proxy (`WORKER_PROXY_ENABLED=true`):
+  - listens on `WORKER_PROXY_LISTEN_ADDR` (default `:8091`) and advertises a routable unicast `WORKER_PROXY_ADVERTISE_ADDR` with the same port through the reserved `obx.proxy_endpoint` Hello label.
+  - reuses `WORKER_SECRET` to derive the per-Worker HMAC verification key; no additional signing key is configured or downloaded.
+  - validates the 15-second Console Route Token, confirms the local Session/lease, and proxies HTTP, SSE, and WebSocket to the cached container IP and signed port.
+  - preserves application Authorization/Cookie and strips Onlyboxes internal headers before the Sandbox.
+  - creates or validates the `onlyboxes-sandbox` bridge with inter-container communication disabled; Docker firewall management must remain enabled, and container IP is inspected once after startup.
+  - proxy traffic does not renew lease or count as a terminal command.
+  - the listener must be firewalled so only Nginx can connect.
 
 Defaults:
 - Console target: `127.0.0.1:50051`
@@ -113,6 +121,7 @@ Defaults:
 - terminal output limit: `1048576` bytes per stream (`stdout`/`stderr`)
 - terminal max active sessions: unlimited (`0`)
 - capability max_inflight: `4` per capability
+- public preview proxy: disabled; listener `:8091` when enabled
 - log level: `info`
 - log format: `json`
 - log add source: `false`

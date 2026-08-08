@@ -3,6 +3,7 @@ package grpcserver
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -41,19 +42,23 @@ var ErrTaskRequestInProgress = errors.New("task request already in progress")
 type RegistryService struct {
 	registryv1.UnimplementedWorkerRegistryServiceServer
 
-	store                  *registry.Store
-	credentialsMu          sync.RWMutex
-	credentials            map[string]string
-	credentialHashAlgo     string
-	hasher                 *persistence.Hasher
-	heartbeatIntervalSec   int32
-	offlineTTLSec          int32
-	nowFn                  func() time.Time
-	newSessionIDFn         func() (string, error)
-	newCommandIDFn         func() (string, error)
-	newTaskIDFn            func() (string, error)
-	newTerminalSessionIDFn func() (string, error)
-	taskRetention          time.Duration
+	store                     *registry.Store
+	credentialsMu             sync.RWMutex
+	credentials               map[string]string
+	credentialHashAlgo        string
+	hasher                    *persistence.Hasher
+	heartbeatIntervalSec      int32
+	offlineTTLSec             int32
+	nowFn                     func() time.Time
+	newSessionIDFn            func() (string, error)
+	newCommandIDFn            func() (string, error)
+	newTaskIDFn               func() (string, error)
+	newTerminalSessionIDFn    func() (string, error)
+	taskRetention             time.Duration
+	proxyEnabled              bool
+	proxyAllowedWorkerCIDRs   []netip.Prefix
+	proxyAllowedWorkerPorts   []uint16
+	proxyAllowedDirectDomains []string
 
 	sessionsMu sync.RWMutex
 	sessions   map[string]*activeSession

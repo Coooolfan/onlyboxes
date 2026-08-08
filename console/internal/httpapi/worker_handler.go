@@ -31,6 +31,7 @@ type WorkerHandler struct {
 	exportUploadTTL    time.Duration
 	exportDownloadTTL  time.Duration
 	exportReturnSchema string
+	proxyRoutes        *ProxyRouteHandler
 	nowFn              func() time.Time
 }
 
@@ -98,6 +99,13 @@ func (h *WorkerHandler) SetExportStore(store ExportStore, exportPrefix string, u
 	h.exportReturnSchema = returnSchema
 }
 
+func (h *WorkerHandler) SetProxyRouteHandler(handler *ProxyRouteHandler) {
+	if h == nil {
+		return
+	}
+	h.proxyRoutes = handler
+}
+
 func NewRouter(workerHandler *WorkerHandler, consoleAuth *ConsoleAuth, mcpAuth *MCPAuth, apiKeyAuth *APIKeyAuth, hiddenTools map[string]bool, mcpToolOverrides map[string]config.MCPToolOverride) (*gin.Engine, error) {
 	if mcpAuth == nil {
 		return nil, ErrMCPAuthRequired
@@ -105,6 +113,9 @@ func NewRouter(workerHandler *WorkerHandler, consoleAuth *ConsoleAuth, mcpAuth *
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 	router.Use(gin.Recovery())
+	if workerHandler != nil && workerHandler.proxyRoutes != nil {
+		router.GET("/internal/v1/proxy/resolve", workerHandler.proxyRoutes.Resolve)
+	}
 	router.Any("/mcp", mcpAuth.RequireTokenWithQueryFallback(), gin.WrapH(NewMCPHandler(
 		workerHandler.dispatcher,
 		workerHandler.store,
@@ -161,6 +172,11 @@ func NewRouter(workerHandler *WorkerHandler, consoleAuth *ConsoleAuth, mcpAuth *
 	dashboard.POST("/workers", workerHandler.CreateWorker)
 	dashboard.DELETE("/workers/:node_id", workerHandler.DeleteWorker)
 	dashboard.GET("/workers/:node_id/startup-command", workerHandler.GetWorkerStartupCommand)
+	if workerHandler.proxyRoutes != nil {
+		dashboard.POST("/proxy-routes", workerHandler.proxyRoutes.Create)
+		dashboard.GET("/proxy-routes", workerHandler.proxyRoutes.List)
+		dashboard.DELETE("/proxy-routes/:route_key", workerHandler.proxyRoutes.Delete)
+	}
 
 	adminDashboard := api.Group("/")
 	adminDashboard.Use(consoleAuth.RequireAuth(apiKeyAuth), consoleAuth.RequireAdmin())

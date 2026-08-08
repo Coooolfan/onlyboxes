@@ -68,6 +68,11 @@ type terminalExecRunResult struct {
 	LeaseExpiresUnixMS int64  `json:"lease_expires_unix_ms"`
 }
 
+type terminalProxyRunResult struct {
+	URL          string `json:"url"`
+	TrafficToken string `json:"traffic_token,omitempty"`
+}
+
 type terminalExecError struct {
 	code    string
 	message string
@@ -219,6 +224,32 @@ func (m *terminalSessionManager) ActiveSessionCount() int32 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return int32(m.activeSessionReservations)
+}
+
+func (m *terminalSessionManager) ResolveProxy(_ context.Context, sessionID string, port int, now time.Time) (terminalProxyRunResult, error) {
+	if m == nil || port < 1 || port > 65535 {
+		return terminalProxyRunResult{}, newTerminalExecError(terminalExecCodeInvalidPayload, "port must be between 1 and 65535")
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return terminalProxyRunResult{}, newTerminalExecError(terminalExecCodeInvalidPayload, "session_id is required")
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	m.mu.Lock()
+	session, ok := m.sessions[sessionID]
+	if !ok || session == nil || session.destroying || session.sandbox == nil || !session.confirmedLeaseExpiresAt.After(now) {
+		m.mu.Unlock()
+		return terminalProxyRunResult{}, newTerminalExecError(terminalExecCodeSessionNotFound, terminalExecNoSessionMessage)
+	}
+	sandbox := *session.sandbox
+	m.mu.Unlock()
+	proxyURL, trafficToken, err := sandbox.ProxyURL(port)
+	if err != nil {
+		return terminalProxyRunResult{}, err
+	}
+	return terminalProxyRunResult{URL: proxyURL, TrafficToken: trafficToken}, nil
 }
 
 func (m *terminalSessionManager) Execute(ctx context.Context, req terminalExecRequest) (terminalExecRunResult, error) {

@@ -4089,6 +4089,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "boxlite",
+ "hmac",
  "prost",
  "protoc-bin-vendored",
  "rand 0.8.5",

@@ -69,6 +69,10 @@ owner = "team-a"
 
 envd 成功返回响应头后，命令执行与文件流遵循 console 下发的 command deadline，避免长时间运行的命令或文件导出被建连超时提前中断。
 
+## 公开预览
+
+`WORKER_PROXY_ENABLED` / `proxy_enabled` 默认为 `false`。启用后，worker 在 Hello 中声明 E2B direct proxy 模式和内部 `terminalProxy` 能力。Console 的 Nginx 鉴权子请求会通过该能力取得当前 session 的 `https://<port>-<sandboxID>.<domain>` origin 与 traffic access token；业务流量直接走“用户 → Nginx → E2B”，不经过 worker。worker 创建 E2B sandbox 时同时设置 `network.allowPublicTraffic=false`，Nginx 使用内部 traffic token 访问，用户自己的 `Authorization` 不会被覆盖。
+
 ## 终端 session 与文件
 
 | 环境变量 | `config.toml` 键 | 默认值 | 约束与说明 |

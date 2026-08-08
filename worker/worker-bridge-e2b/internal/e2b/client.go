@@ -31,27 +31,30 @@ const (
 )
 
 type Config struct {
-	APIKey         string
-	APIURL         string
-	Domain         string
-	SandboxURL     string
-	RequestTimeout time.Duration
+	APIKey                string
+	APIURL                string
+	Domain                string
+	SandboxURL            string
+	RequestTimeout        time.Duration
+	RestrictPublicTraffic bool
 }
 
 type Client struct {
-	apiKey      string
-	apiURL      string
-	domain      string
-	sandboxURL  string
-	controlHTTP *http.Client
-	sandboxHTTP *http.Client
+	apiKey                string
+	apiURL                string
+	domain                string
+	sandboxURL            string
+	controlHTTP           *http.Client
+	sandboxHTTP           *http.Client
+	restrictPublicTraffic bool
 }
 
 type Sandbox struct {
-	ID          string
-	Domain      string
-	EnvdVersion string
-	AccessToken string
+	ID                 string
+	Domain             string
+	EnvdVersion        string
+	AccessToken        string
+	TrafficAccessToken string
 }
 
 type SandboxInfo struct {
@@ -132,7 +135,8 @@ func NewClient(cfg Config) (*Client, error) {
 		controlHTTP: &http.Client{Transport: transport.Clone(), Timeout: requestTimeout},
 		// Envd connection setup and response headers use the configured request
 		// timeout. Once headers arrive, streams use the console dispatch context.
-		sandboxHTTP: &http.Client{Transport: sandboxTransport},
+		sandboxHTTP:           &http.Client{Transport: sandboxTransport},
+		restrictPublicTraffic: cfg.RestrictPublicTraffic,
 	}, nil
 }
 
@@ -156,6 +160,7 @@ func (c *Client) CreateWithMetadata(ctx context.Context, template string, timeou
 		AllowInternetAccess bool              `json:"allow_internet_access"`
 		Metadata            map[string]string `json:"metadata"`
 		EnvVars             map[string]string `json:"envVars"`
+		Network             map[string]bool   `json:"network,omitempty"`
 	}{
 		TemplateID:          template,
 		Timeout:             timeoutSec,
@@ -165,11 +170,15 @@ func (c *Client) CreateWithMetadata(ctx context.Context, template string, timeou
 		Metadata:            cloneMetadata(metadata),
 		EnvVars:             map[string]string{},
 	}
+	if c.restrictPublicTraffic {
+		body.Network = map[string]bool{"allowPublicTraffic": false}
+	}
 	var response struct {
-		SandboxID       string  `json:"sandboxID"`
-		EnvdVersion     string  `json:"envdVersion"`
-		EnvdAccessToken string  `json:"envdAccessToken"`
-		Domain          *string `json:"domain"`
+		SandboxID          string  `json:"sandboxID"`
+		EnvdVersion        string  `json:"envdVersion"`
+		EnvdAccessToken    string  `json:"envdAccessToken"`
+		TrafficAccessToken string  `json:"trafficAccessToken"`
+		Domain             *string `json:"domain"`
 	}
 	if err := c.controlJSON(ctx, http.MethodPost, "/sandboxes", body, &response); err != nil {
 		return nil, err
@@ -182,10 +191,11 @@ func (c *Client) CreateWithMetadata(ctx context.Context, template string, timeou
 		return nil, errors.New("E2B create response did not include sandboxID")
 	}
 	return &Sandbox{
-		ID:          response.SandboxID,
-		Domain:      domain,
-		EnvdVersion: response.EnvdVersion,
-		AccessToken: response.EnvdAccessToken,
+		ID:                 response.SandboxID,
+		Domain:             domain,
+		EnvdVersion:        response.EnvdVersion,
+		AccessToken:        response.EnvdAccessToken,
+		TrafficAccessToken: response.TrafficAccessToken,
 	}, nil
 }
 
@@ -219,10 +229,11 @@ func (c *Client) Connect(ctx context.Context, sandboxID string, timeoutSec int) 
 		return nil, errors.New("E2B sandbox timeout must be positive")
 	}
 	var response struct {
-		SandboxID       string  `json:"sandboxID"`
-		EnvdVersion     string  `json:"envdVersion"`
-		EnvdAccessToken string  `json:"envdAccessToken"`
-		Domain          *string `json:"domain"`
+		SandboxID          string  `json:"sandboxID"`
+		EnvdVersion        string  `json:"envdVersion"`
+		EnvdAccessToken    string  `json:"envdAccessToken"`
+		TrafficAccessToken string  `json:"trafficAccessToken"`
+		Domain             *string `json:"domain"`
 	}
 	path := "/sandboxes/" + url.PathEscape(strings.TrimSpace(sandboxID)) + "/connect"
 	err := c.controlJSON(ctx, http.MethodPost, path, struct {
@@ -242,7 +253,13 @@ func (c *Client) Connect(ctx context.Context, sandboxID string, timeoutSec int) 
 	if id == "" {
 		id = strings.TrimSpace(sandboxID)
 	}
-	return &Sandbox{ID: id, Domain: domain, EnvdVersion: response.EnvdVersion, AccessToken: response.EnvdAccessToken}, nil
+	return &Sandbox{
+		ID:                 id,
+		Domain:             domain,
+		EnvdVersion:        response.EnvdVersion,
+		AccessToken:        response.EnvdAccessToken,
+		TrafficAccessToken: response.TrafficAccessToken,
+	}, nil
 }
 
 func cloneMetadata(metadata map[string]string) map[string]string {
@@ -251,6 +268,24 @@ func cloneMetadata(metadata map[string]string) map[string]string {
 		out[key] = value
 	}
 	return out
+}
+
+func (sandbox *Sandbox) ProxyURL(port int) (string, string, error) {
+	if sandbox == nil || strings.TrimSpace(sandbox.ID) == "" {
+		return "", "", errors.New("sandbox is required")
+	}
+	if port < 1 || port > 65535 {
+		return "", "", errors.New("sandbox port must be between 1 and 65535")
+	}
+	domain := strings.TrimSpace(sandbox.Domain)
+	if domain == "" || strings.ContainsAny(domain, "/:@?#") {
+		return "", "", errors.New("sandbox domain is invalid")
+	}
+	trafficToken := strings.TrimSpace(sandbox.TrafficAccessToken)
+	if trafficToken == "" {
+		return "", "", errors.New("sandbox traffic access token is required")
+	}
+	return "https://" + strconv.Itoa(port) + "-" + sandbox.ID + "." + domain, trafficToken, nil
 }
 
 func (c *Client) SetTimeout(ctx context.Context, sandboxID string, timeoutSec int) error {

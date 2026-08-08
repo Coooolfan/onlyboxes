@@ -15,6 +15,7 @@ console gRPC 默认启用 TLS。只有在可信内网开发环境中才应设置
 - 文件读取使用 envd HTTP `GET /files`。
 - E2B API Key 只发送给 Control API；envd 使用创建响应里的独立 access token。
 - 日志不记录 API Key、envd access token、原始代码、命令或文件内容。
+- 启用 `WORKER_PROXY_ENABLED` 后，公开预览的数据面为“用户 → Nginx → E2B”；worker 只在 Console 的内部 resolve 阶段返回 session 对应的 E2B origin 和 traffic access token。
 
 Go 客户端根据 E2B 的公开 OpenAPI 与 envd protobuf 实现。E2B 当前没有官方 Go SDK。
 

@@ -446,7 +446,7 @@ func TestTerminalSessionDeferredDestroyKeepsSiblingAlive(t *testing.T) {
 	}
 }
 
-func TestCleanupExpiredSessionsSkipsInflight(t *testing.T) {
+func TestCleanupExpiredSessionsReclaimsInflightAndCancelsProxy(t *testing.T) {
 	stubDockerConcurrency(t, func(ctx context.Context, args ...string) dockerCommandResult {
 		return dockerCommandResult{ExitCode: 0}
 	})
@@ -460,37 +460,31 @@ func TestCleanupExpiredSessionsSkipsInflight(t *testing.T) {
 	defer manager.Close()
 
 	expired := time.Now().Add(-time.Minute)
+	busy := readyTerminalSession("busy-session", "container-busy", expired, 1)
+	idle := readyTerminalSession("idle-session", "container-idle", expired, 0)
 	manager.mu.Lock()
-	manager.sessions["busy-session"] = readyTerminalSession("busy-session", "container-busy", expired, 1)
-	manager.sessions["idle-session"] = readyTerminalSession("idle-session", "container-idle", expired, 0)
+	manager.sessions[busy.sessionID] = busy
+	manager.sessions[idle.sessionID] = idle
 	manager.mu.Unlock()
 
 	manager.cleanupExpiredSessions()
 
 	manager.mu.Lock()
-	_, busyPresent := manager.sessions["busy-session"]
-	_, idlePresent := manager.sessions["idle-session"]
+	_, busyPresent := manager.sessions[busy.sessionID]
+	_, idlePresent := manager.sessions[idle.sessionID]
 	manager.mu.Unlock()
-
-	if !busyPresent {
-		t.Fatalf("session with inflight commands must not be reclaimed")
+	if busyPresent || idlePresent {
+		t.Fatalf("expired sessions must be reclaimed regardless of inflight count")
 	}
-	if idlePresent {
-		t.Fatalf("idle expired session should have been reclaimed")
+	select {
+	case <-busy.proxyCtx.Done():
+	default:
+		t.Fatalf("expired inflight session proxy context was not canceled")
 	}
-
-	// Draining the last command makes it reclaimable.
-	manager.mu.Lock()
-	manager.sessions["busy-session"].inflight = 0
-	manager.mu.Unlock()
-
-	manager.cleanupExpiredSessions()
-
-	manager.mu.Lock()
-	_, stillPresent := manager.sessions["busy-session"]
-	manager.mu.Unlock()
-	if stillPresent {
-		t.Fatalf("drained expired session should have been reclaimed")
+	select {
+	case <-idle.proxyCtx.Done():
+	default:
+		t.Fatalf("expired idle session proxy context was not canceled")
 	}
 }
 

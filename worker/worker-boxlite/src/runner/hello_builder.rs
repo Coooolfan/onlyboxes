@@ -29,7 +29,16 @@ pub(crate) fn build_hello(
 
     let mut labels = HashMap::with_capacity(cfg.labels.len());
     for (key, value) in &cfg.labels {
+        if key.trim() == super::PROXY_ENDPOINT_LABEL {
+            continue;
+        }
         labels.insert(key.clone(), value.clone());
+    }
+    if cfg.proxy_enabled {
+        labels.insert(
+            super::PROXY_ENDPOINT_LABEL.to_owned(),
+            cfg.proxy_advertise_addr.trim().to_owned(),
+        );
     }
 
     Ok(ConnectHello {
@@ -103,6 +112,10 @@ mod tests {
             python_exec_max_inflight: 4,
             terminal_exec_max_inflight: 4,
             terminal_resource_max_inflight: 4,
+            proxy_enabled: false,
+            proxy_listen_addr: "0.0.0.0:8091".to_owned(),
+            proxy_advertise_addr: String::new(),
+            proxy_sandbox_ports: Vec::new(),
             log_level: "info".to_owned(),
             log_format: "json".to_owned(),
             log_add_source: false,
@@ -134,6 +147,25 @@ mod tests {
             .terminal_session_capacity
             .expect("terminal capacity declaration");
         assert_eq!(capacity.max_active_sessions, 0);
+    }
+
+    #[test]
+    fn build_hello_advertises_proxy_endpoint_when_enabled() {
+        let mut cfg = test_config();
+        cfg.proxy_enabled = true;
+        cfg.proxy_advertise_addr = "10.0.2.16:8091".to_owned();
+        cfg.labels.insert(
+            super::super::PROXY_ENDPOINT_LABEL.to_owned(),
+            "forged:1".to_owned(),
+        );
+        let hello = build_hello(&cfg, 0).expect("build hello");
+        assert_eq!(
+            hello
+                .labels
+                .get(super::super::PROXY_ENDPOINT_LABEL)
+                .map(String::as_str),
+            Some("10.0.2.16:8091")
+        );
     }
 
     #[test]

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
+	"github.com/onlyboxes/onlyboxes/api/proxytoken"
 	"github.com/onlyboxes/onlyboxes/worker/worker-docker/internal/config"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -123,6 +124,67 @@ func TestBuildHelloAdvertisesExplicitUnlimitedTerminalCapacity(t *testing.T) {
 	capacity := hello.GetTerminalSessionCapacity()
 	if capacity == nil || capacity.GetMaxActiveSessions() != 0 {
 		t.Fatalf("expected explicit unlimited terminal capacity, got %#v", capacity)
+	}
+}
+
+func TestBuildHelloControlsProxyEndpointLabel(t *testing.T) {
+	cfg := testConfig()
+	cfg.Labels = map[string]string{
+		"region":                      "test",
+		proxytoken.ProxyEndpointLabel: "192.0.2.10:9999",
+	}
+
+	disabledHello, err := buildHello(cfg)
+	if err != nil {
+		t.Fatalf("build disabled hello: %v", err)
+	}
+	if _, exists := disabledHello.GetLabels()[proxytoken.ProxyEndpointLabel]; exists {
+		t.Fatalf("user-provided reserved proxy label must be removed when disabled")
+	}
+
+	cfg.ProxyEnabled = true
+	cfg.ProxyAdvertiseAddr = "10.0.0.5:8091"
+	enabledHello, err := buildHello(cfg)
+	if err != nil {
+		t.Fatalf("build enabled hello: %v", err)
+	}
+	if got := enabledHello.GetLabels()[proxytoken.ProxyEndpointLabel]; got != cfg.ProxyAdvertiseAddr {
+		t.Fatalf("expected automatic proxy endpoint %q, got %q", cfg.ProxyAdvertiseAddr, got)
+	}
+	if cfg.Labels[proxytoken.ProxyEndpointLabel] != "192.0.2.10:9999" {
+		t.Fatalf("buildHello mutated configured labels")
+	}
+}
+
+func TestValidateProxyConfig(t *testing.T) {
+	cfg := testConfig()
+	cfg.ProxyEnabled = true
+	cfg.ProxyListenAddr = ":8091"
+	cfg.ProxyAdvertiseAddr = "10.0.0.5:8091"
+	if err := validateProxyConfig(cfg); err != nil {
+		t.Fatalf("expected valid proxy config: %v", err)
+	}
+
+	for _, invalid := range []struct {
+		listen    string
+		advertise string
+	}{
+		{listen: ":8091", advertise: ""},
+		{listen: ":8091", advertise: "worker.internal:8091"},
+		{listen: ":8091", advertise: "0.0.0.0:8091"},
+		{listen: ":8091", advertise: "127.0.0.1:8091"},
+		{listen: ":8091", advertise: "[::ffff:127.0.0.1]:8091"},
+		{listen: ":8091", advertise: "10.0.0.5:0"},
+		{listen: ":0", advertise: "10.0.0.5:8091"},
+		{listen: ":8091", advertise: "10.0.0.5:18091"},
+		{listen: "worker.internal:8091", advertise: "10.0.0.5:8091"},
+		{listen: "127.0.0.1:8091", advertise: "10.0.0.5:8091"},
+	} {
+		cfg.ProxyListenAddr = invalid.listen
+		cfg.ProxyAdvertiseAddr = invalid.advertise
+		if err := validateProxyConfig(cfg); err == nil {
+			t.Fatalf("expected invalid proxy addresses listen=%q advertise=%q to fail", invalid.listen, invalid.advertise)
+		}
 	}
 }
 

@@ -41,6 +41,10 @@ type activeSession struct {
 	executorKind string
 	connectedAt  time.Time
 
+	proxyEndpoint string
+	routeTokenKey []byte
+	proxyDirect   string
+
 	capabilitiesMu sync.Mutex
 	capabilities   map[string]*sessionCapability
 

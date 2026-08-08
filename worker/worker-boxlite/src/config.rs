@@ -25,6 +25,7 @@ const DEFAULT_MAX_INFLIGHT: u32 = 4;
 const DEFAULT_TERMINAL_SESSION_MAX_INFLIGHT: u32 = 1;
 /// Zero keeps terminal session capacity unlimited.
 const DEFAULT_TERMINAL_MAX_ACTIVE_SESSIONS: u32 = 0;
+const DEFAULT_PROXY_LISTEN_ADDR: &str = "0.0.0.0:8091";
 const DEFAULT_LOG_LEVEL: &str = "info";
 const DEFAULT_LOG_FORMAT: &str = "json";
 const DEFAULT_LOG_ADD_SOURCE: bool = false;
@@ -64,6 +65,10 @@ pub struct Config {
     pub python_exec_max_inflight: i32,
     pub terminal_exec_max_inflight: i32,
     pub terminal_resource_max_inflight: i32,
+    pub proxy_enabled: bool,
+    pub proxy_listen_addr: String,
+    pub proxy_advertise_addr: String,
+    pub proxy_sandbox_ports: Vec<u16>,
     pub log_level: String,
     pub log_format: String,
     pub log_add_source: bool,
@@ -173,11 +178,29 @@ impl Config {
                 "WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT",
                 DEFAULT_MAX_INFLIGHT,
             ) as i32,
+            proxy_enabled: src.bool_value("WORKER_PROXY_ENABLED", false),
+            proxy_listen_addr: src
+                .string_value("WORKER_PROXY_LISTEN_ADDR", DEFAULT_PROXY_LISTEN_ADDR),
+            proxy_advertise_addr: src.get("WORKER_PROXY_ADVERTISE_ADDR").trim().to_owned(),
+            proxy_sandbox_ports: parse_proxy_ports(&src.get("WORKER_PROXY_SANDBOX_PORTS")),
             log_level: src.log_level("WORKER_LOG_LEVEL", DEFAULT_LOG_LEVEL),
             log_format: src.log_format("WORKER_LOG_FORMAT", DEFAULT_LOG_FORMAT),
             log_add_source: src.bool_value("WORKER_LOG_ADD_SOURCE", DEFAULT_LOG_ADD_SOURCE),
         }
     }
+}
+
+fn parse_proxy_ports(raw: &str) -> Vec<u16> {
+    let mut ports = serde_json::from_str::<Vec<u16>>(raw).unwrap_or_else(|_| {
+        raw.split(',')
+            .filter_map(|part| part.trim().parse::<u16>().ok())
+            .filter(|port| *port > 0)
+            .collect::<Vec<_>>()
+    });
+    ports.retain(|port| *port > 0);
+    ports.sort_unstable();
+    ports.dedup();
+    ports
 }
 
 fn parse_labels(raw: &str) -> BTreeMap<String, String> {
@@ -280,5 +303,14 @@ mod tests {
 
         assert_eq!(labels.get("description"), Some(&"gpu,shared".to_owned()));
         assert_eq!(labels.get("region"), Some(&"cn".to_owned()));
+    }
+
+    #[test]
+    fn parse_proxy_ports_accepts_toml_array_encoding_and_csv() {
+        assert_eq!(parse_proxy_ports("[8080,3000,8080,0]"), vec![3000, 8080]);
+        assert_eq!(
+            parse_proxy_ports("8080, 3000,invalid,8080"),
+            vec![3000, 8080]
+        );
     }
 }

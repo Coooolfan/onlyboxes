@@ -18,12 +18,16 @@ import (
 func readyTerminalSession(sessionID string, containerName string, leaseExpiresAt time.Time, inflight int) *terminalSession {
 	ready := make(chan struct{})
 	close(ready)
+	proxyCtx, proxyCancel := context.WithCancel(context.Background())
 	return &terminalSession{
 		sessionID:      sessionID,
 		containerName:  containerName,
+		containerIP:    "172.20.0.2",
 		leaseExpiresAt: leaseExpiresAt,
 		inflight:       inflight,
 		ready:          ready,
+		proxyCtx:       proxyCtx,
+		proxyCancel:    proxyCancel,
 	}
 }
 
@@ -496,6 +500,188 @@ func TestTerminalExecDockerCreateArgs(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected create args:\nwant=%#v\ngot=%#v", want, got)
+	}
+}
+
+func TestTerminalSessionExpiryDuringContainerCreationRemovesLateContainer(t *testing.T) {
+	createStarted := make(chan struct{})
+	releaseCreate := make(chan struct{})
+	firstRemove := make(chan struct{})
+	var removeOnce sync.Once
+	var removeMu sync.Mutex
+	removeCalls := 0
+	stubDockerConcurrency(t, func(_ context.Context, args ...string) dockerCommandResult {
+		switch args[0] {
+		case "create":
+			close(createStarted)
+			<-releaseCreate
+			return dockerCommandResult{ExitCode: 0}
+		case "start":
+			return dockerCommandResult{ExitCode: 0}
+		case "rm":
+			removeMu.Lock()
+			removeCalls++
+			removeMu.Unlock()
+			removeOnce.Do(func() { close(firstRemove) })
+			return dockerCommandResult{ExitCode: 0}
+		default:
+			return dockerCommandResult{ExitCode: 1, Stderr: "unexpected docker operation"}
+		}
+	})
+	manager := newTerminalSessionManager(terminalSessionManagerConfig{
+		LeaseMinSec:      60,
+		LeaseMaxSec:      1800,
+		LeaseDefaultSec:  60,
+		OutputLimitBytes: 1024,
+	})
+	defer manager.Close()
+
+	manager.mu.Lock()
+	session, err := manager.newSessionLocked("session-expire-during-create", time.Now().Add(50*time.Millisecond))
+	manager.mu.Unlock()
+	if err != nil {
+		t.Fatalf("create pending session: %v", err)
+	}
+	readyErr := make(chan error, 1)
+	go func() { readyErr <- manager.awaitSessionReady(context.Background(), session, true) }()
+	<-createStarted
+	waiterErr := make(chan error, 1)
+	go func() { waiterErr <- manager.awaitSessionReady(context.Background(), session, false) }()
+	select {
+	case <-firstRemove:
+	case <-time.After(time.Second):
+		t.Fatalf("lease timer did not attempt cleanup during container creation")
+	}
+	close(releaseCreate)
+	for role, errCh := range map[string]<-chan error{"creator": readyErr, "waiter": waiterErr} {
+		if err := <-errCh; err == nil {
+			t.Fatalf("%s unexpectedly succeeded after lease expiry", role)
+		} else {
+			var terminalErr *terminalExecError
+			if !errors.As(err, &terminalErr) || terminalErr.code != terminalExecCodeSessionNotFound {
+				t.Fatalf("%s expected session_not_found after late create, got %v", role, err)
+			}
+		}
+	}
+	removeMu.Lock()
+	gotRemoveCalls := removeCalls
+	removeMu.Unlock()
+	if gotRemoveCalls < 2 {
+		t.Fatalf("late-created container was not removed again: rm calls=%d", gotRemoveCalls)
+	}
+}
+
+func TestTerminalSessionLeaseTimerTracksExtension(t *testing.T) {
+	containerRemoved := make(chan struct{}, 1)
+	stubDockerConcurrency(t, func(_ context.Context, args ...string) dockerCommandResult {
+		if len(args) > 0 && args[0] == "rm" {
+			containerRemoved <- struct{}{}
+		}
+		return dockerCommandResult{ExitCode: 0}
+	})
+	manager := newTerminalSessionManager(terminalSessionManagerConfig{
+		LeaseMinSec:      60,
+		LeaseMaxSec:      1800,
+		LeaseDefaultSec:  60,
+		OutputLimitBytes: 1024,
+	})
+	defer manager.Close()
+
+	oldExpiry := time.Now().Add(500 * time.Millisecond)
+	session := readyTerminalSession("session-lease-timer", "container-lease-timer", oldExpiry, 0)
+	manager.mu.Lock()
+	manager.sessions[session.sessionID] = session
+	manager.scheduleSessionLeaseTimerLocked(session)
+	manager.mu.Unlock()
+
+	time.Sleep(100 * time.Millisecond)
+	newExpiry := time.Now().Add(900 * time.Millisecond)
+	manager.mu.Lock()
+	session.leaseExpiresAt = newExpiry
+	manager.scheduleSessionLeaseTimerLocked(session)
+	manager.mu.Unlock()
+
+	waitUntilOldExpiry := time.Until(oldExpiry.Add(150 * time.Millisecond))
+	if waitUntilOldExpiry > 0 {
+		time.Sleep(waitUntilOldExpiry)
+	}
+	select {
+	case <-session.proxyCtx.Done():
+		t.Fatalf("lease timer ignored an extension")
+	default:
+	}
+
+	select {
+	case <-session.proxyCtx.Done():
+	case <-time.After(time.Until(newExpiry.Add(time.Second))):
+		t.Fatalf("lease timer did not cancel the session at the extended deadline")
+	}
+	select {
+	case <-containerRemoved:
+	case <-time.After(time.Second):
+		t.Fatalf("lease timer did not remove the expired session container")
+	}
+	manager.mu.Lock()
+	_, stillPresent := manager.sessions[session.sessionID]
+	manager.mu.Unlock()
+	if stillPresent {
+		t.Fatalf("lease timer left the expired session registered")
+	}
+}
+
+func TestTerminalSessionProxyTargetCachesContainerIP(t *testing.T) {
+	originalRunDockerCommand := runDockerCommand
+	t.Cleanup(func() {
+		runDockerCommand = originalRunDockerCommand
+	})
+
+	inspectCalls := 0
+	runDockerCommand = func(_ context.Context, args ...string) dockerCommandResult {
+		switch args[0] {
+		case "create", "start", "exec", "rm":
+			return dockerCommandResult{ExitCode: 0}
+		case "inspect":
+			inspectCalls++
+			return dockerCommandResult{Stdout: "172.30.0.8\n", ExitCode: 0}
+		default:
+			return dockerCommandResult{Stderr: "unexpected docker operation", ExitCode: 1}
+		}
+	}
+
+	manager := newTerminalSessionManager(terminalSessionManagerConfig{
+		LeaseMinSec:      60,
+		LeaseMaxSec:      1800,
+		LeaseDefaultSec:  60,
+		OutputLimitBytes: 1024,
+		DockerNetwork:    terminalProxyDockerNetwork,
+	})
+	defer manager.Close()
+
+	created, err := manager.Execute(context.Background(), terminalExecRequest{Command: "start-service"})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if inspectCalls != 1 {
+		t.Fatalf("expected one inspect after container start, got %d", inspectCalls)
+	}
+	for range 20 {
+		target, err := manager.ResolveProxyTarget(context.Background(), created.SessionID, time.Now())
+		if err != nil {
+			t.Fatalf("resolve proxy target: %v", err)
+		}
+		if target.IP != "172.30.0.8" {
+			t.Fatalf("unexpected cached target IP %q", target.IP)
+		}
+	}
+	if inspectCalls != 1 {
+		t.Fatalf("proxy requests repeated docker inspect: %d calls", inspectCalls)
+	}
+}
+
+func TestTerminalExecDockerCreateArgsWithProxyNetwork(t *testing.T) {
+	got := terminalExecDockerCreateArgsWithNetwork("container-a", "python:slim", "256m", "1.0", 128, terminalProxyDockerNetwork)
+	if network := argValue(got, "--network"); network != terminalProxyDockerNetwork {
+		t.Fatalf("expected proxy network %q, got %q in %#v", terminalProxyDockerNetwork, network, got)
 	}
 }
 

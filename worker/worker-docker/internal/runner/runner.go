@@ -3,6 +3,8 @@ package runner
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -56,7 +58,19 @@ func Run(ctx context.Context, cfg config.Config) error {
 	if err := validateTerminalMaxActiveSessions(cfg.TerminalMaxActiveSessions); err != nil {
 		return err
 	}
+	if err := validateProxyConfig(cfg); err != nil {
+		return err
+	}
+	if cfg.ProxyEnabled {
+		if err := ensureTerminalProxyNetwork(ctx); err != nil {
+			return fmt.Errorf("initialize sandbox proxy network: %w", err)
+		}
+	}
 
+	dockerNetwork := ""
+	if cfg.ProxyEnabled {
+		dockerNetwork = terminalProxyDockerNetwork
+	}
 	terminalManager := newTerminalSessionManager(terminalSessionManagerConfig{
 		LeaseMinSec:        cfg.TerminalLeaseMinSec,
 		LeaseMaxSec:        cfg.TerminalLeaseMaxSec,
@@ -67,6 +81,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 		MemoryLimit:        cfg.TerminalExecMemoryLimit,
 		CPULimit:           cfg.TerminalExecCPULimit,
 		PidsLimit:          cfg.TerminalExecPidsLimit,
+		DockerNetwork:      dockerNetwork,
 		SessionMaxInflight: cfg.TerminalSessionMaxInflight,
 		MaxActiveSessions:  cfg.TerminalMaxActiveSessions,
 		PreserveOnClose:    true,
@@ -115,18 +130,67 @@ func Run(ctx context.Context, cfg config.Config) error {
 		terminalManager.maxActiveSessions,
 	)
 
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+	var proxyErrCh chan error
+	proxyWaited := false
+	if cfg.ProxyEnabled {
+		proxyHandler, err := newSandboxProxyHandler(cfg.WorkerID, cfg.WorkerSecret, terminalManager)
+		if err != nil {
+			return fmt.Errorf("initialize sandbox proxy: %w", err)
+		}
+		proxyErrCh = make(chan error, 1)
+		proxyReadyCh := make(chan net.Addr, 1)
+		go func() {
+			err := runSandboxProxyServer(runCtx, cfg, proxyHandler, proxyReadyCh)
+			proxyErrCh <- err
+			cancelRun()
+		}()
+		select {
+		case address := <-proxyReadyCh:
+			logging.Infof("sandbox proxy listening: addr=%s advertise_addr=%s", address.String(), cfg.ProxyAdvertiseAddr)
+		case err := <-proxyErrCh:
+			proxyWaited = true
+			return fmt.Errorf("sandbox proxy server: %w", err)
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		defer func() {
+			cancelRun()
+			if !proxyWaited {
+				<-proxyErrCh
+			}
+		}()
+	}
+
 	reconnectDelay := initialReconnectDelay
 	for {
-		if err := ctx.Err(); err != nil {
+		if err := runCtx.Err(); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if proxyErrCh != nil {
+				proxyErr := <-proxyErrCh
+				proxyWaited = true
+				return fmt.Errorf("sandbox proxy server: %w", proxyErr)
+			}
 			return err
 		}
 
-		err := runSession(ctx, cfg)
+		err := runSession(runCtx, cfg)
 		if err == nil {
 			return nil
 		}
 
-		if errCtx := ctx.Err(); errCtx != nil {
+		if errCtx := runCtx.Err(); errCtx != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if proxyErrCh != nil {
+				proxyErr := <-proxyErrCh
+				proxyWaited = true
+				return fmt.Errorf("sandbox proxy server: %w", proxyErr)
+			}
 			return errCtx
 		}
 
@@ -137,7 +201,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 			logging.Warnf("registry session interrupted: %v", err)
 		}
 
-		if err := waitReconnect(ctx, reconnectDelay); err != nil {
+		if err := waitReconnect(runCtx, reconnectDelay); err != nil {
 			return err
 		}
 		reconnectDelay = nextReconnectDelay(reconnectDelay)

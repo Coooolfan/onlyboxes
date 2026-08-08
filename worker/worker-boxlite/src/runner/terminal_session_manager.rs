@@ -202,6 +202,33 @@ pub(crate) enum TerminalOperationError {
     ExecutionFailed(String),
 }
 
+/// Separates a missing session from a guest port that has no host mapping so the
+/// sandbox proxy can answer with the right status code instead of a blanket 404.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub(crate) enum ProxyTargetError {
+    #[error("sandbox session not found")]
+    SessionNotFound,
+    #[error("{}", port_not_enabled_message(*requested_port, enabled_ports))]
+    PortNotEnabled {
+        requested_port: u16,
+        enabled_ports: Vec<u16>,
+    },
+}
+
+fn port_not_enabled_message(requested_port: u16, enabled_ports: &[u16]) -> String {
+    if enabled_ports.is_empty() {
+        return format!(
+            "sandbox port {requested_port} is not enabled for proxy access; this sandbox has no proxied ports"
+        );
+    }
+    let ports = enabled_ports
+        .iter()
+        .map(u16::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("sandbox port {requested_port} is not enabled for proxy access; enabled ports: {ports}")
+}
+
 #[async_trait]
 pub(crate) trait TerminalBackend: Send + Sync {
     async fn create_session_box(
@@ -248,6 +275,13 @@ pub(crate) trait TerminalBackend: Send + Sync {
         deadline_unix_ms: i64,
     ) -> Result<(), BoxliteCommandError>;
     async fn remove_box(&self, box_id: &str);
+    fn proxy_target(&self, _box_id: &str, _guest_port: u16) -> Option<u16> {
+        None
+    }
+    /// Guest ports mapped when this box was created, used for diagnostics only.
+    fn proxy_ports(&self, _box_id: &str) -> Vec<u16> {
+        Vec::new()
+    }
 }
 
 /// Publishes the outcome of box creation to callers waiting on a session.
@@ -559,6 +593,37 @@ impl TerminalSessionManager {
                 Err(TerminalOperationError::ExecutionFailed(message))
             }
         }
+    }
+
+    pub(crate) async fn resolve_proxy_target(
+        &self,
+        session_id: &str,
+        guest_port: u16,
+        now: SystemTime,
+    ) -> Result<u16, ProxyTargetError> {
+        let sessions = self.sessions.lock().await;
+        let Some(session) = sessions.get(session_id.trim()) else {
+            return Err(ProxyTargetError::SessionNotFound);
+        };
+        if session.destroying || session.box_id.trim().is_empty() || session.lease_expires_at <= now
+        {
+            return Err(ProxyTargetError::SessionNotFound);
+        }
+        self.backend
+            .proxy_target(&session.box_id, guest_port)
+            .ok_or_else(|| ProxyTargetError::PortNotEnabled {
+                requested_port: guest_port,
+                enabled_ports: self.backend.proxy_ports(&session.box_id),
+            })
+    }
+
+    pub(crate) async fn proxy_session_active(&self, session_id: &str, now: SystemTime) -> bool {
+        let sessions = self.sessions.lock().await;
+        sessions.get(session_id.trim()).is_some_and(|session| {
+            !session.destroying
+                && !session.box_id.trim().is_empty()
+                && session.lease_expires_at > now
+        })
     }
 
     pub(crate) async fn resolve_resource(
@@ -1469,6 +1534,14 @@ impl TerminalBackend for BoxliteTerminalBackend {
     async fn remove_box(&self, box_id: &str) {
         boxlite_runtime::remove_box(&self.cfg, box_id).await;
     }
+
+    fn proxy_target(&self, box_id: &str, guest_port: u16) -> Option<u16> {
+        boxlite_runtime::terminal_proxy_target(box_id, guest_port)
+    }
+
+    fn proxy_ports(&self, box_id: &str) -> Vec<u16> {
+        boxlite_runtime::terminal_proxy_ports(box_id)
+    }
 }
 
 fn map_boxlite_terminal_error(err: BoxliteCommandError) -> TerminalOperationError {
@@ -1841,6 +1914,17 @@ mod tests {
 
         async fn remove_box(&self, box_id: &str) {
             self.removed.lock().await.push(box_id.to_owned());
+        }
+
+        fn proxy_target(&self, box_id: &str, guest_port: u16) -> Option<u16> {
+            (!box_id.trim().is_empty() && guest_port == 8080).then_some(18080)
+        }
+
+        fn proxy_ports(&self, box_id: &str) -> Vec<u16> {
+            if box_id.trim().is_empty() {
+                return Vec::new();
+            }
+            vec![8080]
         }
     }
 
@@ -2460,6 +2544,68 @@ mod tests {
         assert_eq!(second.stdout, "persisted\n");
 
         manager.close().await;
+    }
+
+    #[tokio::test]
+    async fn proxy_target_requires_live_session_and_enabled_port() {
+        let backend = StatefulShellBackend::new();
+        let manager = manager_with_backend(backend, 1024 * 1024);
+        let created = manager
+            .execute(TerminalExecRequest {
+                command: "true".to_owned(),
+                session_id: String::new(),
+                create_if_missing: false,
+                lease_ttl_sec: None,
+                deadline_unix_ms: 0,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            manager
+                .resolve_proxy_target(&created.session_id, 8080, SystemTime::now())
+                .await
+                .unwrap(),
+            18080
+        );
+        let port_error = manager
+            .resolve_proxy_target(&created.session_id, 3000, SystemTime::now())
+            .await
+            .unwrap_err();
+        assert_eq!(
+            port_error,
+            ProxyTargetError::PortNotEnabled {
+                requested_port: 3000,
+                enabled_ports: vec![8080],
+            }
+        );
+        assert_eq!(
+            port_error.to_string(),
+            "sandbox port 3000 is not enabled for proxy access; enabled ports: 8080"
+        );
+        assert_eq!(
+            manager
+                .resolve_proxy_target(
+                    &created.session_id,
+                    8080,
+                    SystemTime::now() + Duration::from_secs(3600),
+                )
+                .await
+                .unwrap_err(),
+            ProxyTargetError::SessionNotFound
+        );
+    }
+
+    #[test]
+    fn port_not_enabled_message_reports_empty_mapping() {
+        assert_eq!(
+            port_not_enabled_message(5178, &[]),
+            "sandbox port 5178 is not enabled for proxy access; this sandbox has no proxied ports"
+        );
+        assert_eq!(
+            port_not_enabled_message(5178, &[3000, 8080]),
+            "sandbox port 5178 is not enabled for proxy access; enabled ports: 3000, 8080"
+        );
     }
 
     #[tokio::test]

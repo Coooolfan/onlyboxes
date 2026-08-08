@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
+use boxlite::runtime::options::PortSpec;
 use boxlite::{
     BoxCommand, BoxOptions, BoxStatus, BoxliteOptions, BoxliteRuntime, CopyOptions, ExecStderr,
     ExecStdout, LiteBox, RootfsSpec,
@@ -14,6 +15,7 @@ use tokio_util::sync::CancellationToken;
 use crate::config::Config;
 
 const BOX_CLEANUP_TIMEOUT: Duration = Duration::from_secs(3);
+const TERMINAL_PROXY_CREATE_ATTEMPTS: usize = 3;
 const TERMINAL_EXEC_IDLE_COMMAND: &str = "while true; do sleep 3600; done";
 const TERMINAL_SESSION_CREATE_CANCELLED_MESSAGE: &str = "terminal session manager is closed";
 
@@ -21,6 +23,7 @@ static RUNTIME: OnceLock<Result<BoxliteRuntime, String>> = OnceLock::new();
 // Keep terminal session handles alive so the first exec can reuse the
 // already-connected guest session instead of immediately reattaching by box_id.
 static TERMINAL_SESSION_BOXES: OnceLock<Mutex<HashMap<String, Arc<LiteBox>>>> = OnceLock::new();
+static TERMINAL_PROXY_PORTS: OnceLock<Mutex<HashMap<String, HashMap<u16, u16>>>> = OnceLock::new();
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PythonExecRunResult {
@@ -97,6 +100,30 @@ pub(crate) async fn create_terminal_session_box(
     shutdown: CancellationToken,
     deadline_unix_ms: i64,
 ) -> Result<String, BoxliteCommandError> {
+    for attempt in 1..=TERMINAL_PROXY_CREATE_ATTEMPTS {
+        let result =
+            create_terminal_session_box_once(cfg, box_name, shutdown.clone(), deadline_unix_ms)
+                .await;
+        match result {
+            Err(err)
+                if cfg.proxy_enabled
+                    && attempt < TERMINAL_PROXY_CREATE_ATTEMPTS
+                    && is_proxy_port_conflict(&err) =>
+            {
+                tracing::warn!(attempt, error = %err, "terminal proxy port conflict; retrying box creation");
+            }
+            result => return result,
+        }
+    }
+    unreachable!()
+}
+
+async fn create_terminal_session_box_once(
+    cfg: &Config,
+    box_name: &str,
+    shutdown: CancellationToken,
+    deadline_unix_ms: i64,
+) -> Result<String, BoxliteCommandError> {
     if shutdown.is_cancelled() {
         return Err(BoxliteCommandError::ExecutionFailed(
             TERMINAL_SESSION_CREATE_CANCELLED_MESSAGE.to_owned(),
@@ -107,11 +134,9 @@ pub(crate) async fn create_terminal_session_box(
     }
 
     let runtime = runtime(cfg)?;
+    let (box_options, proxy_ports) = build_terminal_exec_box_options(cfg)?;
     let litebox = {
-        let create = runtime.get_or_create(
-            build_terminal_exec_box_options(cfg),
-            Some(box_name.trim().to_owned()),
-        );
+        let create = runtime.create(box_options, Some(box_name.trim().to_owned()));
         tokio::pin!(create);
 
         match remaining_until_deadline(deadline_unix_ms) {
@@ -120,7 +145,7 @@ pub(crate) async fn create_terminal_session_box(
                     TERMINAL_SESSION_CREATE_CANCELLED_MESSAGE.to_owned(),
                 )),
                 _ = tokio::time::sleep(remaining) => Err(BoxliteCommandError::DeadlineExceeded),
-                result = &mut create => result.map(|(litebox, _)| litebox).map_err(|err| {
+                result = &mut create => result.map_err(|err| {
                     BoxliteCommandError::ExecutionFailed(format!("terminalExec create failed: {err}"))
                 }),
             },
@@ -128,7 +153,7 @@ pub(crate) async fn create_terminal_session_box(
                 _ = shutdown.cancelled() => Err(BoxliteCommandError::ExecutionFailed(
                     TERMINAL_SESSION_CREATE_CANCELLED_MESSAGE.to_owned(),
                 )),
-                result = &mut create => result.map(|(litebox, _)| litebox).map_err(|err| {
+                result = &mut create => result.map_err(|err| {
                     BoxliteCommandError::ExecutionFailed(format!("terminalExec create failed: {err}"))
                 }),
             },
@@ -136,6 +161,12 @@ pub(crate) async fn create_terminal_session_box(
     }?;
 
     let box_id = litebox.id().as_str().to_owned();
+    if !proxy_ports.is_empty() {
+        terminal_proxy_port_map()
+            .lock()
+            .expect("terminal proxy ports lock poisoned")
+            .insert(box_id.clone(), proxy_ports);
+    }
     let start_result = {
         let start = litebox.start();
         tokio::pin!(start);
@@ -253,6 +284,14 @@ fn is_onlyboxes_terminal_session_box_name(name: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
+fn is_proxy_port_conflict(err: &BoxliteCommandError) -> bool {
+    matches!(
+        err,
+        BoxliteCommandError::ExecutionFailed(message)
+            if message.to_ascii_lowercase().contains("address already in use")
+    )
+}
+
 pub(crate) async fn exec_terminal_shell(
     cfg: &Config,
     box_id: &str,
@@ -352,6 +391,10 @@ pub(crate) async fn remove_box(cfg: &Config, box_id: &str) {
     }
 
     drop_terminal_session_box(box_id);
+    terminal_proxy_port_map()
+        .lock()
+        .expect("terminal proxy ports lock poisoned")
+        .remove(box_id);
 
     let Ok(runtime) = runtime(cfg) else {
         return;
@@ -415,7 +458,39 @@ fn build_python_exec_box_options(cfg: &Config) -> BoxOptions {
     options
 }
 
-fn build_terminal_exec_box_options(cfg: &Config) -> BoxOptions {
+fn build_terminal_exec_box_options(
+    cfg: &Config,
+) -> Result<(BoxOptions, HashMap<u16, u16>), BoxliteCommandError> {
+    let mut proxy_ports = HashMap::new();
+    let mut ports = Vec::new();
+    let mut reservations = Vec::new();
+    if cfg.proxy_enabled {
+        for guest_port in &cfg.proxy_sandbox_ports {
+            let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+                .map_err(|err| {
+                    BoxliteCommandError::ExecutionFailed(format!(
+                        "allocate terminal proxy port failed: {err}"
+                    ))
+                })?;
+            let host_port = listener
+                .local_addr()
+                .map_err(|err| {
+                    BoxliteCommandError::ExecutionFailed(format!(
+                        "read terminal proxy port failed: {err}"
+                    ))
+                })?
+                .port();
+            proxy_ports.insert(*guest_port, host_port);
+            reservations.push(listener);
+            ports.push(PortSpec {
+                host_port: Some(host_port),
+                guest_port: *guest_port,
+                host_ip: Some("127.0.0.1".to_owned()),
+                ..Default::default()
+            });
+        }
+    }
+    drop(reservations);
     let mut options = BoxOptions {
         cpus: Some(resolve_cpus(cfg.terminal_exec_cpus)),
         memory_mib: Some(cfg.terminal_exec_memory_mib),
@@ -424,11 +499,37 @@ fn build_terminal_exec_box_options(cfg: &Config) -> BoxOptions {
         detach: true,
         entrypoint: Some(vec!["sh".to_owned(), "-lc".to_owned()]),
         cmd: Some(vec![TERMINAL_EXEC_IDLE_COMMAND.to_owned()]),
+        ports,
         ..Default::default()
     };
     options.advanced.security.resource_limits.max_processes =
         Some(cfg.terminal_exec_max_processes as u64);
-    options
+    Ok((options, proxy_ports))
+}
+
+fn terminal_proxy_port_map() -> &'static Mutex<HashMap<String, HashMap<u16, u16>>> {
+    TERMINAL_PROXY_PORTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub(crate) fn terminal_proxy_target(box_id: &str, guest_port: u16) -> Option<u16> {
+    terminal_proxy_port_map().lock().ok().and_then(|ports| {
+        ports
+            .get(box_id.trim())
+            .and_then(|mapping| mapping.get(&guest_port))
+            .copied()
+    })
+}
+
+pub(crate) fn terminal_proxy_ports(box_id: &str) -> Vec<u16> {
+    let Ok(ports) = terminal_proxy_port_map().lock() else {
+        return Vec::new();
+    };
+    let Some(mapping) = ports.get(box_id.trim()) else {
+        return Vec::new();
+    };
+    let mut guest_ports = mapping.keys().copied().collect::<Vec<_>>();
+    guest_ports.sort_unstable();
+    guest_ports
 }
 
 async fn get_box(runtime: &BoxliteRuntime, box_id: &str) -> Result<LiteBox, BoxliteCommandError> {
@@ -673,6 +774,28 @@ mod tests {
     }
 
     #[test]
+    fn proxy_port_conflict_detection_only_retries_bind_collisions() {
+        assert!(is_proxy_port_conflict(
+            &BoxliteCommandError::ExecutionFailed(
+                "listen tcp 0.0.0.0:27380: bind: address already in use".to_owned(),
+            )
+        ));
+        assert!(is_proxy_port_conflict(
+            &BoxliteCommandError::ExecutionFailed(
+                "Address already in use (os error 48)".to_owned(),
+            )
+        ));
+        assert!(!is_proxy_port_conflict(
+            &BoxliteCommandError::ExecutionFailed(
+                "terminalExec start failed: image unavailable".to_owned(),
+            )
+        ));
+        assert!(!is_proxy_port_conflict(
+            &BoxliteCommandError::DeadlineExceeded
+        ));
+    }
+
+    #[test]
     fn resolve_cpus_clamps_to_supported_range() {
         assert_eq!(resolve_cpus(0), 1);
         assert_eq!(resolve_cpus(1), 1);
@@ -727,12 +850,16 @@ mod tests {
             python_exec_max_inflight: 4,
             terminal_exec_max_inflight: 4,
             terminal_resource_max_inflight: 4,
+            proxy_enabled: false,
+            proxy_listen_addr: "0.0.0.0:8091".to_owned(),
+            proxy_advertise_addr: String::new(),
+            proxy_sandbox_ports: Vec::new(),
             log_level: "info".to_owned(),
             log_format: "json".to_owned(),
             log_add_source: false,
         };
 
-        let options = build_terminal_exec_box_options(&cfg);
+        let (options, _) = build_terminal_exec_box_options(&cfg).expect("terminal box options");
         assert_eq!(
             options.entrypoint,
             Some(vec!["sh".to_owned(), "-lc".to_owned()])
@@ -779,6 +906,10 @@ mod tests {
             python_exec_max_inflight: 4,
             terminal_exec_max_inflight: 4,
             terminal_resource_max_inflight: 4,
+            proxy_enabled: false,
+            proxy_listen_addr: "0.0.0.0:8091".to_owned(),
+            proxy_advertise_addr: String::new(),
+            proxy_sandbox_ports: Vec::new(),
             log_level: "info".to_owned(),
             log_format: "json".to_owned(),
             log_add_source: false,

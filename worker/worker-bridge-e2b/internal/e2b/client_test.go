@@ -162,10 +162,11 @@ func TestControlPlaneLifecycle(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/sandboxes":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"sandboxID":       "sb-1",
-				"envdVersion":     "0.6.2",
-				"envdAccessToken": "envd-token",
-				"domain":          "example.test",
+				"sandboxID":          "sb-1",
+				"envdVersion":        "0.6.2",
+				"envdAccessToken":    "envd-token",
+				"trafficAccessToken": "traffic-token",
+				"domain":             "example.test",
 			})
 		default:
 			w.WriteHeader(http.StatusNoContent)
@@ -174,9 +175,10 @@ func TestControlPlaneLifecycle(t *testing.T) {
 	defer server.Close()
 
 	client, err := NewClient(Config{
-		APIKey:         "test-key",
-		APIURL:         server.URL,
-		RequestTimeout: time.Second,
+		APIKey:                "test-key",
+		APIURL:                server.URL,
+		RequestTimeout:        time.Second,
+		RestrictPublicTraffic: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -185,7 +187,7 @@ func TestControlPlaneLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sandbox.ID != "sb-1" || sandbox.Domain != "example.test" || sandbox.AccessToken != "envd-token" {
+	if sandbox.ID != "sb-1" || sandbox.Domain != "example.test" || sandbox.AccessToken != "envd-token" || sandbox.TrafficAccessToken != "traffic-token" {
 		t.Fatalf("unexpected sandbox: %#v", sandbox)
 	}
 	if err := client.SetTimeout(context.Background(), sandbox.ID, 120); err != nil {
@@ -208,6 +210,10 @@ func TestControlPlaneLifecycle(t *testing.T) {
 	}
 	if requests[0].Body["allow_internet_access"] != true || requests[0].Body["secure"] != true {
 		t.Fatalf("missing create security/network fields: %#v", requests[0].Body)
+	}
+	network, ok := requests[0].Body["network"].(map[string]any)
+	if !ok || network["allowPublicTraffic"] != false {
+		t.Fatalf("public sandbox traffic was not restricted: %#v", requests[0].Body)
 	}
 	if requests[1].Path != "/sandboxes/sb-1/timeout" || requests[1].Body["timeout"] != float64(120) {
 		t.Fatalf("unexpected timeout request: %#v", requests[1])
@@ -243,9 +249,10 @@ func TestRecoveryControlPlaneMetadataListAndConnect(t *testing.T) {
 				t.Errorf("unexpected connect body: %#v err=%v", body, err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"sandboxID":       "sb-recover",
-				"envdVersion":     "0.6.2",
-				"envdAccessToken": "fresh-token",
+				"sandboxID":          "sb-recover",
+				"envdVersion":        "0.6.2",
+				"envdAccessToken":    "fresh-token",
+				"trafficAccessToken": "fresh-traffic-token",
 			})
 		default:
 			http.NotFound(w, r)
@@ -269,8 +276,22 @@ func TestRecoveryControlPlaneMetadataListAndConnect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sandbox.ID != "sb-recover" || sandbox.AccessToken != "fresh-token" {
+	if sandbox.ID != "sb-recover" || sandbox.AccessToken != "fresh-token" || sandbox.TrafficAccessToken != "fresh-traffic-token" {
 		t.Fatalf("unexpected connected sandbox: %#v", sandbox)
+	}
+}
+
+func TestSandboxProxyURL(t *testing.T) {
+	sandbox := &Sandbox{ID: "sandbox-1", Domain: "e2b.app", TrafficAccessToken: "traffic-secret"}
+	gotURL, gotToken, err := sandbox.ProxyURL(8080)
+	if err != nil {
+		t.Fatalf("proxy URL: %v", err)
+	}
+	if gotURL != "https://8080-sandbox-1.e2b.app" || gotToken != "traffic-secret" {
+		t.Fatalf("unexpected proxy target url=%q token=%q", gotURL, gotToken)
+	}
+	if _, _, err := sandbox.ProxyURL(0); err == nil {
+		t.Fatal("expected invalid port rejection")
 	}
 }
 

@@ -44,6 +44,12 @@ terminal_max_active_sessions = 0
 # Maximum concurrent commands in one terminal session.
 terminal_session_max_inflight = 1
 
+# Public preview proxy. advertise_addr must be reachable from Nginx and allowed
+# by CONSOLE_PROXY_ALLOWED_WORKER_CIDRS / CONSOLE_PROXY_ALLOWED_WORKER_PORTS.
+proxy_enabled = false
+proxy_listen_addr = ":8091"
+proxy_advertise_addr = ""
+
 # Capability concurrency.
 echo_max_inflight = 4
 python_exec_max_inflight = 4

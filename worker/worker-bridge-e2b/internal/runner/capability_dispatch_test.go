@@ -13,10 +13,12 @@ func TestAllCapabilityDispatchersEncodeResults(t *testing.T) {
 	originalPython := runPythonExec
 	originalTerminal := runTerminalExec
 	originalResource := runTerminalResource
+	originalProxy := runTerminalProxy
 	t.Cleanup(func() {
 		runPythonExec = originalPython
 		runTerminalExec = originalTerminal
 		runTerminalResource = originalResource
+		runTerminalProxy = originalProxy
 	})
 	runPythonExec = func(_ context.Context, code string) (pythonExecRunResult, error) {
 		if code != "print(1)" {
@@ -45,6 +47,12 @@ func TestAllCapabilityDispatchersEncodeResults(t *testing.T) {
 			SizeBytes: 1,
 			Blob:      []byte("a"),
 		}, nil
+	}
+	runTerminalProxy = func(_ context.Context, sessionID string, port int, _ time.Time) (terminalProxyRunResult, error) {
+		if sessionID != "session-1" || port != 8080 {
+			t.Fatalf("unexpected proxy request: session=%q port=%d", sessionID, port)
+		}
+		return terminalProxyRunResult{URL: "https://8080-sandbox.e2b.app", TrafficToken: "traffic-secret"}, nil
 	}
 
 	tests := []struct {
@@ -93,6 +101,17 @@ func TestAllCapabilityDispatchersEncodeResults(t *testing.T) {
 				var result terminalResourceRunResult
 				if json.Unmarshal(payload, &result) != nil || string(result.Blob) != "a" || result.MIMEType != "text/plain" {
 					t.Fatalf("unexpected resource result %s", payload)
+				}
+			},
+		},
+		{
+			name:       "terminalProxy",
+			capability: "terminalProxy",
+			payload:    `{"session_id":"session-1","port":8080}`,
+			assert: func(t *testing.T, payload []byte) {
+				var result terminalProxyRunResult
+				if json.Unmarshal(payload, &result) != nil || result.URL != "https://8080-sandbox.e2b.app" || result.TrafficToken != "traffic-secret" {
+					t.Fatalf("unexpected proxy result %s", payload)
 				}
 			},
 		},

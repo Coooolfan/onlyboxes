@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,6 +26,7 @@ const (
 	terminalExecSchemaVersion      = "1"
 	terminalExecIdleCommand        = "while true; do sleep 3600; done"
 	terminalExecCleanupTimeout     = 3 * time.Second
+	terminalExecInspectTimeout     = 2 * time.Second
 	terminalExecJanitorInterval    = 5 * time.Second
 	terminalExecNoSessionMessage   = "session not found"
 	terminalExecBusyMessage        = "session is busy"
@@ -97,13 +99,17 @@ func newTerminalExecError(code string, message string) *terminalExecError {
 type terminalSession struct {
 	sessionID      string
 	containerName  string
+	containerIP    string
 	leaseExpiresAt time.Time
+	leaseTimer     *time.Timer
+	proxyCtx       context.Context
+	proxyCancel    context.CancelFunc
 
-	// inflight counts commands currently executing against this session.
-	// A session is idle, and therefore reclaimable, only at zero.
+	// inflight counts commands currently executing against this session and
+	// controls deferred cleanup for non-lease failures.
 	inflight int
-	// destroying stops the session accepting new commands. The container is
-	// removed by whichever caller drops inflight to zero.
+	// destroying stops the session accepting new commands. Non-lease failures
+	// wait for inflight to drain; lease expiry is an immediate hard boundary.
 	destroying bool
 	// ready is closed once container creation finished; initErr carries the
 	// outcome. Callers that did not create the session must wait on it before
@@ -123,6 +129,7 @@ type terminalSessionManagerConfig struct {
 	MemoryLimit      string
 	CPULimit         string
 	PidsLimit        int
+	DockerNetwork    string
 	// SessionMaxInflight caps concurrent commands per session. Defaults to 1,
 	// which preserves the original strictly serial behaviour.
 	SessionMaxInflight int
@@ -147,6 +154,7 @@ type terminalSessionManager struct {
 	memoryLimit               string
 	cpuLimit                  string
 	pidsLimit                 int
+	dockerNetwork             string
 	sessionMaxInflight        int
 	maxActiveSessions         int
 	activeSessionReservations int
@@ -239,6 +247,7 @@ func newTerminalSessionManager(cfg terminalSessionManagerConfig) *terminalSessio
 		memoryLimit:        memoryLimit,
 		cpuLimit:           cpuLimit,
 		pidsLimit:          pidsLimit,
+		dockerNetwork:      strings.TrimSpace(cfg.DockerNetwork),
 		sessionMaxInflight: sessionMaxInflight,
 		maxActiveSessions:  maxActiveSessions,
 		preserveOnClose:    cfg.PreserveOnClose,
@@ -268,6 +277,7 @@ func (m *terminalSessionManager) Close() {
 			if session == nil {
 				continue
 			}
+			m.stopSessionLeaseTimerLocked(session)
 			sessions = append(sessions, session)
 		}
 		m.sessions = make(map[string]*terminalSession)
@@ -359,31 +369,40 @@ func (m *terminalSessionManager) resolveLeaseDuration(leaseTTLSec *int) (time.Du
 	return time.Duration(leaseSec) * time.Second, nil
 }
 
-func (m *terminalSessionManager) createAndStartContainer(ctx context.Context, containerName string) error {
-	createResult := runDockerCommand(ctx, terminalExecDockerCreateArgs(
+func (m *terminalSessionManager) createAndStartContainer(ctx context.Context, containerName string) (string, error) {
+	createResult := runDockerCommand(ctx, terminalExecDockerCreateArgsWithNetwork(
 		containerName,
 		m.dockerImage,
 		m.memoryLimit,
 		m.cpuLimit,
 		m.pidsLimit,
+		m.dockerNetwork,
 	)...)
 	if createResult.Err != nil {
-		return fmt.Errorf("docker create failed: %w", createResult.Err)
+		return "", fmt.Errorf("docker create failed: %w", createResult.Err)
 	}
 	if createResult.ExitCode != 0 {
-		return fmt.Errorf("docker create failed: %s", dockerCommandFailureMessage("exit code", createResult.ExitCode, createResult.Stderr))
+		return "", fmt.Errorf("docker create failed: %s", dockerCommandFailureMessage("exit code", createResult.ExitCode, createResult.Stderr))
 	}
 
 	startResult := runDockerCommand(ctx, terminalExecDockerStartArgs(containerName)...)
 	if startResult.Err != nil {
 		m.forceRemoveContainer(containerName)
-		return fmt.Errorf("docker start failed: %w", startResult.Err)
+		return "", fmt.Errorf("docker start failed: %w", startResult.Err)
 	}
 	if startResult.ExitCode != 0 {
 		m.forceRemoveContainer(containerName)
-		return fmt.Errorf("docker start failed: %s", dockerCommandFailureMessage("exit code", startResult.ExitCode, startResult.Stderr))
+		return "", fmt.Errorf("docker start failed: %s", dockerCommandFailureMessage("exit code", startResult.ExitCode, startResult.Stderr))
 	}
-	return nil
+	if m.dockerNetwork == "" {
+		return "", nil
+	}
+	containerIP, err := inspectTerminalContainerIP(ctx, containerName, m.dockerNetwork)
+	if err != nil {
+		m.forceRemoveContainer(containerName)
+		return "", err
+	}
+	return containerIP, nil
 }
 
 func (m *terminalSessionManager) janitorLoop() {
@@ -407,11 +426,16 @@ func (m *terminalSessionManager) cleanupExpiredSessions() {
 
 	m.mu.Lock()
 	for sessionID, session := range m.sessions {
-		if session == nil || session.destroying || session.inflight > 0 {
+		if session == nil || session.destroying {
 			continue
 		}
 		if session.leaseExpiresAt.After(now) {
 			continue
+		}
+		session.destroying = true
+		m.stopSessionLeaseTimerLocked(session)
+		if session.proxyCancel != nil {
+			session.proxyCancel()
 		}
 		expired = append(expired, session)
 		m.cleanupWG.Add(1)
@@ -422,6 +446,159 @@ func (m *terminalSessionManager) cleanupExpiredSessions() {
 	for _, session := range expired {
 		m.cleanupTrackedSession(session)
 	}
+}
+
+func (m *terminalSessionManager) expireSessionLease(session *terminalSession) {
+	if m == nil || session == nil {
+		return
+	}
+
+	now := time.Now()
+	m.mu.Lock()
+	current, ok := m.sessions[session.sessionID]
+	if m.closed || !ok || current != session || session.destroying {
+		m.mu.Unlock()
+		return
+	}
+	if session.leaseExpiresAt.After(now) {
+		m.scheduleSessionLeaseTimerLocked(session)
+		m.mu.Unlock()
+		return
+	}
+	session.destroying = true
+	session.leaseTimer = nil
+	if session.proxyCancel != nil {
+		session.proxyCancel()
+	}
+	delete(m.sessions, session.sessionID)
+	m.cleanupWG.Add(1)
+	m.mu.Unlock()
+
+	m.cleanupTrackedSession(session)
+}
+
+func (m *terminalSessionManager) scheduleSessionLeaseTimerLocked(session *terminalSession) {
+	if m == nil || session == nil || m.closed || session.destroying {
+		return
+	}
+	if session.leaseTimer != nil {
+		session.leaseTimer.Stop()
+	}
+	delay := time.Until(session.leaseExpiresAt)
+	if delay < 0 {
+		delay = 0
+	}
+	session.leaseTimer = time.AfterFunc(delay, func() {
+		m.expireSessionLease(session)
+	})
+}
+
+func (m *terminalSessionManager) stopSessionLeaseTimerLocked(session *terminalSession) {
+	if session == nil || session.leaseTimer == nil {
+		return
+	}
+	session.leaseTimer.Stop()
+	session.leaseTimer = nil
+}
+
+type terminalProxyTarget struct {
+	IP             string
+	SessionContext context.Context
+}
+
+var errTerminalProxySessionNotFound = errors.New("proxy session not found")
+
+func (m *terminalSessionManager) ResolveProxyTarget(ctx context.Context, sessionID string, now time.Time) (terminalProxyTarget, error) {
+	if m == nil {
+		return terminalProxyTarget{}, errTerminalProxySessionNotFound
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return terminalProxyTarget{}, errTerminalProxySessionNotFound
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	m.mu.Lock()
+	session, ok := m.sessions[sessionID]
+	if !ok || session == nil || session.destroying {
+		m.mu.Unlock()
+		return terminalProxyTarget{}, errTerminalProxySessionNotFound
+	}
+	ready := session.ready
+	m.mu.Unlock()
+
+	select {
+	case <-ctx.Done():
+		return terminalProxyTarget{}, ctx.Err()
+	case <-ready:
+	}
+
+	if now.IsZero() {
+		now = time.Now()
+	}
+	var expired *terminalSession
+	m.mu.Lock()
+	current, ok := m.sessions[sessionID]
+	if !ok || current != session || session.destroying || session.initErr != nil {
+		m.mu.Unlock()
+		return terminalProxyTarget{}, errTerminalProxySessionNotFound
+	}
+	if !session.leaseExpiresAt.After(now) {
+		session.destroying = true
+		m.stopSessionLeaseTimerLocked(session)
+		if session.proxyCancel != nil {
+			session.proxyCancel()
+		}
+		delete(m.sessions, sessionID)
+		m.cleanupWG.Add(1)
+		expired = session
+		m.mu.Unlock()
+		go m.cleanupTrackedSession(expired)
+		return terminalProxyTarget{}, errTerminalProxySessionNotFound
+	}
+	address, err := netip.ParseAddr(strings.TrimSpace(session.containerIP))
+	if err != nil || address.IsUnspecified() {
+		m.mu.Unlock()
+		return terminalProxyTarget{}, errTerminalProxySessionNotFound
+	}
+	sessionContext := session.proxyCtx
+	if sessionContext == nil {
+		sessionContext = context.Background()
+	}
+	target := terminalProxyTarget{
+		IP:             address.Unmap().String(),
+		SessionContext: sessionContext,
+	}
+	m.mu.Unlock()
+	return target, nil
+}
+
+func inspectTerminalContainerIP(ctx context.Context, containerName string, dockerNetwork string) (string, error) {
+	inspectCtx, cancel := context.WithTimeout(ctx, terminalExecInspectTimeout)
+	defer cancel()
+	result := runDockerCommand(inspectCtx, terminalExecDockerInspectIPArgs(containerName, dockerNetwork)...)
+	if result.Err != nil {
+		return "", fmt.Errorf("docker inspect proxy target failed: %w", result.Err)
+	}
+	if result.ExitCode != 0 {
+		return "", fmt.Errorf("docker inspect proxy target failed: %s", dockerCommandFailureMessage("exit code", result.ExitCode, result.Stderr))
+	}
+	address, err := netip.ParseAddr(strings.TrimSpace(result.Stdout))
+	if err != nil {
+		return "", errors.New("docker inspect returned an invalid proxy target IP")
+	}
+	address = address.Unmap()
+	if !address.IsGlobalUnicast() {
+		return "", errors.New("docker inspect returned an invalid proxy target IP")
+	}
+	return address.String(), nil
+}
+
+func terminalExecDockerInspectIPArgs(containerName string, dockerNetwork string) []string {
+	format := `{{with index .NetworkSettings.Networks "` + strings.TrimSpace(dockerNetwork) + `"}}{{.IPAddress}}{{end}}`
+	return []string{"inspect", "--format", format, containerName}
 }
 
 // claimSession reserves one inflight slot, creating the session when needed.
@@ -451,6 +628,7 @@ func (m *terminalSessionManager) claimSession(
 		existing.inflight++
 		if existing.leaseExpiresAt.Before(leaseTarget) {
 			existing.leaseExpiresAt = leaseTarget
+			m.scheduleSessionLeaseTimerLocked(existing)
 		}
 		return existing, false, nil
 	}
@@ -475,6 +653,7 @@ func (m *terminalSessionManager) newSessionLocked(sessionID string, leaseTarget 
 
 	containerName := terminalSessionResourceName(sessionID)
 
+	proxyCtx, proxyCancel := context.WithCancel(context.Background())
 	session := &terminalSession{
 		sessionID:        sessionID,
 		containerName:    containerName,
@@ -482,9 +661,12 @@ func (m *terminalSessionManager) newSessionLocked(sessionID string, leaseTarget 
 		inflight:         1,
 		ready:            make(chan struct{}),
 		capacityReserved: true,
+		proxyCtx:         proxyCtx,
+		proxyCancel:      proxyCancel,
 	}
 	m.sessions[sessionID] = session
 	m.activeSessionReservations++
+	m.scheduleSessionLeaseTimerLocked(session)
 	m.createWG.Add(1)
 	return session, nil
 }
@@ -495,12 +677,18 @@ func (m *terminalSessionManager) newSessionLocked(sessionID string, leaseTarget 
 func (m *terminalSessionManager) awaitSessionReady(ctx context.Context, session *terminalSession, created bool) error {
 	if created {
 		defer m.createWG.Done()
-		err := m.createAndStartContainer(ctx, session.containerName)
+		containerIP, err := m.createAndStartContainer(ctx, session.containerName)
+		session.containerIP = containerIP
 		session.initErr = err
 		close(session.ready)
 		if err != nil {
 			m.releaseAndDestroySession(session.sessionID)
 			return err
+		}
+
+		if !m.sessionIsActive(session) {
+			m.cleanupInactiveCreatedSession(session)
+			return newTerminalExecError(terminalExecCodeSessionNotFound, terminalExecNoSessionMessage)
 		}
 		return nil
 	}
@@ -517,7 +705,45 @@ func (m *terminalSessionManager) awaitSessionReady(ctx context.Context, session 
 		m.releaseSession(session.sessionID)
 		return session.initErr
 	}
+	if !m.sessionIsActive(session) {
+		return newTerminalExecError(terminalExecCodeSessionNotFound, terminalExecNoSessionMessage)
+	}
 	return nil
+}
+
+func (m *terminalSessionManager) cleanupInactiveCreatedSession(session *terminalSession) {
+	if m == nil || session == nil {
+		return
+	}
+	m.mu.Lock()
+	current, owned := m.sessions[session.sessionID]
+	owned = owned && current == session
+	if owned {
+		delete(m.sessions, session.sessionID)
+		session.destroying = true
+		m.stopSessionLeaseTimerLocked(session)
+		if session.proxyCancel != nil {
+			session.proxyCancel()
+		}
+	}
+	m.mu.Unlock()
+
+	if owned {
+		m.cleanupSession(session)
+		return
+	}
+	// An expiry cleanup may have run before docker create completed.
+	m.forceRemoveContainer(session.containerName)
+}
+
+func (m *terminalSessionManager) sessionIsActive(session *terminalSession) bool {
+	if m == nil || session == nil {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	current, ok := m.sessions[session.sessionID]
+	return ok && current == session && !session.destroying && !m.closed
 }
 
 // releaseSession gives back one inflight slot and reports the current lease.
@@ -570,6 +796,10 @@ func (m *terminalSessionManager) releaseAndDestroySession(sessionID string) {
 		return
 	}
 	session.destroying = true
+	m.stopSessionLeaseTimerLocked(session)
+	if session.proxyCancel != nil {
+		session.proxyCancel()
+	}
 	if session.inflight > 0 {
 		session.inflight--
 	}
@@ -594,6 +824,9 @@ func (m *terminalSessionManager) cleanupTrackedSession(session *terminalSession)
 func (m *terminalSessionManager) cleanupSession(session *terminalSession) {
 	if session == nil {
 		return
+	}
+	if session.proxyCancel != nil {
+		session.proxyCancel()
 	}
 	m.forceRemoveContainer(session.containerName)
 	m.releaseCapacityReservation(session)
@@ -639,8 +872,12 @@ func (m *terminalSessionManager) forceRemoveContainer(containerName string) {
 }
 
 func terminalExecDockerCreateArgs(containerName string, dockerImage string, memoryLimit string, cpuLimit string, pidsLimit int) []string {
+	return terminalExecDockerCreateArgsWithNetwork(containerName, dockerImage, memoryLimit, cpuLimit, pidsLimit, "")
+}
+
+func terminalExecDockerCreateArgsWithNetwork(containerName string, dockerImage string, memoryLimit string, cpuLimit string, pidsLimit int, dockerNetwork string) []string {
 	sessionHash := strings.TrimPrefix(strings.TrimSpace(containerName), terminalExecContainerPrefix)
-	return []string{
+	args := []string{
 		"create",
 		"--name", containerName,
 		"--label", pythonExecManagedLabel,
@@ -651,11 +888,16 @@ func terminalExecDockerCreateArgs(containerName string, dockerImage string, memo
 		"--memory", memoryLimit,
 		"--cpus", cpuLimit,
 		"--pids-limit", strconv.Itoa(pidsLimit),
+	}
+	if network := strings.TrimSpace(dockerNetwork); network != "" {
+		args = append(args, "--network", network)
+	}
+	return append(args,
 		dockerImage,
 		"sh",
 		"-lc",
 		terminalExecIdleCommand,
-	}
+	)
 }
 
 func terminalExecDockerStartArgs(containerName string) []string {
