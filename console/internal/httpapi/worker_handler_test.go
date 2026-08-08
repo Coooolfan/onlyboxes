@@ -52,15 +52,15 @@ func (p *fakeWorkerProvisioning) CreateProvisionedWorkerForOwner(ownerID string,
 	return p.createNodeID, p.createSecret, nil
 }
 
-func (p *fakeWorkerProvisioning) DeleteProvisionedWorker(nodeID string) bool {
+func (p *fakeWorkerProvisioning) DeleteProvisionedWorker(nodeID string) (bool, error) {
 	if p == nil || p.secrets == nil {
-		return false
+		return false, nil
 	}
 	if _, ok := p.secrets[nodeID]; !ok {
-		return false
+		return false, nil
 	}
 	delete(p.secrets, nodeID)
-	return true
+	return true, nil
 }
 
 func TestListWorkersEmpty(t *testing.T) {

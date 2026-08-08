@@ -95,6 +95,12 @@ func main() {
 	registryService.SetHasher(db.Hasher)
 	registryService.SetTaskRetention(time.Duration(cfg.TaskRetentionDays) * 24 * time.Hour)
 	registryService.ConfigureProxy(cfg.ProxyEnabled, cfg.ProxyAllowedWorkerCIDRs, cfg.ProxyAllowedWorkerPorts, cfg.ProxyAllowedDirectDomains)
+	restoreCtx, restoreCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if err := registryService.RestoreTerminalSessionRoutes(restoreCtx, time.Now()); err != nil {
+		restoreCancel()
+		fatal("failed to restore terminal session routes", "error", err)
+	}
+	restoreCancel()
 	grpcSrv := grpcserver.NewServer(registryService)
 	httpHandler := httpapi.NewWorkerHandler(
 		store,

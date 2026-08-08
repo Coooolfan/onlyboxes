@@ -214,8 +214,8 @@ func TestDeleteProvisionedWorkerDisconnectsSessionAndRevokesCredential(t *testin
 		t.Fatalf("connect worker failed: %v", err)
 	}
 
-	if removed := svc.DeleteProvisionedWorker(workerID); !removed {
-		t.Fatalf("expected delete to return true")
+	if removed, err := svc.DeleteProvisionedWorker(workerID); err != nil || !removed {
+		t.Fatalf("expected delete to return true, removed=%t err=%v", removed, err)
 	}
 	if _, ok := svc.GetWorkerSecret(workerID); ok {
 		t.Fatalf("expected credential to be revoked")
@@ -1272,7 +1272,7 @@ func TestDispatchCommandTerminalSessionCapacityDoesNotClearConcurrentProvisional
 
 	session.resolvePending(&registryv1.CommandResult{
 		CommandId:       secondDispatch.GetCommandId(),
-		PayloadJson:     []byte(`{"session_id":"session-shared"}`),
+		PayloadJson:     []byte(`{"session_id":"session-shared","lease_expires_unix_ms":4102444800000}`),
 		CompletedUnixMs: now.UnixMilli(),
 	})
 	second := <-secondDone
@@ -2057,6 +2057,36 @@ func connectWorkerWithHello(
 	ack := resp.GetConnectAck()
 	if ack == nil {
 		return nil, "", fmt.Errorf("expected connect_ack, got %#v", resp.GetPayload())
+	}
+	hasTerminalExec := false
+	for _, capability := range hello.GetCapabilities() {
+		if normalizeCapability(capability.GetName()) == taskCapabilityTerminalExec {
+			hasTerminalExec = true
+			break
+		}
+	}
+	if hasTerminalExec {
+		results := make([]*registryv1.TerminalSessionRecoveryResult, 0, len(ack.GetTerminalSessionRecoveryCandidates()))
+		for _, candidate := range ack.GetTerminalSessionRecoveryCandidates() {
+			results = append(results, &registryv1.TerminalSessionRecoveryResult{
+				SessionId: candidate.GetSessionId(),
+				Status:    registryv1.TerminalSessionRecoveryResult_RECOVERED,
+			})
+		}
+		if err := stream.Send(&registryv1.ConnectRequest{
+			Payload: &registryv1.ConnectRequest_TerminalSessionRecoveryReport{
+				TerminalSessionRecoveryReport: &registryv1.TerminalSessionRecoveryReport{Results: results},
+			},
+		}); err != nil {
+			return nil, "", err
+		}
+		recoveryAck, err := stream.Recv()
+		if err != nil {
+			return nil, "", err
+		}
+		if recoveryAck.GetTerminalSessionRecoveryAck() == nil {
+			return nil, "", fmt.Errorf("expected terminal_session_recovery_ack, got %#v", recoveryAck.GetPayload())
+		}
 	}
 	return stream, ack.GetSessionId(), nil
 }

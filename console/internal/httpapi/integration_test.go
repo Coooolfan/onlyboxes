@@ -615,6 +615,7 @@ func TestTerminalLifecycle(t *testing.T) {
 	if connectResp.GetConnectAck() == nil {
 		t.Fatalf("expected connect_ack, got %#v", connectResp.GetPayload())
 	}
+	completeEmptyTerminalRecovery(t, stream, connectResp.GetConnectAck())
 
 	go func() {
 		sessionContent := map[string]string{}
@@ -1116,6 +1117,7 @@ func TestTokenIsolationLifecycle(t *testing.T) {
 	if connectResp.GetConnectAck() == nil {
 		t.Fatalf("expected connect_ack, got %#v", connectResp.GetPayload())
 	}
+	completeEmptyTerminalRecovery(t, stream, connectResp.GetConnectAck())
 
 	go func() {
 		sessionContent := map[string]string{}
@@ -1941,6 +1943,31 @@ func requestList(t *testing.T, client *http.Client, url string) listWorkersRespo
 		t.Fatalf("failed to decode list response: %v", err)
 	}
 	return payload
+}
+
+func completeEmptyTerminalRecovery(
+	t *testing.T,
+	stream grpc.BidiStreamingClient[registryv1.ConnectRequest, registryv1.ConnectResponse],
+	ack *registryv1.ConnectAck,
+) {
+	t.Helper()
+	if len(ack.GetTerminalSessionRecoveryCandidates()) != 0 {
+		t.Fatalf("new test worker unexpectedly received recovery candidates: %#v", ack.GetTerminalSessionRecoveryCandidates())
+	}
+	if err := stream.Send(&registryv1.ConnectRequest{
+		Payload: &registryv1.ConnectRequest_TerminalSessionRecoveryReport{
+			TerminalSessionRecoveryReport: &registryv1.TerminalSessionRecoveryReport{},
+		},
+	}); err != nil {
+		t.Fatalf("send empty terminal recovery report: %v", err)
+	}
+	resp, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("receive terminal recovery ack: %v", err)
+	}
+	if resp.GetTerminalSessionRecoveryAck() == nil {
+		t.Fatalf("expected terminal recovery ack, got %#v", resp.GetPayload())
+	}
 }
 
 func newAuthenticatedClient(t *testing.T, server *httptest.Server) *http.Client {

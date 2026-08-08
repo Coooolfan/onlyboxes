@@ -1,12 +1,12 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use boxlite::runtime::options::PortSpec;
 use boxlite::{
-    BoxCommand, BoxOptions, BoxliteOptions, BoxliteRuntime, CopyOptions, ExecStderr, ExecStdout,
-    LiteBox, RootfsSpec,
+    BoxCommand, BoxOptions, BoxStatus, BoxliteOptions, BoxliteRuntime, CopyOptions, ExecStderr,
+    ExecStdout, LiteBox, RootfsSpec,
 };
 use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
@@ -209,6 +209,79 @@ async fn create_terminal_session_box_once(
 
     cache_terminal_session_box(litebox);
     Ok(box_id)
+}
+
+pub(crate) async fn recover_terminal_session_box(
+    cfg: &Config,
+    box_name: &str,
+) -> Result<Option<String>, BoxliteCommandError> {
+    let runtime = runtime(cfg)?;
+    let Some(litebox) = runtime
+        .get(box_name.trim())
+        .await
+        .map_err(|err| BoxliteCommandError::ExecutionFailed(format!("lookup box failed: {err}")))?
+    else {
+        return Ok(None);
+    };
+
+    match litebox.info().status {
+        BoxStatus::Running => {}
+        BoxStatus::Configured | BoxStatus::Stopped => {
+            litebox.start().await.map_err(|err| {
+                BoxliteCommandError::ExecutionFailed(format!("restart terminalExec box: {err}"))
+            })?;
+        }
+        BoxStatus::Unknown | BoxStatus::Stopping | BoxStatus::Paused | BoxStatus::Failed => {
+            return Err(BoxliteCommandError::ExecutionFailed(format!(
+                "terminalExec box has invalid status: {:?}",
+                litebox.info().status
+            )));
+        }
+    }
+
+    let box_id = litebox.id().as_str().to_owned();
+    cache_terminal_session_box(litebox);
+    Ok(Some(box_id))
+}
+
+pub(crate) async fn cleanup_orphan_terminal_session_boxes(
+    cfg: &Config,
+    expected_names: &HashSet<String>,
+) -> usize {
+    let Ok(runtime) = runtime(cfg) else {
+        return 0;
+    };
+    let infos = match runtime.list_info().await {
+        Ok(infos) => infos,
+        Err(err) => {
+            tracing::warn!(error = %err, "list terminal Box orphans failed");
+            return 0;
+        }
+    };
+
+    let mut cleaned = 0;
+    for info in infos {
+        let Some(name) = info.name.as_deref() else {
+            continue;
+        };
+        if !is_onlyboxes_terminal_session_box_name(name) || expected_names.contains(name) {
+            continue;
+        }
+        remove_box(cfg, info.id.as_str()).await;
+        cleaned += 1;
+    }
+    cleaned
+}
+
+fn is_onlyboxes_terminal_session_box_name(name: &str) -> bool {
+    const PREFIX: &str = "onlyboxes-terminal-v1-";
+    let Some(hash) = name.strip_prefix(PREFIX) else {
+        return false;
+    };
+    hash.len() == 64
+        && hash
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn is_proxy_port_conflict(err: &BoxliteCommandError) -> bool {
@@ -423,6 +496,7 @@ fn build_terminal_exec_box_options(
         memory_mib: Some(cfg.terminal_exec_memory_mib),
         rootfs: RootfsSpec::Image(cfg.terminal_exec_image.clone()),
         auto_remove: false,
+        detach: true,
         entrypoint: Some(vec!["sh".to_owned(), "-lc".to_owned()]),
         cmd: Some(vec![TERMINAL_EXEC_IDLE_COMMAND.to_owned()]),
         ports,
@@ -729,6 +803,20 @@ mod tests {
     }
 
     #[test]
+    fn orphan_cleanup_name_filter_rejects_foreign_boxes() {
+        let valid = format!("onlyboxes-terminal-v1-{}", "a".repeat(64));
+        assert!(is_onlyboxes_terminal_session_box_name(&valid));
+        assert!(!is_onlyboxes_terminal_session_box_name("developer-box"));
+        assert!(!is_onlyboxes_terminal_session_box_name(
+            "onlyboxes-terminal-v1-not-a-session-hash"
+        ));
+        assert!(!is_onlyboxes_terminal_session_box_name(&format!(
+            "onlyboxes-terminal-v1-{}",
+            "A".repeat(64)
+        )));
+    }
+
+    #[test]
     fn terminal_exec_box_options_override_entrypoint_to_idle_loop() {
         let cfg = Config {
             config_file: None,
@@ -780,6 +868,8 @@ mod tests {
             options.cmd,
             Some(vec![TERMINAL_EXEC_IDLE_COMMAND.to_owned()])
         );
+        assert!(!options.auto_remove);
+        assert!(options.detach);
     }
 
     #[test]

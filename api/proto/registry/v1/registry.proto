@@ -38,12 +38,37 @@ message ConnectRequest {
     ConnectHello hello = 1;
     HeartbeatFrame heartbeat = 2;
     CommandResult command_result = 3;
+    TerminalSessionRecoveryReport terminal_session_recovery_report = 4;
   }
 }
+
+message TerminalSessionRecoveryCandidate {
+  string session_id = 1;
+  int64 lease_expires_unix_ms = 2;
+}
+
+message TerminalSessionRecoveryResult {
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    RECOVERED = 1;
+    MISSING = 2;
+    INVALID = 3;
+  }
+
+  string session_id = 1;
+  Status status = 2;
+}
+
+message TerminalSessionRecoveryReport {
+  repeated TerminalSessionRecoveryResult results = 1;
+}
+
+message TerminalSessionRecoveryAck {}
 
 message ConnectAck {
   string session_id = 1;
   int32 heartbeat_interval_sec = 3;
+  repeated TerminalSessionRecoveryCandidate terminal_session_recovery_candidates = 4;
 }
 
 message HeartbeatAck {
@@ -74,6 +99,7 @@ message ConnectResponse {
     ConnectAck connect_ack = 1;
     HeartbeatAck heartbeat_ack = 2;
     CommandDispatch command_dispatch = 4;
+    TerminalSessionRecoveryAck terminal_session_recovery_ack = 5;
   }
 }
 

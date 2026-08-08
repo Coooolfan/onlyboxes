@@ -30,6 +30,19 @@ func TestRunReturnsContextCanceled(t *testing.T) {
 	}
 }
 
+func TestTerminalRecoveryTimesOutBeforeWorkerBecomesReady(t *testing.T) {
+	original := recoverTerminalSessionsFn
+	t.Cleanup(func() { recoverTerminalSessionsFn = original })
+	recoverTerminalSessionsFn = func(ctx context.Context, _ []*registryv1.TerminalSessionRecoveryCandidate) []*registryv1.TerminalSessionRecoveryResult {
+		<-ctx.Done()
+		return nil
+	}
+	_, err := recoverTerminalSessionsWithTimeout(context.Background(), 10*time.Millisecond, nil)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected recovery deadline, got %v", err)
+	}
+}
+
 func TestRunWaitsBeforeReconnectOnSessionFailure(t *testing.T) {
 	originalWaitReconnect := waitReconnect
 	waitCalls := 0
@@ -980,6 +993,20 @@ func (s *fakeRegistryService) Connect(stream grpc.BidiStreamingServer[registryv1
 				SessionId:            "session-1",
 				HeartbeatIntervalSec: 1,
 			},
+		},
+	}); err != nil {
+		return err
+	}
+	recoveryReq, err := stream.Recv()
+	if err != nil {
+		return err
+	}
+	if recoveryReq.GetTerminalSessionRecoveryReport() == nil {
+		return status.Error(codes.InvalidArgument, "terminal session recovery report is required")
+	}
+	if err := stream.Send(&registryv1.ConnectResponse{
+		Payload: &registryv1.ConnectResponse_TerminalSessionRecoveryAck{
+			TerminalSessionRecoveryAck: &registryv1.TerminalSessionRecoveryAck{},
 		},
 	}); err != nil {
 		return err

@@ -71,6 +71,11 @@ func (s *RegistryService) Connect(stream grpc.BidiStreamingServer[registryv1.Con
 	}
 
 	session := newActiveSessionAt(hello.GetNodeId(), sessionID, hello, now)
+	recoveryCandidates, err := s.beginTerminalSessionRecoveryWithError(session.nodeID, now)
+	if err != nil {
+		return status.Errorf(codes.Internal, "prepare terminal session recovery: %v", err)
+	}
+	session.setRecoveryCandidates(recoveryCandidates)
 	if err := s.configureSessionProxy(session, hello, workerSecret); err != nil {
 		return status.Errorf(codes.InvalidArgument, "invalid proxy endpoint: %v", err)
 	}
@@ -93,7 +98,7 @@ func (s *RegistryService) Connect(stream grpc.BidiStreamingServer[registryv1.Con
 		writerErrCh <- writerLoop(stream, session)
 	}()
 
-	if err := session.enqueueControl(stream.Context(), newConnectAck(sessionID, s.heartbeatIntervalSec)); err != nil {
+	if err := session.enqueueControl(stream.Context(), newConnectAck(sessionID, s.heartbeatIntervalSec, recoveryCandidates...)); err != nil {
 		return status.Error(codes.Internal, "failed to send connect ack")
 	}
 
@@ -127,6 +132,26 @@ func (s *RegistryService) Connect(stream grpc.BidiStreamingServer[registryv1.Con
 			if err := handleCommandResult(session, req.GetCommandResult()); err != nil {
 				return err
 			}
+		case req.GetTerminalSessionRecoveryReport() != nil:
+			if !session.recoveryRequired {
+				return status.Error(codes.InvalidArgument, "terminal session recovery is not supported by this worker")
+			}
+			if session.isReady() {
+				if !session.matchesRecoveryResults(req.GetTerminalSessionRecoveryReport()) {
+					return status.Error(codes.FailedPrecondition, "terminal session recovery report changed after completion")
+				}
+				if err := session.enqueueControl(stream.Context(), newTerminalSessionRecoveryAck()); err != nil {
+					return status.Error(codes.Internal, "failed to resend terminal session recovery ack")
+				}
+				continue
+			}
+			if err := s.applyTerminalSessionRecoveryReport(session, req.GetTerminalSessionRecoveryReport(), s.nowFn()); err != nil {
+				return status.Error(codes.InvalidArgument, err.Error())
+			}
+			if err := session.enqueueControl(stream.Context(), newTerminalSessionRecoveryAck()); err != nil {
+				return status.Error(codes.Internal, "failed to send terminal session recovery ack")
+			}
+			session.markRecoveryComplete()
 		default:
 			return status.Error(codes.InvalidArgument, "unsupported frame type")
 		}
@@ -332,10 +357,6 @@ func (s *RegistryService) swapSession(session *activeSession) *activeSession {
 		s.sessions[session.nodeID] = session
 		return replaced
 	}()
-	// Release sessionsMu before touching terminal route tables to avoid lock
-	// inversion with dispatch paths that read terminal routes then sessions.
-	// This leaves a tiny window where an old route may be observed once.
-	s.clearTerminalSessionRoutesByNode(session.nodeID)
 	return replaced
 }
 
@@ -361,9 +382,12 @@ func (s *RegistryService) removeSession(session *activeSession) {
 	if !shouldClearStoreSession {
 		return
 	}
-	// Keep the same lock order as swapSession: sessions first, then route tables.
-	// Clearing route mappings outside sessionsMu avoids cross-lock deadlocks.
-	s.clearTerminalSessionRoutesByNode(session.nodeID)
+	unavailable := s.markTerminalSessionRoutesUnavailable(session.nodeID)
+	slog.Info(
+		"terminal session routes unavailable",
+		"executor_kind", session.executorKind,
+		"unavailable_route_count", unavailable,
+	)
 	if shouldClearStoreSession && s.store != nil {
 		if err := s.store.ClearSession(session.nodeID, session.sessionID); err != nil {
 			slog.Error(
@@ -415,13 +439,22 @@ func writerLoop(stream grpc.BidiStreamingServer[registryv1.ConnectRequest, regis
 	}
 }
 
-func newConnectAck(sessionID string, heartbeatIntervalSec int32) *registryv1.ConnectResponse {
+func newConnectAck(sessionID string, heartbeatIntervalSec int32, recoveryCandidates ...*registryv1.TerminalSessionRecoveryCandidate) *registryv1.ConnectResponse {
 	return &registryv1.ConnectResponse{
 		Payload: &registryv1.ConnectResponse_ConnectAck{
 			ConnectAck: &registryv1.ConnectAck{
-				SessionId:            sessionID,
-				HeartbeatIntervalSec: heartbeatIntervalSec,
+				SessionId:                         sessionID,
+				HeartbeatIntervalSec:              heartbeatIntervalSec,
+				TerminalSessionRecoveryCandidates: recoveryCandidates,
 			},
+		},
+	}
+}
+
+func newTerminalSessionRecoveryAck() *registryv1.ConnectResponse {
+	return &registryv1.ConnectResponse{
+		Payload: &registryv1.ConnectResponse_TerminalSessionRecoveryAck{
+			TerminalSessionRecoveryAck: &registryv1.TerminalSessionRecoveryAck{},
 		},
 	}
 }

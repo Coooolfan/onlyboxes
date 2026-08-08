@@ -260,6 +260,7 @@ func TestTerminalCommandStatusMappings(t *testing.T) {
 		{name: "session_not_found", errorCode: terminalExecSessionNotFoundCode, statusCode: http.StatusNotFound},
 		{name: "session_busy", errorCode: terminalExecSessionBusyCode, statusCode: http.StatusConflict},
 		{name: "session_capacity_exceeded", errorCode: terminalExecSessionCapacityCode, statusCode: http.StatusTooManyRequests},
+		{name: "session_unavailable", errorCode: terminalExecSessionUnavailableCode, statusCode: http.StatusServiceUnavailable},
 		{name: "invalid_payload", errorCode: terminalExecInvalidPayloadCode, statusCode: http.StatusBadRequest},
 		{name: "no_capacity", errorCode: terminalTaskNoCapacityCode, statusCode: http.StatusTooManyRequests},
 		{name: "no_worker", errorCode: terminalTaskNoWorkerCode, statusCode: http.StatusServiceUnavailable},

@@ -20,6 +20,7 @@ import (
 const (
 	terminalSessionNotFoundCode         = "session_not_found"
 	terminalSessionCapacityExceededCode = "session_capacity_exceeded"
+	terminalSessionUnavailableCode      = "session_unavailable"
 )
 
 type dispatchOptions struct {
@@ -235,7 +236,7 @@ func (s *RegistryService) dispatchCommandAttempt(
 			terminalRouteReservationID,
 		)
 	}
-	confirmTerminalRoute := func() {
+	confirmTerminalRouteInMemory := func() {
 		if terminalSessionID != "" {
 			s.confirmTerminalSessionRoute(
 				terminalSessionID,
@@ -244,6 +245,25 @@ func (s *RegistryService) dispatchCommandAttempt(
 				s.nowFn(),
 			)
 		}
+	}
+	commitTerminalRoute := func(resultPayload []byte) error {
+		if terminalSessionID == "" {
+			return nil
+		}
+		confirmed, err := s.commitConfirmedTerminalSessionRoute(
+			terminalSessionID,
+			session.nodeID,
+			terminalRouteReservationID,
+			terminalSessionLeaseExpiresUnixMs(resultPayload),
+			s.nowFn(),
+		)
+		if err != nil {
+			return err
+		}
+		if !confirmed {
+			return errors.New("terminal session route changed before persistence")
+		}
+		return nil
 	}
 
 	commandID, err := s.newCommandIDFn()
@@ -293,7 +313,7 @@ func (s *RegistryService) dispatchCommandAttempt(
 	if onDispatched != nil {
 		if err := onDispatched(commandID); err != nil {
 			if terminalRouteReservationID != 0 {
-				confirmTerminalRoute()
+				confirmTerminalRouteInMemory()
 			}
 			return dispatchAttemptResult{}, err
 		}
@@ -304,7 +324,7 @@ func (s *RegistryService) dispatchCommandAttempt(
 		if terminalRouteReservationID != 0 && terminalSessionID != "" {
 			// The dispatch reached the worker stream, so cancellation does not
 			// prove that session creation failed.
-			confirmTerminalRoute()
+			confirmTerminalRouteInMemory()
 		}
 		if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
 			return dispatchAttemptResult{}, context.DeadlineExceeded
@@ -316,7 +336,13 @@ func (s *RegistryService) dispatchCommandAttempt(
 			return dispatchAttemptResult{}, status.Error(codes.Unavailable, "worker session closed before command result")
 		}
 		if outcome.err == nil && terminalSessionID != "" {
-			confirmTerminalRoute()
+			if capability == taskCapabilityTerminalExec {
+				if err := commitTerminalRoute(outcome.payloadJSON); err != nil {
+					return dispatchAttemptResult{}, status.Errorf(codes.Internal, "persist terminal session route: %v", err)
+				}
+			} else {
+				confirmTerminalRouteInMemory()
+			}
 			return dispatchAttemptResult{outcome: outcome}, nil
 		}
 		if outcome.err == nil || terminalSessionID == "" {
@@ -327,8 +353,8 @@ func (s *RegistryService) dispatchCommandAttempt(
 		case isSessionNotFoundCommandError(outcome.err):
 			if terminalRouteReservationID != 0 {
 				rollbackTerminalRouteReservation()
-			} else {
-				s.clearTerminalSessionRoute(terminalSessionID, session.nodeID)
+			} else if err := s.clearTerminalSessionRoute(terminalSessionID, session.nodeID); err != nil {
+				return dispatchAttemptResult{}, status.Errorf(codes.Internal, "delete terminal session route: %v", err)
 			}
 		case isSessionCapacityCommandError(outcome.err):
 			releaseResult := rollbackTerminalRouteReservation()
@@ -340,7 +366,7 @@ func (s *RegistryService) dispatchCommandAttempt(
 			}, nil
 		case terminalRouteReservationID != 0:
 			// Other execution errors do not prove that session creation failed.
-			confirmTerminalRoute()
+			confirmTerminalRouteInMemory()
 		}
 		return dispatchAttemptResult{outcome: outcome}, nil
 	}
@@ -359,6 +385,12 @@ func (s *RegistryService) pickSessionForDispatch(
 	}
 	now := s.nowFn()
 	s.maybePruneTerminalSessionRoutes(now)
+	if route, exists := s.terminalSessionRouteSnapshot(normalizedTerminalSessionID, now); exists && route.ReservationID == 0 {
+		boundSession := s.getSession(route.NodeID)
+		if route.RecoveryState != terminalSessionRecoveryReady || boundSession == nil || !boundSession.isReady() {
+			return nil, 0, terminalSessionUnavailableError()
+		}
+	}
 
 	nodeID, reservationID, ok := s.claimTerminalSessionRoute(normalizedTerminalSessionID, now)
 	if !ok {
@@ -376,6 +408,9 @@ func (s *RegistryService) pickSessionForDispatch(
 		return session, reservationID, nil
 	}
 	if errors.Is(err, ErrNoCapabilityWorker) {
+		if reservationID == 0 {
+			return nil, 0, terminalSessionUnavailableError()
+		}
 		s.clearTerminalSessionRoute(normalizedTerminalSessionID, nodeID)
 		return s.tryReserveAndPickTerminalSession(capability, ownerID, normalizedTerminalSessionID, now, options)
 	}
@@ -440,7 +475,7 @@ func (s *RegistryService) pickSessionForNodeAndCapability(nodeID string, capabil
 	}
 
 	session := s.getSession(normalizedNodeID)
-	if session == nil || !session.hasCapability(capability) {
+	if session == nil || !session.isReady() || !session.hasCapability(capability) {
 		return nil, ErrNoCapabilityWorker
 	}
 
@@ -485,7 +520,7 @@ func (s *RegistryService) pickSessionForCapability(
 			continue
 		}
 		session := s.getSession(nodeID)
-		if session == nil || !session.hasCapability(capability) {
+		if session == nil || !session.isReady() || !session.hasCapability(capability) {
 			continue
 		}
 		hasSession = true
@@ -571,6 +606,26 @@ func isSessionNotFoundCommandError(err error) bool {
 
 func isSessionCapacityCommandError(err error) bool {
 	return isCommandErrorCode(err, terminalSessionCapacityExceededCode)
+}
+
+func terminalSessionUnavailableError() error {
+	return &CommandExecutionError{
+		Code:    terminalSessionUnavailableCode,
+		Message: "terminal session is temporarily unavailable",
+	}
+}
+
+func terminalSessionLeaseExpiresUnixMs(payload []byte) int64 {
+	if len(payload) == 0 {
+		return 0
+	}
+	var decoded struct {
+		LeaseExpiresUnixMS int64 `json:"lease_expires_unix_ms"`
+	}
+	if err := json.Unmarshal(payload, &decoded); err != nil || decoded.LeaseExpiresUnixMS <= 0 {
+		return 0
+	}
+	return decoded.LeaseExpiresUnixMS
 }
 
 func isCommandErrorCode(err error, code string) bool {

@@ -139,21 +139,24 @@ func normalizeProvisioningWorkerType(workerType string) string {
 	}
 }
 
-func (s *RegistryService) DeleteProvisionedWorker(nodeID string) bool {
+func (s *RegistryService) DeleteProvisionedWorker(nodeID string) (bool, error) {
 	trimmedNodeID := strings.TrimSpace(nodeID)
 	if trimmedNodeID == "" {
-		return false
+		return false, nil
+	}
+	if _, err := s.deleteTerminalSessionRoutesByNode(trimmedNodeID); err != nil {
+		return false, err
 	}
 
 	deletedCredentialInMemory := s.deleteCredential(trimmedNodeID)
 	deletedCredentialInDB := s.store.DeleteCredential(trimmedNodeID)
 	deletedNode := s.store.Delete(trimmedNodeID)
 	if !deletedCredentialInMemory && !deletedCredentialInDB && !deletedNode {
-		return false
+		return false, nil
 	}
 
 	s.disconnectWorker(trimmedNodeID, "worker credential revoked")
-	return true
+	return true, nil
 }
 
 func (s *RegistryService) getCredential(nodeID string) (string, bool) {

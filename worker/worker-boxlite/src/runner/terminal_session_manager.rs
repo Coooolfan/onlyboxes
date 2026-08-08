@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
@@ -9,6 +9,7 @@ use async_trait::async_trait;
 use base64::Engine;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tokio::sync::{watch, Mutex, Notify};
 use tokio_util::io::ReaderStream;
 use tokio_util::sync::CancellationToken;
@@ -16,6 +17,10 @@ use uuid::Uuid;
 
 use crate::boxlite_runtime::{self, BoxliteCommandError, CollectedExecOutput};
 use crate::config::Config;
+use crate::proto::registryv1::{
+    terminal_session_recovery_result, TerminalSessionRecoveryCandidate,
+    TerminalSessionRecoveryResult,
+};
 
 pub(crate) const TERMINAL_EXEC_JANITOR_INTERVAL: Duration = Duration::from_secs(5);
 #[cfg(not(test))]
@@ -231,6 +236,23 @@ pub(crate) trait TerminalBackend: Send + Sync {
         shutdown: CancellationToken,
         deadline_unix_ms: i64,
     ) -> Result<String, TerminalOperationError>;
+    async fn create_session_box_for_session(
+        &self,
+        _session_id: &str,
+        shutdown: CancellationToken,
+        deadline_unix_ms: i64,
+    ) -> Result<String, TerminalOperationError> {
+        self.create_session_box(shutdown, deadline_unix_ms).await
+    }
+    async fn recover_session_box(
+        &self,
+        _session_id: &str,
+    ) -> Result<Option<String>, TerminalOperationError> {
+        Ok(None)
+    }
+    async fn cleanup_orphan_session_boxes(&self, _expected_names: &HashSet<String>) -> usize {
+        0
+    }
     async fn exec_shell_command(
         &self,
         box_id: &str,
@@ -342,7 +364,7 @@ pub(crate) fn shared_terminal_session_manager(cfg: &Config) -> Arc<TerminalSessi
 
 pub(crate) async fn shutdown_shared_terminal_sessions() {
     if let Some(manager) = TERMINAL_SESSION_MANAGER.get() {
-        manager.close().await;
+        manager.close_preserving().await;
     }
 }
 
@@ -351,6 +373,15 @@ pub(crate) async fn shared_active_session_count() -> i32 {
         Some(manager) => manager.active_session_count().await,
         None => 0,
     }
+}
+
+pub(crate) async fn shared_recover_terminal_sessions(
+    cfg: &Config,
+    candidates: &[TerminalSessionRecoveryCandidate],
+) -> Vec<TerminalSessionRecoveryResult> {
+    shared_terminal_session_manager(cfg)
+        .recover_sessions(candidates)
+        .await
 }
 
 struct RetiredSession {
@@ -475,7 +506,11 @@ impl TerminalSessionManager {
             let _creation_guard = PendingCreationGuard { manager: self };
             match self
                 .backend
-                .create_session_box(self.shutdown.clone(), req.deadline_unix_ms)
+                .create_session_box_for_session(
+                    &claimed.session_id,
+                    self.shutdown.clone(),
+                    req.deadline_unix_ms,
+                )
                 .await
             {
                 Ok(box_id) => {
@@ -778,7 +813,16 @@ impl TerminalSessionManager {
         Ok(TerminalResourceRunResult { blob, ..result })
     }
 
+    #[cfg(test)]
     pub(crate) async fn close(&self) {
+        self.close_inner(false).await;
+    }
+
+    pub(crate) async fn close_preserving(&self) {
+        self.close_inner(true).await;
+    }
+
+    async fn close_inner(&self, preserve: bool) {
         if self.closed.swap(true, Ordering::SeqCst) {
             return;
         }
@@ -816,7 +860,14 @@ impl TerminalSessionManager {
 
         self.wait_for_pending_cleanups().await;
         for session in sessions {
-            self.cleanup_retired_session(session).await;
+            if preserve {
+                if session.capacity_reserved {
+                    self.active_session_reservations
+                        .fetch_sub(1, Ordering::SeqCst);
+                }
+            } else {
+                self.cleanup_retired_session(session).await;
+            }
         }
     }
 
@@ -833,6 +884,129 @@ impl TerminalSessionManager {
         self.active_session_reservations
             .load(Ordering::SeqCst)
             .min(i32::MAX as u32) as i32
+    }
+
+    pub(crate) async fn recover_sessions(
+        &self,
+        candidates: &[TerminalSessionRecoveryCandidate],
+    ) -> Vec<TerminalSessionRecoveryResult> {
+        let started_at = std::time::Instant::now();
+        let now = SystemTime::now();
+        let mut results = Vec::with_capacity(candidates.len());
+        let mut recovered_names = HashSet::with_capacity(candidates.len());
+
+        for candidate in candidates {
+            let session_id = candidate.session_id.trim();
+            let lease_expires_at = system_time_from_unix_millis(candidate.lease_expires_unix_ms);
+            let status = if session_id.is_empty()
+                || lease_expires_at.is_none()
+                || lease_expires_at.is_some_and(|lease| lease <= now)
+            {
+                terminal_session_recovery_result::Status::Invalid
+            } else {
+                let lease_expires_at = lease_expires_at.expect("validated lease");
+                match self.recover_one_session(session_id, lease_expires_at).await {
+                    Ok(true) => {
+                        recovered_names.insert(terminal_session_resource_name(session_id));
+                        terminal_session_recovery_result::Status::Recovered
+                    }
+                    Ok(false) => terminal_session_recovery_result::Status::Missing,
+                    Err(err) => {
+                        tracing::warn!(
+                            session_id_hash = %terminal_session_id_hash(session_id),
+                            error = %err,
+                            "terminal Box recovery failed"
+                        );
+                        terminal_session_recovery_result::Status::Invalid
+                    }
+                }
+            };
+            results.push(TerminalSessionRecoveryResult {
+                session_id: candidate.session_id.clone(),
+                status: status as i32,
+            });
+        }
+
+        let orphan_cleaned = self
+            .backend
+            .cleanup_orphan_session_boxes(&recovered_names)
+            .await;
+        let missing = results
+            .iter()
+            .filter(|result| {
+                result.status == terminal_session_recovery_result::Status::Missing as i32
+            })
+            .count();
+        let invalid = results
+            .iter()
+            .filter(|result| {
+                result.status == terminal_session_recovery_result::Status::Invalid as i32
+            })
+            .count();
+        tracing::info!(
+            executor_kind = "boxlite",
+            discovered = recovered_names.len() + orphan_cleaned,
+            candidate = candidates.len(),
+            recovered = recovered_names.len(),
+            missing,
+            invalid,
+            orphan_cleaned,
+            duration_ms = started_at.elapsed().as_millis(),
+            recovery_failures = invalid,
+            "terminal session recovery completed"
+        );
+        results
+    }
+
+    async fn recover_one_session(
+        &self,
+        session_id: &str,
+        lease_expires_at: SystemTime,
+    ) -> Result<bool, TerminalOperationError> {
+        {
+            let mut sessions = self.sessions.lock().await;
+            if let Some(session) = sessions.get_mut(session_id) {
+                if session.destroying || session.box_id.trim().is_empty() {
+                    return Err(TerminalOperationError::ExecutionFailed(
+                        "terminal session is not recoverable".to_owned(),
+                    ));
+                }
+                session.lease_expires_at = lease_expires_at;
+                return Ok(true);
+            }
+        }
+
+        let Some(box_id) = self.backend.recover_session_box(session_id).await? else {
+            return Ok(false);
+        };
+
+        let mut sessions = self.sessions.lock().await;
+        if self.closed.load(Ordering::SeqCst) {
+            return Err(TerminalOperationError::ExecutionFailed(
+                TERMINAL_MANAGER_CLOSED_MESSAGE.to_owned(),
+            ));
+        }
+        if let Some(session) = sessions.get_mut(session_id) {
+            session.lease_expires_at = lease_expires_at;
+            return Ok(true);
+        }
+
+        let (ready_tx, _) = watch::channel(SessionReadyState::Ready(box_id.clone()));
+        sessions.insert(
+            session_id.to_owned(),
+            TerminalSession {
+                session_id: session_id.to_owned(),
+                box_id,
+                lease_expires_at,
+                inflight: 0,
+                destroying: false,
+                capacity_reserved: true,
+                ready_tx,
+            },
+        );
+        self.active_session_reservations
+            .fetch_add(1, Ordering::SeqCst);
+        Ok(true)
     }
 
     pub(crate) async fn cleanup_expired_sessions(&self) {
@@ -1284,6 +1458,34 @@ impl TerminalBackend for BoxliteTerminalBackend {
             })
     }
 
+    async fn create_session_box_for_session(
+        &self,
+        session_id: &str,
+        shutdown: CancellationToken,
+        deadline_unix_ms: i64,
+    ) -> Result<String, TerminalOperationError> {
+        let name = terminal_session_resource_name(session_id);
+        boxlite_runtime::create_terminal_session_box(&self.cfg, &name, shutdown, deadline_unix_ms)
+            .await
+            .map_err(map_boxlite_terminal_error)
+    }
+
+    async fn recover_session_box(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<String>, TerminalOperationError> {
+        boxlite_runtime::recover_terminal_session_box(
+            &self.cfg,
+            &terminal_session_resource_name(session_id),
+        )
+        .await
+        .map_err(map_boxlite_terminal_error)
+    }
+
+    async fn cleanup_orphan_session_boxes(&self, expected_names: &HashSet<String>) -> usize {
+        boxlite_runtime::cleanup_orphan_terminal_session_boxes(&self.cfg, expected_names).await
+    }
+
     async fn exec_shell_command(
         &self,
         box_id: &str,
@@ -1340,6 +1542,29 @@ impl TerminalBackend for BoxliteTerminalBackend {
     fn proxy_ports(&self, box_id: &str) -> Vec<u16> {
         boxlite_runtime::terminal_proxy_ports(box_id)
     }
+}
+
+fn map_boxlite_terminal_error(err: BoxliteCommandError) -> TerminalOperationError {
+    match err {
+        BoxliteCommandError::DeadlineExceeded => TerminalOperationError::DeadlineExceeded,
+        BoxliteCommandError::MissingBox => {
+            TerminalOperationError::ExecutionFailed("terminalExec box not found".to_owned())
+        }
+        BoxliteCommandError::ExecutionFailed(message) => {
+            TerminalOperationError::ExecutionFailed(message)
+        }
+    }
+}
+
+fn terminal_session_id_hash(session_id: &str) -> String {
+    format!("{:x}", Sha256::digest(session_id.as_bytes()))
+}
+
+fn terminal_session_resource_name(session_id: &str) -> String {
+    format!(
+        "onlyboxes-terminal-v1-{}",
+        terminal_session_id_hash(session_id)
+    )
 }
 
 fn truncate_by_bytes(value: &str, max_bytes: usize) -> (String, bool) {
@@ -1459,6 +1684,13 @@ fn to_unix_millis(time: SystemTime) -> i64 {
         .unwrap_or_default()
 }
 
+fn system_time_from_unix_millis(value: i64) -> Option<SystemTime> {
+    if value <= 0 {
+        return None;
+    }
+    SystemTime::UNIX_EPOCH.checked_add(Duration::from_millis(value as u64))
+}
+
 fn serialize_resource_blob<S>(blob: &[u8], serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
@@ -1503,6 +1735,85 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
     use tokio::sync::Notify;
+
+    struct RecoveryBackend {
+        boxes: Mutex<HashMap<String, String>>,
+        expected_names: Mutex<HashSet<String>>,
+    }
+
+    impl RecoveryBackend {
+        fn new(session_id: &str, box_id: &str) -> Arc<Self> {
+            Arc::new(Self {
+                boxes: Mutex::new(HashMap::from([(session_id.to_owned(), box_id.to_owned())])),
+                expected_names: Mutex::new(HashSet::new()),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl TerminalBackend for RecoveryBackend {
+        async fn create_session_box(
+            &self,
+            _shutdown: CancellationToken,
+            _deadline_unix_ms: i64,
+        ) -> Result<String, TerminalOperationError> {
+            Err(TerminalOperationError::ExecutionFailed(
+                "unexpected create".to_owned(),
+            ))
+        }
+
+        async fn recover_session_box(
+            &self,
+            session_id: &str,
+        ) -> Result<Option<String>, TerminalOperationError> {
+            Ok(self.boxes.lock().await.get(session_id).cloned())
+        }
+
+        async fn cleanup_orphan_session_boxes(&self, expected_names: &HashSet<String>) -> usize {
+            *self.expected_names.lock().await = expected_names.clone();
+            0
+        }
+
+        async fn exec_shell_command(
+            &self,
+            _box_id: &str,
+            _command: &str,
+            _deadline_unix_ms: i64,
+        ) -> Result<CollectedExecOutput, BoxliteCommandError> {
+            Ok(CollectedExecOutput {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: 0,
+            })
+        }
+
+        async fn exec_resource_probe(
+            &self,
+            _box_id: &str,
+            _action: &str,
+            _file_path: &str,
+            _max_read_bytes: usize,
+            _deadline_unix_ms: i64,
+        ) -> Result<CollectedExecOutput, BoxliteCommandError> {
+            Err(BoxliteCommandError::ExecutionFailed(
+                "unexpected resource probe".to_owned(),
+            ))
+        }
+
+        async fn copy_out_file(
+            &self,
+            _box_id: &str,
+            _container_src: &str,
+            _host_dst: &Path,
+            _deadline_unix_ms: i64,
+        ) -> Result<(), BoxliteCommandError> {
+            Err(BoxliteCommandError::ExecutionFailed(
+                "unexpected copy".to_owned(),
+            ))
+        }
+
+        async fn remove_box(&self, _box_id: &str) {}
+    }
 
     struct StatefulShellBackend {
         next_box: Mutex<u32>,
@@ -4292,5 +4603,139 @@ mod tests {
         exec_handle.await.expect("join").expect("exec");
 
         manager.close().await;
+    }
+
+    #[tokio::test]
+    async fn recovery_restores_box_with_exact_lease_and_capacity() {
+        let session_id = "owner-a:session-recover";
+        let backend = RecoveryBackend::new(session_id, "box-recover");
+        let manager = manager_with_limit(backend.clone(), 1);
+        let lease = SystemTime::now() + Duration::from_secs(600);
+        let lease_unix_ms = to_unix_millis(lease);
+
+        let results = manager
+            .recover_sessions(&[TerminalSessionRecoveryCandidate {
+                session_id: session_id.to_owned(),
+                lease_expires_unix_ms: lease_unix_ms,
+            }])
+            .await;
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].status,
+            terminal_session_recovery_result::Status::Recovered as i32
+        );
+        assert_eq!(manager.active_session_count().await, 1);
+
+        let sessions = manager.sessions.lock().await;
+        let recovered = sessions.get(session_id).expect("recovered session");
+        assert_eq!(recovered.box_id, "box-recover");
+        assert_eq!(recovered.inflight, 0);
+        assert_eq!(to_unix_millis(recovered.lease_expires_at), lease_unix_ms);
+        drop(sessions);
+
+        let expected_names = backend.expected_names.lock().await;
+        assert_eq!(
+            &*expected_names,
+            &HashSet::from([terminal_session_resource_name(session_id)])
+        );
+        drop(expected_names);
+
+        let reused = manager
+            .execute(exec_req(session_id, "printf recovered", false))
+            .await
+            .expect("execute recovered session");
+        assert!(!reused.created);
+        assert_eq!(reused.session_id, session_id);
+
+        let repeated = manager
+            .recover_sessions(&[TerminalSessionRecoveryCandidate {
+                session_id: session_id.to_owned(),
+                lease_expires_unix_ms: lease_unix_ms,
+            }])
+            .await;
+        assert_eq!(
+            repeated[0].status,
+            terminal_session_recovery_result::Status::Recovered as i32
+        );
+        assert_eq!(manager.active_session_count().await, 1);
+        assert_eq!(
+            to_unix_millis(
+                manager
+                    .sessions
+                    .lock()
+                    .await
+                    .get(session_id)
+                    .expect("recovered session")
+                    .lease_expires_at
+            ),
+            lease_unix_ms
+        );
+        manager.close_preserving().await;
+    }
+
+    #[tokio::test]
+    async fn recovery_reports_missing_and_skips_expired_candidate() {
+        let backend = RecoveryBackend::new("different-session", "box-other");
+        let manager = manager_with_limit(backend.clone(), 1);
+        let results = manager
+            .recover_sessions(&[
+                TerminalSessionRecoveryCandidate {
+                    session_id: "session-missing".to_owned(),
+                    lease_expires_unix_ms: to_unix_millis(
+                        SystemTime::now() + Duration::from_secs(60),
+                    ),
+                },
+                TerminalSessionRecoveryCandidate {
+                    session_id: "session-expired".to_owned(),
+                    lease_expires_unix_ms: to_unix_millis(
+                        SystemTime::now() - Duration::from_secs(60),
+                    ),
+                },
+            ])
+            .await;
+        assert_eq!(
+            results[0].status,
+            terminal_session_recovery_result::Status::Missing as i32
+        );
+        assert_eq!(
+            results[1].status,
+            terminal_session_recovery_result::Status::Invalid as i32
+        );
+        assert_eq!(manager.active_session_count().await, 0);
+        assert!(backend.expected_names.lock().await.is_empty());
+        manager.close_preserving().await;
+    }
+
+    #[tokio::test]
+    async fn concurrent_recovery_uses_one_reservation() {
+        let session_id = "session-concurrent";
+        let backend = RecoveryBackend::new(session_id, "box-concurrent");
+        let manager = manager_with_limit(backend, 1);
+        let candidates = vec![TerminalSessionRecoveryCandidate {
+            session_id: session_id.to_owned(),
+            lease_expires_unix_ms: to_unix_millis(SystemTime::now() + Duration::from_secs(60)),
+        }];
+        let (first, second) = tokio::join!(
+            manager.recover_sessions(&candidates),
+            manager.recover_sessions(&candidates)
+        );
+        for result in [first, second] {
+            assert_eq!(
+                result[0].status,
+                terminal_session_recovery_result::Status::Recovered as i32
+            );
+        }
+        assert_eq!(manager.active_session_count().await, 1);
+        manager.close_preserving().await;
+    }
+
+    #[test]
+    fn recovery_resource_name_is_deterministic_and_does_not_expose_session_id() {
+        let session_id = "owner-secret:session-secret";
+        let name = terminal_session_resource_name(session_id);
+        assert!(name.starts_with("onlyboxes-terminal-v1-"));
+        assert_eq!(name.len(), "onlyboxes-terminal-v1-".len() + 64);
+        assert!(!name.contains("owner-secret"));
+        assert_eq!(name, terminal_session_resource_name(session_id));
     }
 }

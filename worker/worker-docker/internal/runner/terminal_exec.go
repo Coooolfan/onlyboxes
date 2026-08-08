@@ -2,6 +2,8 @@ package runner
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -17,8 +19,11 @@ import (
 const (
 	terminalExecCapabilityName     = "terminalexec"
 	terminalExecCapabilityDeclared = "terminalExec"
-	terminalExecContainerPrefix    = "onlyboxes-terminalexec-"
+	terminalExecContainerPrefix    = "onlyboxes-terminal-v1-"
 	terminalExecCapabilityLabel    = "onlyboxes.capability=terminalExec"
+	terminalExecSessionLabelKey    = "onlyboxes.session_id_hash"
+	terminalExecSchemaLabelKey     = "onlyboxes.schema_version"
+	terminalExecSchemaVersion      = "1"
 	terminalExecIdleCommand        = "while true; do sleep 3600; done"
 	terminalExecCleanupTimeout     = 3 * time.Second
 	terminalExecInspectTimeout     = 2 * time.Second
@@ -131,6 +136,9 @@ type terminalSessionManagerConfig struct {
 	// MaxActiveSessions caps terminal sandbox reservations across all sessions.
 	// Zero preserves the existing unlimited behaviour.
 	MaxActiveSessions int
+	// PreserveOnClose leaves terminal containers running for process restart
+	// recovery. Tests and explicit teardown may leave this false.
+	PreserveOnClose bool
 }
 
 type terminalSessionManager struct {
@@ -150,6 +158,7 @@ type terminalSessionManager struct {
 	sessionMaxInflight        int
 	maxActiveSessions         int
 	activeSessionReservations int
+	preserveOnClose           bool
 
 	stopCh    chan struct{}
 	doneCh    chan struct{}
@@ -241,6 +250,7 @@ func newTerminalSessionManager(cfg terminalSessionManagerConfig) *terminalSessio
 		dockerNetwork:      strings.TrimSpace(cfg.DockerNetwork),
 		sessionMaxInflight: sessionMaxInflight,
 		maxActiveSessions:  maxActiveSessions,
+		preserveOnClose:    cfg.PreserveOnClose,
 		stopCh:             make(chan struct{}),
 		doneCh:             make(chan struct{}),
 	}
@@ -275,6 +285,10 @@ func (m *terminalSessionManager) Close() {
 
 		m.cleanupWG.Wait()
 		for _, session := range sessions {
+			if m.preserveOnClose {
+				m.releaseCapacityReservation(session)
+				continue
+			}
 			m.cleanupSession(session)
 		}
 	})
@@ -637,10 +651,7 @@ func (m *terminalSessionManager) newSessionLocked(sessionID string, leaseTarget 
 		)
 	}
 
-	containerName, err := newTerminalExecContainerName()
-	if err != nil {
-		return nil, fmt.Errorf("allocate terminal container name: %w", err)
-	}
+	containerName := terminalSessionResourceName(sessionID)
 
 	proxyCtx, proxyCancel := context.WithCancel(context.Background())
 	session := &terminalSession{
@@ -865,12 +876,15 @@ func terminalExecDockerCreateArgs(containerName string, dockerImage string, memo
 }
 
 func terminalExecDockerCreateArgsWithNetwork(containerName string, dockerImage string, memoryLimit string, cpuLimit string, pidsLimit int, dockerNetwork string) []string {
+	sessionHash := strings.TrimPrefix(strings.TrimSpace(containerName), terminalExecContainerPrefix)
 	args := []string{
 		"create",
 		"--name", containerName,
 		"--label", pythonExecManagedLabel,
 		"--label", terminalExecCapabilityLabel,
 		"--label", pythonExecRuntimeLabel,
+		"--label", terminalExecSessionLabelKey + "=" + sessionHash,
+		"--label", terminalExecSchemaLabelKey + "=" + terminalExecSchemaVersion,
 		"--memory", memoryLimit,
 		"--cpus", cpuLimit,
 		"--pids-limit", strconv.Itoa(pidsLimit),
@@ -894,12 +908,13 @@ func terminalExecDockerExecArgs(containerName string, command string) []string {
 	return []string{"exec", containerName, "sh", "-lc", command}
 }
 
-func newTerminalExecContainerName() (string, error) {
-	suffix, err := randomHex(8)
-	if err != nil {
-		return "", err
-	}
-	return terminalExecContainerPrefix + suffix, nil
+func terminalSessionIDHash(sessionID string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(sessionID)))
+	return hex.EncodeToString(sum[:])
+}
+
+func terminalSessionResourceName(sessionID string) string {
+	return terminalExecContainerPrefix + terminalSessionIDHash(sessionID)
 }
 
 func truncateByBytes(value string, maxBytes int) (string, bool) {

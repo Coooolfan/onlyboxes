@@ -57,6 +57,11 @@ The console service hosts:
     - an existing session route remains pinned to its original worker even when that worker reports full active-session capacity.
     - `max_inflight` and active-session capacity are evaluated independently; the worker-local session manager remains the final authority.
     - an explicit pre-execution `session_capacity_exceeded` can be retried on an untried worker only after the provisional route is safely removed; all attempts share the task deadline.
+  - terminal session restart recovery:
+    - confirmed routes retain their worker binding and absolute lease while the worker is disconnected; requests return retryable `session_unavailable` instead of being reassigned.
+    - a terminal-capable worker must reconcile every Console candidate and receive a recovery acknowledgement before it becomes dispatchable.
+    - recovered routes keep their original lease; missing, invalid, or expired resources delete the route so later calls follow normal `session_not_found`/creation semantics.
+    - route and lease state are currently in Console memory and therefore do not survive a Console restart.
 - MCP Streamable HTTP API (bearer token required):
   - `POST /mcp` for JSON-RPC requests over Streamable HTTP transport.
   - recommended request header: `Authorization: Bearer <access-token>`.

@@ -223,6 +223,64 @@ func TestControlPlaneLifecycle(t *testing.T) {
 	}
 }
 
+func TestRecoveryControlPlaneMetadataListAndConnect(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-API-Key") != "test-key" {
+			t.Errorf("missing API key")
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/sandboxes":
+			if got := r.URL.Query().Get("metadata"); got != "onlyboxes.schema_version=1&onlyboxes.session_id_hash=abc+123" {
+				t.Errorf("unexpected metadata query: %q", got)
+			}
+			_ = json.NewEncoder(w).Encode([]map[string]any{{
+				"sandboxID":   "sb-recover",
+				"state":       "running",
+				"envdVersion": "0.6.2",
+				"metadata": map[string]string{
+					"onlyboxes.schema_version":  "1",
+					"onlyboxes.session_id_hash": "abc 123",
+				},
+			}})
+		case r.Method == http.MethodPost && r.URL.Path == "/sandboxes/sb-recover/connect":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["timeout"] != float64(90) {
+				t.Errorf("unexpected connect body: %#v err=%v", body, err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"sandboxID":          "sb-recover",
+				"envdVersion":        "0.6.2",
+				"envdAccessToken":    "fresh-token",
+				"trafficAccessToken": "fresh-traffic-token",
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(Config{APIKey: "test-key", APIURL: server.URL, RequestTimeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := map[string]string{
+		"onlyboxes.session_id_hash": "abc 123",
+		"onlyboxes.schema_version":  "1",
+	}
+	infos, err := client.List(context.Background(), metadata)
+	if err != nil || len(infos) != 1 || infos[0].ID != "sb-recover" {
+		t.Fatalf("unexpected list result: infos=%#v err=%v", infos, err)
+	}
+	sandbox, err := client.Connect(context.Background(), "sb-recover", 90)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sandbox.ID != "sb-recover" || sandbox.AccessToken != "fresh-token" || sandbox.TrafficAccessToken != "fresh-traffic-token" {
+		t.Fatalf("unexpected connected sandbox: %#v", sandbox)
+	}
+}
+
 func TestSandboxProxyURL(t *testing.T) {
 	sandbox := &Sandbox{ID: "sandbox-1", Domain: "e2b.app", TrafficAccessToken: "traffic-secret"}
 	gotURL, gotToken, err := sandbox.ProxyURL(8080)

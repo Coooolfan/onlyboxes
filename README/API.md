@@ -632,6 +632,7 @@ Errors:
 
 - `400` invalid body/params or `invalid_payload`
 - `404` `session_not_found`
+- `503` `session_unavailable` while the session's bound worker is offline or reconciling after restart; retry the same `session_id` without rerouting it.
 - `409` `session_busy` or canceled
   - `session_busy` means the request exceeded the per-session concurrency limit. Workers default to one command per session; the worker must raise `WORKER_TERMINAL_SESSION_MAX_INFLIGHT` to allow concurrent commands on one `session_id`.
   - `terminalExec` and `terminalResource` share that per-session limit.

@@ -25,6 +25,7 @@ func TestDirectProxyAuthorizationResolvesE2BOriginThroughWorker(t *testing.T) {
 		Capabilities: []*registryv1.CapabilityDeclaration{{Name: taskCapabilityTerminalExec}, {Name: taskCapabilityTerminalProxy, MaxInflight: 4}},
 	}
 	session := newActiveSessionAt("worker-e2b", "connection-e2b", hello, now)
+	session.markRecoveryComplete()
 	if err := service.configureSessionProxy(session, hello, "worker-secret"); err != nil {
 		t.Fatalf("configure direct proxy: %v", err)
 	}
