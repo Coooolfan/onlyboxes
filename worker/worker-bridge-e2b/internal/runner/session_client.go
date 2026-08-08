@@ -107,8 +107,9 @@ func recoverTerminalSessionsWithTimeout(
 	recoveryCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	resultCh := make(chan []*registryv1.TerminalSessionRecoveryResult, 1)
+	recoverTerminalSessions := recoverTerminalSessionsFn
 	go func() {
-		resultCh <- recoverTerminalSessionsFn(recoveryCtx, candidates)
+		resultCh <- recoverTerminalSessions(recoveryCtx, candidates)
 	}()
 	select {
 	case <-recoveryCtx.Done():
