@@ -15,6 +15,7 @@ use tokio_util::sync::CancellationToken;
 use crate::config::Config;
 
 const BOX_CLEANUP_TIMEOUT: Duration = Duration::from_secs(3);
+const TERMINAL_PROXY_CREATE_ATTEMPTS: usize = 3;
 const TERMINAL_EXEC_IDLE_COMMAND: &str = "while true; do sleep 3600; done";
 const TERMINAL_SESSION_CREATE_CANCELLED_MESSAGE: &str = "terminal session manager is closed";
 
@@ -94,6 +95,30 @@ pub(crate) async fn run_python_exec(
 }
 
 pub(crate) async fn create_terminal_session_box(
+    cfg: &Config,
+    box_name: &str,
+    shutdown: CancellationToken,
+    deadline_unix_ms: i64,
+) -> Result<String, BoxliteCommandError> {
+    for attempt in 1..=TERMINAL_PROXY_CREATE_ATTEMPTS {
+        let result =
+            create_terminal_session_box_once(cfg, box_name, shutdown.clone(), deadline_unix_ms)
+                .await;
+        match result {
+            Err(err)
+                if cfg.proxy_enabled
+                    && attempt < TERMINAL_PROXY_CREATE_ATTEMPTS
+                    && is_proxy_port_conflict(&err) =>
+            {
+                tracing::warn!(attempt, error = %err, "terminal proxy port conflict; retrying box creation");
+            }
+            result => return result,
+        }
+    }
+    unreachable!()
+}
+
+async fn create_terminal_session_box_once(
     cfg: &Config,
     box_name: &str,
     shutdown: CancellationToken,
@@ -184,6 +209,14 @@ pub(crate) async fn create_terminal_session_box(
 
     cache_terminal_session_box(litebox);
     Ok(box_id)
+}
+
+fn is_proxy_port_conflict(err: &BoxliteCommandError) -> bool {
+    matches!(
+        err,
+        BoxliteCommandError::ExecutionFailed(message)
+            if message.to_ascii_lowercase().contains("address already in use")
+    )
 }
 
 pub(crate) async fn exec_terminal_shell(
@@ -664,6 +697,28 @@ mod tests {
             remaining_until_deadline(now_unix_ms() - 1),
             Some(Duration::ZERO)
         );
+    }
+
+    #[test]
+    fn proxy_port_conflict_detection_only_retries_bind_collisions() {
+        assert!(is_proxy_port_conflict(
+            &BoxliteCommandError::ExecutionFailed(
+                "listen tcp 0.0.0.0:27380: bind: address already in use".to_owned(),
+            )
+        ));
+        assert!(is_proxy_port_conflict(
+            &BoxliteCommandError::ExecutionFailed(
+                "Address already in use (os error 48)".to_owned(),
+            )
+        ));
+        assert!(!is_proxy_port_conflict(
+            &BoxliteCommandError::ExecutionFailed(
+                "terminalExec start failed: image unavailable".to_owned(),
+            )
+        ));
+        assert!(!is_proxy_port_conflict(
+            &BoxliteCommandError::DeadlineExceeded
+        ));
     }
 
     #[test]
