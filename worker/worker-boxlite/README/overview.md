@@ -11,6 +11,7 @@ Security warning (high risk):
 - `worker_secret` in hello is visible on the network path without transport encryption.
 - run only inside trusted private networks or encrypted tunnels; never expose this channel directly on public internet.
 - full mitigation requires TLS/mTLS support (not implemented in this release).
+- when public preview is enabled, permit only Nginx to reach the fixed worker proxy port; per-VM mapped ports bind to loopback and are never advertised.
 
 Build and runtime prerequisites:
 - supported host matrix follows current Boxlite support: `linux/amd64`, `linux/arm64`, `darwin/arm64`.
@@ -136,6 +137,10 @@ Main environment variables:
 - `WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT`
 - `WORKER_TERMINAL_SESSION_MAX_INFLIGHT`
 - `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS`
+- `WORKER_PROXY_ENABLED`
+- `WORKER_PROXY_LISTEN_ADDR`
+- `WORKER_PROXY_ADVERTISE_ADDR`
+- `WORKER_PROXY_SANDBOX_PORTS`
 - `WORKER_LOG_LEVEL`
 - `WORKER_LOG_FORMAT`
 - `WORKER_LOG_ADD_SOURCE`
@@ -161,6 +166,13 @@ Capability concurrency:
 
 Recommended setting:
 - `WORKER_CALL_TIMEOUT_SEC >= 2 * WORKER_HEARTBEAT_INTERVAL_SEC`
+
+Public preview proxy:
+- `WORKER_PROXY_ENABLED` defaults to `false`.
+- `WORKER_PROXY_LISTEN_ADDR` defaults to `0.0.0.0:8091`; `WORKER_PROXY_ADVERTISE_ADDR` must be a unicast IP reachable by Nginx and use the same port.
+- `WORKER_PROXY_SANDBOX_PORTS` is required when enabled and lists the guest TCP ports available to routes, for example `3000,8080`.
+- the proxy verifies the Console-signed Route Token, removes all internal headers, tunnels HTTP/1.1/SSE/WebSocket traffic to the session VM, and terminates the connection after session expiry or worker shutdown.
+- proxy error statuses are distinct: `401` invalid Route Token, `404` session missing or expired, `403` guest port not mapped for this VM (the response body lists the mapped ports), `502` mapped port has no listener inside the VM.
 
 Manual smoke checklist:
 - start `console`, create a `worker-boxlite`, and launch the worker with the returned `WORKER_ID` and `WORKER_SECRET`

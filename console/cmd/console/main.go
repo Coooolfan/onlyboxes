@@ -94,6 +94,7 @@ func main() {
 	)
 	registryService.SetHasher(db.Hasher)
 	registryService.SetTaskRetention(time.Duration(cfg.TaskRetentionDays) * 24 * time.Hour)
+	registryService.ConfigureProxy(cfg.ProxyEnabled, cfg.ProxyAllowedWorkerCIDRs, cfg.ProxyAllowedWorkerPorts, cfg.ProxyAllowedDirectDomains)
 	grpcSrv := grpcserver.NewServer(registryService)
 	httpHandler := httpapi.NewWorkerHandler(
 		store,
@@ -103,6 +104,22 @@ func main() {
 		registryService,
 		cfg.GRPCAddr,
 	)
+	if cfg.ProxyEnabled {
+		if len(cfg.ProxyAllowedDirectDomains) == 0 {
+			fatal("CONSOLE_PROXY_ALLOWED_DIRECT_DOMAINS must contain at least one valid domain when proxy is enabled")
+		}
+		proxyRouteHandler, err := httpapi.NewProxyRouteHandler(
+			registryService,
+			cfg.ProxyPublicBaseDomain,
+			cfg.ProxyPublicScheme,
+			cfg.ProxyInternalAuthToken,
+			cfg.ProxyRouteTTL,
+		)
+		if err != nil {
+			fatal("failed to initialize proxy routes", "error", err)
+		}
+		httpHandler.SetProxyRouteHandler(proxyRouteHandler)
+	}
 	if cfg.ExportFileEnabled() {
 		exportStore, err := objectstore.New(objectstore.Config{
 			Endpoint:   cfg.ExportFileEndpoint,

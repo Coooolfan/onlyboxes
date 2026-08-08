@@ -26,6 +26,8 @@ Validation is identical to the environment variable path: an invalid value norma
 
 The loaded config file path is reported once at startup via the `config file loaded` log line.
 
+Public preview is opt-in. Set `WORKER_PROXY_ENABLED=true`, a fixed `WORKER_PROXY_LISTEN_ADDR`, the Nginx-reachable `WORKER_PROXY_ADVERTISE_ADDR` using the same port, and a comma-separated `WORKER_PROXY_SANDBOX_PORTS` list. Boxlite port mappings are fixed when each microVM is created, so routes can only target listed ports. The worker binds every VM mapping to a random loopback port and exposes only its token-protected fixed proxy listener.
+
 See `config.example.toml` in the worker root for a full annotated template.
 
 `terminal_max_active_sessions` maps to `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS`. `0` keeps the existing unlimited behavior; a positive value limits terminal sessions managed by this worker. Creating, ready, destroying, and Box cleanup in progress sessions all consume capacity. The configured maximum and current reservation count are sent in every Connect Hello.
@@ -37,6 +39,10 @@ console_grpc_target = "console.internal:50051"
 heartbeat_interval_sec = 5
 terminal_exec_boxlite_image = "coolfan1024/onlyboxes-runtime:default"
 terminal_max_active_sessions = 0
+proxy_enabled = true
+proxy_listen_addr = "0.0.0.0:8091"
+proxy_advertise_addr = "10.20.1.16:8091"
+proxy_sandbox_ports = [3000, 8080]
 log_level = "info"
 
 [labels]

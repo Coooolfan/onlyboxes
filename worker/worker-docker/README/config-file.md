@@ -26,6 +26,14 @@ Validation is identical to the environment variable path: an invalid value norma
 
 The loaded config file path is reported once at startup via the `config file loaded` log line.
 
+Public preview proxy configuration:
+
+- `WORKER_PROXY_ENABLED`: start the fixed HTTP proxy endpoint (default `false`).
+- `WORKER_PROXY_LISTEN_ADDR`: local IP listener (default `:8091`); port `0` and hostnames are rejected, and a specific bind IP must match the advertise IP.
+- `WORKER_PROXY_ADVERTISE_ADDR`: routable unicast IP and the same port reported to Console, for example `10.0.2.15:8091`; required when enabled.
+
+Enabling the proxy creates or validates the shared `onlyboxes-sandbox` Docker bridge with inter-container communication disabled. Terminal containers join this bridge, and Worker caches each container IP after startup. The Docker daemon must manage its iptables/nftables firewall rules; deployments with Docker firewalling disabled are unsupported. Nginx must be the only network source allowed to reach the proxy listener.
+
 See `config.example.toml` in the worker root for a full annotated template.
 
 `terminal_max_active_sessions` maps to `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS`. `0` keeps the existing unlimited behavior; a positive value limits terminal sessions managed by this worker. Creating sessions, ready sessions, sessions waiting for in-flight commands to drain, and backend cleanup in progress all consume capacity. The configured maximum and current reservation count are sent in every Connect Hello.

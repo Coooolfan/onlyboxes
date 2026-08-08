@@ -39,6 +39,10 @@ type activeSession struct {
 	nodeID    string
 	sessionID string
 
+	proxyEndpoint string
+	routeTokenKey []byte
+	proxyDirect   string
+
 	capabilitiesMu sync.Mutex
 	capabilities   map[string]*sessionCapability
 

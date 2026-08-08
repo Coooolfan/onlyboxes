@@ -113,6 +113,35 @@ func newTestTerminalManager(backend e2bBackend, maxInflight int) *terminalSessio
 	})
 }
 
+func TestResolveProxyReturnsActiveSandboxOrigin(t *testing.T) {
+	backend := &fakeE2BBackend{}
+	manager := newTestTerminalManager(backend, 1)
+	defer manager.Close()
+	now := time.Now()
+	manager.mu.Lock()
+	manager.sessions["session-a"] = &terminalSession{
+		sessionID:               "session-a",
+		sandbox:                 &e2b.Sandbox{ID: "sandbox-a", Domain: "e2b.app", TrafficAccessToken: "traffic-secret"},
+		confirmedLeaseExpiresAt: now.Add(time.Minute),
+		ready:                   make(chan struct{}),
+		capacityReserved:        true,
+	}
+	close(manager.sessions["session-a"].ready)
+	manager.activeSessionReservations = 1
+	manager.mu.Unlock()
+
+	resolved, err := manager.ResolveProxy(context.Background(), "session-a", 3000, now)
+	if err != nil {
+		t.Fatalf("resolve proxy: %v", err)
+	}
+	if resolved.URL != "https://3000-sandbox-a.e2b.app" || resolved.TrafficToken != "traffic-secret" {
+		t.Fatalf("unexpected proxy resolution: %#v", resolved)
+	}
+	if _, err := manager.ResolveProxy(context.Background(), "session-a", 3000, now.Add(2*time.Minute)); err == nil {
+		t.Fatal("expected expired session rejection")
+	}
+}
+
 func newTestTerminalManagerWithCapacity(backend e2bBackend, maxInflight, maxActiveSessions int) *terminalSessionManager {
 	return newTerminalSessionManager(terminalSessionManagerConfig{
 		Backend:            backend,

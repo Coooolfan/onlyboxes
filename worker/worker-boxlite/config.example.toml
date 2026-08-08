@@ -53,6 +53,12 @@ python_exec_max_inflight = 4
 terminal_exec_max_inflight = 4
 terminal_resource_max_inflight = 4
 
+# Public preview proxy. sandbox_ports are the only guest ports that can be routed.
+proxy_enabled = false
+proxy_listen_addr = "0.0.0.0:8091"
+proxy_advertise_addr = "10.20.1.16:8091"
+proxy_sandbox_ports = [3000, 8080]
+
 # Logging.
 log_level = "info"
 log_format = "json"

@@ -28,6 +28,20 @@ heartbeat_interval_sec = 5
 # Dashboard registration.
 enable_registration = false
 
+# Public preview proxy. Keep disabled until Nginx and worker ingress are ready.
+proxy_enabled = false
+proxy_public_base_domain = "public-preview.example.com"
+# http | https; use http only for trusted local development.
+proxy_public_scheme = "https"
+# Prefer CONSOLE_PROXY_INTERNAL_AUTH_TOKEN instead of storing this secret here.
+proxy_internal_auth_token = ""
+proxy_allowed_worker_cidrs = ["10.0.0.0/8"]
+proxy_allowed_worker_ports = [8091]
+# Direct E2B origins must be subdomains of one of these suffixes.
+proxy_allowed_direct_domains = ["e2b.app"]
+# Maximum 604800 (7 days).
+proxy_route_ttl_sec = 86400
+
 # Export file object storage. Export is enabled only when every field is set.
 export_file_endpoint = ""
 export_file_region = ""

@@ -28,6 +28,7 @@ Onlyboxes 有以下鉴权路径：
   - `/api/v1/console/accounts*`
   - `/api/v1/console/tokens*`
   - `/api/v1/workers*`（按角色作用域）
+  - `/api/v1/proxy-routes*`（按账号隔离的公开预览路由）
 - 会话有效期为 12 小时（内存态）；console 重启后会话全部失效。
 
 ### 1.2 访问令牌（Bearer）
@@ -499,6 +500,63 @@ Worker 类型：
   "error": "worker secret is returned only when creating the worker; delete and recreate to get a new startup command"
 }
 ```
+
+### 5.7 公开预览路由
+
+这些管理 API 接受 Dashboard Cookie、Console API Key 或 Dashboard JIT 鉴权。路由按账号隔离并保存在内存中。
+
+`POST /api/v1/proxy-routes`
+
+```json
+{
+  "session_id": "sess_xxx",
+  "port": 8080
+}
+```
+
+成功 `201`：
+
+```json
+{
+  "route_key": "ceirceirceirceirceirceirce",
+  "session_id": "sess_xxx",
+  "port": 8080,
+  "url": "https://ceirceirceirceirceirceirce.public-preview.example.com",
+  "created_at": "2026-02-21T00:00:00Z",
+  "expires_at": "2026-02-22T00:00:00Z"
+}
+```
+
+规则与错误：
+
+- `session_id` 必须属于当前账号，并且已有一条指向在线、已启用代理的 Docker、Boxlite 或 E2B Worker 的确认路由。
+- `port` 范围为 `1..65535`。
+- route URL 由 `CONSOLE_PROXY_PUBLIC_SCHEME`（默认 `https`）和 `CONSOLE_PROXY_PUBLIC_BASE_DOMAIN` 组成；仅在可信的本地开发环境使用 `http`。
+- routeKey 使用 128 bit 随机数编码为 26 位小写 Base32。
+- 每个账号最多保留 100 条有效 route。
+- route 默认 TTL 为 `86400` 秒，可通过 `CONSOLE_PROXY_ROUTE_TTL_SEC` 修改，最大为 `604800` 秒（7 天）。
+- `400` 请求体、Session ID 或端口非法。
+- `404` Session 路由不存在。
+- `429` 当前账号达到 route 上限。
+- `503` Session 所在 Worker 没有可用代理入口。
+
+`GET /api/v1/proxy-routes`
+
+成功 `200` 返回当前账号的 route：
+
+```json
+{
+  "items": [],
+  "total": 0
+}
+```
+
+`DELETE /api/v1/proxy-routes/:route_key`
+
+- `204` 删除成功。
+- `404` route 不存在、已过期或属于其他账号。
+
+返回的预览 URL 是匿名地址：任何持有者都能访问 Sandbox 服务，不需要 Onlyboxes Cookie 或 Bearer Token。每个新 HTTP 请求都由 Nginx 调用受保护的 Console 内部接口解析。Docker 与 Boxlite 链路取得全新 15 秒 Route Token；E2B 链路取得当前 sandbox origin 与内部 traffic token，数据面为“用户 → Nginx → E2B”。Token 过期不会终止已接受的 HTTP/SSE/WebSocket 连接。访问 route 不会续租 Sandbox lease。Console 重启会使全部 route 失效。
 
 ## 6. 命令执行 API（Bearer Token 鉴权）
 
@@ -1003,5 +1061,8 @@ Console 回包：
 - `worker-sys` 必须部署在独立主机并配合严格的操作系统权限控制。
 - 请将 console HTTP（`:8089`）和 gRPC（`:50051`）端点放在反向代理/网关之后，并对外访问强制 TLS。
 - 生产环境应将 gRPC 端口保持内网并通过隧道/链路加密。
+- 公开预览需要 wildcard DNS/TLS、`docs/nginx/README.md` 部署说明、`docs/nginx/public-preview.conf.example` 中的 Nginx 配置，以及只允许 Nginx 访问 Worker 代理端口的网络 ACL。
+- 必须妥善保管 `CONSOLE_PROXY_INTERNAL_AUTH_TOKEN`，并将 `CONSOLE_PROXY_ALLOWED_WORKER_CIDRS` / `CONSOLE_PROXY_ALLOWED_WORKER_PORTS` 收窄到真实 Worker 入口。
+- 必须将 `CONSOLE_PROXY_ALLOWED_DIRECT_DOMAINS` 收窄到部署实际使用的 E2B 域名（默认 `e2b.app`）。
 - Token 明文与 `WORKER_SECRET` 仅在创建时返回一次。
 - `GET /api/v1/console/tokens/:token_id/value` 与 `GET /api/v1/workers/:node_id/startup-command` 设计为永久 `410 Gone`。
