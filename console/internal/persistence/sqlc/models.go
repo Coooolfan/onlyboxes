@@ -44,6 +44,15 @@ type Task struct {
 	ExpiresAtUnixMs   int64  `json:"expires_at_unix_ms"`
 }
 
+type TerminalSessionRoute struct {
+	ScopedSessionID    string `json:"scoped_session_id"`
+	NodeID             string `json:"node_id"`
+	LeaseExpiresUnixMs int64  `json:"lease_expires_unix_ms"`
+	LastUsedUnixMs     int64  `json:"last_used_unix_ms"`
+	CreatedAtUnixMs    int64  `json:"created_at_unix_ms"`
+	UpdatedAtUnixMs    int64  `json:"updated_at_unix_ms"`
+}
+
 type TrustedToken struct {
 	TokenID         string `json:"token_id"`
 	AccountID       string `json:"account_id"`

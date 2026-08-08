@@ -214,8 +214,8 @@ func TestDeleteProvisionedWorkerDisconnectsSessionAndRevokesCredential(t *testin
 		t.Fatalf("connect worker failed: %v", err)
 	}
 
-	if removed := svc.DeleteProvisionedWorker(workerID); !removed {
-		t.Fatalf("expected delete to return true")
+	if removed, err := svc.DeleteProvisionedWorker(workerID); err != nil || !removed {
+		t.Fatalf("expected delete to return true, removed=%t err=%v", removed, err)
 	}
 	if _, ok := svc.GetWorkerSecret(workerID); ok {
 		t.Fatalf("expected credential to be revoked")
@@ -1272,7 +1272,7 @@ func TestDispatchCommandTerminalSessionCapacityDoesNotClearConcurrentProvisional
 
 	session.resolvePending(&registryv1.CommandResult{
 		CommandId:       secondDispatch.GetCommandId(),
-		PayloadJson:     []byte(`{"session_id":"session-shared"}`),
+		PayloadJson:     []byte(`{"session_id":"session-shared","lease_expires_unix_ms":4102444800000}`),
 		CompletedUnixMs: now.UnixMilli(),
 	})
 	second := <-secondDone

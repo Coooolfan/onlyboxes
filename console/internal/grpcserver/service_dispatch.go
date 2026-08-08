@@ -236,7 +236,7 @@ func (s *RegistryService) dispatchCommandAttempt(
 			terminalRouteReservationID,
 		)
 	}
-	confirmTerminalRoute := func(resultPayload []byte) {
+	confirmTerminalRouteInMemory := func() {
 		if terminalSessionID != "" {
 			s.confirmTerminalSessionRoute(
 				terminalSessionID,
@@ -244,10 +244,26 @@ func (s *RegistryService) dispatchCommandAttempt(
 				terminalRouteReservationID,
 				s.nowFn(),
 			)
-			if leaseExpiresUnixMs := terminalSessionLeaseExpiresUnixMs(resultPayload); leaseExpiresUnixMs > 0 {
-				s.updateTerminalSessionRouteLease(terminalSessionID, session.nodeID, leaseExpiresUnixMs, s.nowFn())
-			}
 		}
+	}
+	commitTerminalRoute := func(resultPayload []byte) error {
+		if terminalSessionID == "" {
+			return nil
+		}
+		confirmed, err := s.commitConfirmedTerminalSessionRoute(
+			terminalSessionID,
+			session.nodeID,
+			terminalRouteReservationID,
+			terminalSessionLeaseExpiresUnixMs(resultPayload),
+			s.nowFn(),
+		)
+		if err != nil {
+			return err
+		}
+		if !confirmed {
+			return errors.New("terminal session route changed before persistence")
+		}
+		return nil
 	}
 
 	commandID, err := s.newCommandIDFn()
@@ -297,7 +313,7 @@ func (s *RegistryService) dispatchCommandAttempt(
 	if onDispatched != nil {
 		if err := onDispatched(commandID); err != nil {
 			if terminalRouteReservationID != 0 {
-				confirmTerminalRoute(nil)
+				confirmTerminalRouteInMemory()
 			}
 			return dispatchAttemptResult{}, err
 		}
@@ -308,7 +324,7 @@ func (s *RegistryService) dispatchCommandAttempt(
 		if terminalRouteReservationID != 0 && terminalSessionID != "" {
 			// The dispatch reached the worker stream, so cancellation does not
 			// prove that session creation failed.
-			confirmTerminalRoute(nil)
+			confirmTerminalRouteInMemory()
 		}
 		if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
 			return dispatchAttemptResult{}, context.DeadlineExceeded
@@ -320,7 +336,13 @@ func (s *RegistryService) dispatchCommandAttempt(
 			return dispatchAttemptResult{}, status.Error(codes.Unavailable, "worker session closed before command result")
 		}
 		if outcome.err == nil && terminalSessionID != "" {
-			confirmTerminalRoute(outcome.payloadJSON)
+			if capability == taskCapabilityTerminalExec {
+				if err := commitTerminalRoute(outcome.payloadJSON); err != nil {
+					return dispatchAttemptResult{}, status.Errorf(codes.Internal, "persist terminal session route: %v", err)
+				}
+			} else {
+				confirmTerminalRouteInMemory()
+			}
 			return dispatchAttemptResult{outcome: outcome}, nil
 		}
 		if outcome.err == nil || terminalSessionID == "" {
@@ -331,8 +353,8 @@ func (s *RegistryService) dispatchCommandAttempt(
 		case isSessionNotFoundCommandError(outcome.err):
 			if terminalRouteReservationID != 0 {
 				rollbackTerminalRouteReservation()
-			} else {
-				s.clearTerminalSessionRoute(terminalSessionID, session.nodeID)
+			} else if err := s.clearTerminalSessionRoute(terminalSessionID, session.nodeID); err != nil {
+				return dispatchAttemptResult{}, status.Errorf(codes.Internal, "delete terminal session route: %v", err)
 			}
 		case isSessionCapacityCommandError(outcome.err):
 			releaseResult := rollbackTerminalRouteReservation()
@@ -344,7 +366,7 @@ func (s *RegistryService) dispatchCommandAttempt(
 			}, nil
 		case terminalRouteReservationID != 0:
 			// Other execution errors do not prove that session creation failed.
-			confirmTerminalRoute(nil)
+			confirmTerminalRouteInMemory()
 		}
 		return dispatchAttemptResult{outcome: outcome}, nil
 	}

@@ -27,6 +27,7 @@ const (
 	defaultCommandDispatchTimeout = 60 * time.Second
 	defaultTerminalRouteTTL       = 30 * time.Minute
 	terminalRoutePruneMinInterval = 1 * time.Minute
+	terminalRouteStoreTimeout     = 5 * time.Second
 	computerUseCapabilityName     = "computeruse"
 	computerUseCapabilityDeclared = "computerUse"
 	readImageCapabilityName       = "readimage"
@@ -69,6 +70,7 @@ type RegistryService struct {
 	terminalNodeToSessionIDIndex map[string]map[string]struct{}
 	terminalRouteReservationSeq  uint64
 	terminalRouteTTL             time.Duration
+	terminalRouteStore           terminalSessionRouteStore
 	lastTerminalRoutePruneUnixMs atomic.Int64
 
 	tasksMu sync.RWMutex
@@ -109,6 +111,7 @@ func NewRegistryService(
 		terminalSessionToNode:        make(map[string]terminalSessionRoute),
 		terminalNodeToSessionIDIndex: make(map[string]map[string]struct{}),
 		terminalRouteTTL:             defaultTerminalRouteTTL,
+		terminalRouteStore:           store,
 		tasks:                        make(map[string]*taskRecord),
 		taskRequestReservations:      make(map[string]struct{}),
 		criticalPersistenceFailureFn: func(error) {},

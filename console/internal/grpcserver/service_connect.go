@@ -71,7 +71,10 @@ func (s *RegistryService) Connect(stream grpc.BidiStreamingServer[registryv1.Con
 	}
 
 	session := newActiveSessionAt(hello.GetNodeId(), sessionID, hello, now)
-	recoveryCandidates := s.beginTerminalSessionRecovery(session.nodeID, now)
+	recoveryCandidates, err := s.beginTerminalSessionRecoveryWithError(session.nodeID, now)
+	if err != nil {
+		return status.Errorf(codes.Internal, "prepare terminal session recovery: %v", err)
+	}
 	session.setRecoveryCandidates(recoveryCandidates)
 	if err := s.configureSessionProxy(session, hello, workerSecret); err != nil {
 		return status.Errorf(codes.InvalidArgument, "invalid proxy endpoint: %v", err)

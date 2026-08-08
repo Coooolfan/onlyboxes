@@ -270,7 +270,7 @@ func TestDispatchCommandRetriesTerminalCapacityOnAnotherWorker(t *testing.T) {
 	}
 	workerB.resolvePending(&registryv1.CommandResult{
 		CommandId:       dispatchB.GetCommandId(),
-		PayloadJson:     []byte(`{"session_id":"session-retry","stdout":"ok"}`),
+		PayloadJson:     []byte(`{"session_id":"session-retry","stdout":"ok","lease_expires_unix_ms":4102444800000}`),
 		CompletedUnixMs: now.UnixMilli(),
 	})
 
@@ -371,7 +371,7 @@ func TestSubmitTaskSkipsReportedFullConnectedWorker(t *testing.T) {
 		Payload: &registryv1.ConnectRequest_CommandResult{
 			CommandResult: &registryv1.CommandResult{
 				CommandId:       dispatchB.GetCommandId(),
-				PayloadJson:     []byte(`{"session_id":"obx:owner-a:session-connected-skip","stdout":"ok"}`),
+				PayloadJson:     []byte(`{"session_id":"obx:owner-a:session-connected-skip","stdout":"ok","lease_expires_unix_ms":4102444800000}`),
 				CompletedUnixMs: now.UnixMilli(),
 			},
 		},
@@ -531,7 +531,7 @@ func TestSubmitTaskRetriesCapacityAcrossConnectedWorkers(t *testing.T) {
 		Payload: &registryv1.ConnectRequest_CommandResult{
 			CommandResult: &registryv1.CommandResult{
 				CommandId:       dispatchB.GetCommandId(),
-				PayloadJson:     []byte(`{"session_id":"obx:owner-a:external-session","stdout":"ok"}`),
+				PayloadJson:     []byte(`{"session_id":"obx:owner-a:external-session","stdout":"ok","lease_expires_unix_ms":4102444800000}`),
 				CompletedUnixMs: now.UnixMilli(),
 			},
 		},
@@ -618,7 +618,7 @@ func TestTerminalCapacityRetryWorksForAllTaskModes(t *testing.T) {
 			workerB.resolvePending(&registryv1.CommandResult{
 				CommandId: dispatchB.GetCommandId(),
 				PayloadJson: []byte(`{"session_id":"obx:owner-a:session-mode-` +
-					string(mode) + `","stdout":"ok"}`),
+					string(mode) + `","stdout":"ok","lease_expires_unix_ms":4102444800000}`),
 				CompletedUnixMs: now.UnixMilli(),
 			})
 
@@ -778,7 +778,7 @@ func TestConcurrentProvisionalCapacityOnlyLastRollbackRetries(t *testing.T) {
 	retryDispatch := receiveCommandDispatch(t, workerB)
 	workerB.resolvePending(&registryv1.CommandResult{
 		CommandId:       retryDispatch.GetCommandId(),
-		PayloadJson:     []byte(`{"session_id":"session-shared-retry","stdout":"ok"}`),
+		PayloadJson:     []byte(`{"session_id":"session-shared-retry","stdout":"ok","lease_expires_unix_ms":4102444800000}`),
 		CompletedUnixMs: now.UnixMilli(),
 	})
 	second := <-secondDone

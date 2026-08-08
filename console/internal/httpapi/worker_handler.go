@@ -37,7 +37,7 @@ type WorkerHandler struct {
 
 type WorkerProvisioning interface {
 	CreateProvisionedWorkerForOwner(ownerID string, workerType string, now time.Time, offlineTTL time.Duration) (string, string, error)
-	DeleteProvisionedWorker(nodeID string) bool
+	DeleteProvisionedWorker(nodeID string) (bool, error)
 }
 
 type workerItem struct {
@@ -330,7 +330,12 @@ func (h *WorkerHandler) DeleteWorker(c *gin.Context) {
 			return
 		}
 	}
-	if !h.provisioning.DeleteProvisionedWorker(nodeID) {
+	deleted, err := h.provisioning.DeleteProvisionedWorker(nodeID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete worker"})
+		return
+	}
+	if !deleted {
 		c.JSON(http.StatusNotFound, gin.H{"error": "worker not found"})
 		return
 	}

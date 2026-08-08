@@ -85,6 +85,9 @@ func Open(ctx context.Context, opts Options) (*DB, error) {
 
 	queries := sqlc.New(db)
 	nowMS := time.Now().UnixMilli()
+	if _, err := queries.DeleteExpiredTerminalSessionRoutes(ctx, nowMS); err != nil {
+		return nil, fmt.Errorf("startup recovery terminal session routes: %w", err)
+	}
 	retentionMS := int64((time.Duration(taskRetentionDays) * 24 * time.Hour).Milliseconds())
 	expiresMS := nowMS + retentionMS
 	if _, err := queries.MarkNonTerminalTasksFailedOnStartup(ctx, sqlc.MarkNonTerminalTasksFailedOnStartupParams{
