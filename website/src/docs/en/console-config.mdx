@@ -137,6 +137,21 @@ These variables enable the MCP `exportFile` tool. The tool is registered in `too
 | `CONSOLE_OFFLINE_TTL_SEC` | No | `15` | Seconds before a silent worker is marked offline |
 | `CONSOLE_REPLAY_WINDOW_SEC` | No | `60` | Replay window for request deduplication (seconds) |
 
+### Public preview proxy
+
+These variables enable the public preview proxy. Keep it disabled until Nginx and worker ingress are ready. See [Public Preview Proxy](/en/docs/reverse-proxy) for the full deployment guide.
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `CONSOLE_PROXY_ENABLED` | No | `false` | Enable the public preview proxy |
+| `CONSOLE_PROXY_PUBLIC_BASE_DOMAIN` | No | | Base domain for preview URLs, e.g. `public-preview.example.com`; requires wildcard DNS/TLS |
+| `CONSOLE_PROXY_PUBLIC_SCHEME` | No | `https` | Preview URL scheme; accepts `http` or `https` only. Use `https` in production; `http` is for trusted local development |
+| `CONSOLE_PROXY_INTERNAL_AUTH_TOKEN` | No | | Shared internal auth token between Nginx and Console; prefer providing it via environment variable rather than the config file |
+| `CONSOLE_PROXY_ALLOWED_WORKER_CIDRS` | No | | Comma-separated CIDR allowlist for worker proxy ingress; accepts unicast IPs only — no hostnames, loopback, unspecified, or out-of-allowlist addresses |
+| `CONSOLE_PROXY_ALLOWED_WORKER_PORTS` | No | | Comma-separated port allowlist for worker proxy ingress |
+| `CONSOLE_PROXY_ALLOWED_DIRECT_DOMAINS` | No | `e2b.app` | Comma-separated suffix allowlist for E2B direct origins; restrict to the E2B domains used by the deployment |
+| `CONSOLE_PROXY_ROUTE_TTL_SEC` | No | `86400` | Preview route TTL in seconds, max `604800` (7 days); Console refuses to start if exceeded |
+
 ### Logging
 
 | Variable | Required | Default | Description |
@@ -150,3 +165,4 @@ These variables enable the MCP `exportFile` tool. The tool is registered in `too
 - [Install](/en/docs/install)
 - [Quick Start](/en/docs/quick-start)
 - [Architecture](/en/docs/architecture)
+- [Public Preview Proxy](/en/docs/reverse-proxy)

@@ -42,6 +42,12 @@ export const mdxComponents = {
       {...props}
     />
   ),
+  h4: ({ className, ...props }: HTMLAttributes<HTMLHeadingElement>) => (
+    <h4
+      className={mergeClassName('mt-6 scroll-mt-28 text-lg font-semibold tracking-tight text-(--ob-ink)', className)}
+      {...props}
+    />
+  ),
   p: ({ className, ...props }: HTMLAttributes<HTMLParagraphElement>) => (
     <p className={mergeClassName('mt-5 text-base leading-8 text-(--ob-muted)', className)} {...props} />
   ),

@@ -21,6 +21,7 @@ export const meta = {
 
 - 一键部署脚本会额外创建一个管理员 API key，酌情删除
 - Dashboard 登录会话保存在内存中，`console` 重启后会失效。
+- 只有 0.10.0 及之后的版本，重启控制节点和执行节点才会保留会话状态；更早版本重启后会话丢失。
 
 ## 常见问题
 
@@ -38,7 +39,7 @@ export const meta = {
 
 ### 更底层的实现文档在哪里？
 
-仓库里仍然保留了内部与低层文档：
+仓库内包含内部与底层文档：
 
 - [Console 细节](https://github.com/Coooolfan/onlyboxes/blob/main/console/README/overview.md)
 - [Worker 细节](https://github.com/Coooolfan/onlyboxes/blob/main/worker/worker-docker/README/overview.md)

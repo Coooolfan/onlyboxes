@@ -1,0 +1,155 @@
+import { PublicPreviewSequenceDiagram } from '../../features/docs/PublicPreviewSequenceDiagram'
+
+export const meta = {
+  title: '公开预览代理',
+  description: '使用 Nginx 等反向代理网关部署公开预览子域名代理，为 Sandbox 内的 HTTP 服务生成匿名可访问 URL。',
+  section: '集成',
+  order: 65,
+  slug: 'reverse-proxy',
+}
+
+# 公开预览代理
+
+公开预览功能允许为 Sandbox 内运行的 HTTP 服务生成匿名可访问的子域名 URL。该功能需要 Console、Worker 和 Nginx 三方协同配置。本文以 Nginx 为例，介绍完整的部署流程。
+
+公开预览的 route 注册通过 Console 的 HTTP REST API（`POST /api/v1/proxy-routes`）完成，未对 MCP 工具暴露。接入方需要自行实现 HTTP 调用来创建和管理 route，**不能通过 MCP 工具完成这一步**。
+
+Nginx 作为互联网入口，可以部署多个实例以支持 HA 或横向扩容。需确保 DNS 负载均衡（如多条 A 记录轮询）或前置负载均衡可用，且所有 Nginx 实例对白名单内的 Worker 网络可达。
+
+## 请求时序
+
+<PublicPreviewSequenceDiagram />
+
+切换上方标签可分别查看 Docker / Boxlite 与 E2B 两种数据面的请求流程。两者的共同前缀相同：
+
+1. 浏览器访问 `https://<route-key>.public-preview.example.com/`，请求到达 Nginx。
+2. Nginx 通过 `auth_request` 调用 Console 的 `/internal/v1/proxy/resolve` 内部接口，以 route-key 解析路由。
+3. Console 返回 upstream 地址和 Route Token（Docker/Boxlite）或 E2B origin 与 traffic token（E2B）。
+
+**Docker / Boxlite**：Nginx 将请求代理到 Worker 代理端口并附带 Route Token；Worker 解析 session 定位到对应的 host 映射端口后转发到 Sandbox，响应沿原路返回。
+
+**E2B**：Nginx 直接将请求代理到 E2B sandbox origin 并附带 traffic token，响应沿原路返回。
+
+### 前置条件
+
+- wildcard DNS：将 `*.public-preview.example.com` 指向 Nginx。
+- wildcard TLS 证书：为同一 wildcard 域名签发证书并部署到 Nginx。wildcard 不覆盖基础域名本身，预览只使用单层子域。
+- Nginx `auth_request` 模块可用。
+- Worker 代理入口已就绪且可由 Nginx 直接访问。
+
+### 1. Console 配置
+
+生成 Nginx 与 Console 之间共享的随机 Token：
+
+```bash
+openssl rand -hex 32
+```
+
+配置 Console 环境变量：
+
+```bash
+CONSOLE_PROXY_ENABLED=true
+CONSOLE_PROXY_PUBLIC_BASE_DOMAIN=public-preview.example.com
+CONSOLE_PROXY_PUBLIC_SCHEME=https
+CONSOLE_PROXY_INTERNAL_AUTH_TOKEN=<nginx-console-secret>
+CONSOLE_PROXY_ALLOWED_WORKER_CIDRS=0.0.0.0/0,::/0
+CONSOLE_PROXY_ALLOWED_WORKER_PORTS=8091
+CONSOLE_PROXY_ALLOWED_DIRECT_DOMAINS=e2b.app
+CONSOLE_PROXY_ROUTE_TTL_SEC=86400
+```
+
+CIDR 和端口白名单必须只包含 Nginx 实际可达的 Worker 入口。其余环境变量参考[控制台配置](/zh-CN/docs/console-config#公开预览代理)。
+
+### 2. Worker 配置
+
+#### Docker worker
+
+```bash
+WORKER_PROXY_ENABLED=true
+WORKER_PROXY_LISTEN_ADDR=:8091
+WORKER_PROXY_ADVERTISE_ADDR=10.20.1.15:8091
+```
+
+listen 与 advertise 端口必须相同，advertise IP 必须可由 Nginx 直接访问并匹配 Console 白名单。Worker 启动时创建或验证 `onlyboxes-sandbox` bridge，并要求 `com.docker.network.bridge.enable_icc=false`。Docker daemon 必须启用自己的 iptables/nftables 防火墙管理；禁止使用会绕过 bridge 隔离的 `iptables=false` 或等价配置。代理 listener 启动失败时 Worker 不会向 Console 注册。
+
+#### Boxlite worker
+
+```bash
+WORKER_PROXY_ENABLED=true
+WORKER_PROXY_LISTEN_ADDR=:8091
+WORKER_PROXY_ADVERTISE_ADDR=10.20.1.15:8091
+WORKER_PROXY_SANDBOX_PORTS=3000,8080
+```
+
+与 Docker worker 相同，listen 与 advertise 端口必须一致，advertise IP 必须可由 Nginx 直接访问并匹配 Console 白名单。`WORKER_PROXY_SANDBOX_PORTS` 是 Boxlite 独有的配置，用于声明创建 VM 时要映射的 guest 端口列表。
+
+每个 VM 创建时，Worker 会为 `WORKER_PROXY_SANDBOX_PORTS` 中的每个 guest 端口在宿主机上绑定一个随机 loopback 端口，建立 guest → host 的端口映射。公开预览请求到达 Worker 代理端口后，Worker 通过 Route Token 中的 `session_id` 和 `port` 定位到对应的 VM 和 guest 端口，再将流量转发到该 VM 的 host 映射端口。未在 `WORKER_PROXY_SANDBOX_PORTS` 中列出的 guest 端口不会建立映射，无法创建公开 route 数据面连接。`WORKER_PROXY_SANDBOX_PORTS` 为空时 Worker 拒绝启动代理。
+
+Boxlite 的代理 listener 校验逻辑与 Docker 一致：端口不匹配、非单播 advertise IP 均会阻止 Worker 注册。
+
+#### E2B worker
+
+只需设置 `WORKER_PROXY_ENABLED=true`。E2B worker 不监听数据面端口；Console 通过 worker 内部能力解析 E2B origin，Nginx 随后直接访问 E2B。E2B sandbox 禁止无 token 公网流量，traffic token 只在 Console 与 Nginx 的内部响应头中传递。
+
+### 3. Nginx 配置
+
+将仓库中 [`docs/nginx/public-preview.conf.example`](https://github.com/Coooolfan/onlyboxes/blob/main/docs/nginx/public-preview.conf.example) 的 `map` 块放在 `http {}` 中，`server` 块也放在同一 `http {}` 中。替换以下占位值：
+
+| 占位 | 替换为 |
+|------|--------|
+| `public-preview.example.com` | 实际预览基域名 |
+| 证书路径 | 实际 wildcard 证书路径 |
+| `127.0.0.1:8089` | Console HTTP 地址（仅用于 `auth_request` 内部调用） |
+| `replace-with-console-proxy-internal-token` | Console 的 `CONSOLE_PROXY_INTERNAL_AUTH_TOKEN` |
+| `223.5.5.5 1.1.1.1` | 环境使用的递归 DNS resolver |
+
+验证并平滑重载：
+
+```bash
+nginx -t
+nginx -s reload
+```
+
+Nginx 从 Console 接收完整 upstream URL：Docker/Boxlite 指向白名单内 Worker，E2B 指向当前 sandbox origin。部署注意事项：
+
+- 不要从客户端 Header 构造 `proxy_pass`，upstream 只能来自 Console 的 `auth_request` 响应。
+- 示例会覆盖客户端提供的 Onlyboxes/E2B 内部 Header（Route Token、Internal Token 等），防止客户端伪造；同时保留 Sandbox 应用自己的 `Authorization` 和 Cookie，原样透传。
+- E2B TLS 校验不得关闭。
+
+### 4. 测试
+
+先通过已鉴权的 Terminal API 创建 Session 并在其中启动 HTTP 服务，再创建 route：
+
+```bash
+curl -sS https://console.example.com/api/v1/proxy-routes \
+  -H 'Authorization: Bearer <console-api-key>' \
+  -H 'Content-Type: application/json' \
+  -d '{"session_id":"<session-id>","port":8080}'
+```
+
+随后在不携带 Onlyboxes Cookie 或 Authorization 的情况下访问返回 URL：
+
+```bash
+curl -i https://<route-key>.public-preview.example.com/
+```
+
+## 数据面行为
+
+| 链路 | 数据面 | Route Token |
+|------|--------|-------------|
+| Docker / Boxlite | 浏览器 → Nginx → Worker 代理端口 → Sandbox | 每次请求签发 15 秒有效期的 Route Token |
+| E2B | 浏览器 → Nginx → E2B sandbox origin | Console 返回当前 sandbox origin 与内部 traffic token |
+
+- Token 过期不会终止已接受的 HTTP/SSE/WebSocket 连接。
+- 访问 route 不会续租 Sandbox lease。
+- route 存储在 Console 内存中，Console 重启后全部失效。
+- 访问日志可能包含 routeKey，应按凭据日志处理并限制留存和读取权限。
+
+## 相关文档
+
+- [控制台配置](/zh-CN/docs/console-config)
+- [Console API 参考](/zh-CN/docs/console-api)
+- [安全与 FAQ](/zh-CN/docs/security-faq)
+- [worker-docker](/zh-CN/docs/worker-docker)
+- [worker-boxlite](/zh-CN/docs/worker-boxlite)
+- [worker-bridge-e2b](/zh-CN/docs/worker-bridge-e2b)

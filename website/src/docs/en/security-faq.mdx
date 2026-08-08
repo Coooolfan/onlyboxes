@@ -21,6 +21,7 @@ export const meta = {
 
 - The one-click installer creates an additional admin API key — delete it at your discretion.
 - Dashboard login sessions are in-memory and are invalidated when `console` restarts.
+- Only versions 0.10.0 and later preserve session state across control node and worker restarts; earlier versions lose sessions on restart.
 
 ## FAQ
 
@@ -38,7 +39,7 @@ In theory, yes. In practice it is usually not recommended because you need to de
 
 ### Where are the deeper implementation docs?
 
-The repository still hosts internal and low-level docs:
+The repository includes internal and low-level docs:
 
 - [Console internals](https://github.com/Coooolfan/onlyboxes/blob/main/console/README/overview.md)
 - [Worker internals](https://github.com/Coooolfan/onlyboxes/blob/main/worker/worker-docker/README/overview.md)

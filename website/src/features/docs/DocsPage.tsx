@@ -15,7 +15,7 @@ import { useSiteContext } from '../site/SiteContext'
 interface TocItem {
   id: string
   title: string
-  level: 2 | 3
+  level: 2 | 3 | 4
 }
 
 interface TocHighlight {
@@ -53,8 +53,8 @@ function useTableOfContents(key: string) {
         return
       }
 
-      const headings = [...container.querySelectorAll<HTMLHeadingElement>('h2[id], h3[id]')].map((heading) => {
-        const level: TocItem['level'] = heading.tagName === 'H2' ? 2 : 3
+      const headings = [...container.querySelectorAll<HTMLHeadingElement>('h2[id], h3[id], h4[id]')].map((heading) => {
+        const level: TocItem['level'] = heading.tagName === 'H2' ? 2 : heading.tagName === 'H3' ? 3 : 4
 
         return {
           id: heading.id,
@@ -303,7 +303,7 @@ function DocsTableOfContents({
                       : isDark
                         ? 'text-neutral-500 hover:text-white'
                         : 'text-neutral-500 hover:text-neutral-950'
-                  } ${item.level === 3 ? 'pl-5' : ''}`}
+                  } ${item.level === 3 ? 'pl-5' : ''} ${item.level === 4 ? 'pl-8' : ''}`}
                 >
                   {item.title}
                 </a>

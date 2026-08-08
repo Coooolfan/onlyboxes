@@ -570,6 +570,11 @@ Worker 类型：`normal`（对应 `worker-docker`/`worker-boxlite`）、`worker-
   "workers": [
     {
       "node_id": "worker-1",
+      "active_session_count": 3,
+      "terminal_session_capacity": {
+        "known": true,
+        "max_active_sessions": 4
+      },
       "capabilities": [
         { "name": "pythonExec", "inflight": 1, "max_inflight": 4 }
       ]
@@ -580,6 +585,10 @@ Worker 类型：`normal`（对应 `worker-docker`/`worker-boxlite`）、`worker-
 ```
 
 > 普通用户的结果仅包含本人 `worker-sys`。
+>
+> - `active_session_count` 是 worker 最近一次上报的 terminal reservation 数。
+> - `terminal_session_capacity.known=false` 表示旧 worker 未声明最大值，不能解释为不限。
+> - `known=true,max_active_sessions=0` 明确表示 active terminal session 数不限。
 
 ---
 
@@ -655,6 +664,65 @@ Worker 类型：`normal`（对应 `worker-docker`/`worker-boxlite`）、`worker-
   "error": "worker secret is returned only when creating the worker; delete and recreate to get a new startup command"
 }
 ```
+
+---
+
+#### 公开预览路由
+
+这些管理 API 接受 Dashboard Cookie、Console API Key 或 Dashboard JIT 鉴权。路由按账号隔离并保存在内存中。完整部署流程参考[公开预览代理](/zh-CN/docs/reverse-proxy)。
+
+`POST /api/v1/proxy-routes`
+
+```json
+{
+  "session_id": "sess_xxx",
+  "port": 8080
+}
+```
+
+成功 `201`：
+
+```json
+{
+  "route_key": "ceirceirceirceirceirceirce",
+  "session_id": "sess_xxx",
+  "port": 8080,
+  "url": "https://ceirceirceirceirceirceirce.public-preview.example.com",
+  "created_at": "2026-02-21T00:00:00Z",
+  "expires_at": "2026-02-22T00:00:00Z"
+}
+```
+
+规则与错误：
+
+- `session_id` 必须属于当前账号，并且已有一条指向在线、已启用代理的 Docker、Boxlite 或 E2B Worker 的确认路由。
+- `port` 范围为 `1..65535`。
+- route URL 由 `CONSOLE_PROXY_PUBLIC_SCHEME`（默认 `https`）和 `CONSOLE_PROXY_PUBLIC_BASE_DOMAIN` 组成；仅在可信的本地开发环境使用 `http`。
+- routeKey 使用 128 bit 随机数编码为 26 位小写 Base32。
+- 每个账号最多保留 100 条有效 route。
+- route 默认 TTL 为 `86400` 秒，可通过 `CONSOLE_PROXY_ROUTE_TTL_SEC` 修改，最大为 `604800` 秒（7 天）。
+- `400` 请求体、Session ID 或端口非法。
+- `404` Session 路由不存在。
+- `429` 当前账号达到 route 上限。
+- `503` Session 所在 Worker 没有可用代理入口。
+
+`GET /api/v1/proxy-routes`
+
+成功 `200` 返回当前账号的 route：
+
+```json
+{
+  "items": [],
+  "total": 0
+}
+```
+
+`DELETE /api/v1/proxy-routes/:route_key`
+
+- `204` 删除成功。
+- `404` route 不存在、已过期或属于其他账号。
+
+返回的预览 URL 是匿名地址：任何持有者都能访问 Sandbox 服务，不需要 Onlyboxes Cookie 或 Bearer Token。每个新 HTTP 请求都由 Nginx 调用受保护的 Console 内部接口解析。Docker 与 Boxlite 链路取得全新 15 秒 Route Token；E2B 链路取得当前 sandbox origin 与内部 traffic token，数据面为"用户 → Nginx → E2B"。Token 过期不会终止已接受的 HTTP/SSE/WebSocket 连接。访问 route 不会续租 Sandbox lease。Console 重启会使全部 route 失效。
 
 ---
 
@@ -765,6 +833,7 @@ Worker 类型：`normal`（对应 `worker-docker`/`worker-boxlite`）、`worker-
 | `409` | `session_busy` | 会话被另一请求占用，或任务已取消 |
 | `429` | `no_capacity` | 选中的 worker 对应 capability 并发额度耗尽 |
 | `429` | `session_capacity_exceeded` | 选中的 sandbox worker 已达到 `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS`；已有 session 仍可使用，但本次请求无法创建新 session |
+| `503` | `session_unavailable` | session 绑定的 Worker 离线或重启后正在核对资源；客户端应使用同一 `session_id` 重试，Console 不会将其改派 |
 | `503` | — | 无可用 worker |
 | `504` | — | 执行超时 |
 | `502` | — | 其他执行失败 |
@@ -904,6 +973,8 @@ Task 适合需要异步执行或结果轮询的场景。所有权按 token 对�
 | `wait_ms` | int | 否 | `1..60000`，默认 `1500`；`auto` 模式下等待完成的最长毫秒数 |
 | `timeout_ms` | int | 否 | `1..600000`，默认 `60000`；任务总超时 |
 | `request_id` | string | 否 | 幂等键，账号维度去重 |
+
+> terminal 容量改派期间，同一任务保持 `task_id` 与 `request_id` 不变；`command_id` 表示当前或最后一次 worker 派发，因此任务运行中可能更新。
 
 **`mode` 字段说明：**
 
@@ -1230,3 +1301,4 @@ public static String makeJitToken(String signingKey, String issuer, String subje
 
 - [MCP 工具参考](/zh-CN/docs/mcp-tools)
 - [安全与 FAQ](/zh-CN/docs/security-faq)
+- [公开预览代理](/zh-CN/docs/reverse-proxy)

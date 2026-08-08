@@ -137,6 +137,21 @@ CONSOLE_MCP_TOOL_TERMINAL_EXEC_PARAM_SESSION_ID_DESCRIPTION=""
 | `CONSOLE_OFFLINE_TTL_SEC` | 否 | `15` | worker 静默多少秒后标记为离线 |
 | `CONSOLE_REPLAY_WINDOW_SEC` | 否 | `60` | 请求去重的重放窗口（秒） |
 
+### 公开预览代理
+
+以下变量用于启用公开预览代理。在 Nginx 与 Worker 代理入口就绪前应保持禁用。完整部署流程参考[公开预览代理](/zh-CN/docs/reverse-proxy)。
+
+| 变量 | 必填 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `CONSOLE_PROXY_ENABLED` | 否 | `false` | 是否启用公开预览代理 |
+| `CONSOLE_PROXY_PUBLIC_BASE_DOMAIN` | 否 | | 预览 URL 的基域名，例如 `public-preview.example.com`；需要 wildcard DNS/TLS |
+| `CONSOLE_PROXY_PUBLIC_SCHEME` | 否 | `https` | 预览 URL 协议；仅接受 `http` 或 `https`，生产环境应使用 `https`，可信本地开发可设为 `http` |
+| `CONSOLE_PROXY_INTERNAL_AUTH_TOKEN` | 否 | | Nginx 与 Console 之间共享的内部鉴权 Token；建议通过环境变量提供而非写入配置文件 |
+| `CONSOLE_PROXY_ALLOWED_WORKER_CIDRS` | 否 | | 逗号分隔的 Worker 代理入口 CIDR 白名单；只接受单播 IP，不接受主机名、loopback、unspecified 或白名单外地址 |
+| `CONSOLE_PROXY_ALLOWED_WORKER_PORTS` | 否 | | 逗号分隔的 Worker 代理端口白名单 |
+| `CONSOLE_PROXY_ALLOWED_DIRECT_DOMAINS` | 否 | `e2b.app` | 逗号分隔的 E2B 直连域名后缀白名单；应收窄到部署实际使用的 E2B 域名 |
+| `CONSOLE_PROXY_ROUTE_TTL_SEC` | 否 | `86400` | 预览路由 TTL（秒），最大 `604800`（7 天）；超出时 Console 拒绝启动 |
+
 ### 日志
 
 | 变量 | 必填 | 默认值 | 说明 |
@@ -150,3 +165,4 @@ CONSOLE_MCP_TOOL_TERMINAL_EXEC_PARAM_SESSION_ID_DESCRIPTION=""
 - [安装](/zh-CN/docs/install)
 - [快速开始](/zh-CN/docs/quick-start)
 - [架构](/zh-CN/docs/architecture)
+- [公开预览代理](/zh-CN/docs/reverse-proxy)
