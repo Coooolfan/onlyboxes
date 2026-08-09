@@ -120,6 +120,8 @@ func main() {
 			cfg.ProxyPublicScheme,
 			cfg.ProxyInternalAuthToken,
 			cfg.ProxyRouteTTL,
+			cfg.ProxyRouteMaxPerAccount,
+			cfg.ProxyRouteMaxPerSession,
 		)
 		if err != nil {
 			fatal("failed to initialize proxy routes", "error", err)

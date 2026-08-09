@@ -531,11 +531,12 @@ Rules and errors:
 - `port` must be `1..65535`.
 - route URLs use `CONSOLE_PROXY_PUBLIC_SCHEME` (`https` by default) and `CONSOLE_PROXY_PUBLIC_BASE_DOMAIN`; use `http` only for trusted local development.
 - route keys contain 128 random bits encoded as 26 lowercase Base32 characters.
-- each account can hold at most 100 active routes.
+- each account can hold at most 16 active routes by default; configure it with `CONSOLE_PROXY_ROUTE_MAX_PER_ACCOUNT`.
+- each session can hold at most 2 active routes by default; configure it with `CONSOLE_PROXY_ROUTE_MAX_PER_SESSION`.
 - default route TTL is `86400` seconds, can be changed with `CONSOLE_PROXY_ROUTE_TTL_SEC`, and cannot exceed `604800` seconds (7 days).
 - `400` invalid body, session ID, or port.
 - `404` session route not found.
-- `429` account route limit reached.
+- `429` account or session route limit reached.
 - `503` the session's Worker has no available proxy endpoint.
 
 `GET /api/v1/proxy-routes`

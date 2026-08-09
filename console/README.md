@@ -301,6 +301,8 @@ Persistence config:
 - `CONSOLE_PROXY_ALLOWED_WORKER_PORTS`: port allowlist for advertised Worker proxy endpoints (default `8091`)
 - `CONSOLE_PROXY_ALLOWED_DIRECT_DOMAINS`: domain suffix allowlist for E2B direct origins (default `e2b.app`)
 - `CONSOLE_PROXY_ROUTE_TTL_SEC`: in-memory preview route TTL (default `86400`, maximum `604800`)
+- `CONSOLE_PROXY_ROUTE_MAX_PER_ACCOUNT`: maximum active preview routes per account (default `16`)
+- `CONSOLE_PROXY_ROUTE_MAX_PER_SESSION`: maximum active preview routes per terminal session (default `2`)
 
 Logging config:
 - `CONSOLE_LOG_LEVEL`: `debug|info|warn|error` (default `info`)

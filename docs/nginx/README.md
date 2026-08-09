@@ -41,6 +41,8 @@ CONSOLE_PROXY_ALLOWED_WORKER_CIDRS=10.20.0.0/16
 CONSOLE_PROXY_ALLOWED_WORKER_PORTS=8091
 CONSOLE_PROXY_ALLOWED_DIRECT_DOMAINS=e2b.app
 CONSOLE_PROXY_ROUTE_TTL_SEC=86400
+CONSOLE_PROXY_ROUTE_MAX_PER_ACCOUNT=16
+CONSOLE_PROXY_ROUTE_MAX_PER_SESSION=2
 ```
 
 CIDR 和端口 allowlist 必须只包含 Nginx 实际可达的 Worker 入口。`CONSOLE_PROXY_PUBLIC_SCHEME` 仅接受 `http` 或 `https`，生产环境应使用默认值 `https`；可信的本地开发入口可显式设置为 `http`。Console 只接受单播 IP endpoint，不接受主机名、loopback、unspecified 或 allowlist 外地址。Route TTL 最大为 `604800` 秒（7 天），超出时 Console 拒绝启动。

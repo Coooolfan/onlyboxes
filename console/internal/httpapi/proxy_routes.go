@@ -30,7 +30,6 @@ const (
 	proxyRouteKeyLength             = 26
 	proxyBaseDomainMaxBytes         = 253 - 1 - proxyRouteKeyLength
 	proxyRouteCreateAttempts        = 8
-	proxyRouteMaxPerOwner           = 100
 	proxyRouteMaxTTL                = 7 * 24 * time.Hour
 )
 
@@ -56,6 +55,8 @@ type ProxyRouteHandler struct {
 	publicScheme  string
 	internalToken string
 	routeTTL      time.Duration
+	maxPerAccount int
+	maxPerSession int
 	nowFn         func() time.Time
 	randomReader  io.Reader
 
@@ -88,6 +89,8 @@ func NewProxyRouteHandler(
 	publicScheme string,
 	internalToken string,
 	routeTTL time.Duration,
+	maxPerAccount int,
+	maxPerSession int,
 ) (*ProxyRouteHandler, error) {
 	if resolver == nil {
 		return nil, errors.New("proxy route resolver is required")
@@ -107,12 +110,20 @@ func NewProxyRouteHandler(
 	if routeTTL <= 0 || routeTTL > proxyRouteMaxTTL {
 		return nil, errors.New("proxy route TTL must be between 1 second and 7 days")
 	}
+	if maxPerAccount <= 0 {
+		return nil, errors.New("proxy route max per account must be positive")
+	}
+	if maxPerSession <= 0 {
+		return nil, errors.New("proxy route max per session must be positive")
+	}
 	return &ProxyRouteHandler{
 		resolver:      resolver,
 		baseDomain:    normalizedDomain,
 		publicScheme:  normalizedScheme,
 		internalToken: internalToken,
 		routeTTL:      routeTTL,
+		maxPerAccount: maxPerAccount,
+		maxPerSession: maxPerSession,
 		nowFn:         time.Now,
 		randomReader:  rand.Reader,
 		routes:        make(map[string]proxyRouteRecord),
@@ -161,8 +172,12 @@ func (h *ProxyRouteHandler) Create(c *gin.Context) {
 
 	record, err := h.createRoute(ownerID, sessionID, req.Port, target, now)
 	if err != nil {
-		if errors.Is(err, errProxyRouteLimitReached) {
-			c.JSON(http.StatusTooManyRequests, gin.H{"error": "proxy route limit reached"})
+		if errors.Is(err, errProxyRouteAccountLimitReached) {
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "account proxy route limit reached"})
+			return
+		}
+		if errors.Is(err, errProxyRouteSessionLimitReached) {
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "session proxy route limit reached"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create proxy route"})
@@ -247,7 +262,10 @@ func (h *ProxyRouteHandler) Resolve(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-var errProxyRouteLimitReached = errors.New("proxy route limit reached")
+var (
+	errProxyRouteAccountLimitReached = errors.New("account proxy route limit reached")
+	errProxyRouteSessionLimitReached = errors.New("session proxy route limit reached")
+)
 
 func (h *ProxyRouteHandler) createRoute(
 	ownerID string,
@@ -260,14 +278,21 @@ func (h *ProxyRouteHandler) createRoute(
 	defer h.mu.Unlock()
 	h.pruneLocked(now)
 
-	count := 0
+	accountCount := 0
+	sessionCount := 0
 	for _, record := range h.routes {
 		if record.OwnerID == ownerID {
-			count++
+			accountCount++
+			if record.SessionID == sessionID {
+				sessionCount++
+			}
 		}
 	}
-	if count >= proxyRouteMaxPerOwner {
-		return proxyRouteRecord{}, errProxyRouteLimitReached
+	if accountCount >= h.maxPerAccount {
+		return proxyRouteRecord{}, errProxyRouteAccountLimitReached
+	}
+	if sessionCount >= h.maxPerSession {
+		return proxyRouteRecord{}, errProxyRouteSessionLimitReached
 	}
 
 	for attempt := 0; attempt < proxyRouteCreateAttempts; attempt++ {

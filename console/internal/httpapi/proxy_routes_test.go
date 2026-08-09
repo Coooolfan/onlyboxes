@@ -17,6 +17,11 @@ import (
 	"github.com/onlyboxes/onlyboxes/console/internal/grpcserver"
 )
 
+const (
+	testProxyRouteMaxPerAccount = 16
+	testProxyRouteMaxPerSession = 2
+)
+
 type proxyRouteResolverStub struct {
 	target              grpcserver.ProxySessionTarget
 	resolveErr          error
@@ -105,7 +110,7 @@ func TestProxyRouteConfiguredHTTPURL(t *testing.T) {
 			ScopedSessionID: "obx:owner-a:session-a",
 		},
 	}
-	handler, err := NewProxyRouteHandler(resolver, "public-preview.localhost", "http", "nginx-secret", time.Hour)
+	handler, err := NewProxyRouteHandler(resolver, "public-preview.localhost", "http", "nginx-secret", time.Hour, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession)
 	if err != nil {
 		t.Fatalf("new localhost proxy route handler: %v", err)
 	}
@@ -140,7 +145,7 @@ func TestProxyRoutePerOwnerLimit(t *testing.T) {
 	now := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
 	resolver := &proxyRouteResolverStub{target: grpcserver.ProxySessionTarget{WorkerID: "worker-1", ScopedSessionID: "scoped-session"}}
 	handler := newProxyRouteHandlerForTest(t, resolver, now, time.Hour)
-	for index := 0; index < proxyRouteMaxPerOwner; index++ {
+	for index := 0; index < testProxyRouteMaxPerAccount; index++ {
 		routeKey := "route-" + strconv.Itoa(index)
 		handler.routes[routeKey] = proxyRouteRecord{RouteKey: routeKey, OwnerID: "owner-a", ExpiresAt: now.Add(time.Hour)}
 	}
@@ -152,6 +157,31 @@ func TestProxyRoutePerOwnerLimit(t *testing.T) {
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusTooManyRequests {
 		t.Fatalf("route limit expected 429, got %d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestProxyRoutePerSessionLimit(t *testing.T) {
+	now := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
+	resolver := &proxyRouteResolverStub{target: grpcserver.ProxySessionTarget{WorkerID: "worker-1", ScopedSessionID: "scoped-session"}}
+	handler := newProxyRouteHandlerForTest(t, resolver, now, time.Hour)
+	for index := 0; index < testProxyRouteMaxPerSession; index++ {
+		routeKey := "route-" + strconv.Itoa(index)
+		handler.routes[routeKey] = proxyRouteRecord{
+			RouteKey:  routeKey,
+			OwnerID:   "owner-a",
+			SessionID: "session-a",
+			ExpiresAt: now.Add(time.Hour),
+		}
+	}
+
+	router := newProxyRouteTestRouter(handler)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/proxy-routes", strings.NewReader(`{"session_id":"session-a","port":8080}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Test-Owner", "owner-a")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusTooManyRequests || !strings.Contains(response.Body.String(), "session proxy route limit reached") {
+		t.Fatalf("session route limit expected 429, got %d body=%s", response.Code, response.Body.String())
 	}
 }
 
@@ -288,29 +318,35 @@ func TestNewProxyRouteHandlerRejectsInvalidConfiguration(t *testing.T) {
 	resolver := &proxyRouteResolverStub{}
 	tooLongDomain := strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "." + strings.Repeat("d", 35)
 	for _, domain := range []string{"", "localhost", "https://preview.example.com", "*.preview.example.com", "-bad.example.com", tooLongDomain} {
-		if _, err := NewProxyRouteHandler(resolver, domain, "https", "secret", time.Hour); err == nil {
+		if _, err := NewProxyRouteHandler(resolver, domain, "https", "secret", time.Hour, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession); err == nil {
 			t.Fatalf("expected invalid domain %q to fail", domain)
 		}
 	}
 	for _, scheme := range []string{"", "ftp"} {
-		if _, err := NewProxyRouteHandler(resolver, "preview.example.com", scheme, "secret", time.Hour); err == nil {
+		if _, err := NewProxyRouteHandler(resolver, "preview.example.com", scheme, "secret", time.Hour, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession); err == nil {
 			t.Fatalf("expected invalid public scheme %q to fail", scheme)
 		}
 	}
-	if _, err := NewProxyRouteHandler(resolver, "preview.example.com", "https", "", time.Hour); err == nil {
+	if _, err := NewProxyRouteHandler(resolver, "preview.example.com", "https", "", time.Hour, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession); err == nil {
 		t.Fatalf("expected missing internal token to fail")
 	}
-	if _, err := NewProxyRouteHandler(resolver, "preview.example.com", "https", "secret", 0); err == nil {
+	if _, err := NewProxyRouteHandler(resolver, "preview.example.com", "https", "secret", 0, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession); err == nil {
 		t.Fatalf("expected invalid route TTL to fail")
 	}
-	if _, err := NewProxyRouteHandler(resolver, "preview.example.com", "https", "secret", proxyRouteMaxTTL+time.Second); err == nil {
+	if _, err := NewProxyRouteHandler(resolver, "preview.example.com", "https", "secret", proxyRouteMaxTTL+time.Second, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession); err == nil {
 		t.Fatalf("expected route TTL above maximum to fail")
+	}
+	if _, err := NewProxyRouteHandler(resolver, "preview.example.com", "https", "secret", time.Hour, 0, testProxyRouteMaxPerSession); err == nil {
+		t.Fatalf("expected invalid account route limit to fail")
+	}
+	if _, err := NewProxyRouteHandler(resolver, "preview.example.com", "https", "secret", time.Hour, testProxyRouteMaxPerAccount, 0); err == nil {
+		t.Fatalf("expected invalid session route limit to fail")
 	}
 }
 
 func newProxyRouteHandlerForTest(t *testing.T, resolver ProxyRouteResolver, now time.Time, ttl time.Duration) *ProxyRouteHandler {
 	t.Helper()
-	handler, err := NewProxyRouteHandler(resolver, "public-preview.example.com", "https", "nginx-secret", ttl)
+	handler, err := NewProxyRouteHandler(resolver, "public-preview.example.com", "https", "nginx-secret", ttl, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession)
 	if err != nil {
 		t.Fatalf("new proxy route handler: %v", err)
 	}

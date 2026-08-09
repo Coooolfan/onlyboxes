@@ -47,7 +47,7 @@ GET    /api/v1/proxy-routes
 DELETE /api/v1/proxy-routes/:routeKey
 ```
 
-管理 API 必须鉴权并按 owner 隔离。`POST` 接收 `{"session_id":"...","port":8080}`，创建时验证 Session 归属、现有 Worker 映射和端口范围，生成 128-bit、全小写、DNS-safe 的 `routeKey`。每账号最多保留 100 条 route。
+管理 API 必须鉴权并按 owner 隔离。`POST` 接收 `{"session_id":"...","port":8080}`，创建时验证 Session 归属、现有 Worker 映射和端口范围，生成 128-bit、全小写、DNS-safe 的 `routeKey`。账号和单 Session 的 route 数量分别由 `CONSOLE_PROXY_ROUTE_MAX_PER_ACCOUNT` 与 `CONSOLE_PROXY_ROUTE_MAX_PER_SESSION` 限制，默认值为 16 和 2。
 
 Nginx 内部接口：
 

@@ -33,6 +33,8 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("CONSOLE_PROXY_ALLOWED_WORKER_CIDRS", "")
 	t.Setenv("CONSOLE_PROXY_ALLOWED_WORKER_PORTS", "")
 	t.Setenv("CONSOLE_PROXY_ROUTE_TTL_SEC", "")
+	t.Setenv("CONSOLE_PROXY_ROUTE_MAX_PER_ACCOUNT", "")
+	t.Setenv("CONSOLE_PROXY_ROUTE_MAX_PER_SESSION", "")
 	t.Setenv("CONSOLE_LOG_LEVEL", "")
 	t.Setenv("CONSOLE_LOG_FORMAT", "")
 	t.Setenv("CONSOLE_LOG_ADD_SOURCE", "")
@@ -95,6 +97,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.ProxyRouteTTL != time.Duration(defaultProxyRouteTTLSec)*time.Second {
 		t.Fatalf("unexpected proxy route TTL: %s", cfg.ProxyRouteTTL)
 	}
+	if cfg.ProxyRouteMaxPerAccount != defaultProxyRouteMaxPerAccount || cfg.ProxyRouteMaxPerSession != defaultProxyRouteMaxPerSession {
+		t.Fatalf("unexpected proxy route limits: account=%d session=%d", cfg.ProxyRouteMaxPerAccount, cfg.ProxyRouteMaxPerSession)
+	}
 	if cfg.LogLevel != defaultLogLevel {
 		t.Fatalf("expected LogLevel=%q, got %q", defaultLogLevel, cfg.LogLevel)
 	}
@@ -133,6 +138,8 @@ func TestLoadReadsDashboardCredentialsAndDurations(t *testing.T) {
 	t.Setenv("CONSOLE_PROXY_ALLOWED_WORKER_PORTS", "8091, 18091,invalid,8091")
 	t.Setenv("CONSOLE_PROXY_ALLOWED_DIRECT_DOMAINS", "e2b.app, Sandbox.Example.COM.,invalid/path,e2b.app")
 	t.Setenv("CONSOLE_PROXY_ROUTE_TTL_SEC", "3600")
+	t.Setenv("CONSOLE_PROXY_ROUTE_MAX_PER_ACCOUNT", "24")
+	t.Setenv("CONSOLE_PROXY_ROUTE_MAX_PER_SESSION", "3")
 	t.Setenv("CONSOLE_LOG_LEVEL", "debug")
 	t.Setenv("CONSOLE_LOG_FORMAT", "text")
 	t.Setenv("CONSOLE_LOG_ADD_SOURCE", "true")
@@ -207,6 +214,9 @@ func TestLoadReadsDashboardCredentialsAndDurations(t *testing.T) {
 	if cfg.ProxyRouteTTL != time.Hour {
 		t.Fatalf("expected proxy route TTL 1h, got %s", cfg.ProxyRouteTTL)
 	}
+	if cfg.ProxyRouteMaxPerAccount != 24 || cfg.ProxyRouteMaxPerSession != 3 {
+		t.Fatalf("unexpected proxy route limit overrides: account=%d session=%d", cfg.ProxyRouteMaxPerAccount, cfg.ProxyRouteMaxPerSession)
+	}
 	if cfg.LogLevel != "debug" {
 		t.Fatalf("expected LogLevel=debug, got %q", cfg.LogLevel)
 	}
@@ -225,6 +235,8 @@ func TestLoadFallsBackForInvalidNumericEnv(t *testing.T) {
 	t.Setenv("CONSOLE_EXPORT_FILE_UPLOAD_PRESIGN_TTL_SEC", "0")
 	t.Setenv("CONSOLE_EXPORT_FILE_DOWNLOAD_PRESIGN_TTL_SEC", "not-a-number")
 	t.Setenv("CONSOLE_PROXY_ROUTE_TTL_SEC", "0")
+	t.Setenv("CONSOLE_PROXY_ROUTE_MAX_PER_ACCOUNT", "-1")
+	t.Setenv("CONSOLE_PROXY_ROUTE_MAX_PER_SESSION", "not-a-number")
 
 	cfg := Load()
 	if cfg.OfflineTTL != time.Duration(defaultOfflineTTLSec)*time.Second {
@@ -244,6 +256,9 @@ func TestLoadFallsBackForInvalidNumericEnv(t *testing.T) {
 	}
 	if cfg.ProxyRouteTTL != time.Duration(defaultProxyRouteTTLSec)*time.Second {
 		t.Fatalf("expected default proxy route TTL, got %s", cfg.ProxyRouteTTL)
+	}
+	if cfg.ProxyRouteMaxPerAccount != defaultProxyRouteMaxPerAccount || cfg.ProxyRouteMaxPerSession != defaultProxyRouteMaxPerSession {
+		t.Fatalf("expected default proxy route limits, got account=%d session=%d", cfg.ProxyRouteMaxPerAccount, cfg.ProxyRouteMaxPerSession)
 	}
 }
 

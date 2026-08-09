@@ -9,24 +9,26 @@ import (
 )
 
 const (
-	defaultHTTPAddr             = ":8089"
-	defaultGRPCAddr             = ":50051"
-	defaultOfflineTTLSec        = 15
-	defaultReplayWindowSec      = 60
-	defaultHeartbeatIntervalSec = 5
-	defaultDBPath               = "./db/onlyboxes-console.db"
-	defaultDBBusyTimeoutMS      = 5000
-	defaultTaskRetentionDays    = 30
-	defaultExportUploadTTLSec   = 15 * 60
-	defaultExportDownloadTTLSec = 60 * 60
-	defaultMCPTokenQueryParam   = "token"
-	defaultProxyRouteTTLSec     = 24 * 60 * 60
-	defaultProxyWorkerPort      = 8091
-	defaultProxyPublicScheme    = "https"
-	defaultProxyDirectDomain    = "e2b.app"
-	defaultLogLevel             = "info"
-	defaultLogFormat            = "json"
-	defaultLogAddSource         = false
+	defaultHTTPAddr                = ":8089"
+	defaultGRPCAddr                = ":50051"
+	defaultOfflineTTLSec           = 15
+	defaultReplayWindowSec         = 60
+	defaultHeartbeatIntervalSec    = 5
+	defaultDBPath                  = "./db/onlyboxes-console.db"
+	defaultDBBusyTimeoutMS         = 5000
+	defaultTaskRetentionDays       = 30
+	defaultExportUploadTTLSec      = 15 * 60
+	defaultExportDownloadTTLSec    = 60 * 60
+	defaultMCPTokenQueryParam      = "token"
+	defaultProxyRouteTTLSec        = 24 * 60 * 60
+	defaultProxyRouteMaxPerAccount = 16
+	defaultProxyRouteMaxPerSession = 2
+	defaultProxyWorkerPort         = 8091
+	defaultProxyPublicScheme       = "https"
+	defaultProxyDirectDomain       = "e2b.app"
+	defaultLogLevel                = "info"
+	defaultLogFormat               = "json"
+	defaultLogAddSource            = false
 )
 
 type Config struct {
@@ -66,6 +68,8 @@ type Config struct {
 	ProxyAllowedWorkerPorts   []uint16
 	ProxyAllowedDirectDomains []string
 	ProxyRouteTTL             time.Duration
+	ProxyRouteMaxPerAccount   int
+	ProxyRouteMaxPerSession   int
 	LogLevel                  string
 	LogFormat                 string
 	LogAddSource              bool
@@ -101,6 +105,8 @@ func Load() Config {
 	exportUploadTTLSec := src.positiveInt("CONSOLE_EXPORT_FILE_UPLOAD_PRESIGN_TTL_SEC", defaultExportUploadTTLSec)
 	exportDownloadTTLSec := src.positiveInt("CONSOLE_EXPORT_FILE_DOWNLOAD_PRESIGN_TTL_SEC", defaultExportDownloadTTLSec)
 	proxyRouteTTLSec := src.positiveInt("CONSOLE_PROXY_ROUTE_TTL_SEC", defaultProxyRouteTTLSec)
+	proxyRouteMaxPerAccount := src.positiveInt("CONSOLE_PROXY_ROUTE_MAX_PER_ACCOUNT", defaultProxyRouteMaxPerAccount)
+	proxyRouteMaxPerSession := src.positiveInt("CONSOLE_PROXY_ROUTE_MAX_PER_SESSION", defaultProxyRouteMaxPerSession)
 
 	return Config{
 		ConfigFile:                src.Path(),
@@ -139,6 +145,8 @@ func Load() Config {
 		ProxyAllowedWorkerPorts:   parsePortList(src.get("CONSOLE_PROXY_ALLOWED_WORKER_PORTS")),
 		ProxyAllowedDirectDomains: parseDomainList(src.trimmedStringValue("CONSOLE_PROXY_ALLOWED_DIRECT_DOMAINS", defaultProxyDirectDomain)),
 		ProxyRouteTTL:             time.Duration(proxyRouteTTLSec) * time.Second,
+		ProxyRouteMaxPerAccount:   proxyRouteMaxPerAccount,
+		ProxyRouteMaxPerSession:   proxyRouteMaxPerSession,
 		LogLevel:                  src.logLevel("CONSOLE_LOG_LEVEL", defaultLogLevel),
 		LogFormat:                 src.logFormat("CONSOLE_LOG_FORMAT", defaultLogFormat),
 		LogAddSource:              src.boolValue("CONSOLE_LOG_ADD_SOURCE", defaultLogAddSource),

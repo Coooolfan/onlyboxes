@@ -41,6 +41,8 @@ Public preview proxy configuration:
 - `CONSOLE_PROXY_ALLOWED_WORKER_PORTS`: comma-separated ports or a TOML array (default `8091`). Every advertised Worker proxy port must match one entry.
 - `CONSOLE_PROXY_ALLOWED_DIRECT_DOMAINS`: comma-separated domain suffixes or a TOML array (default `e2b.app`). Every E2B direct origin must be a subdomain of one entry.
 - `CONSOLE_PROXY_ROUTE_TTL_SEC`: in-memory route lifetime (default `86400`, maximum `604800`).
+- `CONSOLE_PROXY_ROUTE_MAX_PER_ACCOUNT`: maximum active routes retained for one account (default `16`).
+- `CONSOLE_PROXY_ROUTE_MAX_PER_SESSION`: maximum active routes retained for one terminal session (default `2`).
 
 When proxy is enabled, base domain, internal token, and at least one direct domain are required. Worker CIDR/port allowlists are required for Docker/Boxlite registrations but may be empty in an E2B-only deployment. See the [Nginx deployment guide](../../docs/nginx/README.md) and [data-plane configuration example](../../docs/nginx/public-preview.conf.example).
 
