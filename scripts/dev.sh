@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Onlyboxes 本地开发进程编排：用一个 tmux 会话托管 console / web / website，
-# 避免 go run 与 vite dev 阻塞终端。日志同时落到 scripts/.dev/<svc>.log。
+# Onlyboxes 本地开发编排：tmux 托管应用进程，Docker/OrbStack 托管公共预览组件。
+# 所有命令立即返回，日志可通过统一的 logs 子命令查看。
 set -euo pipefail
 
 SESSION="${ONLYBOXES_DEV_SESSION:-onlyboxes-dev}"
@@ -8,16 +8,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 LOG_DIR="$SCRIPT_DIR/.dev"
 CREDS_FILE="$LOG_DIR/console-creds.json"
+PREVIEW_HELPER="$SCRIPT_DIR/dev-public-preview.sh"
 # tmux server 不继承调用方的自定义环境变量，因此额外配置统一走这个文件
 ENV_FILE="${ONLYBOXES_DEV_ENV:-$SCRIPT_DIR/dev.env}"
 
-ALL_SERVICES=(console web website)
+DEFAULT_SERVICES=(console web website)
+ALL_SERVICES=(console web website worker-docker nginx)
 
 svc_dir() {
     case "$1" in
         console) echo "$ROOT_DIR/console" ;;
         web) echo "$ROOT_DIR/web" ;;
         website) echo "$ROOT_DIR/website" ;;
+        worker-docker) echo "$ROOT_DIR/worker/worker-docker" ;;
         *) return 1 ;;
     esac
 }
@@ -28,6 +31,7 @@ svc_cmd() {
         console) echo "go run ./cmd/console" ;;
         web) echo "NO_COLOR=1 yarn dev" ;;
         website) echo "NO_COLOR=1 yarn dev" ;;
+        worker-docker) echo "go run ./cmd/worker-docker" ;;
         *) return 1 ;;
     esac
 }
@@ -63,6 +67,7 @@ svc_port() {
         console) configured_port CONSOLE_HTTP_ADDR 8089 ;;
         web) echo 5178 ;;
         website) echo 5173 ;;
+        worker-docker | nginx) "$PREVIEW_HELPER" port "$1" ;;
         *) echo "" ;;
     esac
 }
@@ -82,8 +87,11 @@ svc_extra_ports() {
 # 非 POSIX shell，下面的 set -a / . file 会失效。内层只用双引号，整体才能安全地
 # 被单引号包住，交给任意 shell 解析都是同一个字面量。
 wrapped_cmd() {
-    local inner
-    inner="set -a; [ -f \"$ENV_FILE\" ] && . \"$ENV_FILE\"; set +a; $(svc_cmd "$1") 2>&1 | tee \"$LOG_DIR/$1.log\""
+    local svc="$1" inner extra_env=""
+    if [ "$svc" = "worker-docker" ]; then
+        extra_env="; worker_env=\"\$(\"$PREVIEW_HELPER\" worker-env)\"; [ -f \"\$worker_env\" ] && . \"\$worker_env\""
+    fi
+    inner="set -a; [ -f \"$ENV_FILE\" ] && . \"$ENV_FILE\"$extra_env; set +a; $(svc_cmd "$svc") 2>&1 | tee \"$LOG_DIR/$svc.log\""
     echo "bash -c '$inner'"
 }
 
@@ -104,15 +112,42 @@ is_valid_service() {
     return 1
 }
 
-# 解析服务参数：为空则返回全部，否则逐个校验
+worker_runner() {
+    "$PREVIEW_HELPER" runner
+}
+
+is_tmux_service() {
+    case "$1" in
+        console | web | website) return 0 ;;
+        worker-docker) [ "$(worker_runner)" = "native" ] ;;
+        *) return 1 ;;
+    esac
+}
+
+# public-preview 是 console / worker-docker / nginx 的组合别名。
 resolve_services() {
+    local empty_set="$1" svc requested="" expanded=""
+    shift
     if [ "$#" -eq 0 ]; then
-        printf '%s\n' "${ALL_SERVICES[@]}"
-        return
+        if [ "$empty_set" = "all" ]; then
+            requested="${ALL_SERVICES[*]}"
+        else
+            requested="${DEFAULT_SERVICES[*]}"
+        fi
+    else
+        requested="$*"
     fi
-    for svc in "$@"; do
-        is_valid_service "$svc" || die "未知服务 '$svc'（可选：${ALL_SERVICES[*]}）"
-        echo "$svc"
+    for svc in $requested; do
+        if [ "$svc" = "public-preview" ]; then
+            expanded+=" console worker-docker nginx"
+            continue
+        fi
+        is_valid_service "$svc" || die "未知服务 '$svc'（可选：${ALL_SERVICES[*]} public-preview）"
+        expanded+=" $svc"
+    done
+    # 固定依赖顺序并去重。
+    for svc in "${ALL_SERVICES[@]}"; do
+        case " $expanded " in *" $svc "*) echo "$svc" ;; esac
     done
 }
 
@@ -205,6 +240,19 @@ cleanup_bootstrap() {
 
 start_service() {
     local svc="$1" dir log port
+
+    if [ "$svc" = "nginx" ]; then
+        "$PREVIEW_HELPER" start-nginx
+        return
+    fi
+    if [ "$svc" = "worker-docker" ]; then
+        "$PREVIEW_HELPER" provision-worker
+        if [ "$(worker_runner)" = "orb" ]; then
+            "$PREVIEW_HELPER" start-worker-orb
+            return
+        fi
+    fi
+
     dir="$(svc_dir "$svc")"
     log="$LOG_DIR/$svc.log"
 
@@ -239,6 +287,16 @@ start_service() {
 
 stop_service() {
     local svc="$1" owned
+
+    if [ "$svc" = "nginx" ]; then
+        "$PREVIEW_HELPER" stop-nginx
+        return
+    fi
+    if [ "$svc" = "worker-docker" ] && [ "$(worker_runner)" = "orb" ]; then
+        "$PREVIEW_HELPER" stop-worker-orb
+        return
+    fi
+
     if ! window_exists "$svc"; then
         echo "• $svc 未在运行"
         return
@@ -253,7 +311,7 @@ stop_service() {
 cmd_start() {
     require_tmux
     local services
-    services=$(resolve_services "$@")
+    services=$(resolve_services default "$@")
     ensure_session
     while IFS= read -r svc; do
         start_service "$svc"
@@ -266,60 +324,43 @@ cmd_start() {
 cmd_stop() {
     require_tmux
     local services
-    services=$(resolve_services "$@")
+    services=$(resolve_services all "$@")
 
-    if ! session_exists; then
-        echo "会话 $SESSION 未运行"
-        return
-    fi
-
-    if [ "$#" -eq 0 ]; then
-        # 先逐个采集进程树快照，再销毁会话，最后按快照回收
-        local snapshots="" svc_snapshot
-        while IFS= read -r svc; do
-            window_exists "$svc" || continue
-            svc_snapshot="$(snapshot_pids "$svc" | tr '\n' ' ')"
-            snapshots+="$svc|$svc_snapshot"$'\n'
-        done <<<"$services"
-
-        tmux kill-session -t "$SESSION"
-        echo "已停止全部服务（会话 $SESSION 已销毁）"
-
-        while IFS='|' read -r svc pids; do
-            [ -n "$svc" ] || continue
-            # shellcheck disable=SC2086
-            reclaim_ports "$svc" "$(printf '%s\n' $pids)"
-        done <<<"$snapshots"
-        return
-    fi
-
+    # 逆依赖顺序停止：Nginx → Worker →应用服务。
     while IFS= read -r svc; do
         stop_service "$svc"
-    done <<<"$services"
+    done < <(printf '%s\n' "$services" | awk '{ line[NR] = $0 } END { for (i = NR; i >= 1; i--) print line[i] }')
 
     # 若只剩占位或空会话则一并销毁
-    if ! tmux list-windows -t "$SESSION" -F '#{window_name}' 2>/dev/null | grep -qvx __bootstrap__; then
+    if session_exists && ! tmux list-windows -t "$SESSION" -F '#{window_name}' 2>/dev/null | grep -qvx __bootstrap__; then
         tmux kill-session -t "$SESSION" 2>/dev/null || true
     fi
+    case "$services" in
+        *worker-docker* | *nginx*) "$PREVIEW_HELPER" cleanup-network ;;
+    esac
 }
 
 cmd_restart() {
-    cmd_stop "$@"
+    local services
+    services="$(resolve_services default "$@")"
+    # shellcheck disable=SC2086
+    cmd_stop $services
     sleep 1
-    cmd_start "$@"
+    # shellcheck disable=SC2086
+    cmd_start $services
 }
 
 cmd_status() {
     require_tmux
-    if ! session_exists; then
-        echo "会话 ${SESSION}：未运行"
-        return
-    fi
-    echo "会话 ${SESSION}：运行中"
+    if session_exists; then echo "会话 ${SESSION}：运行中"; else echo "会话 ${SESSION}：未运行"; fi
     # 表头含中文，显示宽度与 printf 的字符计数不一致，这里按显示宽度手工对齐
-    echo "服务       端口           监听     窗口状态"
+    echo "服务           端口           监听     运行状态"
     for svc in "${ALL_SERVICES[@]}"; do
         local port extra ports listen win all_listening
+        if [ "$svc" = "nginx" ] || { [ "$svc" = "worker-docker" ] && [ "$(worker_runner)" = "orb" ]; }; then
+            "$PREVIEW_HELPER" status "$svc"
+            continue
+        fi
         port="$(svc_port "$svc")"
         extra="$(svc_extra_ports "$svc")"
         ports="$port${extra:+/$extra}"
@@ -354,6 +395,10 @@ cmd_logs() {
     local svc="${1:-}"
     [ -n "$svc" ] || die "用法：scripts/dev.sh logs <${ALL_SERVICES[*]}>"
     is_valid_service "$svc" || die "未知服务 '$svc'（可选：${ALL_SERVICES[*]}）"
+    if [ "$svc" = "nginx" ] || { [ "$svc" = "worker-docker" ] && [ "$(worker_runner)" = "orb" ]; }; then
+        "$PREVIEW_HELPER" logs "$svc"
+        return
+    fi
     local log="$LOG_DIR/$svc.log"
     [ -f "$log" ] || die "暂无 ${svc} 日志（先执行 scripts/dev.sh start ${svc}）"
     tail -n 200 "$log"
@@ -435,27 +480,28 @@ EOF
 
 usage() {
     cat <<'EOF'
-Onlyboxes 本地开发进程编排（基于 tmux）
+Onlyboxes 本地开发服务编排（tmux + Docker/OrbStack）
 
 用法：scripts/dev.sh <命令> [服务...]
 
 命令：
   start   [svc...]   后台启动服务（默认 console web website），终端不阻塞
-  stop    [svc...]   停止指定服务；不带参数销毁整个会话
+  stop    [svc...]   停止指定服务；不带参数停止全部服务
   restart [svc...]   重启指定服务
-  status             查看会话、端口监听与各窗口状态
+  status             查看 tmux、容器、端口监听与服务状态
   logs    <svc>      查看某服务最近日志（快照，立即返回）
   creds              打印 console 管理员账号（首次初始化时生成）
 
 说明：不提供 attach / logs -f 等阻塞入口；如需实时查看请自行执行 tmux attach -t $SESSION
 
 服务：console（:8089 HTTP，:50051 gRPC）web（:5178）website（:5173）
-
-不含 worker：worker 各实现启动参数差异较大，部分场景需同时运行多个实例，请手动启动。
+      worker-docker（:8091）nginx（:80）
+组合：public-preview = console + worker-docker + nginx
 
 示例：
   scripts/dev.sh start              # 三个全起
   scripts/dev.sh start console web  # 只起控制节点与前端
+  scripts/dev.sh start public-preview # 一键启动本地公共预览栈
   scripts/dev.sh logs console       # 查看控制节点最近日志
   scripts/dev.sh restart web        # 重启前端
   scripts/dev.sh stop               # 全部停止
@@ -463,9 +509,11 @@ Onlyboxes 本地开发进程编排（基于 tmux）
 环境变量：
   ONLYBOXES_DEV_SESSION  自定义 tmux 会话名（默认 onlyboxes-dev）
   ONLYBOXES_DEV_ENV      自定义配置文件路径（默认 scripts/dev.env）
+  ONLYBOXES_WORKER_DOCKER_RUNNER  worker-docker 运行方式（orb 或 native）
 
 配置：tmux 不继承当前 shell 的自定义环境变量，服务所需配置请写入
       scripts/dev.env（参考 scripts/dev.env.example），start 时自动加载。
+      公共预览本机覆盖项写入 scripts/public-preview.env。
 EOF
 }
 
