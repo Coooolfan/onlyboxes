@@ -4,7 +4,7 @@
 
 ## 配置入口
 
-启动至少需要 `WORKER_ID`、`WORKER_SECRET`、`WORKER_E2B_API_KEY`、`WORKER_E2B_PYTHON_TEMPLATE` 和 `WORKER_E2B_TERMINAL_TEMPLATE`。E2B 标准环境变量别名、全部可选参数、默认值和 `config.toml` 键见[完整配置参数参考](config-file.md)，可直接复制根目录的 [`config.example.toml`](../config.example.toml)。
+启动至少需要 `WORKER_ID`、`WORKER_SECRET`、`WORKER_E2B_API_KEY`、`WORKER_E2B_PYTHON_TEMPLATE` 和 `WORKER_E2B_TERMINAL_TEMPLATE`。E2B 标准环境变量别名、全部可选参数、默认值和 `config.toml` 键见[完整配置参数参考](docs/config-file.md)，可直接复制根目录的 [`config.example.toml`](config.example.toml)。
 
 console gRPC 默认启用 TLS。只有在可信内网开发环境中才应设置 `WORKER_CONSOLE_INSECURE=true`；明文连接会暴露 hello 中的一次性 worker secret。
 

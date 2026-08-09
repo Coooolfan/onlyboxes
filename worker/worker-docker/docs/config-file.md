@@ -1,4 +1,4 @@
-# Worker Docker Config File
+# Worker Docker Configuration
 
 `worker-docker` reads configuration from environment variables and from a `config.toml` file.
 

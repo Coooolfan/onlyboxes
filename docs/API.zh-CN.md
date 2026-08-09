@@ -630,6 +630,8 @@ Worker 类型：
 }
 ```
 
+已确认的 terminal session 路由绑定与绝对 lease 会持久化到 SQLite，并可跨 Console 重启恢复。恢复后的路由继续固定到原 Worker；在该 Worker 重连并完成资源核对前返回 `session_unavailable`，不会改派到其他 Worker。
+
 错误：
 
 - `400` 请求参数非法或 `invalid_payload`

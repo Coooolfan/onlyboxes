@@ -1,6 +1,6 @@
 # Onlyboxes
 
-[简体中文](README.zh-CN.md)
+[简体中文](docs/README.zh-CN.md)
 
 Onlyboxes is a self-hosted code execution sandbox platform for individuals and small teams.
 
@@ -158,7 +158,7 @@ Default endpoints:
 ### 6) Verify readiness
 
 - Confirm the worker is `online` on the dashboard Workers page.
-- For REST API request examples, see `README/API.md`.
+- For REST API request examples, see `docs/API.md`.
 - If no tokens are configured, `/mcp` and execution APIs return `401` by design.
 - Add the MCP endpoint `http://127.0.0.1:8089/mcp` in any LLM Chat Client, set the token, and verify it works correctly.
 ![claude-code-demo](static/claude-code-demo.jpg)
@@ -241,9 +241,9 @@ Workers are not orchestrated — their startup arguments vary per implementation
 
 ### Useful docs
 
-- Unified API reference: `README/API.md`
-- Console internals: `console/README/overview.md`
-- Worker internals: `worker/worker-docker/README/overview.md`
+- Unified API reference: `docs/API.md`
+- Console internals: `console/README.md`
+- Worker internals: `worker/worker-docker/README.md`
 - API/proto guide: `api/README/proto.md`
 - Web app guide: `web/README.md`
 

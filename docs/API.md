@@ -628,6 +628,8 @@ Success `200`:
 }
 ```
 
+Confirmed terminal session route bindings and absolute leases are persisted in SQLite across Console restarts. A restored route remains pinned to its original Worker and returns `session_unavailable` until that Worker reconnects and completes recovery; it is not reassigned to another Worker.
+
 Errors:
 
 - `400` invalid body/params or `invalid_payload`

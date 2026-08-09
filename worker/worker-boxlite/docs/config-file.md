@@ -1,4 +1,4 @@
-# Worker Boxlite Config File
+# Worker BoxLite Configuration
 
 `worker-boxlite` reads configuration from environment variables and from a `config.toml` file.
 

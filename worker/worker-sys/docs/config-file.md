@@ -1,4 +1,4 @@
-# Worker Sys Config File
+# Worker Sys Configuration
 
 `worker-sys` reads configuration from environment variables and from a `config.toml` file.
 

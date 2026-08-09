@@ -1,7 +1,7 @@
 # Console Overview
 
 Configuration sources:
-- environment variables and `config.toml` (see `README/config-file.md`).
+- environment variables and `config.toml` (see [`docs/config-file.md`](docs/config-file.md)).
 - priority is environment variable > `config.toml` > default.
 
 The console service hosts:
@@ -61,7 +61,7 @@ The console service hosts:
     - confirmed routes retain their worker binding and absolute lease while the worker is disconnected; requests return retryable `session_unavailable` instead of being reassigned.
     - a terminal-capable worker must reconcile every Console candidate and receive a recovery acknowledgement before it becomes dispatchable.
     - recovered routes keep their original lease; missing, invalid, or expired resources delete the route so later calls follow normal `session_not_found`/creation semantics.
-    - route and lease state are currently in Console memory and therefore do not survive a Console restart.
+    - confirmed route bindings and absolute leases are persisted in SQLite and survive a Console restart; restored routes remain unavailable until the owning worker reconnects and completes recovery.
 - MCP Streamable HTTP API (bearer token required):
   - `POST /mcp` for JSON-RPC requests over Streamable HTTP transport.
   - recommended request header: `Authorization: Bearer <access-token>`.
@@ -276,11 +276,13 @@ JIT token behavior:
 - `CONSOLE_DASHBOARD_JIT_SIGNING_KEY` must differ from `CONSOLE_JIT_SIGNING_KEY`.
 - Dashboard JIT tokens are for dashboard automation such as worker-sys provisioning; they are rejected by `/mcp` and cannot access cookie-only token management endpoints.
 
-Task persistence behavior:
+Task and terminal-session persistence behavior:
 - task input/result/status lifecycle is persisted in SQLite.
 - startup recovery marks all non-terminal tasks as `failed` with `error_code=console_restarted`.
 - non-expired terminal tasks are retained for `CONSOLE_TASK_RETENTION_DAYS` (default `30`) and cleaned by periodic pruner.
 - internal terminal capacity retries keep one task/request identity; `command_id` is updated to the current or last worker attempt.
+- confirmed terminal session route bindings and absolute leases are persisted in SQLite; startup deletes expired routes and loads active routes as unavailable until worker reconciliation succeeds.
+- provisional terminal routes, reservation IDs, provisional-use counters, and recovery connection state are process-local and are not restored.
 - terminal session capacity snapshots are connection-local and are not persisted to SQLite; reconnect Hello initializes a fresh snapshot.
 
 Persistence config:

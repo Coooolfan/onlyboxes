@@ -3,8 +3,8 @@ Onlyboxes 是一个面向个人与小型团队的代码执行沙箱平台解决�
 # 项目结构
 
 - 此文件夹为项目根目录。使用 monorepo 管理多个工程，前后端分离。核心服务以 控制节点-执行节点 的形式部署。
-- 所有子工程都有各自的`README`文件夹，每个 md 文件代表某个方面的说明，如果工作内容涉及对应方面，应当阅读对应 md 文件。
-- 根目录的`README`文件夹用于记录跨工程的项目说明，其中`README/API.md`与`README/API.zh-CN.md`为统一 API 参考。
+- 子工程使用根部 `README.md` 记录概览，并可使用 `docs` 或 `README` 文件夹记录专题说明；如果工作内容涉及对应方面，应当阅读相关 md 文件。
+- 根目录的 `docs` 文件夹用于记录跨工程的项目说明，其中 `docs/API.md` 与 `docs/API.zh-CN.md` 为统一 API 参考。
 - 本地启动服务统一使用`scripts/dev.sh`（tmux 编排 console / web / website，所有子命令立即返回，不阻塞终端），不要自行拼装`go run`或`yarn dev`。用法见`scripts/README.md`。worker 不在编排范围内，需手动启动。
 
 # 项目概述

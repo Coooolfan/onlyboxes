@@ -13,7 +13,7 @@ Security warning (high risk):
 - full mitigation requires TLS/mTLS support (not implemented in this release).
 
 Configuration sources:
-- environment variables and `config.toml` (see `README/config-file.md`).
+- environment variables and `config.toml` (see [`docs/config-file.md`](docs/config-file.md)).
 - priority is environment variable > `config.toml` > default.
 
 Required identity:
@@ -71,7 +71,7 @@ Capability behavior:
   - command timeout/cancel marks the session for destruction and stops it accepting new commands; the container is removed once in-flight commands drain, so one command's timeout does not kill its siblings.
   - lease expiry is a hard boundary: a per-session deadline timer removes the session even when commands are in flight, cancels active proxy requests, and force-removes the container; the janitor remains a cleanup fallback.
   - terminal containers use deterministic `onlyboxes-terminal-v1-<sha256(session_id)>` names plus schema/session-hash labels and are preserved when the worker exits.
-  - after reconnect, the worker reconciles Console candidates before accepting commands, restarts stopped containers, restores the exact lease, and removes local Onlyboxes terminal orphans that Console no longer recognizes.
+  - after reconnect, the worker reconciles Console candidates before accepting commands, restarts stopped containers, restores the exact lease, and removes local Onlyboxes terminal orphans that Console no longer recognizes. Transient Docker recovery checks are retried twice before the affected session is abandoned so one unavailable container does not block Worker startup.
   - lease expiry, explicit destruction, unsafe command timeout, and invalid resource identity still remove the container; one-shot `pythonExec` containers remain per-call resources.
 - `terminalExec` result uses JSON payload:
   - `{"session_id":"...","created":true,"stdout":"...","stderr":"...","exit_code":0,"stdout_truncated":false,"stderr_truncated":false,"lease_expires_unix_ms":...}`

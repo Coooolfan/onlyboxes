@@ -1,6 +1,6 @@
 # Onlyboxes
 
-[English](README.md)
+[English](../README.md)
 
 Onlyboxes 是一个面向个人与小型团队的自托管代码执行沙箱平台。
 
@@ -30,8 +30,8 @@ Onlyboxes 是一个面向个人与小型团队的自托管代码执行沙箱平�
 
 ## 架构
 
-![架构](static/architecture.zh-CN.svg#gh-light-mode-only)
-![架构](static/architecture.zh-CN-dark.svg#gh-dark-mode-only)
+![架构](../static/architecture.zh-CN.svg#gh-light-mode-only)
+![架构](../static/architecture.zh-CN-dark.svg#gh-dark-mode-only)
 
 ## 一键安装脚本（Linux）
 
@@ -117,20 +117,20 @@ curl -fsSL https://onlybox.es/install.sh | bash
 
 - 浏览器打开 `http://127.0.0.1:8089`。
 - 使用初始化的管理员账号登录。
-![控制台登录页](static/docs/quickstart-login.png)
+![控制台登录页](../static/docs/quickstart-login.png)
 - 进入 token 管理页面创建访问 token。
-![Token 创建完成弹窗（一次性明文）](static/docs/quickstart-token-modal.png)
+![Token 创建完成弹窗（一次性明文）](../static/docs/quickstart-token-modal.png)
 - token 明文只返回一次，请立即安全保存。
 
 ### 4）创建 worker
 
 - 在 Workers 页面创建 worker。
-![Workers 页面](static/docs/quickstart-workers-page.png)
+![Workers 页面](../static/docs/quickstart-workers-page.png)
 - 在创建弹窗中复制并安全保存启动命令（`WORKER_SECRET` 仅一次可见）。
-![Worker 创建完成弹窗（启动命令与一次性密钥）](static/docs/quickstart-worker-created-modal.jpg)
+![Worker 创建完成弹窗（启动命令与一次性密钥）](../static/docs/quickstart-worker-created-modal.jpg)
 - （可选）点击 `Open in Startup Tool with Id and Secret` 携带 id 与 key 进入启动命令编辑工具
   - 在弹出的页面中，你可以编辑所有可用的选项，页面最下方会生成对应的启动命令，复制并保存
-![启动命令编辑工具](static/docs/quickstart-worker-startup-tool.jpg)
+![启动命令编辑工具](../static/docs/quickstart-worker-startup-tool.jpg)
 
 
 ### 5）启动 worker
@@ -158,10 +158,10 @@ curl -fsSL https://onlybox.es/install.sh | bash
 ### 6）验证运行状态
 
 - 在控制台 Workers 页面确认 worker 状态为 `online`。
-- REST API 调用示例请参考 `README/API.zh-CN.md`。
+- REST API 调用示例请参考 `API.zh-CN.md`。
 - 若系统中没有任何 token，`/mcp` 与执行类 API 会按预期返回 `401`。
 - 在任意 LLM Chat Client 中添加 MCP 端点 `http://127.0.0.1:8089/mcp`，并设置 token，确认可以正常工作。
-![claude-code-demo](static/claude-code-demo.jpg)
+![claude-code-demo](../static/claude-code-demo.jpg)
 
 ## 常见问题
 
@@ -241,9 +241,9 @@ worker 不在编排范围内：各实现启动参数差异较大，需手动启�
 
 ### 延伸文档
 
-- 统一 API 文档：`README/API.zh-CN.md`
-- Console 细节：`console/README/overview.md`
-- Worker 细节：`worker/worker-docker/README/overview.md`
+- 统一 API 文档：`API.zh-CN.md`
+- Console 细节：`console/README.md`
+- Worker 细节：`worker/worker-docker/README.md`
 - API/proto 说明：`api/README/proto.md`
 - Web 说明：`web/README.md`
 
@@ -269,4 +269,4 @@ worker 不在编排范围内：各实现启动参数差异较大，需手动启�
 
 ## 许可证
 
-[GNU AGPL v3.0](LICENSE)
+[GNU AGPL v3.0](../LICENSE)

@@ -1,4 +1,4 @@
-# E2B Bridge 配置参数
+# E2B Bridge 配置参考
 
 worker 按以下顺序查找 `config.toml`：
 

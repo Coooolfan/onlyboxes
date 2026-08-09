@@ -16,7 +16,7 @@ Security warning (high risk):
 - place console gRPC behind trusted private networking or encrypted tunnels.
 
 Configuration sources:
-- environment variables and `config.toml` (see `README/config-file.md`).
+- environment variables and `config.toml` (see [`docs/config-file.md`](docs/config-file.md)).
 - priority is environment variable > `config.toml` > default.
 
 Required identity:

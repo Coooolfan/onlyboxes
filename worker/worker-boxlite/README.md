@@ -21,7 +21,7 @@ Build and runtime prerequisites:
 - terminal images must contain `/bin/sh` and `python`.
 
 Configuration sources:
-- environment variables and `config.toml` (see `README/config-file.md`).
+- environment variables and `config.toml` (see [`docs/config-file.md`](docs/config-file.md)).
 - priority is environment variable > `config.toml` > default.
 
 Required identity:
