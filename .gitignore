@@ -58,3 +58,4 @@ console/config.toml
 # local dev orchestration (scripts/dev.sh)
 scripts/.dev/
 scripts/dev.env
+scripts/public-preview.env
