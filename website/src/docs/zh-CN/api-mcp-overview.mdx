@@ -699,11 +699,12 @@ Worker 类型：`normal`（对应 `worker-docker`/`worker-boxlite`）、`worker-
 - `port` 范围为 `1..65535`。
 - route URL 由 `CONSOLE_PROXY_PUBLIC_SCHEME`（默认 `https`）和 `CONSOLE_PROXY_PUBLIC_BASE_DOMAIN` 组成；仅在可信的本地开发环境使用 `http`。
 - routeKey 使用 128 bit 随机数编码为 26 位小写 Base32。
-- 每个账号最多保留 100 条有效 route。
+- 每个账号默认最多保留 16 条有效 route，可通过 `CONSOLE_PROXY_ROUTE_MAX_PER_ACCOUNT` 修改。
+- 单个 Session 默认最多保留 2 条有效 route，可通过 `CONSOLE_PROXY_ROUTE_MAX_PER_SESSION` 修改。
 - route 默认 TTL 为 `86400` 秒，可通过 `CONSOLE_PROXY_ROUTE_TTL_SEC` 修改，最大为 `604800` 秒（7 天）。
 - `400` 请求体、Session ID 或端口非法。
 - `404` Session 路由不存在。
-- `429` 当前账号达到 route 上限。
+- `429` 当前账号或 Session 达到 route 上限。
 - `503` Session 所在 Worker 没有可用代理入口。
 
 `GET /api/v1/proxy-routes`

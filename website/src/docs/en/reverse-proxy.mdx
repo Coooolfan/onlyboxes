@@ -56,6 +56,8 @@ CONSOLE_PROXY_ALLOWED_WORKER_CIDRS=0.0.0.0/0,::/0
 CONSOLE_PROXY_ALLOWED_WORKER_PORTS=8091
 CONSOLE_PROXY_ALLOWED_DIRECT_DOMAINS=e2b.app
 CONSOLE_PROXY_ROUTE_TTL_SEC=86400
+CONSOLE_PROXY_ROUTE_MAX_PER_ACCOUNT=16
+CONSOLE_PROXY_ROUTE_MAX_PER_SESSION=2
 ```
 
 The CIDR and port allowlists must contain only Worker ingress endpoints actually reachable by Nginx. See [Console Configuration](/en/docs/console-config#public-preview-proxy) for the remaining environment variables.
