@@ -10,6 +10,11 @@ import (
 	"github.com/onlyboxes/onlyboxes/worker/worker-docker/internal/logging"
 )
 
+const (
+	terminalRecoveryDockerMaxAttempts = 3
+	terminalRecoveryDockerRetryDelay  = 100 * time.Millisecond
+)
+
 var recoverTerminalSessionsFn = func(
 	_ context.Context,
 	candidates []*registryv1.TerminalSessionRecoveryCandidate,
@@ -82,16 +87,40 @@ func (m *terminalSessionManager) recoverOne(
 	containerName string,
 	leaseExpiresAt time.Time,
 ) registryv1.TerminalSessionRecoveryResult_Status {
+	for attempt := 1; attempt <= terminalRecoveryDockerMaxAttempts; attempt++ {
+		status, retryable := m.recoverOneAttempt(ctx, sessionID, containerName, leaseExpiresAt)
+		if !retryable || attempt == terminalRecoveryDockerMaxAttempts {
+			return status
+		}
+		logging.Warnf(
+			"terminal recovery Docker check failed; retrying: session_id_hash=%s attempt=%d max_attempts=%d",
+			terminalSessionIDHash(sessionID),
+			attempt,
+			terminalRecoveryDockerMaxAttempts,
+		)
+		if !waitTerminalRecoveryRetry(ctx, terminalRecoveryDockerRetryDelay) {
+			return status
+		}
+	}
+	return registryv1.TerminalSessionRecoveryResult_INVALID
+}
+
+func (m *terminalSessionManager) recoverOneAttempt(
+	ctx context.Context,
+	sessionID string,
+	containerName string,
+	leaseExpiresAt time.Time,
+) (registryv1.TerminalSessionRecoveryResult_Status, bool) {
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
-		return registryv1.TerminalSessionRecoveryResult_INVALID
+		return registryv1.TerminalSessionRecoveryResult_INVALID, false
 	}
 	if existing := m.sessions[sessionID]; existing != nil && !existing.destroying {
 		existing.leaseExpiresAt = leaseExpiresAt
 		m.scheduleSessionLeaseTimerLocked(existing)
 		m.mu.Unlock()
-		return registryv1.TerminalSessionRecoveryResult_RECOVERED
+		return registryv1.TerminalSessionRecoveryResult_RECOVERED, false
 	}
 	m.mu.Unlock()
 
@@ -102,20 +131,20 @@ func (m *terminalSessionManager) recoverOne(
 	)
 	if inspect.Err != nil || inspect.ExitCode != 0 {
 		if inspect.Err == nil && isNoSuchContainerMessage(inspect.Stderr) {
-			return registryv1.TerminalSessionRecoveryResult_MISSING
+			return registryv1.TerminalSessionRecoveryResult_MISSING, false
 		}
-		return registryv1.TerminalSessionRecoveryResult_MISSING
+		return registryv1.TerminalSessionRecoveryResult_MISSING, true
 	}
 	parts := strings.SplitN(strings.TrimSpace(inspect.Stdout), "\t", 2)
 	if len(parts) != 2 {
-		return registryv1.TerminalSessionRecoveryResult_INVALID
+		return registryv1.TerminalSessionRecoveryResult_INVALID, false
 	}
 	labels := map[string]string{}
 	if err := json.Unmarshal([]byte(parts[0]), &labels); err != nil ||
 		labels[terminalExecSessionLabelKey] != terminalSessionIDHash(sessionID) ||
 		labels[terminalExecSchemaLabelKey] != terminalExecSchemaVersion {
 		m.forceRemoveContainer(containerName)
-		return registryv1.TerminalSessionRecoveryResult_INVALID
+		return registryv1.TerminalSessionRecoveryResult_INVALID, false
 	}
 	matching := runDockerCommand(ctx,
 		"ps", "-a",
@@ -124,14 +153,14 @@ func (m *terminalSessionManager) recoverOne(
 		"--format", "{{.Names}}",
 	)
 	if matching.Err != nil || matching.ExitCode != 0 {
-		return registryv1.TerminalSessionRecoveryResult_INVALID
+		return registryv1.TerminalSessionRecoveryResult_INVALID, true
 	}
 	matchingNames := nonEmptyLines(matching.Stdout)
 	if len(matchingNames) != 1 || matchingNames[0] != containerName {
 		for _, name := range matchingNames {
 			m.forceRemoveContainer(name)
 		}
-		return registryv1.TerminalSessionRecoveryResult_INVALID
+		return registryv1.TerminalSessionRecoveryResult_INVALID, false
 	}
 
 	switch strings.TrimSpace(strings.ToLower(parts[1])) {
@@ -139,18 +168,18 @@ func (m *terminalSessionManager) recoverOne(
 	case "created", "exited", "stopped":
 		start := runDockerCommand(ctx, terminalExecDockerStartArgs(containerName)...)
 		if start.Err != nil || start.ExitCode != 0 {
-			return registryv1.TerminalSessionRecoveryResult_INVALID
+			return registryv1.TerminalSessionRecoveryResult_INVALID, true
 		}
 	default:
 		m.forceRemoveContainer(containerName)
-		return registryv1.TerminalSessionRecoveryResult_INVALID
+		return registryv1.TerminalSessionRecoveryResult_INVALID, false
 	}
 	containerIP := ""
 	if m.dockerNetwork != "" {
 		var err error
 		containerIP, err = inspectTerminalContainerIP(ctx, containerName, m.dockerNetwork)
 		if err != nil {
-			return registryv1.TerminalSessionRecoveryResult_INVALID
+			return registryv1.TerminalSessionRecoveryResult_INVALID, true
 		}
 	}
 
@@ -161,16 +190,16 @@ func (m *terminalSessionManager) recoverOne(
 	defer m.mu.Unlock()
 	if m.closed {
 		proxyCancel()
-		return registryv1.TerminalSessionRecoveryResult_INVALID
+		return registryv1.TerminalSessionRecoveryResult_INVALID, false
 	}
 	if existing := m.sessions[sessionID]; existing != nil {
 		proxyCancel()
 		if existing.containerName != containerName || existing.destroying {
-			return registryv1.TerminalSessionRecoveryResult_INVALID
+			return registryv1.TerminalSessionRecoveryResult_INVALID, false
 		}
 		existing.leaseExpiresAt = leaseExpiresAt
 		m.scheduleSessionLeaseTimerLocked(existing)
-		return registryv1.TerminalSessionRecoveryResult_RECOVERED
+		return registryv1.TerminalSessionRecoveryResult_RECOVERED, false
 	}
 	session := &terminalSession{
 		sessionID:        sessionID,
@@ -185,7 +214,24 @@ func (m *terminalSessionManager) recoverOne(
 	m.sessions[sessionID] = session
 	m.activeSessionReservations++
 	m.scheduleSessionLeaseTimerLocked(session)
-	return registryv1.TerminalSessionRecoveryResult_RECOVERED
+	return registryv1.TerminalSessionRecoveryResult_RECOVERED, false
+}
+
+func waitTerminalRecoveryRetry(ctx context.Context, delay time.Duration) bool {
+	if delay <= 0 {
+		return ctx == nil || ctx.Err() == nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 func nonEmptyLines(value string) []string {

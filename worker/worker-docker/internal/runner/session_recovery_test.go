@@ -278,6 +278,80 @@ func TestTerminalRecoveryReportsMissingAndCleansExpiredCandidate(t *testing.T) {
 	}
 }
 
+func TestTerminalRecoveryRetriesDockerChecksTwiceBeforeRecovering(t *testing.T) {
+	original := runDockerCommand
+	t.Cleanup(func() { runDockerCommand = original })
+
+	sessionID := "owner-a:session-retry-success"
+	name := terminalSessionResourceName(sessionID)
+	hash := terminalSessionIDHash(sessionID)
+	inspectCalls := 0
+	runDockerCommand = func(_ context.Context, args ...string) dockerCommandResult {
+		joined := strings.Join(args, " ")
+		switch {
+		case len(args) > 0 && args[0] == "inspect":
+			inspectCalls++
+			if inspectCalls < terminalRecoveryDockerMaxAttempts {
+				return dockerCommandResult{ExitCode: 1, Stderr: "Docker daemon temporarily unavailable"}
+			}
+			return dockerCommandResult{ExitCode: 0, Stdout: fmt.Sprintf("{\"%s\":\"%s\",\"%s\":\"1\"}\trunning\n", terminalExecSessionLabelKey, hash, terminalExecSchemaLabelKey)}
+		case strings.Contains(joined, "label="+terminalExecSessionLabelKey+"="+hash):
+			return dockerCommandResult{ExitCode: 0, Stdout: name + "\n"}
+		case len(args) > 0 && args[0] == "ps":
+			return dockerCommandResult{ExitCode: 0, Stdout: name + "\n"}
+		default:
+			t.Fatalf("unexpected docker command: %v", args)
+			return dockerCommandResult{ExitCode: 1}
+		}
+	}
+
+	manager := newTerminalSessionManager(terminalSessionManagerConfig{PreserveOnClose: true})
+	defer manager.Close()
+	results := manager.Recover(context.Background(), []*registryv1.TerminalSessionRecoveryCandidate{{
+		SessionId: sessionID, LeaseExpiresUnixMs: time.Now().Add(time.Minute).UnixMilli(),
+	}})
+	if len(results) != 1 || results[0].GetStatus() != registryv1.TerminalSessionRecoveryResult_RECOVERED {
+		t.Fatalf("unexpected recovery result: %#v", results)
+	}
+	if inspectCalls != terminalRecoveryDockerMaxAttempts {
+		t.Fatalf("inspect calls=%d, want %d", inspectCalls, terminalRecoveryDockerMaxAttempts)
+	}
+}
+
+func TestTerminalRecoveryAbandonsSessionAfterTwoDockerRetries(t *testing.T) {
+	original := runDockerCommand
+	t.Cleanup(func() { runDockerCommand = original })
+
+	inspectCalls := 0
+	runDockerCommand = func(_ context.Context, args ...string) dockerCommandResult {
+		switch {
+		case len(args) > 0 && args[0] == "inspect":
+			inspectCalls++
+			return dockerCommandResult{ExitCode: 1, Stderr: "Docker daemon temporarily unavailable"}
+		case len(args) > 0 && args[0] == "ps":
+			return dockerCommandResult{ExitCode: 0}
+		default:
+			t.Fatalf("unexpected docker command: %v", args)
+			return dockerCommandResult{ExitCode: 1}
+		}
+	}
+
+	manager := newTerminalSessionManager(terminalSessionManagerConfig{PreserveOnClose: true})
+	defer manager.Close()
+	results := manager.Recover(context.Background(), []*registryv1.TerminalSessionRecoveryCandidate{{
+		SessionId: "owner-a:session-retry-exhausted", LeaseExpiresUnixMs: time.Now().Add(time.Minute).UnixMilli(),
+	}})
+	if len(results) != 1 || results[0].GetStatus() != registryv1.TerminalSessionRecoveryResult_MISSING {
+		t.Fatalf("unexpected recovery result: %#v", results)
+	}
+	if inspectCalls != terminalRecoveryDockerMaxAttempts {
+		t.Fatalf("inspect calls=%d, want %d", inspectCalls, terminalRecoveryDockerMaxAttempts)
+	}
+	if manager.ActiveSessionCount() != 0 {
+		t.Fatalf("active session count=%d, want 0", manager.ActiveSessionCount())
+	}
+}
+
 func TestConcurrentTerminalRecoveryUsesOneReservation(t *testing.T) {
 	original := runDockerCommand
 	t.Cleanup(func() { runDockerCommand = original })
