@@ -63,6 +63,61 @@ func TestTerminalRecoveryRestoresContainerAndExactLease(t *testing.T) {
 	}
 }
 
+func TestTerminalRecoveryRestoresProxyRuntimeState(t *testing.T) {
+	original := runDockerCommand
+	t.Cleanup(func() { runDockerCommand = original })
+
+	sessionID := "owner-a:session-proxy"
+	name := terminalSessionResourceName(sessionID)
+	hash := terminalSessionIDHash(sessionID)
+	const containerIP = "172.20.0.8"
+	runDockerCommand = func(_ context.Context, args ...string) dockerCommandResult {
+		joined := strings.Join(args, " ")
+		switch {
+		case len(args) > 0 && args[0] == "inspect" && strings.Contains(joined, "NetworkSettings.Networks"):
+			return dockerCommandResult{ExitCode: 0, Stdout: containerIP + "\n"}
+		case len(args) > 0 && args[0] == "inspect":
+			return dockerCommandResult{ExitCode: 0, Stdout: fmt.Sprintf("{\"%s\":\"%s\",\"%s\":\"1\"}\trunning\n", terminalExecSessionLabelKey, hash, terminalExecSchemaLabelKey)}
+		case strings.Contains(joined, "label="+terminalExecSessionLabelKey+"="+hash):
+			return dockerCommandResult{ExitCode: 0, Stdout: name + "\n"}
+		case len(args) > 0 && args[0] == "ps":
+			return dockerCommandResult{ExitCode: 0, Stdout: name + "\n"}
+		default:
+			t.Fatalf("unexpected docker command: %v", args)
+			return dockerCommandResult{ExitCode: 1}
+		}
+	}
+
+	manager := newTerminalSessionManager(terminalSessionManagerConfig{
+		DockerNetwork:   terminalProxyDockerNetwork,
+		PreserveOnClose: true,
+	})
+	defer manager.Close()
+	lease := time.Now().Add(time.Minute).Truncate(time.Millisecond)
+	results := manager.Recover(context.Background(), []*registryv1.TerminalSessionRecoveryCandidate{{
+		SessionId: sessionID, LeaseExpiresUnixMs: lease.UnixMilli(),
+	}})
+	if len(results) != 1 || results[0].GetStatus() != registryv1.TerminalSessionRecoveryResult_RECOVERED {
+		t.Fatalf("unexpected recovery result: %#v", results)
+	}
+
+	target, err := manager.ResolveProxyTarget(context.Background(), sessionID, time.Now())
+	if err != nil {
+		t.Fatalf("resolve recovered proxy target: %v", err)
+	}
+	if target.IP != containerIP || target.SessionContext == nil {
+		t.Fatalf("unexpected recovered proxy target: %#v", target)
+	}
+	manager.mu.Lock()
+	recovered := manager.sessions[sessionID]
+	hasLeaseTimer := recovered != nil && recovered.leaseTimer != nil
+	hasProxyCancel := recovered != nil && recovered.proxyCancel != nil
+	manager.mu.Unlock()
+	if !hasLeaseTimer || !hasProxyCancel {
+		t.Fatalf("recovered runtime state incomplete: lease_timer=%v proxy_cancel=%v", hasLeaseTimer, hasProxyCancel)
+	}
+}
+
 func TestTerminalRecoveryRejectsAndRemovesDuplicateContainers(t *testing.T) {
 	original := runDockerCommand
 	t.Cleanup(func() { runDockerCommand = original })

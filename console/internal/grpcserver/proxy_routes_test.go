@@ -10,6 +10,7 @@ import (
 
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
 	"github.com/onlyboxes/onlyboxes/api/proxytoken"
+	"github.com/onlyboxes/onlyboxes/console/internal/testutil/registrytest"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -70,6 +71,43 @@ func TestDirectProxyCapabilityCannotBeSubmittedAsUserTask(t *testing.T) {
 	})
 	if status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("expected internal capability rejection, got %v", err)
+	}
+}
+
+func TestRejectedProxyReconnectDoesNotChangeTerminalRouteRecoveryState(t *testing.T) {
+	now := time.UnixMilli(1_730_000_000_000)
+	service := NewRegistryService(registrytest.NewStore(t), map[string]string{"worker-1": "worker-secret"}, 5, 15, time.Minute)
+	service.nowFn = func() time.Time { return now }
+	service.ConfigureProxy(true, []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}, []uint16{8091}, []string{"e2b.app"})
+	scopedSessionID := scopeTerminalSessionID("owner-a", "session-a")
+	service.bindTerminalSessionRoute(scopedSessionID, "worker-1", now)
+
+	client, cleanup := newBufClient(t, service)
+	defer cleanup()
+	stream, err := client.Connect(context.Background())
+	if err != nil {
+		t.Fatalf("connect failed: %v", err)
+	}
+	hello := &registryv1.ConnectHello{
+		NodeId:       "worker-1",
+		WorkerSecret: "worker-secret",
+		Labels: map[string]string{
+			proxytoken.ProxyEndpointLabel: "192.168.1.10:8091",
+		},
+		Capabilities: []*registryv1.CapabilityDeclaration{{Name: taskCapabilityTerminalExec}},
+	}
+	if err := stream.Send(&registryv1.ConnectRequest{
+		Payload: &registryv1.ConnectRequest_Hello{Hello: hello},
+	}); err != nil {
+		t.Fatalf("send hello: %v", err)
+	}
+	if _, err := stream.Recv(); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("expected InvalidArgument, got %v", err)
+	}
+
+	route, ok := service.terminalSessionRouteSnapshot(scopedSessionID, now)
+	if !ok || route.RecoveryState != terminalSessionRecoveryReady {
+		t.Fatalf("rejected reconnect changed route state: %#v, exists=%v", route, ok)
 	}
 }
 

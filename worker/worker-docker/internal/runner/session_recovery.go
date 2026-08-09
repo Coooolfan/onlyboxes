@@ -89,6 +89,7 @@ func (m *terminalSessionManager) recoverOne(
 	}
 	if existing := m.sessions[sessionID]; existing != nil && !existing.destroying {
 		existing.leaseExpiresAt = leaseExpiresAt
+		m.scheduleSessionLeaseTimerLocked(existing)
 		m.mu.Unlock()
 		return registryv1.TerminalSessionRecoveryResult_RECOVERED
 	}
@@ -144,29 +145,46 @@ func (m *terminalSessionManager) recoverOne(
 		m.forceRemoveContainer(containerName)
 		return registryv1.TerminalSessionRecoveryResult_INVALID
 	}
+	containerIP := ""
+	if m.dockerNetwork != "" {
+		var err error
+		containerIP, err = inspectTerminalContainerIP(ctx, containerName, m.dockerNetwork)
+		if err != nil {
+			return registryv1.TerminalSessionRecoveryResult_INVALID
+		}
+	}
 
 	ready := make(chan struct{})
 	close(ready)
+	proxyCtx, proxyCancel := context.WithCancel(context.Background())
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
+		proxyCancel()
 		return registryv1.TerminalSessionRecoveryResult_INVALID
 	}
 	if existing := m.sessions[sessionID]; existing != nil {
+		proxyCancel()
 		if existing.containerName != containerName || existing.destroying {
 			return registryv1.TerminalSessionRecoveryResult_INVALID
 		}
 		existing.leaseExpiresAt = leaseExpiresAt
+		m.scheduleSessionLeaseTimerLocked(existing)
 		return registryv1.TerminalSessionRecoveryResult_RECOVERED
 	}
-	m.sessions[sessionID] = &terminalSession{
+	session := &terminalSession{
 		sessionID:        sessionID,
 		containerName:    containerName,
+		containerIP:      containerIP,
 		leaseExpiresAt:   leaseExpiresAt,
+		proxyCtx:         proxyCtx,
+		proxyCancel:      proxyCancel,
 		ready:            ready,
 		capacityReserved: true,
 	}
+	m.sessions[sessionID] = session
 	m.activeSessionReservations++
+	m.scheduleSessionLeaseTimerLocked(session)
 	return registryv1.TerminalSessionRecoveryResult_RECOVERED
 }
 
