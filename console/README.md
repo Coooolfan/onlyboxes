@@ -34,7 +34,7 @@ The console service hosts:
   - `POST /api/v1/proxy-routes` creates an anonymous preview URL for an owned terminal session and port.
   - `GET /api/v1/proxy-routes` lists only the current account's active routes.
   - `DELETE /api/v1/proxy-routes/:route_key` deletes only the current account's route; cross-account access returns `404`.
-  - routes default to 24 hours, are capped at 7 days, use 128-bit DNS-safe keys, and are restored from SQLite after Console restart.
+  - routes default to 24 hours, are capped at 7 days, and are restored from SQLite after Console restart. Route keys use lowercase Base32 and default to 26 characters, preserving 128 bits of randomness; shorter configured lengths preserve only the corresponding prefix and therefore provide less resistance to URL guessing (for example, 8 characters carry 40 bits).
   - `GET /internal/v1/proxy/resolve` is Nginx-only and protected by `CONSOLE_PROXY_INTERNAL_AUTH_TOKEN`. Docker/Boxlite return a Worker URL plus a 15-second Route Token; E2B is resolved through its internal Worker capability and returns the current sandbox origin plus traffic token.
   - proxy traffic is anonymous and never carries Dashboard credentials; anyone holding the preview URL can access it.
 - command APIs (execution, bearer token required):
