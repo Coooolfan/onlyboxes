@@ -530,7 +530,7 @@ Rules and errors:
 - `session_id` must belong to the current account and have a confirmed route to an online proxy-enabled Docker, Boxlite, or E2B Worker.
 - `port` must be `1..65535`.
 - route URLs use `CONSOLE_PROXY_PUBLIC_SCHEME` (`https` by default) and `CONSOLE_PROXY_PUBLIC_BASE_DOMAIN`; use `http` only for trusted local development.
-- route keys contain 128 random bits encoded as 26 lowercase Base32 characters.
+- route keys use lowercase Base32 and default to 26 characters. `CONSOLE_PROXY_ROUTE_KEY_LENGTH` controls the length of newly generated keys in the range `8..26`; existing routes remain valid after it changes. Values below `16` reduce resistance to URL guessing and are intended only for trusted local or low-risk deployments.
 - each account can hold at most 16 active routes by default; configure it with `CONSOLE_PROXY_ROUTE_MAX_PER_ACCOUNT`.
 - each session can hold at most 2 active routes by default; configure it with `CONSOLE_PROXY_ROUTE_MAX_PER_SESSION`.
 - default route TTL is `86400` seconds, can be changed with `CONSOLE_PROXY_ROUTE_TTL_SEC`, and cannot exceed `604800` seconds (7 days).

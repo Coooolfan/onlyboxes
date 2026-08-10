@@ -9,6 +9,7 @@ worker_container="onlyboxes-nginx-worker-${suffix}"
 console_container="onlyboxes-nginx-console-${suffix}"
 public_container="onlyboxes-nginx-public-${suffix}"
 preview_host="ceirceirceirceirceirceirce.public-preview.example.com"
+short_preview_host="ceirceir.public-preview.example.com"
 
 cleanup() {
     docker rm -f "$public_container" "$console_container" "$worker_container" >/dev/null 2>&1 || true
@@ -57,8 +58,9 @@ http {
         listen 8089;
         location = /internal/v1/proxy/resolve {
             if (\$http_x_onlyboxes_internal_token != "replace-with-console-proxy-internal-token") { return 401; }
-            if (\$http_x_original_host != "$preview_host") { return 403; }
+            if (\$http_x_original_host !~ "^[a-z2-7]{8,26}\\.public-preview\\.example\\.com$") { return 403; }
             add_header X-Onlyboxes-Upstream "http://$worker_ip:8091" always;
+            add_header X-Onlyboxes-Upstream-Host "\$http_x_original_host" always;
             add_header X-Onlyboxes-Route-Token "route-token-from-console" always;
             return 204;
         }
@@ -125,12 +127,17 @@ if grep -Eq '^x-e2e-(internal-token|original-host|upstream):' <<<"$header_respon
     exit 1
 fi
 
+short_status="$(curl --noproxy '*' -ksS -o /dev/null -w '%{http_code}' \
+    --resolve "$short_preview_host:$host_port:127.0.0.1" \
+    "https://$short_preview_host:$host_port/")"
+[[ "$short_status" == "200" ]]
+
 invalid_status="$(curl --noproxy '*' -ksS -o /dev/null -w '%{http_code}' \
     --resolve "invalid.public-preview.example.com:$host_port:127.0.0.1" \
     "https://invalid.public-preview.example.com:$host_port/")"
 [[ "$invalid_status" == "403" ]]
 
 resolver_requests="$(docker logs "$console_container" 2>&1 | grep -c 'GET /internal/v1/proxy/resolve')"
-[[ "$resolver_requests" == "2" ]]
+[[ "$resolver_requests" == "3" ]]
 
 echo "public preview Nginx verification passed"

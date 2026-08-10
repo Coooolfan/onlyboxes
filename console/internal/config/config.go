@@ -21,6 +21,9 @@ const (
 	defaultExportDownloadTTLSec    = 60 * 60
 	defaultMCPTokenQueryParam      = "token"
 	defaultProxyRouteTTLSec        = 24 * 60 * 60
+	defaultProxyRouteKeyLength     = 26
+	minProxyRouteKeyLength         = 8
+	maxProxyRouteKeyLength         = 26
 	defaultProxyRouteMaxPerAccount = 16
 	defaultProxyRouteMaxPerSession = 2
 	defaultProxyWorkerPort         = 8091
@@ -68,6 +71,7 @@ type Config struct {
 	ProxyAllowedWorkerPorts   []uint16
 	ProxyAllowedDirectDomains []string
 	ProxyRouteTTL             time.Duration
+	ProxyRouteKeyLength       int
 	ProxyRouteMaxPerAccount   int
 	ProxyRouteMaxPerSession   int
 	LogLevel                  string
@@ -105,6 +109,7 @@ func Load() Config {
 	exportUploadTTLSec := src.positiveInt("CONSOLE_EXPORT_FILE_UPLOAD_PRESIGN_TTL_SEC", defaultExportUploadTTLSec)
 	exportDownloadTTLSec := src.positiveInt("CONSOLE_EXPORT_FILE_DOWNLOAD_PRESIGN_TTL_SEC", defaultExportDownloadTTLSec)
 	proxyRouteTTLSec := src.positiveInt("CONSOLE_PROXY_ROUTE_TTL_SEC", defaultProxyRouteTTLSec)
+	proxyRouteKeyLength := src.boundedInt("CONSOLE_PROXY_ROUTE_KEY_LENGTH", defaultProxyRouteKeyLength, minProxyRouteKeyLength, maxProxyRouteKeyLength)
 	proxyRouteMaxPerAccount := src.positiveInt("CONSOLE_PROXY_ROUTE_MAX_PER_ACCOUNT", defaultProxyRouteMaxPerAccount)
 	proxyRouteMaxPerSession := src.positiveInt("CONSOLE_PROXY_ROUTE_MAX_PER_SESSION", defaultProxyRouteMaxPerSession)
 
@@ -145,6 +150,7 @@ func Load() Config {
 		ProxyAllowedWorkerPorts:   parsePortList(src.get("CONSOLE_PROXY_ALLOWED_WORKER_PORTS")),
 		ProxyAllowedDirectDomains: parseDomainList(src.trimmedStringValue("CONSOLE_PROXY_ALLOWED_DIRECT_DOMAINS", defaultProxyDirectDomain)),
 		ProxyRouteTTL:             time.Duration(proxyRouteTTLSec) * time.Second,
+		ProxyRouteKeyLength:       proxyRouteKeyLength,
 		ProxyRouteMaxPerAccount:   proxyRouteMaxPerAccount,
 		ProxyRouteMaxPerSession:   proxyRouteMaxPerSession,
 		LogLevel:                  src.logLevel("CONSOLE_LOG_LEVEL", defaultLogLevel),
@@ -185,6 +191,18 @@ func (s source) positiveInt(key string, defaultValue int) int {
 	}
 	parsed, err := strconv.Atoi(value)
 	if err != nil || parsed <= 0 {
+		return defaultValue
+	}
+	return parsed
+}
+
+func (s source) boundedInt(key string, defaultValue int, minValue int, maxValue int) int {
+	value := strings.TrimSpace(s.get(key))
+	if value == "" {
+		return defaultValue
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < minValue || parsed > maxValue {
 		return defaultValue
 	}
 	return parsed

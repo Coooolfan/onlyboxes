@@ -151,6 +151,7 @@ CONSOLE_MCP_TOOL_TERMINAL_EXEC_PARAM_SESSION_ID_DESCRIPTION=""
 | `CONSOLE_PROXY_ALLOWED_WORKER_PORTS` | 否 | | 逗号分隔的 Worker 代理端口白名单 |
 | `CONSOLE_PROXY_ALLOWED_DIRECT_DOMAINS` | 否 | `e2b.app` | 逗号分隔的 E2B 直连域名后缀白名单；应收窄到部署实际使用的 E2B 域名 |
 | `CONSOLE_PROXY_ROUTE_TTL_SEC` | 否 | `86400` | 预览路由 TTL（秒），最大 `604800`（7 天）；超出时 Console 拒绝启动 |
+| `CONSOLE_PROXY_ROUTE_KEY_LENGTH` | 否 | `26` | 新生成 route key 的长度，范围 `8..26`；修改后已有路由仍然有效。低于 `16` 位仅建议用于可信本地或低风险环境 |
 | `CONSOLE_PROXY_ROUTE_MAX_PER_ACCOUNT` | 否 | `16` | 单个账号最多保留的有效预览路由数量 |
 | `CONSOLE_PROXY_ROUTE_MAX_PER_SESSION` | 否 | `2` | 单个终端 Session 最多保留的有效预览路由数量 |
 

@@ -151,6 +151,7 @@ These variables enable the public preview proxy. Keep it disabled until Nginx an
 | `CONSOLE_PROXY_ALLOWED_WORKER_PORTS` | No | | Comma-separated port allowlist for worker proxy ingress |
 | `CONSOLE_PROXY_ALLOWED_DIRECT_DOMAINS` | No | `e2b.app` | Comma-separated suffix allowlist for E2B direct origins; restrict to the E2B domains used by the deployment |
 | `CONSOLE_PROXY_ROUTE_TTL_SEC` | No | `86400` | Preview route TTL in seconds, max `604800` (7 days); Console refuses to start if exceeded |
+| `CONSOLE_PROXY_ROUTE_KEY_LENGTH` | No | `26` | Length of newly generated route keys, range `8..26`; existing routes remain valid after changes. Values below `16` are recommended only for trusted local or low-risk deployments |
 | `CONSOLE_PROXY_ROUTE_MAX_PER_ACCOUNT` | No | `16` | Maximum number of active preview routes retained for one account |
 | `CONSOLE_PROXY_ROUTE_MAX_PER_SESSION` | No | `2` | Maximum number of active preview routes retained for one terminal session |
 

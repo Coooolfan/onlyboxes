@@ -7,7 +7,7 @@ map $http_upgrade $onlyboxes_connection_upgrade {
 map $host $onlyboxes_preview_host_valid {
     # Keep this domain in sync with server_name below.
     default 0;
-    "~^[a-z2-7]{26}\.public-preview\.example\.com$" 1;
+    "~^[a-z2-7]{8,26}\.public-preview\.example\.com$" 1;
 }
 
 server {

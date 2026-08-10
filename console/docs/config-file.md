@@ -41,6 +41,7 @@ Public preview proxy configuration:
 - `CONSOLE_PROXY_ALLOWED_WORKER_PORTS`: comma-separated ports or a TOML array (default `8091`). Every advertised Worker proxy port must match one entry.
 - `CONSOLE_PROXY_ALLOWED_DIRECT_DOMAINS`: comma-separated domain suffixes or a TOML array (default `e2b.app`). Every E2B direct origin must be a subdomain of one entry.
 - `CONSOLE_PROXY_ROUTE_TTL_SEC`: persisted route lifetime (default `86400`, maximum `604800`).
+- `CONSOLE_PROXY_ROUTE_KEY_LENGTH`: length of newly generated Base32 route keys (default `26`, range `8..26`). Existing routes keep working after this changes. Values below `16` provide less resistance to URL guessing and are intended only for trusted local or low-risk deployments.
 - `CONSOLE_PROXY_ROUTE_MAX_PER_ACCOUNT`: maximum active routes retained for one account (default `16`).
 - `CONSOLE_PROXY_ROUTE_MAX_PER_SESSION`: maximum active routes retained for one terminal session (default `2`).
 

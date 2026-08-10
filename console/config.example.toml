@@ -41,6 +41,9 @@ proxy_allowed_worker_ports = [8091]
 proxy_allowed_direct_domains = ["e2b.app"]
 # Maximum 604800 (7 days).
 proxy_route_ttl_sec = 86400
+# Generated route key length, 8..26. Values below 16 are intended only for
+# trusted local or low-risk deployments.
+proxy_route_key_length = 26
 # Maximum active routes retained for one account and one session.
 proxy_route_max_per_account = 16
 proxy_route_max_per_session = 2

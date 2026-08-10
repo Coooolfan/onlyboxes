@@ -29,8 +29,9 @@ const (
 	proxyUpstreamHostHeader         = "X-Onlyboxes-Upstream-Host"
 	proxyUpstreamTrafficTokenHeader = "X-Onlyboxes-Upstream-Traffic-Token"
 	proxyRouteKeyBytes              = 16
-	proxyRouteKeyLength             = 26
-	proxyBaseDomainMaxBytes         = 253 - 1 - proxyRouteKeyLength
+	proxyRouteKeyMinLength          = 8
+	proxyRouteKeyMaxLength          = 26
+	proxyBaseDomainMaxBytes         = 253 - 1 - proxyRouteKeyMaxLength
 	proxyRouteCreateAttempts        = 8
 	proxyRouteMaxTTL                = 7 * 24 * time.Hour
 )
@@ -59,16 +60,17 @@ type proxyRouteRecord struct {
 }
 
 type ProxyRouteHandler struct {
-	resolver      ProxyRouteResolver
-	store         proxyRouteStore
-	baseDomain    string
-	publicScheme  string
-	internalToken string
-	routeTTL      time.Duration
-	maxPerAccount int
-	maxPerSession int
-	nowFn         func() time.Time
-	randomReader  io.Reader
+	resolver       ProxyRouteResolver
+	store          proxyRouteStore
+	baseDomain     string
+	publicScheme   string
+	internalToken  string
+	routeTTL       time.Duration
+	routeKeyLength int
+	maxPerAccount  int
+	maxPerSession  int
+	nowFn          func() time.Time
+	randomReader   io.Reader
 
 	mu     sync.RWMutex
 	routes map[string]proxyRouteRecord
@@ -100,6 +102,7 @@ func NewProxyRouteHandler(
 	publicScheme string,
 	internalToken string,
 	routeTTL time.Duration,
+	routeKeyLength int,
 	maxPerAccount int,
 	maxPerSession int,
 ) (*ProxyRouteHandler, error) {
@@ -124,6 +127,9 @@ func NewProxyRouteHandler(
 	if routeTTL <= 0 || routeTTL > proxyRouteMaxTTL {
 		return nil, errors.New("proxy route TTL must be between 1 second and 7 days")
 	}
+	if routeKeyLength < proxyRouteKeyMinLength || routeKeyLength > proxyRouteKeyMaxLength {
+		return nil, fmt.Errorf("proxy route key length must be between %d and %d", proxyRouteKeyMinLength, proxyRouteKeyMaxLength)
+	}
 	if maxPerAccount <= 0 {
 		return nil, errors.New("proxy route max per account must be positive")
 	}
@@ -131,17 +137,18 @@ func NewProxyRouteHandler(
 		return nil, errors.New("proxy route max per session must be positive")
 	}
 	return &ProxyRouteHandler{
-		resolver:      resolver,
-		store:         store,
-		baseDomain:    normalizedDomain,
-		publicScheme:  normalizedScheme,
-		internalToken: internalToken,
-		routeTTL:      routeTTL,
-		maxPerAccount: maxPerAccount,
-		maxPerSession: maxPerSession,
-		nowFn:         time.Now,
-		randomReader:  rand.Reader,
-		routes:        make(map[string]proxyRouteRecord),
+		resolver:       resolver,
+		store:          store,
+		baseDomain:     normalizedDomain,
+		publicScheme:   normalizedScheme,
+		internalToken:  internalToken,
+		routeTTL:       routeTTL,
+		routeKeyLength: routeKeyLength,
+		maxPerAccount:  maxPerAccount,
+		maxPerSession:  maxPerSession,
+		nowFn:          time.Now,
+		randomReader:   rand.Reader,
+		routes:         make(map[string]proxyRouteRecord),
 	}, nil
 }
 
@@ -373,7 +380,7 @@ func (h *ProxyRouteHandler) createRoute(
 	}
 
 	for attempt := 0; attempt < proxyRouteCreateAttempts; attempt++ {
-		routeKey, err := generateProxyRouteKey(h.randomReader)
+		routeKey, err := generateProxyRouteKey(h.randomReader, h.routeKeyLength)
 		if err != nil {
 			return proxyRouteRecord{}, err
 		}
@@ -536,19 +543,23 @@ func proxyRouteOwnerID(c *gin.Context) (string, bool) {
 	return "", false
 }
 
-func generateProxyRouteKey(reader io.Reader) (string, error) {
+func generateProxyRouteKey(reader io.Reader, length int) (string, error) {
 	if reader == nil {
 		return "", errors.New("route key random source is required")
+	}
+	if length < proxyRouteKeyMinLength || length > proxyRouteKeyMaxLength {
+		return "", errors.New("route key length is invalid")
 	}
 	raw := make([]byte, proxyRouteKeyBytes)
 	if _, err := io.ReadFull(reader, raw); err != nil {
 		return "", err
 	}
-	return strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(raw)), nil
+	encoded := strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(raw))
+	return encoded[:length], nil
 }
 
 func validProxyRouteKey(value string) bool {
-	if len(value) != proxyRouteKeyLength {
+	if len(value) < proxyRouteKeyMinLength || len(value) > proxyRouteKeyMaxLength {
 		return false
 	}
 	for _, r := range value {

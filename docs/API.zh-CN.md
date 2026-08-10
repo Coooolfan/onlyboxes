@@ -532,7 +532,7 @@ Worker 类型：
 - `session_id` 必须属于当前账号，并且已有一条指向在线、已启用代理的 Docker、Boxlite 或 E2B Worker 的确认路由。
 - `port` 范围为 `1..65535`。
 - route URL 由 `CONSOLE_PROXY_PUBLIC_SCHEME`（默认 `https`）和 `CONSOLE_PROXY_PUBLIC_BASE_DOMAIN` 组成；仅在可信的本地开发环境使用 `http`。
-- routeKey 使用 128 bit 随机数编码为 26 位小写 Base32。
+- routeKey 使用小写 Base32，默认长度为 `26`。`CONSOLE_PROXY_ROUTE_KEY_LENGTH` 可控制新 routeKey 的长度，范围 `8..26`；修改后已有 route 仍然有效。低于 `16` 位会降低 URL 的抗猜测能力，仅适合可信本地或低风险环境。
 - 每个账号默认最多保留 16 条有效 route，可通过 `CONSOLE_PROXY_ROUTE_MAX_PER_ACCOUNT` 修改。
 - 单个 Session 默认最多保留 2 条有效 route，可通过 `CONSOLE_PROXY_ROUTE_MAX_PER_SESSION` 修改。
 - route 默认 TTL 为 `86400` 秒，可通过 `CONSOLE_PROXY_ROUTE_TTL_SEC` 修改，最大为 `604800` 秒（7 天）。

@@ -21,6 +21,7 @@ import (
 const (
 	testProxyRouteMaxPerAccount = 16
 	testProxyRouteMaxPerSession = 2
+	testProxyRouteKeyLength     = 26
 )
 
 type proxyRouteResolverStub struct {
@@ -111,7 +112,7 @@ func TestProxyRouteConfiguredHTTPURL(t *testing.T) {
 			ScopedSessionID: "obx:owner-a:session-a",
 		},
 	}
-	handler, err := NewProxyRouteHandler(resolver, registrytest.NewStore(t), "public-preview.localhost", "http", "nginx-secret", time.Hour, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession)
+	handler, err := NewProxyRouteHandler(resolver, registrytest.NewStore(t), "public-preview.localhost", "http", "nginx-secret", time.Hour, proxyRouteKeyMinLength, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession)
 	if err != nil {
 		t.Fatalf("new localhost proxy route handler: %v", err)
 	}
@@ -119,6 +120,9 @@ func TestProxyRouteConfiguredHTTPURL(t *testing.T) {
 	handler.randomReader = bytes.NewReader(bytes.Repeat([]byte{0x11}, proxyRouteKeyBytes*proxyRouteCreateAttempts))
 
 	created := createProxyRouteForTest(t, newProxyRouteTestRouter(handler), "owner-a", `{"session_id":"session-a","port":8080}`)
+	if len(created.RouteKey) != proxyRouteKeyMinLength {
+		t.Fatalf("unexpected configured route key length %d", len(created.RouteKey))
+	}
 	wantURL := "http://" + created.RouteKey + ".public-preview.localhost"
 	if created.URL != wantURL {
 		t.Fatalf("unexpected localhost public URL %q, want %q", created.URL, wantURL)
@@ -336,9 +340,9 @@ func TestProxyRoutePerSessionLimit(t *testing.T) {
 	}
 }
 
-func TestGenerateProxyRouteKeyUses128Bits(t *testing.T) {
+func TestGenerateProxyRouteKeyUsesConfiguredLength(t *testing.T) {
 	raw := []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
-	routeKey, err := generateProxyRouteKey(bytes.NewReader(raw))
+	routeKey, err := generateProxyRouteKey(bytes.NewReader(raw), proxyRouteKeyMaxLength)
 	if err != nil {
 		t.Fatalf("generate route key: %v", err)
 	}
@@ -348,6 +352,18 @@ func TestGenerateProxyRouteKeyUses128Bits(t *testing.T) {
 	decoded, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(strings.ToUpper(routeKey))
 	if err != nil || !bytes.Equal(decoded, raw) {
 		t.Fatalf("route key did not preserve 128 random bits: decoded=%x err=%v", decoded, err)
+	}
+	shortRouteKey, err := generateProxyRouteKey(bytes.NewReader(raw), proxyRouteKeyMinLength)
+	if err != nil {
+		t.Fatalf("generate short route key: %v", err)
+	}
+	if len(shortRouteKey) != proxyRouteKeyMinLength || shortRouteKey != routeKey[:proxyRouteKeyMinLength] || !validProxyRouteKey(shortRouteKey) {
+		t.Fatalf("unexpected short route key %q", shortRouteKey)
+	}
+	for _, length := range []int{proxyRouteKeyMinLength - 1, proxyRouteKeyMaxLength + 1} {
+		if _, err := generateProxyRouteKey(bytes.NewReader(raw), length); err == nil {
+			t.Fatalf("expected route key length %d to fail", length)
+		}
 	}
 }
 
@@ -468,34 +484,39 @@ func TestProxyRouteInternalResolve(t *testing.T) {
 func TestNewProxyRouteHandlerRejectsInvalidConfiguration(t *testing.T) {
 	resolver := &proxyRouteResolverStub{}
 	store := registrytest.NewStore(t)
-	if _, err := NewProxyRouteHandler(resolver, nil, "preview.example.com", "https", "secret", time.Hour, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession); err == nil {
+	if _, err := NewProxyRouteHandler(resolver, nil, "preview.example.com", "https", "secret", time.Hour, testProxyRouteKeyLength, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession); err == nil {
 		t.Fatalf("expected missing proxy route store to fail")
 	}
 	tooLongDomain := strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "." + strings.Repeat("d", 35)
 	for _, domain := range []string{"", "localhost", "https://preview.example.com", "*.preview.example.com", "-bad.example.com", tooLongDomain} {
-		if _, err := NewProxyRouteHandler(resolver, store, domain, "https", "secret", time.Hour, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession); err == nil {
+		if _, err := NewProxyRouteHandler(resolver, store, domain, "https", "secret", time.Hour, testProxyRouteKeyLength, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession); err == nil {
 			t.Fatalf("expected invalid domain %q to fail", domain)
 		}
 	}
 	for _, scheme := range []string{"", "ftp"} {
-		if _, err := NewProxyRouteHandler(resolver, store, "preview.example.com", scheme, "secret", time.Hour, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession); err == nil {
+		if _, err := NewProxyRouteHandler(resolver, store, "preview.example.com", scheme, "secret", time.Hour, testProxyRouteKeyLength, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession); err == nil {
 			t.Fatalf("expected invalid public scheme %q to fail", scheme)
 		}
 	}
-	if _, err := NewProxyRouteHandler(resolver, store, "preview.example.com", "https", "", time.Hour, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession); err == nil {
+	if _, err := NewProxyRouteHandler(resolver, store, "preview.example.com", "https", "", time.Hour, testProxyRouteKeyLength, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession); err == nil {
 		t.Fatalf("expected missing internal token to fail")
 	}
-	if _, err := NewProxyRouteHandler(resolver, store, "preview.example.com", "https", "secret", 0, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession); err == nil {
+	if _, err := NewProxyRouteHandler(resolver, store, "preview.example.com", "https", "secret", 0, testProxyRouteKeyLength, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession); err == nil {
 		t.Fatalf("expected invalid route TTL to fail")
 	}
-	if _, err := NewProxyRouteHandler(resolver, store, "preview.example.com", "https", "secret", proxyRouteMaxTTL+time.Second, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession); err == nil {
+	if _, err := NewProxyRouteHandler(resolver, store, "preview.example.com", "https", "secret", proxyRouteMaxTTL+time.Second, testProxyRouteKeyLength, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession); err == nil {
 		t.Fatalf("expected route TTL above maximum to fail")
 	}
-	if _, err := NewProxyRouteHandler(resolver, store, "preview.example.com", "https", "secret", time.Hour, 0, testProxyRouteMaxPerSession); err == nil {
+	if _, err := NewProxyRouteHandler(resolver, store, "preview.example.com", "https", "secret", time.Hour, testProxyRouteKeyLength, 0, testProxyRouteMaxPerSession); err == nil {
 		t.Fatalf("expected invalid account route limit to fail")
 	}
-	if _, err := NewProxyRouteHandler(resolver, store, "preview.example.com", "https", "secret", time.Hour, testProxyRouteMaxPerAccount, 0); err == nil {
+	if _, err := NewProxyRouteHandler(resolver, store, "preview.example.com", "https", "secret", time.Hour, testProxyRouteKeyLength, testProxyRouteMaxPerAccount, 0); err == nil {
 		t.Fatalf("expected invalid session route limit to fail")
+	}
+	for _, length := range []int{proxyRouteKeyMinLength - 1, proxyRouteKeyMaxLength + 1} {
+		if _, err := NewProxyRouteHandler(resolver, store, "preview.example.com", "https", "secret", time.Hour, length, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession); err == nil {
+			t.Fatalf("expected invalid route key length %d to fail", length)
+		}
 	}
 }
 
@@ -506,7 +527,7 @@ func newProxyRouteHandlerForTest(t *testing.T, resolver ProxyRouteResolver, now 
 
 func newProxyRouteHandlerWithStoreForTest(t *testing.T, resolver ProxyRouteResolver, store proxyRouteStore, now time.Time, ttl time.Duration) *ProxyRouteHandler {
 	t.Helper()
-	handler, err := NewProxyRouteHandler(resolver, store, "public-preview.example.com", "https", "nginx-secret", ttl, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession)
+	handler, err := NewProxyRouteHandler(resolver, store, "public-preview.example.com", "https", "nginx-secret", ttl, testProxyRouteKeyLength, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession)
 	if err != nil {
 		t.Fatalf("new proxy route handler: %v", err)
 	}

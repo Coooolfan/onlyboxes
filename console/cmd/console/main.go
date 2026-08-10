@@ -122,6 +122,7 @@ func main() {
 			cfg.ProxyPublicScheme,
 			cfg.ProxyInternalAuthToken,
 			cfg.ProxyRouteTTL,
+			cfg.ProxyRouteKeyLength,
 			cfg.ProxyRouteMaxPerAccount,
 			cfg.ProxyRouteMaxPerSession,
 		)

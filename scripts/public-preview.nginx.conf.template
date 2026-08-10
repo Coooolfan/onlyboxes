@@ -8,7 +8,7 @@ http {
 
     map $host $onlyboxes_preview_host_valid {
         default 0;
-        "~^[a-z2-7]{26}\\.__PUBLIC_PREVIEW_DOMAIN_REGEX__$" 1;
+        "~^[a-z2-7]{8,26}\\.__PUBLIC_PREVIEW_DOMAIN_REGEX__$" 1;
     }
 
     server {
