@@ -107,7 +107,7 @@ curl -i https://<route-key>.public-preview.example.com/
 - Sandbox lease 到期时已建立的 SSE/WebSocket 连接断开，容器被回收；
 - Sandbox 未监听签名端口时公开请求返回 `502`。
 
-route 存储在 Console 内存中，Console 重启后全部失效。预览访问不会续租。Route Token 只限制新请求到达 Worker 的 15 秒窗口，不会单独终止已建立连接。访问日志可能包含 routeKey，应按凭据日志处理并限制留存和读取权限。
+route 持久化到 Console SQLite，未过期的原 URL 可跨 Console 重启恢复；在所属 Worker 重连并完成 terminal session 恢复前，新请求暂时被拒绝。预览访问不会续租。Route Token 只限制新请求到达 Worker 的 15 秒窗口，不会单独终止已建立连接。访问日志和 SQLite 备份可能包含 routeKey，应按凭据处理并限制留存和读取权限。
 
 ## Nginx 自动验证
 

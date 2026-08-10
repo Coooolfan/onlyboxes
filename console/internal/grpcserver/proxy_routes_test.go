@@ -205,6 +205,24 @@ func TestProxySessionRejectsOwnerMismatchAndUnavailableWorker(t *testing.T) {
 	}
 }
 
+func TestProxySessionRejectsTerminalRoutePendingRecovery(t *testing.T) {
+	now := time.UnixMilli(1_730_000_000_000)
+	service, scopedSessionID := newProxyRegistryServiceForTest(t, now)
+
+	service.terminalRoutesMu.Lock()
+	route := service.terminalSessionToNode[scopedSessionID]
+	route.RecoveryState = terminalSessionRecoveryUnavailable
+	service.terminalSessionToNode[scopedSessionID] = route
+	service.terminalRoutesMu.Unlock()
+
+	if _, err := service.ResolveProxySession("owner-a", "session-a", now); !errors.Is(err, ErrProxySessionNotFound) {
+		t.Fatalf("expected recovering session to be unavailable for route creation, got %v", err)
+	}
+	if _, err := service.AuthorizeProxyRoute(context.Background(), "worker-1", scopedSessionID, 8080, now.Add(time.Minute), now); !errors.Is(err, ErrProxySessionNotFound) {
+		t.Fatalf("expected recovering session to reject proxy authorization, got %v", err)
+	}
+}
+
 func TestNormalizeAllowedProxyEndpoint(t *testing.T) {
 	allowed := []netip.Prefix{
 		netip.MustParsePrefix("10.0.0.0/8"),

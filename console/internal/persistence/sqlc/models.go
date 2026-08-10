@@ -26,6 +26,17 @@ type ApiKey struct {
 	UpdatedAtUnixMs int64  `json:"updated_at_unix_ms"`
 }
 
+type ProxyRoute struct {
+	RouteKey        string `json:"route_key"`
+	OwnerID         string `json:"owner_id"`
+	SessionID       string `json:"session_id"`
+	ScopedSessionID string `json:"scoped_session_id"`
+	WorkerID        string `json:"worker_id"`
+	Port            int64  `json:"port"`
+	CreatedAtUnixMs int64  `json:"created_at_unix_ms"`
+	ExpiresAtUnixMs int64  `json:"expires_at_unix_ms"`
+}
+
 type Task struct {
 	TaskID            string `json:"task_id"`
 	OwnerID           string `json:"owner_id"`

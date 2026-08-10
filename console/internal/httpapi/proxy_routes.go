@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"encoding/base32"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/onlyboxes/onlyboxes/api/proxytoken"
 	"github.com/onlyboxes/onlyboxes/console/internal/grpcserver"
+	"github.com/onlyboxes/onlyboxes/console/internal/registry"
 )
 
 const (
@@ -38,6 +40,13 @@ type ProxyRouteResolver interface {
 	AuthorizeProxyRoute(ctx context.Context, workerID string, scopedSessionID string, port int, routeExpiresAt time.Time, now time.Time) (grpcserver.ProxyAuthorization, error)
 }
 
+type proxyRouteStore interface {
+	InsertProxyRoute(context.Context, registry.ProxyRoute) (bool, error)
+	DeleteProxyRoute(context.Context, string, string) (bool, error)
+	DeleteExpiredProxyRoutes(context.Context, int64) (int64, error)
+	LoadActiveProxyRoutes(context.Context, int64) ([]registry.ProxyRoute, error)
+}
+
 type proxyRouteRecord struct {
 	RouteKey        string
 	OwnerID         string
@@ -51,6 +60,7 @@ type proxyRouteRecord struct {
 
 type ProxyRouteHandler struct {
 	resolver      ProxyRouteResolver
+	store         proxyRouteStore
 	baseDomain    string
 	publicScheme  string
 	internalToken string
@@ -85,6 +95,7 @@ type listProxyRoutesResponse struct {
 
 func NewProxyRouteHandler(
 	resolver ProxyRouteResolver,
+	store proxyRouteStore,
 	baseDomain string,
 	publicScheme string,
 	internalToken string,
@@ -94,6 +105,9 @@ func NewProxyRouteHandler(
 ) (*ProxyRouteHandler, error) {
 	if resolver == nil {
 		return nil, errors.New("proxy route resolver is required")
+	}
+	if store == nil {
+		return nil, errors.New("proxy route store is required")
 	}
 	normalizedDomain, err := normalizeProxyBaseDomain(baseDomain)
 	if err != nil {
@@ -118,6 +132,7 @@ func NewProxyRouteHandler(
 	}
 	return &ProxyRouteHandler{
 		resolver:      resolver,
+		store:         store,
 		baseDomain:    normalizedDomain,
 		publicScheme:  normalizedScheme,
 		internalToken: internalToken,
@@ -128,6 +143,58 @@ func NewProxyRouteHandler(
 		randomReader:  rand.Reader,
 		routes:        make(map[string]proxyRouteRecord),
 	}, nil
+}
+
+func (h *ProxyRouteHandler) Restore(ctx context.Context, now time.Time) error {
+	if h == nil || h.store == nil {
+		return errors.New("proxy route store is required")
+	}
+	if now.IsZero() {
+		now = h.now()
+	}
+	nowUnixMs := now.UnixMilli()
+	if _, err := h.store.DeleteExpiredProxyRoutes(ctx, nowUnixMs); err != nil {
+		return fmt.Errorf("delete expired proxy routes: %w", err)
+	}
+	persisted, err := h.store.LoadActiveProxyRoutes(ctx, nowUnixMs)
+	if err != nil {
+		return fmt.Errorf("load proxy routes: %w", err)
+	}
+	routes := make(map[string]proxyRouteRecord, len(persisted))
+	for _, route := range persisted {
+		record := proxyRouteRecordFromStore(route)
+		if !validPersistedProxyRoute(record, now) {
+			return errors.New("persisted proxy route is invalid")
+		}
+		if _, duplicate := routes[record.RouteKey]; duplicate {
+			return errors.New("persisted proxy route is duplicated")
+		}
+		routes[record.RouteKey] = record
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.routes) != 0 {
+		return errors.New("proxy routes are already initialized")
+	}
+	h.routes = routes
+	return nil
+}
+
+func (h *ProxyRouteHandler) PruneExpired(ctx context.Context, now time.Time) (int, error) {
+	if h == nil || h.store == nil {
+		return 0, errors.New("proxy route store is required")
+	}
+	if now.IsZero() {
+		now = h.now()
+	}
+	if _, err := h.store.DeleteExpiredProxyRoutes(ctx, now.UnixMilli()); err != nil {
+		return 0, fmt.Errorf("delete expired proxy routes: %w", err)
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.pruneLocked(now), nil
 }
 
 func (h *ProxyRouteHandler) Create(c *gin.Context) {
@@ -170,7 +237,7 @@ func (h *ProxyRouteHandler) Create(c *gin.Context) {
 		return
 	}
 
-	record, err := h.createRoute(ownerID, sessionID, req.Port, target, now)
+	record, err := h.createRoute(c.Request.Context(), ownerID, sessionID, req.Port, target, now)
 	if err != nil {
 		if errors.Is(err, errProxyRouteAccountLimitReached) {
 			c.JSON(http.StatusTooManyRequests, gin.H{"error": "account proxy route limit reached"})
@@ -208,7 +275,16 @@ func (h *ProxyRouteHandler) Delete(c *gin.Context) {
 		return
 	}
 	routeKey := strings.ToLower(strings.TrimSpace(c.Param("route_key")))
-	if !validProxyRouteKey(routeKey) || !h.deleteRoute(ownerID, routeKey, h.now()) {
+	if !validProxyRouteKey(routeKey) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "proxy route not found"})
+		return
+	}
+	deleted, err := h.deleteRoute(c.Request.Context(), ownerID, routeKey, h.now())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete proxy route"})
+		return
+	}
+	if !deleted {
 		c.JSON(http.StatusNotFound, gin.H{"error": "proxy route not found"})
 		return
 	}
@@ -268,6 +344,7 @@ var (
 )
 
 func (h *ProxyRouteHandler) createRoute(
+	ctx context.Context,
 	ownerID string,
 	sessionID string,
 	port int,
@@ -313,6 +390,13 @@ func (h *ProxyRouteHandler) createRoute(
 			CreatedAt:       now,
 			ExpiresAt:       now.Add(h.routeTTL),
 		}
+		inserted, err := h.store.InsertProxyRoute(ctx, proxyRouteRecordToStore(record))
+		if err != nil {
+			return proxyRouteRecord{}, err
+		}
+		if !inserted {
+			continue
+		}
 		h.routes[routeKey] = record
 		return record, nil
 	}
@@ -344,24 +428,30 @@ func (h *ProxyRouteHandler) getRoute(routeKey string, now time.Time) (proxyRoute
 	return record, ok
 }
 
-func (h *ProxyRouteHandler) deleteRoute(ownerID string, routeKey string, now time.Time) bool {
+func (h *ProxyRouteHandler) deleteRoute(ctx context.Context, ownerID string, routeKey string, now time.Time) (bool, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.pruneLocked(now)
 	record, ok := h.routes[routeKey]
 	if !ok || record.OwnerID != ownerID {
-		return false
+		return false, nil
+	}
+	if _, err := h.store.DeleteProxyRoute(ctx, routeKey, ownerID); err != nil {
+		return false, err
 	}
 	delete(h.routes, routeKey)
-	return true
+	return true, nil
 }
 
-func (h *ProxyRouteHandler) pruneLocked(now time.Time) {
+func (h *ProxyRouteHandler) pruneLocked(now time.Time) int {
+	removed := 0
 	for routeKey, record := range h.routes {
 		if !record.ExpiresAt.After(now) {
 			delete(h.routes, routeKey)
+			removed++
 		}
 	}
+	return removed
 }
 
 func (h *ProxyRouteHandler) routeResponse(record proxyRouteRecord) proxyRouteResponse {
@@ -373,6 +463,43 @@ func (h *ProxyRouteHandler) routeResponse(record proxyRouteRecord) proxyRouteRes
 		CreatedAt: record.CreatedAt,
 		ExpiresAt: record.ExpiresAt,
 	}
+}
+
+func proxyRouteRecordToStore(record proxyRouteRecord) registry.ProxyRoute {
+	return registry.ProxyRoute{
+		RouteKey:        record.RouteKey,
+		OwnerID:         record.OwnerID,
+		SessionID:       record.SessionID,
+		ScopedSessionID: record.ScopedSessionID,
+		WorkerID:        record.WorkerID,
+		Port:            record.Port,
+		CreatedAtUnixMs: record.CreatedAt.UnixMilli(),
+		ExpiresAtUnixMs: record.ExpiresAt.UnixMilli(),
+	}
+}
+
+func proxyRouteRecordFromStore(route registry.ProxyRoute) proxyRouteRecord {
+	return proxyRouteRecord{
+		RouteKey:        strings.TrimSpace(route.RouteKey),
+		OwnerID:         strings.TrimSpace(route.OwnerID),
+		SessionID:       strings.TrimSpace(route.SessionID),
+		ScopedSessionID: strings.TrimSpace(route.ScopedSessionID),
+		WorkerID:        strings.TrimSpace(route.WorkerID),
+		Port:            route.Port,
+		CreatedAt:       time.UnixMilli(route.CreatedAtUnixMs),
+		ExpiresAt:       time.UnixMilli(route.ExpiresAtUnixMs),
+	}
+}
+
+func validPersistedProxyRoute(record proxyRouteRecord, now time.Time) bool {
+	return validProxyRouteKey(record.RouteKey) &&
+		record.OwnerID != "" &&
+		record.SessionID != "" && len(record.SessionID) <= 256 &&
+		record.ScopedSessionID != "" &&
+		record.WorkerID != "" &&
+		record.Port >= 1 && record.Port <= 65535 &&
+		record.ExpiresAt.After(record.CreatedAt) &&
+		record.ExpiresAt.After(now)
 }
 
 func (h *ProxyRouteHandler) routeKeyFromHost(rawHost string) (string, bool) {

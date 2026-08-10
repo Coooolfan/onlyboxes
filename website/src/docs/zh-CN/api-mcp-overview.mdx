@@ -669,7 +669,7 @@ Worker 类型：`normal`（对应 `worker-docker`/`worker-boxlite`）、`worker-
 
 #### 公开预览路由
 
-这些管理 API 接受 Dashboard Cookie、Console API Key 或 Dashboard JIT 鉴权。路由按账号隔离并保存在内存中。完整部署流程参考[公开预览代理](/zh-CN/docs/reverse-proxy)。
+这些管理 API 接受 Dashboard Cookie、Console API Key 或 Dashboard JIT 鉴权。路由按账号隔离并持久化到 SQLite。完整部署流程参考[公开预览代理](/zh-CN/docs/reverse-proxy)。
 
 `POST /api/v1/proxy-routes`
 
@@ -723,7 +723,7 @@ Worker 类型：`normal`（对应 `worker-docker`/`worker-boxlite`）、`worker-
 - `204` 删除成功。
 - `404` route 不存在、已过期或属于其他账号。
 
-返回的预览 URL 是匿名地址：任何持有者都能访问 Sandbox 服务，不需要 Onlyboxes Cookie 或 Bearer Token。每个新 HTTP 请求都由 Nginx 调用受保护的 Console 内部接口解析。Docker 与 Boxlite 链路取得全新 15 秒 Route Token；E2B 链路取得当前 sandbox origin 与内部 traffic token，数据面为"用户 → Nginx → E2B"。Token 过期不会终止已接受的 HTTP/SSE/WebSocket 连接。访问 route 不会续租 Sandbox lease。Console 重启会使全部 route 失效。
+返回的预览 URL 是匿名地址：任何持有者都能访问 Sandbox 服务，不需要 Onlyboxes Cookie 或 Bearer Token。每个新 HTTP 请求都由 Nginx 调用受保护的 Console 内部接口解析。Docker 与 Boxlite 链路取得全新 15 秒 Route Token；E2B 链路取得当前 sandbox origin 与内部 traffic token，数据面为"用户 → Nginx → E2B"。Token 过期不会终止已接受的 HTTP/SSE/WebSocket 连接。访问 route 不会续租 Sandbox lease。有效 route 及其原 URL 可跨 Console 重启恢复；在所属 Worker 重连并完成 terminal session 恢复前，新请求暂不可用。
 
 ---
 

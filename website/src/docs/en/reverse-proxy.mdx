@@ -144,8 +144,8 @@ curl -i https://<route-key>.public-preview.example.com/
 
 - Token expiry does not end an accepted HTTP/SSE/WebSocket connection.
 - Route access does not renew the Sandbox lease.
-- Routes are stored in Console memory; Console restart invalidates all routes.
-- Access logs may contain route keys — treat them as credential logs and limit retention and read access.
+- Routes are persisted in Console SQLite. Unexpired routes retain their original URLs across a Console restart, but reject new requests until the owning Worker reconnects and the terminal session finishes recovery.
+- Access logs and SQLite backups may contain route keys — treat them as credentials and limit retention and read access.
 
 ## Related Docs
 

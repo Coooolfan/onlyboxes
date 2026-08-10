@@ -110,12 +110,14 @@ func main() {
 		registryService,
 		cfg.GRPCAddr,
 	)
+	var proxyRouteHandler *httpapi.ProxyRouteHandler
 	if cfg.ProxyEnabled {
 		if len(cfg.ProxyAllowedDirectDomains) == 0 {
 			fatal("CONSOLE_PROXY_ALLOWED_DIRECT_DOMAINS must contain at least one valid domain when proxy is enabled")
 		}
-		proxyRouteHandler, err := httpapi.NewProxyRouteHandler(
+		proxyRouteHandler, err = httpapi.NewProxyRouteHandler(
 			registryService,
+			store,
 			cfg.ProxyPublicBaseDomain,
 			cfg.ProxyPublicScheme,
 			cfg.ProxyInternalAuthToken,
@@ -126,6 +128,12 @@ func main() {
 		if err != nil {
 			fatal("failed to initialize proxy routes", "error", err)
 		}
+		restoreCtx, restoreCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := proxyRouteHandler.Restore(restoreCtx, time.Now()); err != nil {
+			restoreCancel()
+			fatal("failed to restore proxy routes", "error", err)
+		}
+		restoreCancel()
 		httpHandler.SetProxyRouteHandler(proxyRouteHandler)
 	}
 	if cfg.ExportFileEnabled() {
@@ -180,6 +188,9 @@ func main() {
 	defer cancelRun()
 	go startOfflinePruner(runCtx, store, cfg.OfflineTTL)
 	go startTaskPruner(runCtx, registryService)
+	if proxyRouteHandler != nil {
+		go startProxyRoutePruner(runCtx, proxyRouteHandler)
+	}
 
 	grpcListener, err := net.Listen("tcp", cfg.GRPCAddr)
 	if err != nil {
@@ -279,6 +290,29 @@ func startTaskPruner(ctx context.Context, service *grpcserver.RegistryService) {
 			removed := service.PruneExpiredTasks(now)
 			if removed > 0 {
 				slog.Info("pruned expired tasks", "removed", removed)
+			}
+		}
+	}
+}
+
+func startProxyRoutePruner(ctx context.Context, handler *httpapi.ProxyRouteHandler) {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			pruneCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			removed, err := handler.PruneExpired(pruneCtx, now)
+			cancel()
+			if err != nil {
+				slog.Warn("failed to prune expired proxy routes", "error", err)
+				continue
+			}
+			if removed > 0 {
+				slog.Info("pruned expired proxy routes", "removed", removed)
 			}
 		}
 	}

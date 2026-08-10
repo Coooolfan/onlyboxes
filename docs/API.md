@@ -501,7 +501,7 @@ Always returns `410 Gone`:
 
 ### 5.7 Public Preview Routes
 
-These management APIs accept Dashboard cookie, Console API key, or Dashboard JIT authentication. Routes are account-scoped and stored in memory.
+These management APIs accept Dashboard cookie, Console API key, or Dashboard JIT authentication. Routes are account-scoped and persisted in SQLite.
 
 `POST /api/v1/proxy-routes`
 
@@ -555,7 +555,7 @@ Success `200` returns the current account's routes:
 - `204` deleted.
 - `404` missing, expired, or owned by another account.
 
-The returned preview URL is anonymous: anyone holding it can access the Sandbox service without an Onlyboxes Cookie or Bearer token. Nginx resolves every new HTTP request through the protected internal Console endpoint. Docker and Boxlite receive a fresh 15-second Route Token for the Worker hop; E2B returns the current sandbox origin and an internal traffic token so the data path is browser → Nginx → E2B. Token expiry does not end an accepted HTTP/SSE/WebSocket connection. Route access does not renew the Sandbox lease. Console restart invalidates all routes.
+The returned preview URL is anonymous: anyone holding it can access the Sandbox service without an Onlyboxes Cookie or Bearer token. Nginx resolves every new HTTP request through the protected internal Console endpoint. Docker and Boxlite receive a fresh 15-second Route Token for the Worker hop; E2B returns the current sandbox origin and an internal traffic token so the data path is browser → Nginx → E2B. Token expiry does not end an accepted HTTP/SSE/WebSocket connection. Route access does not renew the Sandbox lease. Active routes and their original URLs survive a Console restart; new requests remain unavailable until the owning Worker reconnects and the terminal session finishes recovery.
 
 ## 6. Execution Command APIs (Bearer Token)
 

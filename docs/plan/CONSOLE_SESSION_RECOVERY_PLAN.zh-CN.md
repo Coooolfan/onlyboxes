@@ -20,10 +20,11 @@ Console 持久化以下稳定事实：
 - `ready`、`unavailable`、`reconciling` 恢复状态；
 - provisional route、reservation ID 和 provisional use 计数；
 - Worker connection session、capability inflight 和恢复报告幂等缓存；
-- terminal session 容量快照；
-- public preview route。
+- terminal session 容量快照。
 
 SQLite 是 confirmed route 与绝对 lease 的持久化来源；Worker 后端是 sandbox、文件系统和进程状态的来源。Console 不持久化容器 ID、Box ID、E2B sandbox ID、envd token 或其他后端凭据。
+
+Public preview route 也持久化到 SQLite。Console 启动时删除已过期的 preview route 并恢复有效 route 的原 URL；在对应 terminal session 和 Worker 完成恢复前，公开入口暂时不可用。
 
 ## Confirmed route 写入
 
@@ -69,7 +70,7 @@ Console 在启动监听前执行 terminal route 恢复：
 - 已有 confirmed route 始终固定到原 Worker，不因容量或离线状态改派。
 - `MISSING`、`INVALID` 或 lease 到期会删除 route；后续请求遵循正常的 `session_not_found` 或显式创建语义。
 - Console 重启时正在执行的命令、输出流和非终态 task 不恢复。
-- Public preview route 不随 terminal route 恢复；terminal session 恢复后可以创建新的 preview route。
+- Public preview route 在启动时独立恢复；对应 terminal route 与 Worker 恢复完成后，原公开 URL 重新可用。
 
 ## 删除与清理
 

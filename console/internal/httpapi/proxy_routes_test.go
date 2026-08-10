@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/onlyboxes/onlyboxes/api/proxytoken"
 	"github.com/onlyboxes/onlyboxes/console/internal/grpcserver"
+	"github.com/onlyboxes/onlyboxes/console/internal/testutil/registrytest"
 )
 
 const (
@@ -110,7 +111,7 @@ func TestProxyRouteConfiguredHTTPURL(t *testing.T) {
 			ScopedSessionID: "obx:owner-a:session-a",
 		},
 	}
-	handler, err := NewProxyRouteHandler(resolver, "public-preview.localhost", "http", "nginx-secret", time.Hour, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession)
+	handler, err := NewProxyRouteHandler(resolver, registrytest.NewStore(t), "public-preview.localhost", "http", "nginx-secret", time.Hour, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession)
 	if err != nil {
 		t.Fatalf("new localhost proxy route handler: %v", err)
 	}
@@ -122,6 +123,156 @@ func TestProxyRouteConfiguredHTTPURL(t *testing.T) {
 	if created.URL != wantURL {
 		t.Fatalf("unexpected localhost public URL %q, want %q", created.URL, wantURL)
 	}
+}
+
+func TestProxyRouteRestorePreservesURLAndDelete(t *testing.T) {
+	now := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
+	store := registrytest.NewStore(t)
+	resolver := &proxyRouteResolverStub{
+		target: grpcserver.ProxySessionTarget{
+			WorkerID:        "worker-1",
+			ScopedSessionID: "obx:owner-a:session-a",
+		},
+		authorization: grpcserver.ProxyAuthorization{Upstream: "http://10.0.0.2:8091", Token: "route-token"},
+	}
+	first := newProxyRouteHandlerWithStoreForTest(t, resolver, store, now, time.Hour)
+	created := createProxyRouteForTest(t, newProxyRouteTestRouter(first), "owner-a", `{"session_id":"session-a","port":8080}`)
+
+	restoredResolver := &proxyRouteResolverStub{
+		authorization: grpcserver.ProxyAuthorization{Upstream: "http://10.0.0.2:8091", Token: "new-route-token"},
+	}
+	restored := newProxyRouteHandlerWithStoreForTest(t, restoredResolver, store, now.Add(time.Minute), time.Hour)
+	restoredRouter := newProxyRouteTestRouter(restored)
+	listed := listProxyRoutesForTest(t, restoredRouter, "owner-a")
+	if listed.Total != 1 || len(listed.Items) != 1 || listed.Items[0].RouteKey != created.RouteKey || listed.Items[0].URL != created.URL {
+		t.Fatalf("restored route changed: created=%#v listed=%#v", created, listed)
+	}
+
+	resolve := httptest.NewRequest(http.MethodGet, "/internal/v1/proxy/resolve", nil)
+	resolve.Header.Set(proxyInternalAuthHeader, "nginx-secret")
+	resolve.Header.Set(proxyOriginalHostHeader, created.RouteKey+".public-preview.example.com")
+	resolveResponse := httptest.NewRecorder()
+	restoredRouter.ServeHTTP(resolveResponse, resolve)
+	if resolveResponse.Code != http.StatusNoContent || restoredResolver.authorizedWorkerID != "worker-1" || restoredResolver.authorizedSessionID != "obx:owner-a:session-a" {
+		t.Fatalf("restored route did not resolve: code=%d worker=%q session=%q", resolveResponse.Code, restoredResolver.authorizedWorkerID, restoredResolver.authorizedSessionID)
+	}
+
+	deleteRequest := httptest.NewRequest(http.MethodDelete, "/api/v1/proxy-routes/"+created.RouteKey, nil)
+	deleteRequest.Header.Set("X-Test-Owner", "owner-a")
+	deleteResponse := httptest.NewRecorder()
+	restoredRouter.ServeHTTP(deleteResponse, deleteRequest)
+	if deleteResponse.Code != http.StatusNoContent {
+		t.Fatalf("delete restored route expected 204, got %d", deleteResponse.Code)
+	}
+
+	afterDelete := newProxyRouteHandlerWithStoreForTest(t, restoredResolver, store, now.Add(2*time.Minute), time.Hour)
+	if listed := listProxyRoutesForTest(t, newProxyRouteTestRouter(afterDelete), "owner-a"); listed.Total != 0 {
+		t.Fatalf("deleted route was restored: %#v", listed)
+	}
+}
+
+func TestProxyRouteRestoreDeletesExpiredRows(t *testing.T) {
+	now := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
+	store := registrytest.NewStore(t)
+	resolver := &proxyRouteResolverStub{
+		target: grpcserver.ProxySessionTarget{
+			WorkerID:        "worker-1",
+			ScopedSessionID: "obx:owner-a:session-a",
+		},
+	}
+	first := newProxyRouteHandlerWithStoreForTest(t, resolver, store, now, time.Hour)
+	createProxyRouteForTest(t, newProxyRouteTestRouter(first), "owner-a", `{"session_id":"session-a","port":8080}`)
+
+	restored := newProxyRouteHandlerWithStoreForTest(t, resolver, store, now.Add(2*time.Hour), time.Hour)
+	if listed := listProxyRoutesForTest(t, newProxyRouteTestRouter(restored), "owner-a"); listed.Total != 0 {
+		t.Fatalf("expired route was restored: %#v", listed)
+	}
+	persisted, err := store.LoadActiveProxyRoutes(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("load persisted proxy routes: %v", err)
+	}
+	if len(persisted) != 0 {
+		t.Fatalf("expired proxy route row was not deleted: %#v", persisted)
+	}
+}
+
+func TestProxyRoutePruneDeletesExpiredRowsAndMemory(t *testing.T) {
+	now := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
+	store := registrytest.NewStore(t)
+	resolver := &proxyRouteResolverStub{
+		target: grpcserver.ProxySessionTarget{
+			WorkerID:        "worker-1",
+			ScopedSessionID: "obx:owner-a:session-a",
+		},
+	}
+	handler := newProxyRouteHandlerWithStoreForTest(t, resolver, store, now, time.Hour)
+	created := createProxyRouteForTest(t, newProxyRouteTestRouter(handler), "owner-a", `{"session_id":"session-a","port":8080}`)
+
+	removed, err := handler.PruneExpired(context.Background(), now.Add(2*time.Hour))
+	if err != nil {
+		t.Fatalf("prune expired proxy routes: %v", err)
+	}
+	if removed != 1 {
+		t.Fatalf("pruned routes=%d, want 1", removed)
+	}
+	if _, exists := handler.routes[created.RouteKey]; exists {
+		t.Fatal("expired route remained in memory")
+	}
+	persisted, err := store.LoadActiveProxyRoutes(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("load persisted proxy routes: %v", err)
+	}
+	if len(persisted) != 0 {
+		t.Fatalf("expired proxy route row was not pruned: %#v", persisted)
+	}
+}
+
+func TestProxyRoutePersistenceFailuresDoNotChangeMemory(t *testing.T) {
+	now := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
+	newResolver := func() *proxyRouteResolverStub {
+		return &proxyRouteResolverStub{
+			target: grpcserver.ProxySessionTarget{
+				WorkerID:        "worker-1",
+				ScopedSessionID: "obx:owner-a:session-a",
+			},
+		}
+	}
+
+	t.Run("create", func(t *testing.T) {
+		store := registrytest.NewStore(t)
+		handler := newProxyRouteHandlerWithStoreForTest(t, newResolver(), store, now, time.Hour)
+		if err := store.Persistence().Close(); err != nil {
+			t.Fatalf("close persistence: %v", err)
+		}
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/proxy-routes", strings.NewReader(`{"session_id":"session-a","port":8080}`))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("X-Test-Owner", "owner-a")
+		response := httptest.NewRecorder()
+		newProxyRouteTestRouter(handler).ServeHTTP(response, request)
+		if response.Code != http.StatusInternalServerError || len(handler.routes) != 0 {
+			t.Fatalf("failed persistence changed memory: code=%d routes=%#v", response.Code, handler.routes)
+		}
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		store := registrytest.NewStore(t)
+		handler := newProxyRouteHandlerWithStoreForTest(t, newResolver(), store, now, time.Hour)
+		router := newProxyRouteTestRouter(handler)
+		created := createProxyRouteForTest(t, router, "owner-a", `{"session_id":"session-a","port":8080}`)
+		if err := store.Persistence().Close(); err != nil {
+			t.Fatalf("close persistence: %v", err)
+		}
+		request := httptest.NewRequest(http.MethodDelete, "/api/v1/proxy-routes/"+created.RouteKey, nil)
+		request.Header.Set("X-Test-Owner", "owner-a")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusInternalServerError {
+			t.Fatalf("delete with failed persistence expected 500, got %d", response.Code)
+		}
+		if _, exists := handler.routes[created.RouteKey]; !exists {
+			t.Fatal("failed persistence removed route from memory")
+		}
+	})
 }
 
 func TestProxyRouteManagementRequiresAuthentication(t *testing.T) {
@@ -316,42 +467,54 @@ func TestProxyRouteInternalResolve(t *testing.T) {
 
 func TestNewProxyRouteHandlerRejectsInvalidConfiguration(t *testing.T) {
 	resolver := &proxyRouteResolverStub{}
+	store := registrytest.NewStore(t)
+	if _, err := NewProxyRouteHandler(resolver, nil, "preview.example.com", "https", "secret", time.Hour, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession); err == nil {
+		t.Fatalf("expected missing proxy route store to fail")
+	}
 	tooLongDomain := strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "." + strings.Repeat("d", 35)
 	for _, domain := range []string{"", "localhost", "https://preview.example.com", "*.preview.example.com", "-bad.example.com", tooLongDomain} {
-		if _, err := NewProxyRouteHandler(resolver, domain, "https", "secret", time.Hour, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession); err == nil {
+		if _, err := NewProxyRouteHandler(resolver, store, domain, "https", "secret", time.Hour, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession); err == nil {
 			t.Fatalf("expected invalid domain %q to fail", domain)
 		}
 	}
 	for _, scheme := range []string{"", "ftp"} {
-		if _, err := NewProxyRouteHandler(resolver, "preview.example.com", scheme, "secret", time.Hour, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession); err == nil {
+		if _, err := NewProxyRouteHandler(resolver, store, "preview.example.com", scheme, "secret", time.Hour, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession); err == nil {
 			t.Fatalf("expected invalid public scheme %q to fail", scheme)
 		}
 	}
-	if _, err := NewProxyRouteHandler(resolver, "preview.example.com", "https", "", time.Hour, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession); err == nil {
+	if _, err := NewProxyRouteHandler(resolver, store, "preview.example.com", "https", "", time.Hour, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession); err == nil {
 		t.Fatalf("expected missing internal token to fail")
 	}
-	if _, err := NewProxyRouteHandler(resolver, "preview.example.com", "https", "secret", 0, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession); err == nil {
+	if _, err := NewProxyRouteHandler(resolver, store, "preview.example.com", "https", "secret", 0, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession); err == nil {
 		t.Fatalf("expected invalid route TTL to fail")
 	}
-	if _, err := NewProxyRouteHandler(resolver, "preview.example.com", "https", "secret", proxyRouteMaxTTL+time.Second, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession); err == nil {
+	if _, err := NewProxyRouteHandler(resolver, store, "preview.example.com", "https", "secret", proxyRouteMaxTTL+time.Second, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession); err == nil {
 		t.Fatalf("expected route TTL above maximum to fail")
 	}
-	if _, err := NewProxyRouteHandler(resolver, "preview.example.com", "https", "secret", time.Hour, 0, testProxyRouteMaxPerSession); err == nil {
+	if _, err := NewProxyRouteHandler(resolver, store, "preview.example.com", "https", "secret", time.Hour, 0, testProxyRouteMaxPerSession); err == nil {
 		t.Fatalf("expected invalid account route limit to fail")
 	}
-	if _, err := NewProxyRouteHandler(resolver, "preview.example.com", "https", "secret", time.Hour, testProxyRouteMaxPerAccount, 0); err == nil {
+	if _, err := NewProxyRouteHandler(resolver, store, "preview.example.com", "https", "secret", time.Hour, testProxyRouteMaxPerAccount, 0); err == nil {
 		t.Fatalf("expected invalid session route limit to fail")
 	}
 }
 
 func newProxyRouteHandlerForTest(t *testing.T, resolver ProxyRouteResolver, now time.Time, ttl time.Duration) *ProxyRouteHandler {
 	t.Helper()
-	handler, err := NewProxyRouteHandler(resolver, "public-preview.example.com", "https", "nginx-secret", ttl, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession)
+	return newProxyRouteHandlerWithStoreForTest(t, resolver, registrytest.NewStore(t), now, ttl)
+}
+
+func newProxyRouteHandlerWithStoreForTest(t *testing.T, resolver ProxyRouteResolver, store proxyRouteStore, now time.Time, ttl time.Duration) *ProxyRouteHandler {
+	t.Helper()
+	handler, err := NewProxyRouteHandler(resolver, store, "public-preview.example.com", "https", "nginx-secret", ttl, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession)
 	if err != nil {
 		t.Fatalf("new proxy route handler: %v", err)
 	}
 	handler.nowFn = func() time.Time { return now }
 	handler.randomReader = bytes.NewReader(bytes.Repeat([]byte{0x11}, proxyRouteKeyBytes*proxyRouteCreateAttempts))
+	if err := handler.Restore(context.Background(), now); err != nil {
+		t.Fatalf("restore proxy routes: %v", err)
+	}
 	return handler
 }
 

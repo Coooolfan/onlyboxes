@@ -17,7 +17,7 @@ https://<routeKey>.public-preview.example.com
 - HTTP、SSE、WebSocket；
 - Worker 固定代理端口，不映射随机宿主机端口；
 - 代理访问不续租，lease 到期后销毁 Sandbox 并断开连接；
-- route 默认保留 24 小时、最长 7 天，Console 重启后失效。
+- route 默认保留 24 小时、最长 7 天，并持久化到 SQLite；Console 重启后恢复原 URL。
 
 ## 数据流
 
@@ -33,7 +33,7 @@ Browser
 
 ## Console
 
-维护内存路由：
+将 route 持久化到 SQLite，并维护内存索引：
 
 ```text
 routeKey -> ownerID, sessionID, port, workerID, expiresAt

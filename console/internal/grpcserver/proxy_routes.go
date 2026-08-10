@@ -285,7 +285,7 @@ func (s *RegistryService) proxyTerminalSessionWorker(scopedSessionID string, now
 	s.terminalRoutesMu.RLock()
 	route, ok := s.terminalSessionToNode[strings.TrimSpace(scopedSessionID)]
 	s.terminalRoutesMu.RUnlock()
-	if !ok || route.ReservationID != 0 || strings.TrimSpace(route.NodeID) == "" {
+	if !ok || route.ReservationID != 0 || route.RecoveryState != terminalSessionRecoveryReady || strings.TrimSpace(route.NodeID) == "" {
 		return "", false
 	}
 	if s.terminalRouteTTL > 0 && now.UnixMilli()-route.LastUsedUnixMs >= s.terminalRouteTTL.Milliseconds() {

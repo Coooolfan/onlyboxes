@@ -8,6 +8,7 @@ sql:
       - "db/migrations/00004_worker_sys_owner_claims.sql"
       - "db/migrations/00005_api_keys.sql"
       - "db/migrations/00006_terminal_session_routes.sql"
+      - "db/migrations/00007_proxy_routes.sql"
     queries:
       - "db/queries/accounts.sql"
       - "db/queries/workers.sql"
@@ -16,6 +17,7 @@ sql:
       - "db/queries/tasks.sql"
       - "db/queries/maintenance.sql"
       - "db/queries/terminal_session_routes.sql"
+      - "db/queries/proxy_routes.sql"
     gen:
       go:
         package: "sqlc"
