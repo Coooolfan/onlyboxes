@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/onlyboxes/onlyboxes/api/proxytoken"
 	"github.com/onlyboxes/onlyboxes/console/internal/grpcserver"
+	"github.com/onlyboxes/onlyboxes/console/internal/registry"
 	"github.com/onlyboxes/onlyboxes/console/internal/testutil/registrytest"
 )
 
@@ -112,7 +113,7 @@ func TestProxyRouteConfiguredHTTPURL(t *testing.T) {
 			ScopedSessionID: "obx:owner-a:session-a",
 		},
 	}
-	handler, err := NewProxyRouteHandler(resolver, registrytest.NewStore(t), "public-preview.localhost", "http", "nginx-secret", time.Hour, proxyRouteKeyMinLength, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession)
+	handler, err := NewProxyRouteHandler(resolver, newProxyRouteStoreForTest(t), "public-preview.localhost", "http", "nginx-secret", time.Hour, proxyRouteKeyMinLength, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession)
 	if err != nil {
 		t.Fatalf("new localhost proxy route handler: %v", err)
 	}
@@ -131,7 +132,7 @@ func TestProxyRouteConfiguredHTTPURL(t *testing.T) {
 
 func TestProxyRouteRestorePreservesURLAndDelete(t *testing.T) {
 	now := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
-	store := registrytest.NewStore(t)
+	store := newProxyRouteStoreForTest(t)
 	resolver := &proxyRouteResolverStub{
 		target: grpcserver.ProxySessionTarget{
 			WorkerID:        "worker-1",
@@ -177,7 +178,7 @@ func TestProxyRouteRestorePreservesURLAndDelete(t *testing.T) {
 
 func TestProxyRouteRestoreDeletesExpiredRows(t *testing.T) {
 	now := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
-	store := registrytest.NewStore(t)
+	store := newProxyRouteStoreForTest(t)
 	resolver := &proxyRouteResolverStub{
 		target: grpcserver.ProxySessionTarget{
 			WorkerID:        "worker-1",
@@ -202,7 +203,7 @@ func TestProxyRouteRestoreDeletesExpiredRows(t *testing.T) {
 
 func TestProxyRoutePruneDeletesExpiredRowsAndMemory(t *testing.T) {
 	now := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
-	store := registrytest.NewStore(t)
+	store := newProxyRouteStoreForTest(t)
 	resolver := &proxyRouteResolverStub{
 		target: grpcserver.ProxySessionTarget{
 			WorkerID:        "worker-1",
@@ -243,7 +244,7 @@ func TestProxyRoutePersistenceFailuresDoNotChangeMemory(t *testing.T) {
 	}
 
 	t.Run("create", func(t *testing.T) {
-		store := registrytest.NewStore(t)
+		store := newProxyRouteStoreForTest(t)
 		handler := newProxyRouteHandlerWithStoreForTest(t, newResolver(), store, now, time.Hour)
 		if err := store.Persistence().Close(); err != nil {
 			t.Fatalf("close persistence: %v", err)
@@ -259,7 +260,7 @@ func TestProxyRoutePersistenceFailuresDoNotChangeMemory(t *testing.T) {
 	})
 
 	t.Run("delete", func(t *testing.T) {
-		store := registrytest.NewStore(t)
+		store := newProxyRouteStoreForTest(t)
 		handler := newProxyRouteHandlerWithStoreForTest(t, newResolver(), store, now, time.Hour)
 		router := newProxyRouteTestRouter(handler)
 		created := createProxyRouteForTest(t, router, "owner-a", `{"session_id":"session-a","port":8080}`)
@@ -483,7 +484,7 @@ func TestProxyRouteInternalResolve(t *testing.T) {
 
 func TestNewProxyRouteHandlerRejectsInvalidConfiguration(t *testing.T) {
 	resolver := &proxyRouteResolverStub{}
-	store := registrytest.NewStore(t)
+	store := newProxyRouteStoreForTest(t)
 	if _, err := NewProxyRouteHandler(resolver, nil, "preview.example.com", "https", "secret", time.Hour, testProxyRouteKeyLength, testProxyRouteMaxPerAccount, testProxyRouteMaxPerSession); err == nil {
 		t.Fatalf("expected missing proxy route store to fail")
 	}
@@ -522,7 +523,15 @@ func TestNewProxyRouteHandlerRejectsInvalidConfiguration(t *testing.T) {
 
 func newProxyRouteHandlerForTest(t *testing.T, resolver ProxyRouteResolver, now time.Time, ttl time.Duration) *ProxyRouteHandler {
 	t.Helper()
-	return newProxyRouteHandlerWithStoreForTest(t, resolver, registrytest.NewStore(t), now, ttl)
+	return newProxyRouteHandlerWithStoreForTest(t, resolver, newProxyRouteStoreForTest(t), now, ttl)
+}
+
+func newProxyRouteStoreForTest(t *testing.T) *registry.Store {
+	t.Helper()
+	store := registrytest.NewStore(t)
+	seedTestAccount(t, store.Persistence().Queries, "owner-a", "proxy-owner-a", "owner-a-password", false)
+	seedTestAccount(t, store.Persistence().Queries, "owner-b", "proxy-owner-b", "owner-b-password", false)
+	return store
 }
 
 func newProxyRouteHandlerWithStoreForTest(t *testing.T, resolver ProxyRouteResolver, store proxyRouteStore, now time.Time, ttl time.Duration) *ProxyRouteHandler {

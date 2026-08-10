@@ -14,6 +14,7 @@ import (
 
 	"github.com/onlyboxes/onlyboxes/console/internal/buildinfo"
 	"github.com/onlyboxes/onlyboxes/console/internal/persistence"
+	"github.com/onlyboxes/onlyboxes/console/internal/registry"
 	"github.com/onlyboxes/onlyboxes/console/internal/testutil/registrytest"
 )
 
@@ -632,11 +633,19 @@ func TestConsoleAuthDeleteAccountGuardsAndCascade(t *testing.T) {
 	seedTestAccount(t, db.Queries, testDashboardAccountID, testDashboardUsername, testDashboardPassword, true)
 	seedTestAccount(t, db.Queries, "acc-admin-second", "admin-second", "admin-second-pass", true)
 
-	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, nil, nil, "")
+	store, err := registry.NewStoreWithPersistence(db)
+	if err != nil {
+		t.Fatalf("new registry store: %v", err)
+	}
+	handler := NewWorkerHandler(store, 15*time.Second, nil, nil, nil, "")
 	auth, err := NewConsoleAuth(db.Queries, true)
 	if err != nil {
 		t.Fatalf("new console auth: %v", err)
 	}
+	now := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
+	proxyHandler := newProxyRouteHandlerWithStoreForTest(t, &proxyRouteResolverStub{}, store, now, time.Hour)
+	handler.SetProxyRouteHandler(proxyHandler)
+	auth.SetProxyRouteRevoker(proxyHandler)
 	mcpAuth, err := NewMCPAuthWithPersistence(db)
 	if err != nil {
 		t.Fatalf("new mcp auth: %v", err)
@@ -666,6 +675,10 @@ func TestConsoleAuthDeleteAccountGuardsAndCascade(t *testing.T) {
 		t.Fatalf("seed member token failed: %v", err)
 	}
 	memberCookie := loginSessionCookieFor(t, router, "member-to-delete", "member-pass")
+	memberRouteKey := "ceirceirceirceirceirceirce"
+	adminRouteKey := "deirceirceirceirceirceirce"
+	seedProxyRouteForAccount(t, store, proxyHandler, memberRouteKey, memberID, now)
+	seedProxyRouteForAccount(t, store, proxyHandler, adminRouteKey, testDashboardAccountID, now)
 
 	deleteSelfReq := httptest.NewRequest(http.MethodDelete, "/api/v1/console/accounts/"+testDashboardAccountID, nil)
 	deleteSelfReq.AddCookie(adminCookie)
@@ -673,6 +686,9 @@ func TestConsoleAuthDeleteAccountGuardsAndCascade(t *testing.T) {
 	router.ServeHTTP(deleteSelfRec, deleteSelfReq)
 	if deleteSelfRec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 for deleting self, got %d body=%s", deleteSelfRec.Code, deleteSelfRec.Body.String())
+	}
+	if _, ok := proxyHandler.getRoute(adminRouteKey, now); !ok {
+		t.Fatal("rejected self-deletion revoked account proxy route")
 	}
 
 	deleteAdminReq := httptest.NewRequest(http.MethodDelete, "/api/v1/console/accounts/acc-admin-second", nil)
@@ -690,6 +706,9 @@ func TestConsoleAuthDeleteAccountGuardsAndCascade(t *testing.T) {
 	if deleteMissingRec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for deleting missing account, got %d body=%s", deleteMissingRec.Code, deleteMissingRec.Body.String())
 	}
+	if _, ok := proxyHandler.getRoute(memberRouteKey, now); !ok {
+		t.Fatal("rejected account deletion changed unrelated proxy route")
+	}
 
 	deleteMemberReq := httptest.NewRequest(http.MethodDelete, "/api/v1/console/accounts/"+memberID, nil)
 	deleteMemberReq.AddCookie(adminCookie)
@@ -697,6 +716,12 @@ func TestConsoleAuthDeleteAccountGuardsAndCascade(t *testing.T) {
 	router.ServeHTTP(deleteMemberRec, deleteMemberReq)
 	if deleteMemberRec.Code != http.StatusNoContent {
 		t.Fatalf("expected 204 for deleting member account, got %d body=%s", deleteMemberRec.Code, deleteMemberRec.Body.String())
+	}
+	if _, ok := proxyHandler.getRoute(memberRouteKey, now); ok {
+		t.Fatal("deleted member proxy route remained in memory")
+	}
+	if _, ok := proxyHandler.getRoute(adminRouteKey, now); !ok {
+		t.Fatal("deleting member revoked another account's proxy route")
 	}
 
 	memberSessionReq := httptest.NewRequest(http.MethodGet, "/api/v1/console/tokens", nil)
@@ -722,6 +747,51 @@ func TestConsoleAuthDeleteAccountGuardsAndCascade(t *testing.T) {
 	if len(remainingTokens) != 0 {
 		t.Fatalf("expected member tokens to be deleted by cascade, got %d", len(remainingTokens))
 	}
+	persistedRoutes, err := store.LoadActiveProxyRoutes(ctx, 0)
+	if err != nil {
+		t.Fatalf("load proxy routes after account delete: %v", err)
+	}
+	if len(persistedRoutes) != 1 || persistedRoutes[0].RouteKey != adminRouteKey {
+		t.Fatalf("unexpected proxy routes after account delete: %#v", persistedRoutes)
+	}
+	restored := newProxyRouteHandlerWithStoreForTest(t, &proxyRouteResolverStub{}, store, now.Add(time.Minute), time.Hour)
+	if _, ok := restored.getRoute(memberRouteKey, now.Add(time.Minute)); ok {
+		t.Fatal("deleted member proxy route was restored")
+	}
+	if _, ok := restored.getRoute(adminRouteKey, now.Add(time.Minute)); !ok {
+		t.Fatal("another account's proxy route was not restored")
+	}
+}
+
+func seedProxyRouteForAccount(
+	t *testing.T,
+	store *registry.Store,
+	handler *ProxyRouteHandler,
+	routeKey string,
+	ownerID string,
+	now time.Time,
+) {
+	t.Helper()
+	record := proxyRouteRecord{
+		RouteKey:        routeKey,
+		OwnerID:         ownerID,
+		SessionID:       "session-" + ownerID,
+		ScopedSessionID: "scoped-" + ownerID,
+		WorkerID:        "worker-1",
+		Port:            8080,
+		CreatedAt:       now,
+		ExpiresAt:       now.Add(time.Hour),
+	}
+	inserted, err := store.InsertProxyRoute(context.Background(), proxyRouteRecordToStore(record))
+	if err != nil {
+		t.Fatalf("insert proxy route: %v", err)
+	}
+	if !inserted {
+		t.Fatalf("proxy route %q was not inserted", routeKey)
+	}
+	handler.mu.Lock()
+	handler.routes[routeKey] = record
+	handler.mu.Unlock()
 }
 
 func loginSessionCookieFor(t *testing.T, router http.Handler, username string, password string) *http.Cookie {

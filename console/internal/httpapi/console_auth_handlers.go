@@ -289,6 +289,9 @@ func (a *ConsoleAuth) DeleteAccount(c *gin.Context) {
 		return
 	}
 
+	if a.proxyRouteRevoker != nil {
+		a.proxyRouteRevoker.RevokeOwnerRoutes(targetAccountID)
+	}
 	a.deleteSessionsByAccountID(targetAccountID)
 	c.Status(http.StatusNoContent)
 }

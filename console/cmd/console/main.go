@@ -161,6 +161,9 @@ func main() {
 		fatal("failed to initialize console auth", "error", err)
 	}
 	consoleAuth.SetPersistenceDB(db)
+	if proxyRouteHandler != nil {
+		consoleAuth.SetProxyRouteRevoker(proxyRouteHandler)
+	}
 	if trimmedDashboardKey := strings.TrimSpace(cfg.DashboardJITSigningKey); trimmedDashboardKey != "" {
 		if trimmedDashboardKey == strings.TrimSpace(cfg.JITSigningKey) {
 			fatal("CONSOLE_DASHBOARD_JIT_SIGNING_KEY must differ from CONSOLE_JIT_SIGNING_KEY")

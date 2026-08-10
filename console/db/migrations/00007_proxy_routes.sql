@@ -1,7 +1,7 @@
 -- +goose Up
 CREATE TABLE proxy_routes (
     route_key TEXT PRIMARY KEY,
-    owner_id TEXT NOT NULL,
+    owner_id TEXT NOT NULL REFERENCES accounts(account_id) ON DELETE CASCADE,
     session_id TEXT NOT NULL,
     scoped_session_id TEXT NOT NULL,
     worker_id TEXT NOT NULL,

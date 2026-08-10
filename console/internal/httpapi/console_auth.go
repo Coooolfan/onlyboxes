@@ -22,9 +22,9 @@ const (
 	maxAccountUsernameRunes         = 64
 	initialAdminAPIKeyName          = "initial-admin"
 
-	requestAccountIDGinKey       = "request_account_id"
-	requestAccountUsernameGinKey = "request_account_username"
-	requestAccountIsAdminGinKey  = "request_account_is_admin"
+	requestAccountIDGinKey        = "request_account_id"
+	requestAccountUsernameGinKey  = "request_account_username"
+	requestAccountIsAdminGinKey   = "request_account_is_admin"
 	requestAuthMethodGinKey       = "request_auth_method"
 	requestAuthMethodCookie       = "cookie"
 	requestAuthMethodAPIKey       = "api_key"
@@ -85,14 +85,19 @@ type consoleAccountContext struct {
 }
 
 type ConsoleAuth struct {
-	queries             *sqlc.Queries
-	db                  *persistence.DB
+	queries              *sqlc.Queries
+	db                   *persistence.DB
 	dashboardJITVerifier *jitTokenVerifier
-	registrationEnabled bool
+	registrationEnabled  bool
+	proxyRouteRevoker    proxyRouteOwnerRevoker
 
 	sessionMu sync.Mutex
 	sessions  map[string]accountSessionState
 	nowFn     func() time.Time
+}
+
+type proxyRouteOwnerRevoker interface {
+	RevokeOwnerRoutes(ownerID string) int
 }
 
 type loginRequest struct {
@@ -181,6 +186,13 @@ func (a *ConsoleAuth) SetPersistenceDB(db *persistence.DB) {
 		return
 	}
 	a.db = db
+}
+
+func (a *ConsoleAuth) SetProxyRouteRevoker(revoker proxyRouteOwnerRevoker) {
+	if a == nil {
+		return
+	}
+	a.proxyRouteRevoker = revoker
 }
 
 // SetDashboardJITSigningKey enables dashboard JIT authentication.

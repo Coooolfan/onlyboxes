@@ -204,6 +204,27 @@ func (h *ProxyRouteHandler) PruneExpired(ctx context.Context, now time.Time) (in
 	return h.pruneLocked(now), nil
 }
 
+func (h *ProxyRouteHandler) RevokeOwnerRoutes(ownerID string) int {
+	if h == nil {
+		return 0
+	}
+	ownerID = strings.TrimSpace(ownerID)
+	if ownerID == "" {
+		return 0
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	removed := 0
+	for routeKey, record := range h.routes {
+		if record.OwnerID == ownerID {
+			delete(h.routes, routeKey)
+			removed++
+		}
+	}
+	return removed
+}
+
 func (h *ProxyRouteHandler) Create(c *gin.Context) {
 	ownerID, ok := proxyRouteOwnerID(c)
 	if !ok {
