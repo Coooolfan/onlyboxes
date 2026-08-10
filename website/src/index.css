@@ -44,6 +44,29 @@ pre::-webkit-scrollbar-thumb:hover {
   background: var(--ob-pre-scrollbar-hover);
 }
 
+/* Desktop docs navigation scrollbar */
+.docs-scrollbar {
+  scrollbar-color: var(--ob-docs-scrollbar) transparent;
+  scrollbar-width: thin;
+}
+
+.docs-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.docs-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.docs-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--ob-docs-scrollbar);
+  border-radius: 999px;
+}
+
+.docs-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--ob-docs-scrollbar-hover);
+}
+
 /* Code block selection */
 pre ::selection {
   background: var(--ob-pre-selection);
@@ -63,6 +86,8 @@ pre ::selection {
   --ob-pre-text: #24292f;
   --ob-pre-scrollbar: rgba(31, 35, 40, 0.18);
   --ob-pre-scrollbar-hover: rgba(31, 35, 40, 0.3);
+  --ob-docs-scrollbar: rgba(23, 23, 23, 0.14);
+  --ob-docs-scrollbar-hover: rgba(23, 23, 23, 0.28);
   --ob-pre-selection: rgba(9, 105, 218, 0.22);
   --ob-blockquote-bg: #fafafa;
   --ob-blockquote-border: #e5e5e5;
@@ -90,6 +115,8 @@ pre ::selection {
   --ob-pre-text: #e5e5e5;
   --ob-pre-scrollbar: rgba(255, 255, 255, 0.15);
   --ob-pre-scrollbar-hover: rgba(255, 255, 255, 0.25);
+  --ob-docs-scrollbar: rgba(255, 255, 255, 0.14);
+  --ob-docs-scrollbar-hover: rgba(255, 255, 255, 0.28);
   --ob-pre-selection: rgba(255, 255, 255, 0.2);
   --ob-blockquote-bg: #141414;
   --ob-blockquote-border: #262626;

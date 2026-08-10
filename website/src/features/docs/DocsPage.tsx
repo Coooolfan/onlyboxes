@@ -438,7 +438,7 @@ export function DocsPage({ locale }: { locale: DocsLocale }) {
       </header>
 
       <div className="mx-auto flex max-w-7xl gap-8 px-4 py-8 sm:px-6 lg:px-8">
-        <aside className="sticky top-24 hidden h-[calc(100vh-7rem)] w-56 shrink-0 overflow-y-auto pr-4 lg:block">
+        <aside className="docs-scrollbar sticky top-24 hidden h-[calc(100vh-7rem)] w-56 shrink-0 overflow-y-auto pr-4 lg:block">
           <DocsNavigation locale={locale} currentSlug={entry?.meta.slug ?? currentSlug} isDark={isDark} />
         </aside>
 
@@ -456,7 +456,7 @@ export function DocsPage({ locale }: { locale: DocsLocale }) {
         </main>
 
         <aside
-          className={`sticky top-24 hidden h-[calc(100vh-7rem)] w-52 shrink-0 overflow-y-auto border-l pl-6 transition-colors duration-300 xl:block ${
+          className={`docs-scrollbar sticky top-24 hidden h-[calc(100vh-7rem)] w-52 shrink-0 overflow-y-auto border-l pl-6 transition-colors duration-300 xl:block ${
             isDark ? 'border-neutral-800' : 'border-neutral-200'
           }`}
         >
