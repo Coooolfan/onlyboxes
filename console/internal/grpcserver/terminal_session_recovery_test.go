@@ -118,7 +118,7 @@ func TestPruneUsesExactLeaseWhenLegacyTTLDisabled(t *testing.T) {
 	base := time.Unix(1_700_375_000, 0)
 	svc.bindTerminalSessionRoute("expired-session", "node-a", base)
 	svc.updateTerminalSessionRouteLease("expired-session", "node-a", base.Add(time.Minute).UnixMilli(), base)
-	if removed := svc.pruneExpiredTerminalSessionRoutes(base.Add(2 * time.Minute)); removed != 1 {
+	if removed := svc.PruneExpiredTerminalSessionRoutes(base.Add(2 * time.Minute)); removed != 1 {
 		t.Fatalf("removed=%d, want exact-lease route pruned", removed)
 	}
 }

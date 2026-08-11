@@ -206,6 +206,41 @@ func TestProxySessionUsesExactLeaseBeyondLegacyRouteTTL(t *testing.T) {
 	}
 }
 
+func TestProxySessionRejectsExpiredExactLeaseWithinPruneInterval(t *testing.T) {
+	for _, action := range []string{"resolve", "authorize"} {
+		t.Run(action, func(t *testing.T) {
+			createdAt := time.UnixMilli(1_730_000_000_000)
+			service, scopedSessionID := newProxyRegistryServiceForTest(t, createdAt)
+			leaseExpiresAt := createdAt.Add(30 * time.Second)
+			if !service.updateTerminalSessionRouteLease(scopedSessionID, "worker-1", leaseExpiresAt.UnixMilli(), createdAt) {
+				t.Fatal("update terminal session route lease")
+			}
+			if _, err := service.ResolveProxySession("owner-a", "session-a", createdAt); err != nil {
+				t.Fatalf("prime terminal route pruning: %v", err)
+			}
+
+			expiredAt := leaseExpiresAt.Add(time.Second)
+			var err error
+			switch action {
+			case "resolve":
+				_, err = service.ResolveProxySession("owner-a", "session-a", expiredAt)
+			case "authorize":
+				_, err = service.AuthorizeProxyRoute(context.Background(), "worker-1", scopedSessionID, 8080, expiredAt.Add(time.Hour), expiredAt)
+			}
+			if !errors.Is(err, ErrProxySessionNotFound) {
+				t.Fatalf("expired exact lease expected session not found, got %v", err)
+			}
+
+			service.terminalRoutesMu.RLock()
+			_, exists := service.terminalSessionToNode[scopedSessionID]
+			service.terminalRoutesMu.RUnlock()
+			if exists {
+				t.Fatal("expired exact lease remained in memory")
+			}
+		})
+	}
+}
+
 func TestProxySessionRejectsOwnerMismatchAndUnavailableWorker(t *testing.T) {
 	now := time.UnixMilli(1_730_000_000_000)
 	service, scopedSessionID := newProxyRegistryServiceForTest(t, now)
@@ -297,6 +332,7 @@ func TestValidateDirectProxyURLRestrictsDomain(t *testing.T) {
 func newProxyRegistryServiceForTest(t *testing.T, now time.Time) (*RegistryService, string) {
 	t.Helper()
 	service := NewRegistryService(nil, nil, 5, 15, time.Minute)
+	service.terminalRouteStore = nil
 	service.nowFn = func() time.Time { return now }
 	service.ConfigureProxy(true, []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}, []uint16{8091}, []string{"e2b.app"})
 	hello := &registryv1.ConnectHello{

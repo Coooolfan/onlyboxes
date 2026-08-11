@@ -2,11 +2,14 @@ package registry
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 
 	"github.com/onlyboxes/onlyboxes/console/internal/persistence/sqlc"
 )
+
+var ErrProxyRouteTerminalSessionNotFound = errors.New("proxy route terminal session not found")
 
 type ProxyRoute struct {
 	RouteKey        string
@@ -37,7 +40,28 @@ func (s *Store) InsertProxyRoute(ctx context.Context, route ProxyRoute) (bool, e
 		CreatedAtUnixMs: route.CreatedAtUnixMs,
 		ExpiresAtUnixMs: route.ExpiresAtUnixMs,
 	})
-	return rows > 0, err
+	if err != nil {
+		return false, err
+	}
+	if rows == 0 {
+		terminalRoute, lookupErr := s.queries.GetTerminalSessionRouteBySession(ctx, route.ScopedSessionID)
+		switch {
+		case errors.Is(lookupErr, sql.ErrNoRows):
+			return false, ErrProxyRouteTerminalSessionNotFound
+		case lookupErr != nil:
+			return false, lookupErr
+		case terminalRoute.NodeID != route.WorkerID || terminalRoute.LeaseExpiresUnixMs <= route.CreatedAtUnixMs:
+			return false, ErrProxyRouteTerminalSessionNotFound
+		}
+	}
+	return rows > 0, nil
+}
+
+func (s *Store) DeleteProxyRoutesByScopedSessionID(ctx context.Context, scopedSessionID string) (int64, error) {
+	if s == nil || s.queries == nil {
+		return 0, ErrPersistenceDBRequired
+	}
+	return s.queries.DeleteProxyRoutesByScopedSessionID(ctx, strings.TrimSpace(scopedSessionID))
 }
 
 func (s *Store) DeleteProxyRoute(ctx context.Context, routeKey string, ownerID string) (bool, error) {

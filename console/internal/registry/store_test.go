@@ -353,6 +353,90 @@ func TestStoreClearSessionReturnsErrorWhenDBClosed(t *testing.T) {
 	}
 }
 
+func TestDeleteExpiredTerminalSessionRoutesDeletesProxyRoutes(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	base := time.Unix(1_700_900_000, 0)
+	if _, err := store.Persistence().SQL.ExecContext(ctx, `
+		INSERT INTO accounts (
+			account_id, username, username_key, password_hash, hash_algo,
+			is_admin, created_at_unix_ms, updated_at_unix_ms
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, "owner-a", "owner-a", "owner-a", "hash", "test", 0, base.UnixMilli(), base.UnixMilli()); err != nil {
+		t.Fatalf("insert account: %v", err)
+	}
+	if inserted, err := store.InsertProxyRoute(ctx, ProxyRoute{
+		RouteKey:        "ceirceix",
+		OwnerID:         "owner-a",
+		SessionID:       "missing",
+		ScopedSessionID: "obx:owner-a:missing",
+		WorkerID:        "node-a",
+		Port:            8080,
+		CreatedAtUnixMs: base.UnixMilli(),
+		ExpiresAtUnixMs: base.Add(time.Hour).UnixMilli(),
+	}); inserted || !errors.Is(err, ErrProxyRouteTerminalSessionNotFound) {
+		t.Fatalf("insert proxy route without terminal session: inserted=%v err=%v", inserted, err)
+	}
+	scopedSessionID := "obx:owner-a:session-a"
+	if err := store.UpsertConfirmedTerminalSessionRoute(ctx, TerminalSessionRoute{
+		ScopedSessionID:    scopedSessionID,
+		NodeID:             "node-a",
+		LeaseExpiresUnixMs: base.Add(time.Minute).UnixMilli(),
+		LastUsedUnixMs:     base.UnixMilli(),
+		CreatedAtUnixMs:    base.UnixMilli(),
+		UpdatedAtUnixMs:    base.UnixMilli(),
+	}); err != nil {
+		t.Fatalf("insert terminal session route: %v", err)
+	}
+	if inserted, err := store.InsertProxyRoute(ctx, ProxyRoute{
+		RouteKey:        "ceirceis",
+		OwnerID:         "owner-a",
+		SessionID:       "session-a",
+		ScopedSessionID: scopedSessionID,
+		WorkerID:        "node-b",
+		Port:            8080,
+		CreatedAtUnixMs: base.UnixMilli(),
+		ExpiresAtUnixMs: base.Add(time.Hour).UnixMilli(),
+	}); inserted || !errors.Is(err, ErrProxyRouteTerminalSessionNotFound) {
+		t.Fatalf("insert proxy route for wrong worker: inserted=%v err=%v", inserted, err)
+	}
+	if inserted, err := store.InsertProxyRoute(ctx, ProxyRoute{
+		RouteKey:        "ceirceit",
+		OwnerID:         "owner-a",
+		SessionID:       "session-a",
+		ScopedSessionID: scopedSessionID,
+		WorkerID:        "node-a",
+		Port:            8080,
+		CreatedAtUnixMs: base.Add(2 * time.Minute).UnixMilli(),
+		ExpiresAtUnixMs: base.Add(time.Hour).UnixMilli(),
+	}); inserted || !errors.Is(err, ErrProxyRouteTerminalSessionNotFound) {
+		t.Fatalf("insert proxy route for expired terminal session: inserted=%v err=%v", inserted, err)
+	}
+	if inserted, err := store.InsertProxyRoute(ctx, ProxyRoute{
+		RouteKey:        "ceirceir",
+		OwnerID:         "owner-a",
+		SessionID:       "session-a",
+		ScopedSessionID: scopedSessionID,
+		WorkerID:        "node-a",
+		Port:            8080,
+		CreatedAtUnixMs: base.UnixMilli(),
+		ExpiresAtUnixMs: base.Add(time.Hour).UnixMilli(),
+	}); err != nil || !inserted {
+		t.Fatalf("insert proxy route: inserted=%v err=%v", inserted, err)
+	}
+
+	if _, err := store.DeleteExpiredTerminalSessionRoutes(ctx, base.Add(2*time.Minute).UnixMilli()); err != nil {
+		t.Fatalf("delete expired terminal session routes: %v", err)
+	}
+	routes, err := store.LoadActiveProxyRoutes(ctx, base.Add(2*time.Minute).UnixMilli())
+	if err != nil {
+		t.Fatalf("load proxy routes: %v", err)
+	}
+	if len(routes) != 0 {
+		t.Fatalf("expired terminal session retained proxy routes: %#v", routes)
+	}
+}
+
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 

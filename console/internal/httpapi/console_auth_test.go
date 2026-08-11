@@ -782,6 +782,16 @@ func seedProxyRouteForAccount(
 		CreatedAt:       now,
 		ExpiresAt:       now.Add(time.Hour),
 	}
+	if err := store.UpsertConfirmedTerminalSessionRoute(context.Background(), registry.TerminalSessionRoute{
+		ScopedSessionID:    record.ScopedSessionID,
+		NodeID:             record.WorkerID,
+		LeaseExpiresUnixMs: record.ExpiresAt.UnixMilli(),
+		LastUsedUnixMs:     record.CreatedAt.UnixMilli(),
+		CreatedAtUnixMs:    record.CreatedAt.UnixMilli(),
+		UpdatedAtUnixMs:    record.CreatedAt.UnixMilli(),
+	}); err != nil {
+		t.Fatalf("insert terminal session route: %v", err)
+	}
 	inserted, err := store.InsertProxyRoute(context.Background(), proxyRouteRecordToStore(record))
 	if err != nil {
 		t.Fatalf("insert proxy route: %v", err)

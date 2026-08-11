@@ -71,6 +71,7 @@ type RegistryService struct {
 	terminalRouteReservationSeq  uint64
 	terminalRouteTTL             time.Duration
 	terminalRouteStore           terminalSessionRouteStore
+	proxyRouteSessionRevoker     ProxyRouteSessionRevoker
 	lastTerminalRoutePruneUnixMs atomic.Int64
 
 	tasksMu sync.RWMutex
@@ -81,6 +82,10 @@ type RegistryService struct {
 	taskRequestReservations      map[string]struct{}
 	criticalPersistenceFailureFn func(error)
 	lastInlineTaskPruneUnixMs    atomic.Int64
+}
+
+type ProxyRouteSessionRevoker interface {
+	RevokeSessionRoutes(...string) int
 }
 
 func NewRegistryService(
@@ -125,6 +130,13 @@ func (s *RegistryService) SetTaskRetention(retention time.Duration) {
 	s.tasksMu.Lock()
 	defer s.tasksMu.Unlock()
 	s.taskRetention = retention
+}
+
+func (s *RegistryService) SetProxyRouteSessionRevoker(revoker ProxyRouteSessionRevoker) {
+	if s == nil {
+		return
+	}
+	s.proxyRouteSessionRevoker = revoker
 }
 
 func (s *RegistryService) PruneExpiredTasks(now time.Time) int {

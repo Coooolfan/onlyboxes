@@ -35,6 +35,7 @@ The console service hosts:
   - `GET /api/v1/proxy-routes` lists only the current account's active routes.
   - `DELETE /api/v1/proxy-routes/:route_key` deletes only the current account's route; cross-account access returns `404`.
   - routes default to 24 hours, are capped at 7 days, and are restored from SQLite after Console restart. Route keys use lowercase Base32 and default to 26 characters, preserving 128 bits of randomness; shorter configured lengths preserve only the corresponding prefix and therefore provide less resistance to URL guessing (for example, 8 characters carry 40 bits).
+  - route creation and resolution enforce the terminal session's exact lease. Expired terminal session routes and their public preview routes are also pruned independently every minute, even when there is no proxy traffic.
   - `GET /internal/v1/proxy/resolve` is Nginx-only and protected by `CONSOLE_PROXY_INTERNAL_AUTH_TOKEN`. Docker/Boxlite return a Worker URL plus a 15-second Route Token; E2B is resolved through its internal Worker capability and returns the current sandbox origin plus traffic token.
   - proxy traffic is anonymous and never carries Dashboard credentials; anyone holding the preview URL can access it.
 - command APIs (execution, bearer token required):
@@ -282,7 +283,7 @@ Task and terminal-session persistence behavior:
 - non-expired terminal tasks are retained for `CONSOLE_TASK_RETENTION_DAYS` (default `30`) and cleaned by periodic pruner.
 - internal terminal capacity retries keep one task/request identity; `command_id` is updated to the current or last worker attempt.
 - confirmed terminal session route bindings and absolute leases are persisted in SQLite; startup deletes expired routes and loads active routes as unavailable until worker reconciliation succeeds.
-- public preview routes are persisted in SQLite; startup deletes expired routes and restores active URLs. A restored URL remains unavailable until its terminal session and Worker finish recovery.
+- public preview routes are persisted in SQLite; startup deletes expired routes and restores active URLs. A restored URL remains unavailable until its terminal session and Worker finish recovery, and is revoked when the terminal session lease expires or its route is otherwise deleted.
 - provisional terminal routes, reservation IDs, provisional-use counters, and recovery connection state are process-local and are not restored.
 - terminal session capacity snapshots are connection-local and are not persisted to SQLite; reconnect Hello initializes a fresh snapshot.
 

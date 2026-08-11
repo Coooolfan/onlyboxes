@@ -669,6 +669,9 @@ func (s *RegistryService) deleteTerminalSessionRoutesByNode(nodeID string) (int,
 
 func (s *RegistryService) deleteTerminalSessionRouteLocked(sessionID string, route terminalSessionRoute) {
 	delete(s.terminalSessionToNode, sessionID)
+	if s.proxyRouteSessionRevoker != nil {
+		s.proxyRouteSessionRevoker.RevokeSessionRoutes(sessionID)
+	}
 	index := s.terminalNodeToSessionIDIndex[route.NodeID]
 	if index == nil {
 		return
@@ -679,7 +682,8 @@ func (s *RegistryService) deleteTerminalSessionRouteLocked(sessionID string, rou
 	}
 }
 
-func (s *RegistryService) pruneExpiredTerminalSessionRoutes(now time.Time) int {
+// PruneExpiredTerminalSessionRoutes removes terminal routes whose lease has expired.
+func (s *RegistryService) PruneExpiredTerminalSessionRoutes(now time.Time) int {
 	if s == nil {
 		return 0
 	}
@@ -731,7 +735,7 @@ func (s *RegistryService) maybePruneTerminalSessionRoutes(now time.Time) {
 			break
 		}
 	}
-	s.pruneExpiredTerminalSessionRoutes(now)
+	s.PruneExpiredTerminalSessionRoutes(now)
 }
 
 func routeNowUnixMs(now time.Time) int64 {

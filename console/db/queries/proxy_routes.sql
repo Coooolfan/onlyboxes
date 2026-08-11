@@ -15,6 +15,10 @@ ON CONFLICT(route_key) DO NOTHING;
 DELETE FROM proxy_routes
 WHERE route_key = ? AND owner_id = ?;
 
+-- name: DeleteProxyRoutesByScopedSessionID :execrows
+DELETE FROM proxy_routes
+WHERE scoped_session_id = ?;
+
 -- name: DeleteExpiredProxyRoutes :execrows
 DELETE FROM proxy_routes
 WHERE expires_at_unix_ms <= ?;

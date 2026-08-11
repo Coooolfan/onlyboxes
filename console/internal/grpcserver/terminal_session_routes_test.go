@@ -32,6 +32,18 @@ type fakeTerminalSessionRouteStore struct {
 	lastDeleteNodeID   string
 }
 
+type recordingProxyRouteSessionRevoker struct {
+	mu         sync.Mutex
+	sessionIDs []string
+}
+
+func (r *recordingProxyRouteSessionRevoker) RevokeSessionRoutes(sessionIDs ...string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sessionIDs = append(r.sessionIDs, sessionIDs...)
+	return len(sessionIDs)
+}
+
 func (f *fakeTerminalSessionRouteStore) LoadActiveTerminalSessionRoutes(ctx context.Context, nowUnixMs int64) ([]registry.TerminalSessionRoute, error) {
 	f.mu.Lock()
 	f.loadCallCount++
@@ -611,6 +623,8 @@ func TestDeleteProvisionedWorkerRemovesPersistedRoutes(t *testing.T) {
 func TestPruneExpiredTerminalSessionRoutesDeletesFromPersistence(t *testing.T) {
 	store := registrytest.NewStore(t)
 	svc := NewRegistryService(store, nil, 5, 15, time.Minute)
+	revoker := &recordingProxyRouteSessionRevoker{}
+	svc.SetProxyRouteSessionRevoker(revoker)
 	base := time.Unix(1_700_860_000, 0)
 	svc.nowFn = func() time.Time { return base }
 	ctx := context.Background()
@@ -633,7 +647,7 @@ func TestPruneExpiredTerminalSessionRoutesDeletesFromPersistence(t *testing.T) {
 	}
 
 	// Prune after the lease has expired.
-	removed := svc.pruneExpiredTerminalSessionRoutes(base.Add(2 * time.Minute))
+	removed := svc.PruneExpiredTerminalSessionRoutes(base.Add(2 * time.Minute))
 	if removed != 1 {
 		t.Fatalf("removed=%d, want 1", removed)
 	}
@@ -647,5 +661,10 @@ func TestPruneExpiredTerminalSessionRoutesDeletesFromPersistence(t *testing.T) {
 		if r.ScopedSessionID == "obx:owner-a:session-prune" {
 			t.Fatal("expired route should be pruned from database")
 		}
+	}
+	revoker.mu.Lock()
+	defer revoker.mu.Unlock()
+	if len(revoker.sessionIDs) != 1 || revoker.sessionIDs[0] != "obx:owner-a:session-prune" {
+		t.Fatalf("unexpected revoked proxy route sessions: %#v", revoker.sessionIDs)
 	}
 }

@@ -105,6 +105,138 @@ func TestProxyRouteManagementOwnerIsolation(t *testing.T) {
 	}
 }
 
+func TestProxyRouteRevokeSessionRoutes(t *testing.T) {
+	now := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
+	store := newProxyRouteStoreForTest(t)
+	resolver := &proxyRouteResolverStub{
+		target: grpcserver.ProxySessionTarget{
+			WorkerID:        "worker-1",
+			ScopedSessionID: "obx:owner-a:session-a",
+		},
+	}
+	handler := newProxyRouteHandlerWithStoreForTest(t, resolver, store, now, time.Hour)
+	handler.randomReader = bytes.NewReader(append(
+		bytes.Repeat([]byte{0x11}, proxyRouteKeyBytes),
+		bytes.Repeat([]byte{0x22}, proxyRouteKeyBytes)...,
+	))
+	router := newProxyRouteTestRouter(handler)
+	createdA := createProxyRouteForTest(t, router, "owner-a", `{"session_id":"session-a","port":8080}`)
+	resolver.target.ScopedSessionID = "obx:owner-a:session-b"
+	createdB := createProxyRouteForTest(t, router, "owner-a", `{"session_id":"session-b","port":8080}`)
+
+	if removed := handler.RevokeSessionRoutes("obx:owner-a:session-a"); removed != 1 {
+		t.Fatalf("removed=%d, want 1", removed)
+	}
+	if _, ok := handler.getRoute(createdA.RouteKey, now); ok {
+		t.Fatal("revoked session route remains in memory")
+	}
+	if _, ok := handler.getRoute(createdB.RouteKey, now); !ok {
+		t.Fatal("another session route was revoked from memory")
+	}
+	persisted, err := store.LoadActiveProxyRoutes(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("load persisted proxy routes: %v", err)
+	}
+	if len(persisted) != 1 || persisted[0].RouteKey != createdB.RouteKey {
+		t.Fatalf("unexpected persisted proxy routes after revoke: %#v", persisted)
+	}
+}
+
+func TestProxyRouteCreateRejectsStaleResolvedSession(t *testing.T) {
+	now := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
+	store := newProxyRouteStoreForTest(t)
+	scopedSessionID := "obx:owner-a:session-a"
+	deleted, err := store.DeleteTerminalSessionRoute(context.Background(), scopedSessionID, "worker-1")
+	if err != nil || !deleted {
+		t.Fatalf("delete terminal session route: deleted=%v err=%v", deleted, err)
+	}
+	resolver := &proxyRouteResolverStub{
+		target: grpcserver.ProxySessionTarget{
+			WorkerID:        "worker-1",
+			ScopedSessionID: scopedSessionID,
+		},
+	}
+	handler := newProxyRouteHandlerWithStoreForTest(t, resolver, store, now, time.Hour)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/proxy-routes", strings.NewReader(`{"session_id":"session-a","port":8080}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Test-Owner", "owner-a")
+	response := httptest.NewRecorder()
+	newProxyRouteTestRouter(handler).ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("stale resolved session expected 404, got %d body=%s", response.Code, response.Body.String())
+	}
+	if len(handler.routes) != 0 {
+		t.Fatalf("stale resolved session changed memory: %#v", handler.routes)
+	}
+	persisted, err := store.LoadActiveProxyRoutes(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("load persisted proxy routes: %v", err)
+	}
+	if len(persisted) != 0 {
+		t.Fatalf("stale resolved session inserted proxy routes: %#v", persisted)
+	}
+}
+
+func TestProxyRouteCreateRejectsSessionExpiredAfterResolve(t *testing.T) {
+	resolveAt := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
+	createAt := resolveAt.Add(time.Second)
+	leaseExpiresAt := resolveAt.Add(500 * time.Millisecond)
+	store := newProxyRouteStoreForTest(t)
+	scopedSessionID := "obx:owner-a:session-a"
+	deleted, err := store.DeleteTerminalSessionRoute(context.Background(), scopedSessionID, "worker-1")
+	if err != nil || !deleted {
+		t.Fatalf("delete seeded terminal session route: deleted=%v err=%v", deleted, err)
+	}
+	if err := store.UpsertConfirmedTerminalSessionRoute(context.Background(), registry.TerminalSessionRoute{
+		ScopedSessionID:    scopedSessionID,
+		NodeID:             "worker-1",
+		LeaseExpiresUnixMs: leaseExpiresAt.UnixMilli(),
+		LastUsedUnixMs:     resolveAt.UnixMilli(),
+		CreatedAtUnixMs:    resolveAt.UnixMilli(),
+		UpdatedAtUnixMs:    resolveAt.UnixMilli(),
+	}); err != nil {
+		t.Fatalf("insert short terminal session route: %v", err)
+	}
+
+	resolver := &proxyRouteResolverStub{
+		target: grpcserver.ProxySessionTarget{
+			WorkerID:        "worker-1",
+			ScopedSessionID: scopedSessionID,
+		},
+	}
+	handler := newProxyRouteHandlerWithStoreForTest(t, resolver, store, resolveAt, time.Hour)
+	nowCalls := 0
+	handler.nowFn = func() time.Time {
+		nowCalls++
+		if nowCalls == 1 {
+			return resolveAt
+		}
+		return createAt
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/proxy-routes", strings.NewReader(`{"session_id":"session-a","port":8080}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Test-Owner", "owner-a")
+	response := httptest.NewRecorder()
+	newProxyRouteTestRouter(handler).ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("session expired after resolve expected 404, got %d body=%s", response.Code, response.Body.String())
+	}
+	if nowCalls < 2 {
+		t.Fatalf("proxy route creation sampled time %d times, want at least 2", nowCalls)
+	}
+	if len(handler.routes) != 0 {
+		t.Fatalf("expired session changed proxy route memory: %#v", handler.routes)
+	}
+	persisted, err := store.LoadActiveProxyRoutes(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("load persisted proxy routes: %v", err)
+	}
+	if len(persisted) != 0 {
+		t.Fatalf("expired session inserted proxy routes: %#v", persisted)
+	}
+}
+
 func TestProxyRouteConfiguredHTTPURL(t *testing.T) {
 	now := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
 	resolver := &proxyRouteResolverStub{
@@ -531,6 +663,23 @@ func newProxyRouteStoreForTest(t *testing.T) *registry.Store {
 	store := registrytest.NewStore(t)
 	seedTestAccount(t, store.Persistence().Queries, "owner-a", "proxy-owner-a", "owner-a-password", false)
 	seedTestAccount(t, store.Persistence().Queries, "owner-b", "proxy-owner-b", "owner-b-password", false)
+	base := time.Now()
+	for _, scopedSessionID := range []string{
+		"obx:owner-a:session-a",
+		"obx:owner-a:session-b",
+		"scoped-session",
+	} {
+		if err := store.UpsertConfirmedTerminalSessionRoute(context.Background(), registry.TerminalSessionRoute{
+			ScopedSessionID:    scopedSessionID,
+			NodeID:             "worker-1",
+			LeaseExpiresUnixMs: base.Add(time.Hour).UnixMilli(),
+			LastUsedUnixMs:     base.UnixMilli(),
+			CreatedAtUnixMs:    base.UnixMilli(),
+			UpdatedAtUnixMs:    base.UnixMilli(),
+		}); err != nil {
+			t.Fatalf("seed terminal session route %q: %v", scopedSessionID, err)
+		}
+	}
 	return store
 }
 

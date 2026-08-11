@@ -135,6 +135,7 @@ func main() {
 			fatal("failed to restore proxy routes", "error", err)
 		}
 		restoreCancel()
+		registryService.SetProxyRouteSessionRevoker(proxyRouteHandler)
 		httpHandler.SetProxyRouteHandler(proxyRouteHandler)
 	}
 	if cfg.ExportFileEnabled() {
@@ -192,6 +193,7 @@ func main() {
 	defer cancelRun()
 	go startOfflinePruner(runCtx, store, cfg.OfflineTTL)
 	go startTaskPruner(runCtx, registryService)
+	go startTerminalSessionRoutePruner(runCtx, registryService)
 	if proxyRouteHandler != nil {
 		go startProxyRoutePruner(runCtx, proxyRouteHandler)
 	}
@@ -294,6 +296,23 @@ func startTaskPruner(ctx context.Context, service *grpcserver.RegistryService) {
 			removed := service.PruneExpiredTasks(now)
 			if removed > 0 {
 				slog.Info("pruned expired tasks", "removed", removed)
+			}
+		}
+	}
+}
+
+func startTerminalSessionRoutePruner(ctx context.Context, service *grpcserver.RegistryService) {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			removed := service.PruneExpiredTerminalSessionRoutes(now)
+			if removed > 0 {
+				slog.Info("pruned expired terminal session routes", "removed", removed)
 			}
 		}
 	}

@@ -282,9 +282,7 @@ func (s *RegistryService) proxyTerminalSessionWorker(scopedSessionID string, now
 	}
 	s.maybePruneTerminalSessionRoutes(now)
 
-	s.terminalRoutesMu.RLock()
-	route, ok := s.terminalSessionToNode[strings.TrimSpace(scopedSessionID)]
-	s.terminalRoutesMu.RUnlock()
+	route, ok := s.terminalSessionRouteSnapshot(scopedSessionID, now)
 	if !ok || route.ReservationID != 0 || route.RecoveryState != terminalSessionRecoveryReady || strings.TrimSpace(route.NodeID) == "" {
 		return "", false
 	}

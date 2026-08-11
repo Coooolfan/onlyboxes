@@ -1395,7 +1395,7 @@ func TestPruneExpiredTerminalSessionRoutes(t *testing.T) {
 	svc.bindTerminalSessionRoute("session-expired", "node-1", base)
 	svc.bindTerminalSessionRoute("session-fresh", "node-1", base.Add(900*time.Millisecond))
 
-	removed := svc.pruneExpiredTerminalSessionRoutes(base.Add(1500 * time.Millisecond))
+	removed := svc.PruneExpiredTerminalSessionRoutes(base.Add(1500 * time.Millisecond))
 	if removed != 1 {
 		t.Fatalf("expected one expired route removed, got %d", removed)
 	}

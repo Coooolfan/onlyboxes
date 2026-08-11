@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"sort"
@@ -34,6 +35,7 @@ const (
 	proxyBaseDomainMaxBytes         = 253 - 1 - proxyRouteKeyMaxLength
 	proxyRouteCreateAttempts        = 8
 	proxyRouteMaxTTL                = 7 * 24 * time.Hour
+	proxyRouteRevokeTimeout         = 5 * time.Second
 )
 
 type ProxyRouteResolver interface {
@@ -44,6 +46,7 @@ type ProxyRouteResolver interface {
 type proxyRouteStore interface {
 	InsertProxyRoute(context.Context, registry.ProxyRoute) (bool, error)
 	DeleteProxyRoute(context.Context, string, string) (bool, error)
+	DeleteProxyRoutesByScopedSessionID(context.Context, string) (int64, error)
 	DeleteExpiredProxyRoutes(context.Context, int64) (int64, error)
 	LoadActiveProxyRoutes(context.Context, int64) ([]registry.ProxyRoute, error)
 }
@@ -225,6 +228,45 @@ func (h *ProxyRouteHandler) RevokeOwnerRoutes(ownerID string) int {
 	return removed
 }
 
+// RevokeSessionRoutes removes persisted and in-memory routes for the scoped
+// terminal sessions. The database cleanup also covers routes created before
+// terminal session persistence was enforced.
+func (h *ProxyRouteHandler) RevokeSessionRoutes(scopedSessionIDs ...string) int {
+	if h == nil || len(scopedSessionIDs) == 0 {
+		return 0
+	}
+	sessionIDs := make(map[string]struct{}, len(scopedSessionIDs))
+	for _, sessionID := range scopedSessionIDs {
+		if normalized := strings.TrimSpace(sessionID); normalized != "" {
+			sessionIDs[normalized] = struct{}{}
+		}
+	}
+	if len(sessionIDs) == 0 {
+		return 0
+	}
+
+	if h.store != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), proxyRouteRevokeTimeout)
+		for sessionID := range sessionIDs {
+			if _, err := h.store.DeleteProxyRoutesByScopedSessionID(ctx, sessionID); err != nil {
+				slog.Error("failed to revoke persisted proxy routes", "scoped_session_id", sessionID, "error", err)
+			}
+		}
+		cancel()
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	removed := 0
+	for routeKey, record := range h.routes {
+		if _, ok := sessionIDs[record.ScopedSessionID]; ok {
+			delete(h.routes, routeKey)
+			removed++
+		}
+	}
+	return removed
+}
+
 func (h *ProxyRouteHandler) Create(c *gin.Context) {
 	ownerID, ok := proxyRouteOwnerID(c)
 	if !ok {
@@ -251,8 +293,8 @@ func (h *ProxyRouteHandler) Create(c *gin.Context) {
 		return
 	}
 
-	now := h.now()
-	target, err := h.resolver.ResolveProxySession(ownerID, sessionID, now)
+	resolveNow := h.now()
+	target, err := h.resolver.ResolveProxySession(ownerID, sessionID, resolveNow)
 	if err != nil {
 		switch {
 		case errors.Is(err, grpcserver.ErrProxySessionNotFound):
@@ -265,8 +307,16 @@ func (h *ProxyRouteHandler) Create(c *gin.Context) {
 		return
 	}
 
-	record, err := h.createRoute(c.Request.Context(), ownerID, sessionID, req.Port, target, now)
+	createNow := h.now()
+	if createNow.Before(resolveNow) {
+		createNow = resolveNow
+	}
+	record, err := h.createRoute(c.Request.Context(), ownerID, sessionID, req.Port, target, createNow)
 	if err != nil {
+		if errors.Is(err, grpcserver.ErrProxySessionNotFound) || errors.Is(err, registry.ErrProxyRouteTerminalSessionNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
+			return
+		}
 		if errors.Is(err, errProxyRouteAccountLimitReached) {
 			c.JSON(http.StatusTooManyRequests, gin.H{"error": "account proxy route limit reached"})
 			return
