@@ -23,45 +23,43 @@ type ProxyRoute struct {
 }
 
 func (s *Store) InsertProxyRoute(ctx context.Context, route ProxyRoute) (bool, error) {
-	if s == nil || s.queries == nil {
+	if s == nil || s.db == nil || s.queries == nil {
 		return false, ErrPersistenceDBRequired
 	}
 	route = normalizeProxyRoute(route)
 	if !validProxyRoute(route) {
 		return false, errors.New("invalid proxy route")
 	}
-	rows, err := s.queries.InsertProxyRoute(ctx, sqlc.InsertProxyRouteParams{
-		RouteKey:        route.RouteKey,
-		OwnerID:         route.OwnerID,
-		SessionID:       route.SessionID,
-		ScopedSessionID: route.ScopedSessionID,
-		WorkerID:        route.WorkerID,
-		Port:            int64(route.Port),
-		CreatedAtUnixMs: route.CreatedAtUnixMs,
-		ExpiresAtUnixMs: route.ExpiresAtUnixMs,
-	})
-	if err != nil {
-		return false, err
-	}
-	if rows == 0 {
-		terminalRoute, lookupErr := s.queries.GetTerminalSessionRouteBySession(ctx, route.ScopedSessionID)
+
+	inserted := false
+	err := s.db.WithTx(ctx, func(q *sqlc.Queries) error {
+		terminalRoute, lookupErr := q.GetTerminalSessionRouteBySession(ctx, route.ScopedSessionID)
 		switch {
 		case errors.Is(lookupErr, sql.ErrNoRows):
-			return false, ErrProxyRouteTerminalSessionNotFound
+			return ErrProxyRouteTerminalSessionNotFound
 		case lookupErr != nil:
-			return false, lookupErr
+			return lookupErr
 		case terminalRoute.NodeID != route.WorkerID || terminalRoute.LeaseExpiresUnixMs <= route.CreatedAtUnixMs:
-			return false, ErrProxyRouteTerminalSessionNotFound
+			return ErrProxyRouteTerminalSessionNotFound
 		}
-	}
-	return rows > 0, nil
-}
 
-func (s *Store) DeleteProxyRoutesByScopedSessionID(ctx context.Context, scopedSessionID string) (int64, error) {
-	if s == nil || s.queries == nil {
-		return 0, ErrPersistenceDBRequired
-	}
-	return s.queries.DeleteProxyRoutesByScopedSessionID(ctx, strings.TrimSpace(scopedSessionID))
+		rows, err := q.InsertProxyRoute(ctx, sqlc.InsertProxyRouteParams{
+			RouteKey:        route.RouteKey,
+			OwnerID:         route.OwnerID,
+			SessionID:       route.SessionID,
+			ScopedSessionID: route.ScopedSessionID,
+			WorkerID:        route.WorkerID,
+			Port:            int64(route.Port),
+			CreatedAtUnixMs: route.CreatedAtUnixMs,
+			ExpiresAtUnixMs: route.ExpiresAtUnixMs,
+		})
+		if err != nil {
+			return err
+		}
+		inserted = rows > 0
+		return nil
+	})
+	return inserted, err
 }
 
 func (s *Store) DeleteProxyRoute(ctx context.Context, routeKey string, ownerID string) (bool, error) {

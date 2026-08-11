@@ -133,6 +133,9 @@ func TestProxyRouteRevokeSessionRoutes(t *testing.T) {
 	if _, ok := handler.getRoute(createdB.RouteKey, now); !ok {
 		t.Fatal("another session route was revoked from memory")
 	}
+	if _, err := store.DeleteTerminalSessionRoute(context.Background(), "obx:owner-a:session-a", "worker-1"); err != nil {
+		t.Fatalf("delete terminal session route: %v", err)
+	}
 	persisted, err := store.LoadActiveProxyRoutes(context.Background(), 0)
 	if err != nil {
 		t.Fatalf("load persisted proxy routes: %v", err)

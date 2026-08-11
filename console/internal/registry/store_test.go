@@ -353,6 +353,49 @@ func TestStoreClearSessionReturnsErrorWhenDBClosed(t *testing.T) {
 	}
 }
 
+func TestProxyRoutesUseTerminalSessionForeignKey(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	rows, err := store.Persistence().SQL.QueryContext(ctx, "PRAGMA foreign_key_list(proxy_routes)")
+	if err != nil {
+		t.Fatalf("list proxy route foreign keys: %v", err)
+	}
+	defer rows.Close()
+
+	foundCascadeSession := false
+	foundCascadeWorker := false
+	for rows.Next() {
+		var id, seq int
+		var tableName, from, to, onUpdate, onDelete, match string
+		if err := rows.Scan(&id, &seq, &tableName, &from, &to, &onUpdate, &onDelete, &match); err != nil {
+			t.Fatalf("scan proxy route foreign key: %v", err)
+		}
+		if tableName != "terminal_session_routes" || onDelete != "CASCADE" {
+			continue
+		}
+		switch {
+		case from == "scoped_session_id" && to == "scoped_session_id":
+			foundCascadeSession = true
+		case from == "worker_id" && to == "node_id":
+			foundCascadeWorker = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate proxy route foreign keys: %v", err)
+	}
+	if !foundCascadeSession || !foundCascadeWorker {
+		t.Fatalf("proxy routes must cascade on terminal session and worker deletion: session=%v worker=%v", foundCascadeSession, foundCascadeWorker)
+	}
+
+	var triggerCount int
+	if err := store.Persistence().SQL.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND (name = 'ignore_proxy_routes_without_terminal_session' OR name = 'delete_proxy_routes_after_terminal_session_route')").Scan(&triggerCount); err != nil {
+		t.Fatalf("count legacy proxy route triggers: %v", err)
+	}
+	if triggerCount != 0 {
+		t.Fatalf("legacy proxy route triggers remain: %d", triggerCount)
+	}
+}
+
 func TestDeleteExpiredTerminalSessionRoutesDeletesProxyRoutes(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

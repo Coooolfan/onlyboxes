@@ -40,19 +40,6 @@ func (q *Queries) DeleteProxyRouteByKeyAndOwner(ctx context.Context, arg DeleteP
 	return result.RowsAffected()
 }
 
-const deleteProxyRoutesByScopedSessionID = `-- name: DeleteProxyRoutesByScopedSessionID :execrows
-DELETE FROM proxy_routes
-WHERE scoped_session_id = ?
-`
-
-func (q *Queries) DeleteProxyRoutesByScopedSessionID(ctx context.Context, scopedSessionID string) (int64, error) {
-	result, err := q.db.ExecContext(ctx, deleteProxyRoutesByScopedSessionID, scopedSessionID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
 const insertProxyRoute = `-- name: InsertProxyRoute :execrows
 INSERT INTO proxy_routes (
     route_key,
