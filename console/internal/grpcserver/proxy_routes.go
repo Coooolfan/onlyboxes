@@ -288,9 +288,6 @@ func (s *RegistryService) proxyTerminalSessionWorker(scopedSessionID string, now
 	if !ok || route.ReservationID != 0 || route.RecoveryState != terminalSessionRecoveryReady || strings.TrimSpace(route.NodeID) == "" {
 		return "", false
 	}
-	if s.terminalRouteTTL > 0 && now.UnixMilli()-route.LastUsedUnixMs >= s.terminalRouteTTL.Milliseconds() {
-		return "", false
-	}
 	return route.NodeID, true
 }
 

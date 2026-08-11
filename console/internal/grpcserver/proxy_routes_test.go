@@ -188,6 +188,24 @@ func TestProxyAuthorizationIsBoundedByRouteExpiry(t *testing.T) {
 	}
 }
 
+func TestProxySessionUsesExactLeaseBeyondLegacyRouteTTL(t *testing.T) {
+	createdAt := time.UnixMilli(1_730_000_000_000)
+	service, scopedSessionID := newProxyRegistryServiceForTest(t, createdAt)
+	leaseExpiresAt := createdAt.Add(2 * service.terminalRouteTTL)
+	if !service.updateTerminalSessionRouteLease(scopedSessionID, "worker-1", leaseExpiresAt.UnixMilli(), createdAt) {
+		t.Fatal("update terminal session route lease")
+	}
+
+	resolveAt := createdAt.Add(service.terminalRouteTTL + time.Minute)
+	target, err := service.ResolveProxySession("owner-a", "session-a", resolveAt)
+	if err != nil {
+		t.Fatalf("resolve proxy session with active exact lease: %v", err)
+	}
+	if target.WorkerID != "worker-1" || target.ScopedSessionID != scopedSessionID {
+		t.Fatalf("unexpected proxy target %#v", target)
+	}
+}
+
 func TestProxySessionRejectsOwnerMismatchAndUnavailableWorker(t *testing.T) {
 	now := time.UnixMilli(1_730_000_000_000)
 	service, scopedSessionID := newProxyRegistryServiceForTest(t, now)
