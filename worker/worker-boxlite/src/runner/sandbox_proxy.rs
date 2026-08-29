@@ -12,6 +12,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio_util::sync::CancellationToken;
 
 use crate::config::Config;
+use crate::{boxlite_runtime, boxlite_runtime::BoxliteCommandError};
 
 use super::terminal_session_manager::{ProxyTargetError, TerminalSessionManager};
 use super::RunnerError;
@@ -81,6 +82,7 @@ pub(crate) async fn run(
         .await
         .map_err(|err| RunnerError::Message(format!("bind sandbox proxy: {err}")))?;
     let key = derive_key(cfg.worker_secret.trim())?;
+    let cfg = Arc::new(cfg);
     tracing::info!(listen_addr = %cfg.proxy_listen_addr, advertise_addr = %cfg.proxy_advertise_addr, "sandbox proxy listening");
     loop {
         tokio::select! {
@@ -89,10 +91,11 @@ pub(crate) async fn run(
                 let (stream, _) = accepted.map_err(|err| RunnerError::Message(format!("accept sandbox proxy connection: {err}")))?;
                 let manager = manager.clone();
                 let worker_id = cfg.worker_id.clone();
+                let cfg = cfg.clone();
                 let key = key.clone();
                 let shutdown = shutdown.clone();
                 tokio::spawn(async move {
-                    if let Err(err) = handle_connection(stream, worker_id, key, manager, shutdown).await {
+                    if let Err(err) = handle_connection(stream, worker_id, key, cfg, manager, shutdown).await {
                         tracing::debug!(error = %err, "sandbox proxy connection closed");
                     }
                 });
@@ -115,6 +118,7 @@ async fn handle_connection(
     mut client: TcpStream,
     worker_id: String,
     key: Vec<u8>,
+    cfg: Arc<Config>,
     manager: Arc<TerminalSessionManager>,
     shutdown: CancellationToken,
 ) -> io::Result<()> {
@@ -131,11 +135,11 @@ async fn handle_connection(
         Ok(claims) if claims.worker_id == worker_id => claims,
         _ => return write_error(&mut client, 401, "invalid route token").await,
     };
-    let target_port = match manager
+    let box_id = match manager
         .resolve_proxy_target(&claims.session_id, claims.port, SystemTime::now())
         .await
     {
-        Ok(port) => port,
+        Ok(target) => target,
         Err(err @ ProxyTargetError::SessionNotFound) => {
             return write_error(&mut client, 404, &err.to_string()).await
         }
@@ -143,11 +147,14 @@ async fn handle_connection(
             return write_error(&mut client, 403, &err.to_string()).await
         }
     };
-    let mut upstream = match TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, target_port)).await
-    {
-        Ok(stream) => stream,
-        Err(_) => return write_error(&mut client, 502, "sandbox upstream unavailable").await,
-    };
+    let mut upstream =
+        match boxlite_runtime::open_terminal_proxy_connection(&cfg, &box_id, claims.port).await {
+            Ok(connection) => connection,
+            Err(BoxliteCommandError::MissingBox) => {
+                return write_error(&mut client, 404, "sandbox session not found").await
+            }
+            Err(_) => return write_error(&mut client, 502, "sandbox upstream unavailable").await,
+        };
     upstream.write_all(&cleaned).await?;
 
     let session_id = claims.session_id;

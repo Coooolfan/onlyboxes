@@ -202,7 +202,7 @@ pub(crate) enum TerminalOperationError {
     ExecutionFailed(String),
 }
 
-/// Separates a missing session from a guest port that has no host mapping so the
+/// Separates a missing session from a guest port outside the proxy allowlist so the
 /// sandbox proxy can answer with the right status code instead of a blanket 404.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum ProxyTargetError {
@@ -275,11 +275,8 @@ pub(crate) trait TerminalBackend: Send + Sync {
         deadline_unix_ms: i64,
     ) -> Result<(), BoxliteCommandError>;
     async fn remove_box(&self, box_id: &str);
-    fn proxy_target(&self, _box_id: &str, _guest_port: u16) -> Option<u16> {
-        None
-    }
-    /// Guest ports mapped when this box was created, used for diagnostics only.
-    fn proxy_ports(&self, _box_id: &str) -> Vec<u16> {
+    /// Guest ports allowed for direct BoxLite tunnels, used for authorization and diagnostics.
+    fn proxy_ports(&self) -> Vec<u16> {
         Vec::new()
     }
 }
@@ -600,7 +597,7 @@ impl TerminalSessionManager {
         session_id: &str,
         guest_port: u16,
         now: SystemTime,
-    ) -> Result<u16, ProxyTargetError> {
+    ) -> Result<String, ProxyTargetError> {
         let sessions = self.sessions.lock().await;
         let Some(session) = sessions.get(session_id.trim()) else {
             return Err(ProxyTargetError::SessionNotFound);
@@ -609,12 +606,14 @@ impl TerminalSessionManager {
         {
             return Err(ProxyTargetError::SessionNotFound);
         }
-        self.backend
-            .proxy_target(&session.box_id, guest_port)
-            .ok_or_else(|| ProxyTargetError::PortNotEnabled {
+        let enabled_ports = self.backend.proxy_ports();
+        if !enabled_ports.contains(&guest_port) {
+            return Err(ProxyTargetError::PortNotEnabled {
                 requested_port: guest_port,
-                enabled_ports: self.backend.proxy_ports(&session.box_id),
-            })
+                enabled_ports,
+            });
+        }
+        Ok(session.box_id.clone())
     }
 
     pub(crate) async fn proxy_session_active(&self, session_id: &str, now: SystemTime) -> bool {
@@ -1535,12 +1534,8 @@ impl TerminalBackend for BoxliteTerminalBackend {
         boxlite_runtime::remove_box(&self.cfg, box_id).await;
     }
 
-    fn proxy_target(&self, box_id: &str, guest_port: u16) -> Option<u16> {
-        boxlite_runtime::terminal_proxy_target(box_id, guest_port)
-    }
-
-    fn proxy_ports(&self, box_id: &str) -> Vec<u16> {
-        boxlite_runtime::terminal_proxy_ports(box_id)
+    fn proxy_ports(&self) -> Vec<u16> {
+        self.cfg.proxy_sandbox_ports.clone()
     }
 }
 
@@ -1916,14 +1911,7 @@ mod tests {
             self.removed.lock().await.push(box_id.to_owned());
         }
 
-        fn proxy_target(&self, box_id: &str, guest_port: u16) -> Option<u16> {
-            (!box_id.trim().is_empty() && guest_port == 8080).then_some(18080)
-        }
-
-        fn proxy_ports(&self, box_id: &str) -> Vec<u16> {
-            if box_id.trim().is_empty() {
-                return Vec::new();
-            }
+        fn proxy_ports(&self) -> Vec<u16> {
             vec![8080]
         }
     }
@@ -2566,7 +2554,7 @@ mod tests {
                 .resolve_proxy_target(&created.session_id, 8080, SystemTime::now())
                 .await
                 .unwrap(),
-            18080
+            "box-1"
         );
         let port_error = manager
             .resolve_proxy_target(&created.session_id, 3000, SystemTime::now())
