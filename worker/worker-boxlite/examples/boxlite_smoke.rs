@@ -186,7 +186,7 @@ async fn main() {
                 cpus: Some(1),
                 memory_mib: Some(512),
                 rootfs: RootfsSpec::Image(image.clone()),
-                auto_remove: false,
+                auto_delete: Some(0),
                 ..Default::default()
             },
             Some(box_name.clone()),

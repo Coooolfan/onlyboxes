@@ -86,16 +86,16 @@ Hello 报告配置上限与当前 reservation 数，heartbeat 持续更新 activ
 
 ## Proxy
 
-启用 proxy 后，Worker 只接受 Console 签发的短期 Route Token。代理会校验 Worker、session、guest port 与过期时间，移除内部 header，并把 HTTP/1.1、SSE 或 WebSocket 流量转发到 Box 映射端口。
+启用 proxy 后，Worker 只接受 Console 签发的短期 Route Token。代理会校验 Worker、session、guest port 与过期时间，移除内部 header，并为每个 HTTP/1.1、SSE 或 WebSocket 连接创建一条直达 Box guest port 的 BoxLite network tunnel。Terminal Box 不预先发布宿主机端口，Worker 重启恢复后也不需要重建进程内端口映射。
 
-Session lease 到期或 Worker shutdown 会取消现有代理请求。未映射端口、无监听端口、无效 token 和缺失 session 使用不同 HTTP 状态，便于 Nginx 与调用方诊断。
+Session lease 到期或 Worker shutdown 会取消现有代理请求。白名单外端口、tunnel 建立失败、无效 token 和缺失 session 使用不同 HTTP 状态，便于 Nginx 与调用方诊断。
 
 ## 安全边界
 
 - Console gRPC 默认要求 TLS；明文模式只用于可信本地网络。
 - `worker_secret`、Route Token、原始命令、代码、路径和文件内容不得写入日志。
 - Guest 镜像必须提供 `/bin/sh` 与 Python。
-- Proxy 映射端口绑定到本地路径，只向配置的固定 Worker proxy 入口暴露。
+- Guest 服务只通过受 Route Token 和端口白名单保护的 BoxLite tunnel 访问，宿主机仅暴露固定 Worker proxy 入口。
 - 所有超时与取消路径都必须保持 session 状态机和容量计数一致。
 
 ## 构建与验证
