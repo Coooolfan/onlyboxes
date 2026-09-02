@@ -178,7 +178,7 @@ func (s *RegistryService) resolveHelloByWorkerType(hello *registryv1.ConnectHell
 		}
 		name := normalizeCapability(capability.GetName())
 		if _, ok := workerSysAllowedCapabilities[name]; !ok {
-			return nil, status.Error(codes.PermissionDenied, "worker-sys supports only computerUse and readImage capabilities")
+			return nil, status.Error(codes.PermissionDenied, "worker-sys supports only "+computerUseCapabilityDeclared+" and "+readImageCapabilityDeclared+" capabilities")
 		}
 		allowedMaxInflight[name] = int(capability.GetMaxInflight())
 	}
