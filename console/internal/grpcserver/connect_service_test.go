@@ -304,15 +304,79 @@ func TestConnectRejectsWorkerSysNonAllowedCapability(t *testing.T) {
 	client, cleanup := newBufClient(t, svc)
 	defer cleanup()
 
-	_, _, err := connectWorker(client, "node-sys", "secret-sys", "nonce-sys-invalid-capability", []string{"echo"})
+	_, _, err := connectWorker(client, "node-sys", "secret-sys", "nonce-sys-invalid-capability", []string{computerUseCapabilityDeclared, "echo"})
 	if status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("expected PermissionDenied, got %v", err)
 	}
 }
 
-func TestConnectRejectsWorkerSysMissingReadImageCapability(t *testing.T) {
+func TestConnectWorkerSysAllowsSubsetOfAllowedCapabilities(t *testing.T) {
+	tests := []struct {
+		name         string
+		capabilities []string
+		expected     map[string]bool
+	}{
+		{
+			name:         "computerUse only",
+			capabilities: []string{computerUseCapabilityDeclared},
+			expected: map[string]bool{
+				computerUseCapabilityName: true,
+				readImageCapabilityName:   false,
+			},
+		},
+		{
+			name:         "readImage only",
+			capabilities: []string{readImageCapabilityDeclared},
+			expected: map[string]bool{
+				computerUseCapabilityName: false,
+				readImageCapabilityName:   true,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := registrytest.NewStore(t)
+			now := time.Unix(1_700_000_015, 0)
+			seeded := store.SeedProvisionedWorkers([]registry.ProvisionedWorker{
+				{
+					NodeID: "node-sys",
+					Labels: map[string]string{
+						registry.LabelOwnerIDKey:    "owner-a",
+						registry.LabelWorkerTypeKey: registry.WorkerTypeSys,
+					},
+				},
+			}, now, 15*time.Second)
+			if seeded != 1 {
+				t.Fatalf("expected one seeded worker, got %d", seeded)
+			}
+
+			svc := NewRegistryService(store, map[string]string{"node-sys": "secret-sys"}, 5, 15, 60*time.Second)
+			client, cleanup := newBufClient(t, svc)
+			defer cleanup()
+
+			stream, _, err := connectWorker(client, "node-sys", "secret-sys", "nonce-sys-subset", tt.capabilities)
+			if err != nil {
+				t.Fatalf("connect worker failed: %v", err)
+			}
+			defer stream.CloseSend()
+
+			session := svc.getSession("node-sys")
+			if session == nil {
+				t.Fatalf("expected active session for node-sys")
+			}
+			for capability, want := range tt.expected {
+				if got := session.hasCapability(capability); got != want {
+					t.Errorf("capability %s: expected present=%v, got %v", capability, want, got)
+				}
+			}
+		})
+	}
+}
+
+func TestConnectRejectsWorkerSysWithoutAllowedCapability(t *testing.T) {
 	store := registrytest.NewStore(t)
-	now := time.Unix(1_700_000_015, 0)
+	now := time.Unix(1_700_000_016, 0)
 	seeded := store.SeedProvisionedWorkers([]registry.ProvisionedWorker{
 		{
 			NodeID: "node-sys",
@@ -330,13 +394,13 @@ func TestConnectRejectsWorkerSysMissingReadImageCapability(t *testing.T) {
 	client, cleanup := newBufClient(t, svc)
 	defer cleanup()
 
-	_, _, err := connectWorker(client, "node-sys", "secret-sys", "nonce-sys-missing-read-image", []string{computerUseCapabilityDeclared})
+	_, _, err := connectWorker(client, "node-sys", "secret-sys", "nonce-sys-no-capability", nil)
 	if status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("expected PermissionDenied, got %v", err)
 	}
 }
 
-func TestConnectWorkerSysForcesRequiredCapabilitiesMaxInflightOne(t *testing.T) {
+func TestConnectWorkerSysDefaultsAllowedCapabilityMaxInflight(t *testing.T) {
 	store := registrytest.NewStore(t)
 	now := time.Unix(1_700_000_020, 0)
 	seeded := store.SeedProvisionedWorkers([]registry.ProvisionedWorker{

@@ -28,8 +28,8 @@ The console service hosts:
     - non-admin: list/stats/inflight only own `worker-sys`; can create/delete only own `worker-sys`
   - `worker-sys` constraints:
     - max one per account
-    - only `computerUse` and `readImage` capabilities are accepted
-    - `computerUse.max_inflight` and `readImage.max_inflight` are both forced to `1`
+    - at least one capability from the `computerUse` / `readImage` allowlist is required; other capabilities are rejected
+    - declared `max_inflight` values are preserved; omitted or non-positive values default to `1`
 - public preview route APIs (dashboard cookie/API key/JIT auth):
   - `POST /api/v1/proxy-routes` creates an anonymous preview URL for an owned terminal session and port.
   - `GET /api/v1/proxy-routes` lists only the current account's active routes.
