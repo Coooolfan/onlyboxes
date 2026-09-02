@@ -34,6 +34,13 @@ const (
 	readImageCapabilityDeclared   = "readImage"
 )
 
+// workerSysAllowedCapabilities is the complete capability surface that a
+// provisioned worker-sys may advertise. Values are the canonical wire names.
+var workerSysAllowedCapabilities = map[string]string{
+	computerUseCapabilityName: computerUseCapabilityDeclared,
+	readImageCapabilityName:   readImageCapabilityDeclared,
+}
+
 var ErrNoEchoWorker = errors.New("no online worker supports echo")
 var ErrEchoTimeout = errors.New("echo command timed out")
 var ErrNoCapabilityWorker = errors.New("no online worker supports capability")

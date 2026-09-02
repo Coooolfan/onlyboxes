@@ -171,27 +171,31 @@ func (s *RegistryService) resolveHelloByWorkerType(hello *registryv1.ConnectHell
 		return hello, nil
 	}
 
-	hasComputerUse := false
-	hasReadImage := false
-	computerUseMaxInflight := 0
-	readImageMaxInflight := 0
+	allowedMaxInflight := make(map[string]int, len(workerSysAllowedCapabilities))
 	for _, capability := range hello.GetCapabilities() {
 		if capability == nil {
 			continue
 		}
-		switch normalizeCapability(capability.GetName()) {
-		case computerUseCapabilityName:
-			hasComputerUse = true
-			computerUseMaxInflight = int(capability.GetMaxInflight())
-		case readImageCapabilityName:
-			hasReadImage = true
-			readImageMaxInflight = int(capability.GetMaxInflight())
-		default:
+		name := normalizeCapability(capability.GetName())
+		if _, ok := workerSysAllowedCapabilities[name]; !ok {
 			return nil, status.Error(codes.PermissionDenied, "worker-sys supports only computerUse and readImage capabilities")
 		}
+		allowedMaxInflight[name] = int(capability.GetMaxInflight())
 	}
-	if !hasComputerUse || !hasReadImage {
-		return nil, status.Error(codes.PermissionDenied, "worker-sys requires computerUse and readImage capabilities")
+	if len(allowedMaxInflight) == 0 {
+		return nil, status.Error(codes.PermissionDenied, "worker-sys requires at least one of computerUse or readImage capabilities")
+	}
+
+	resolvedCapabilities := make([]*registryv1.CapabilityDeclaration, 0, len(allowedMaxInflight))
+	for _, name := range []string{computerUseCapabilityName, readImageCapabilityName} {
+		maxInflight, ok := allowedMaxInflight[name]
+		if !ok {
+			continue
+		}
+		resolvedCapabilities = append(resolvedCapabilities, &registryv1.CapabilityDeclaration{
+			Name:        workerSysAllowedCapabilities[name],
+			MaxInflight: int32(sysCapabilityMaxInflight(maxInflight)),
+		})
 	}
 
 	labels := cloneLabels(hello.GetLabels())
@@ -202,16 +206,7 @@ func (s *RegistryService) resolveHelloByWorkerType(hello *registryv1.ConnectHell
 		Labels:       labels,
 		Version:      hello.GetVersion(),
 		WorkerSecret: hello.GetWorkerSecret(),
-		Capabilities: []*registryv1.CapabilityDeclaration{
-			{
-				Name:        computerUseCapabilityDeclared,
-				MaxInflight: int32(sysCapabilityMaxInflight(computerUseMaxInflight)),
-			},
-			{
-				Name:        readImageCapabilityDeclared,
-				MaxInflight: int32(sysCapabilityMaxInflight(readImageMaxInflight)),
-			},
-		},
+		Capabilities: resolvedCapabilities,
 	}, nil
 }
 

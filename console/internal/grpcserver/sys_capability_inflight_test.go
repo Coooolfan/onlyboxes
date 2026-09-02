@@ -20,7 +20,7 @@ func TestSysCapabilityMaxInflightFallsBackToOne(t *testing.T) {
 	}
 }
 
-// worker-sys has a pinned capability set, but the per-capability concurrency is
+// worker-sys has a pinned capability allowlist, but the per-capability concurrency is
 // the worker's own configuration and must survive the hello rewrite.
 func TestResolveHelloByWorkerTypeKeepsSysDeclaredMaxInflight(t *testing.T) {
 	store := registrytest.NewStore(t)
