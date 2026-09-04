@@ -9,7 +9,6 @@ DEV_ENV="${ONLYBOXES_DEV_ENV:-$SCRIPT_DIR/dev.env}"
 PUBLIC_ENV="$SCRIPT_DIR/public-preview.env"
 CREDS_FILE="$STATE_DIR/console-creds.json"
 WORKER_ENV="$STATE_DIR/worker-docker.env"
-LEGACY_WORKER_ENV="$STATE_DIR/public-preview-worker.env"
 WORKER_BINARY="$STATE_DIR/worker-docker-linux"
 NGINX_CONFIG="$STATE_DIR/public-preview-nginx.conf"
 NGINX_TEMPLATE="$SCRIPT_DIR/public-preview.nginx.conf.template"
@@ -182,15 +181,6 @@ upsert_env() {
     mv "$tmp" "$file"
 }
 
-migrate_worker_env() {
-    mkdir -p "$STATE_DIR"
-    if [ ! -f "$WORKER_ENV" ] && [ -f "$LEGACY_WORKER_ENV" ]; then
-        cp "$LEGACY_WORKER_ENV" "$WORKER_ENV"
-        chmod 600 "$WORKER_ENV"
-        echo "• 已迁移现有 Worker 配置到 scripts/.dev/worker-docker.env"
-    fi
-}
-
 write_worker_env() {
     local node_id="$1" secret="$2" target tmp
     if [ "$(worker_runner)" = "orb" ]; then
@@ -233,7 +223,7 @@ sync_worker_env() {
 }
 
 provision_worker() {
-    migrate_worker_env
+    mkdir -p "$STATE_DIR"
     authenticate_console
 
     local node_id response secret
@@ -267,7 +257,7 @@ build_worker_linux() {
     esac
     if [ ! -x "$WORKER_BINARY" ]; then
         rebuild=1
-    elif find "$ROOT_DIR/worker/worker-docker" "$ROOT_DIR/api" -type f \( -name '*.go' -o -name 'go.mod' -o -name 'go.sum' \) -newer "$WORKER_BINARY" -print -quit | grep -q .; then
+    elif find "$ROOT_DIR/worker/worker-docker" "$ROOT_DIR/worker/internal" "$ROOT_DIR/worker/go.mod" "$ROOT_DIR/worker/go.sum" "$ROOT_DIR/api" -type f \( -name '*.go' -o -name 'go.mod' -o -name 'go.sum' \) -newer "$WORKER_BINARY" -print -quit | grep -q .; then
         rebuild=1
     fi
     if [ "$rebuild" -eq 1 ]; then
@@ -398,7 +388,7 @@ case "${1:-}" in
     cleanup-network) cleanup_network ;;
     status) status_component "${2:-}" ;;
     logs) logs_component "${2:-}" ;;
-    worker-env) migrate_worker_env; printf '%s' "$WORKER_ENV" ;;
+    worker-env) printf '%s' "$WORKER_ENV" ;;
     port)
         case "${2:-}" in worker-docker) printf '8091' ;; nginx) printf '%s' "$HTTP_PORT" ;; *) exit 1 ;; esac
         ;;

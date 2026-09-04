@@ -1,10 +1,10 @@
-module github.com/onlyboxes/onlyboxes/worker/worker-docker
+module github.com/onlyboxes/onlyboxes/worker
 
 go 1.24.0
 
 require (
+	connectrpc.com/connect v1.19.1
 	github.com/BurntSushi/toml v1.5.0
-	github.com/google/uuid v1.6.0
 	github.com/onlyboxes/onlyboxes/api v0.0.0
 	google.golang.org/grpc v1.79.1
 	google.golang.org/protobuf v1.36.10
@@ -17,4 +17,4 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251202230838-ff82c1b0f217 // indirect
 )
 
-replace github.com/onlyboxes/onlyboxes/api => ../../api
+replace github.com/onlyboxes/onlyboxes/api => ../api

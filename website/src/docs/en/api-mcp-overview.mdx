@@ -572,7 +572,6 @@ Worker types: `normal` (backed by `worker-docker`/`worker-boxlite`), `worker-sys
       "node_id": "worker-1",
       "active_session_count": 3,
       "terminal_session_capacity": {
-        "known": true,
         "max_active_sessions": 4
       },
       "capabilities": [
@@ -587,8 +586,7 @@ Worker types: `normal` (backed by `worker-docker`/`worker-boxlite`), `worker-sys
 > For regular users, results only include their own `worker-sys`.
 >
 > - `active_session_count` is the worker's latest terminal reservation count.
-> - `terminal_session_capacity.known=false` means a legacy worker did not declare a maximum; it must not be interpreted as unlimited.
-> - `known=true,max_active_sessions=0` explicitly means unlimited active terminal sessions.
+> - `terminal_session_capacity.max_active_sessions=0` means unlimited active terminal sessions.
 
 ---
 

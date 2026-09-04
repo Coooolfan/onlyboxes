@@ -3,10 +3,13 @@ package e2b
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"mime"
 	"net"
 	"net/http"
@@ -18,7 +21,6 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	"github.com/google/uuid"
 	processv1 "github.com/onlyboxes/onlyboxes/worker/worker-bridge-e2b/internal/e2b/process/v1"
 	"github.com/onlyboxes/onlyboxes/worker/worker-bridge-e2b/internal/e2b/process/v1/processv1connect"
 )
@@ -167,7 +169,7 @@ func (c *Client) CreateWithMetadata(ctx context.Context, template string, timeou
 		AutoPause:           false,
 		Secure:              true,
 		AllowInternetAccess: true,
-		Metadata:            cloneMetadata(metadata),
+		Metadata:            maps.Clone(metadata),
 		EnvVars:             map[string]string{},
 	}
 	if c.restrictPublicTraffic {
@@ -262,14 +264,6 @@ func (c *Client) Connect(ctx context.Context, sandboxID string, timeoutSec int) 
 	}, nil
 }
 
-func cloneMetadata(metadata map[string]string) map[string]string {
-	out := make(map[string]string, len(metadata))
-	for key, value := range metadata {
-		out[key] = value
-	}
-	return out
-}
-
 func (sandbox *Sandbox) ProxyURL(port int) (string, string, error) {
 	if sandbox == nil || strings.TrimSpace(sandbox.ID) == "" {
 		return "", "", errors.New("sandbox is required")
@@ -322,7 +316,11 @@ func (c *Client) Run(
 	baseURL := c.sandboxBaseURL(sandbox)
 	rpc := processv1connect.NewProcessClient(c.sandboxHTTP, baseURL, connect.WithProtoJSON())
 	stdin := false
-	tag := "onlyboxes-" + uuid.NewString()
+	randomID, err := randomID()
+	if err != nil {
+		return CommandResult{}, fmt.Errorf("generate process tag: %w", err)
+	}
+	tag := "onlyboxes-" + randomID
 	req := connect.NewRequest(&processv1.StartRequest{
 		Process: &processv1.ProcessConfig{
 			Cmd:  "/bin/bash",
@@ -392,6 +390,14 @@ func (c *Client) Run(
 	result.StdoutTruncated = stdout.truncated
 	result.StderrTruncated = stderr.truncated
 	return result, nil
+}
+
+func randomID() (string, error) {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(raw[:]), nil
 }
 
 func (c *Client) stopProcess(sandbox *Sandbox, pid uint32, tag string) error {

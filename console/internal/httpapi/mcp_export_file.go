@@ -9,7 +9,6 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -19,7 +18,11 @@ const (
 )
 
 var newExportObjectID = func() string {
-	return uuid.NewString()
+	value, err := randomHex(16)
+	if err != nil {
+		panic(err)
+	}
+	return value
 }
 
 type ExportStore interface {

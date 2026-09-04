@@ -11,7 +11,6 @@ const (
 	defaultConsoleTarget             = "127.0.0.1:50051"
 	defaultHeartbeatInterval         = 5
 	defaultHeartbeatJitter           = 20
-	defaultExecutorKind              = "e2b"
 	defaultE2BAPIURL                 = "https://api.e2b.app"
 	defaultE2BDomain                 = "e2b.app"
 	defaultE2BRequestTimeout         = 60
@@ -41,7 +40,6 @@ type Config struct {
 	HeartbeatJitter             int
 	CallTimeout                 time.Duration
 	NodeName                    string
-	ExecutorKind                string
 	Labels                      map[string]string
 	E2BAPIKey                   string
 	E2BAPIURL                   string
@@ -79,11 +77,10 @@ func Load() Config {
 	if terminalLeaseMaxSec < terminalLeaseMinSec {
 		terminalLeaseMaxSec = terminalLeaseMinSec
 	}
-	terminalLeaseDefaultSec := clampInt(
+	terminalLeaseDefaultSec := min(max(
 		src.positiveInt("WORKER_TERMINAL_LEASE_DEFAULT_SEC", defaultTerminalLeaseTTL),
 		terminalLeaseMinSec,
-		terminalLeaseMaxSec,
-	)
+	), terminalLeaseMaxSec)
 
 	e2bAPIKey := strings.TrimSpace(src.getWithEnvAliases("WORKER_E2B_API_KEY", "E2B_API_KEY"))
 	e2bAPIURL := strings.TrimRight(strings.TrimSpace(src.getWithEnvAliases("WORKER_E2B_API_URL", "E2B_API_URL")), "/")
@@ -107,7 +104,6 @@ func Load() Config {
 		HeartbeatJitter:             heartbeatJitter,
 		CallTimeout:                 time.Duration(callTimeoutSec) * time.Second,
 		NodeName:                    strings.TrimSpace(src.get("WORKER_NODE_NAME")),
-		ExecutorKind:                defaultExecutorKind,
 		Labels:                      parseLabels(src.get("WORKER_LABELS")),
 		E2BAPIKey:                   e2bAPIKey,
 		E2BAPIURL:                   e2bAPIURL,
@@ -248,14 +244,4 @@ func normalizeLabels(raw map[string]string) map[string]string {
 		}
 	}
 	return labels
-}
-
-func clampInt(value, minValue, maxValue int) int {
-	if value < minValue {
-		return minValue
-	}
-	if value > maxValue {
-		return maxValue
-	}
-	return value
 }

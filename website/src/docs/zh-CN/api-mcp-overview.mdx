@@ -572,7 +572,6 @@ Worker 类型：`normal`（对应 `worker-docker`/`worker-boxlite`）、`worker-
       "node_id": "worker-1",
       "active_session_count": 3,
       "terminal_session_capacity": {
-        "known": true,
         "max_active_sessions": 4
       },
       "capabilities": [
@@ -587,8 +586,7 @@ Worker 类型：`normal`（对应 `worker-docker`/`worker-boxlite`）、`worker-
 > 普通用户的结果仅包含本人 `worker-sys`。
 >
 > - `active_session_count` 是 worker 最近一次上报的 terminal reservation 数。
-> - `terminal_session_capacity.known=false` 表示旧 worker 未声明最大值，不能解释为不限。
-> - `known=true,max_active_sessions=0` 明确表示 active terminal session 数不限。
+> - `terminal_session_capacity.max_active_sessions=0` 表示 active terminal session 数不限。
 
 ---
 

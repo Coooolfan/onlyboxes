@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/onlyboxes/onlyboxes/worker/worker-bridge-e2b/internal/logging"
+	"github.com/onlyboxes/onlyboxes/worker/internal/logging"
 )
 
 const pythonExecCleanupTimeout = 10 * time.Second

@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -12,8 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/onlyboxes/onlyboxes/worker/worker-docker/internal/logging"
+	"github.com/onlyboxes/onlyboxes/worker/internal/logging"
 )
 
 const (
@@ -616,7 +616,11 @@ func (m *terminalSessionManager) claimSession(
 	}
 
 	if sessionID == "" {
-		session, err := m.newSessionLocked(uuid.NewString(), leaseTarget)
+		generatedID, err := randomTerminalSessionID()
+		if err != nil {
+			return nil, false, fmt.Errorf("generate terminal session ID: %w", err)
+		}
+		session, err := m.newSessionLocked(generatedID, leaseTarget)
 		return session, true, err
 	}
 
@@ -641,6 +645,14 @@ func (m *terminalSessionManager) claimSession(
 
 	session, err := m.newSessionLocked(sessionID, leaseTarget)
 	return session, true, err
+}
+
+func randomTerminalSessionID() (string, error) {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(raw[:]), nil
 }
 
 func (m *terminalSessionManager) newSessionLocked(sessionID string, leaseTarget time.Time) (*terminalSession, error) {

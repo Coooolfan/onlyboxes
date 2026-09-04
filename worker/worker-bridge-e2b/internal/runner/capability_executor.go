@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -278,7 +279,7 @@ func buildTerminalResourceCommandResult(baseCtx context.Context, commandID strin
 		FilePath:  decoded.FilePath,
 		Action:    decoded.Action,
 		SignedURL: decoded.SignedURL,
-		Headers:   cloneStringMap(decoded.Headers),
+		Headers:   maps.Clone(decoded.Headers),
 	})
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
@@ -305,17 +306,6 @@ func buildTerminalResourceCommandResult(baseCtx context.Context, commandID strin
 			},
 		},
 	}
-}
-
-func cloneStringMap(values map[string]string) map[string]string {
-	if len(values) == 0 {
-		return nil
-	}
-	cloned := make(map[string]string, len(values))
-	for key, value := range values {
-		cloned[key] = value
-	}
-	return cloned
 }
 
 func commandErrorResult(commandID string, code string, message string) *registryv1.ConnectRequest {

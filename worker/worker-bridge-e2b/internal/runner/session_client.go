@@ -2,22 +2,18 @@ package runner
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/big"
 	"strconv"
 	"strings"
 	"time"
 
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
+	"github.com/onlyboxes/onlyboxes/worker/internal/logging"
+	"github.com/onlyboxes/onlyboxes/worker/internal/sessionclient"
 	"github.com/onlyboxes/onlyboxes/worker/worker-bridge-e2b/internal/config"
-	"github.com/onlyboxes/onlyboxes/worker/worker-bridge-e2b/internal/logging"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -27,7 +23,7 @@ func runSession(ctx context.Context, cfg config.Config) error {
 }
 
 func runSessionWithStatus(ctx context.Context, cfg config.Config) (bool, error) {
-	conn, err := dial(ctx, cfg)
+	conn, err := sessionclient.Dial(ctx, cfg.ConsoleGRPCTarget, cfg.ConsoleTLS)
 	if err != nil {
 		return false, fmt.Errorf("dial console: %w", err)
 	}
@@ -135,39 +131,13 @@ func logTerminalRecoverySummary(results []*registryv1.TerminalSessionRecoveryRes
 	)
 }
 
-func dial(ctx context.Context, cfg config.Config) (*grpc.ClientConn, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	var creds grpc.DialOption
-	if cfg.ConsoleTLS {
-		creds = grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{}))
-	} else {
-		creds = grpc.WithTransportCredentials(insecure.NewCredentials())
-	}
-	return grpc.NewClient(cfg.ConsoleGRPCTarget, creds)
-}
-
 func senderLoop(
 	ctx context.Context,
 	stream grpc.BidiStreamingClient[registryv1.ConnectRequest, registryv1.ConnectResponse],
 	outbound <-chan *registryv1.ConnectRequest,
 	errCh chan<- error,
 ) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case req := <-outbound:
-			if req == nil {
-				continue
-			}
-			if err := stream.Send(req); err != nil {
-				reportSessionErr(errCh, fmt.Errorf("stream send failed: %w", err))
-				return
-			}
-		}
-	}
+	sessionclient.SenderLoop(ctx, stream, outbound, errCh)
 }
 
 func receiverLoop(
@@ -310,77 +280,19 @@ func heartbeatLoop(
 	sessionID string,
 	heartbeatInterval time.Duration,
 ) error {
-	interval := heartbeatInterval
-	consecutiveAckTimeouts := 0
-
-	for {
-		waitFor := applyJitter(interval, cfg.HeartbeatJitter)
-		timer := time.NewTimer(waitFor)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return ctx.Err()
-		case err := <-sessionErrCh:
-			timer.Stop()
-			return err
-		case <-timer.C:
-		}
-
-		if err := enqueueRequest(ctx, outbound, &registryv1.ConnectRequest{
-			Payload: &registryv1.ConnectRequest_Heartbeat{
-				Heartbeat: &registryv1.HeartbeatFrame{
-					NodeId:             cfg.WorkerID,
-					SessionId:          sessionID,
-					ActiveSessionCount: activeSessionCountFn(),
-				},
-			},
-		}); err != nil {
-			return fmt.Errorf("enqueue heartbeat: %w", err)
-		}
-
-		ackTimer := time.NewTimer(cfg.CallTimeout)
-		waitAck := true
-		for waitAck {
-			select {
-			case <-ctx.Done():
-				ackTimer.Stop()
-				return ctx.Err()
-			case err := <-sessionErrCh:
-				ackTimer.Stop()
-				return err
-			case <-ackTimer.C:
-				consecutiveAckTimeouts++
-				if consecutiveAckTimeouts >= 2 {
-					return context.DeadlineExceeded
-				}
-				waitAck = false
-			case heartbeatAck := <-heartbeatAckCh:
-				ackTimer.Stop()
-				consecutiveAckTimeouts = 0
-				interval = durationFromServer(heartbeatAck.GetHeartbeatIntervalSec(), interval)
-				waitAck = false
-			}
-		}
-	}
+	return sessionclient.HeartbeatLoop(ctx, outbound, heartbeatAckCh, sessionErrCh, sessionclient.HeartbeatConfig{
+		WorkerID: cfg.WorkerID, SessionID: sessionID, Interval: heartbeatInterval,
+		JitterPercent: cfg.HeartbeatJitter, CallTimeout: cfg.CallTimeout,
+		Minimum: minHeartbeatInterval, ActiveCount: activeSessionCountFn, ApplyJitter: applyJitter,
+	})
 }
 
 func enqueueRequest(ctx context.Context, outbound chan<- *registryv1.ConnectRequest, req *registryv1.ConnectRequest) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case outbound <- req:
-		return nil
-	}
+	return sessionclient.Enqueue(ctx, outbound, req)
 }
 
 func reportSessionErr(errCh chan<- error, err error) {
-	if err == nil {
-		return
-	}
-	select {
-	case errCh <- err:
-	default:
-	}
+	sessionclient.ReportError(errCh, err)
 }
 
 func recvWithTimeout(
@@ -388,91 +300,21 @@ func recvWithTimeout(
 	timeout time.Duration,
 	recv func() (*registryv1.ConnectResponse, error),
 ) (*registryv1.ConnectResponse, error) {
-	if timeout <= 0 {
-		return recv()
-	}
-
-	type recvResult struct {
-		resp *registryv1.ConnectResponse
-		err  error
-	}
-
-	resultCh := make(chan recvResult, 1)
-	go func() {
-		resp, err := recv()
-		resultCh <- recvResult{resp: resp, err: err}
-	}()
-
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-timer.C:
-		return nil, context.DeadlineExceeded
-	case result := <-resultCh:
-		return result.resp, result.err
-	}
+	return sessionclient.RecvWithTimeout(ctx, timeout, recv)
 }
 
 func durationFromServer(seconds int32, fallback time.Duration) time.Duration {
-	if seconds > 0 {
-		return time.Duration(seconds) * time.Second
-	}
-	if fallback <= 0 {
-		return 5 * time.Second
-	}
-	return fallback
+	return sessionclient.DurationFromServer(seconds, fallback)
 }
 
 func jitterDuration(base time.Duration, jitterPct int) time.Duration {
-	if base <= 0 {
-		base = minHeartbeatInterval
-	}
-	if jitterPct <= 0 {
-		return base
-	}
-
-	maxDelta := int64(base) * int64(jitterPct) / 100
-	if maxDelta <= 0 {
-		return base
-	}
-
-	random, err := rand.Int(rand.Reader, big.NewInt(maxDelta*2+1))
-	if err != nil {
-		return base
-	}
-	delta := random.Int64() - maxDelta
-	jittered := base + time.Duration(delta)
-	if jittered < minHeartbeatInterval {
-		return minHeartbeatInterval
-	}
-	return jittered
+	return sessionclient.JitterDuration(base, jitterPct, minHeartbeatInterval)
 }
 
 func waitReconnectDelay(ctx context.Context, delay time.Duration) error {
-	if delay <= 0 {
-		delay = initialReconnectDelay
-	}
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
+	return sessionclient.WaitReconnectDelay(ctx, delay, initialReconnectDelay)
 }
 
 func nextReconnectDelay(current time.Duration) time.Duration {
-	if current <= 0 {
-		return initialReconnectDelay
-	}
-	next := current * 2
-	if next > maxReconnectDelay {
-		return maxReconnectDelay
-	}
-	return next
+	return sessionclient.NextReconnectDelay(current, initialReconnectDelay, maxReconnectDelay)
 }

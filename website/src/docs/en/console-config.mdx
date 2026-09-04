@@ -66,39 +66,9 @@ These variables are only used during first startup when no admin account exists.
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `CONSOLE_HIDDEN_TOOLS` | No | | Comma-separated **internal capability IDs** to hide from MCP `tools/list` (`echo`, `pythonExec`, `terminalExec`, `computerUse`, `readImage`, `exportFile`). Always use the built-in IDs here — never the renamed value supplied via `CONSOLE_MCP_TOOL_<TOOL>_NAME`. Hidden tools remain callable if the client already knows the tool name. |
+| `CONSOLE_HIDDEN_TOOLS` | No | | Comma-separated capability IDs to hide from MCP `tools/list` (`echo`, `pythonExec`, `terminalExec`, `computerUse`, `readImage`, `exportFile`). Hidden tools remain callable if the client already knows the tool name. |
 | `CONSOLE_MCP_TOKEN_QUERY_PARAM` | No | `token` | Query parameter name for the `/mcp` URL-token fallback used by clients that cannot send custom headers. Bearer headers remain recommended. |
 
-#### Tool description / parameter overrides
-
-These env vars let you rewrite what each tool advertises to the model without recompiling. Unset variables keep the built-in defaults. The tool name segment uses `UPPER_SNAKE_CASE` (e.g. `pythonExec` → `PYTHON_EXEC`), and the parameter segment is the uppercased snake_case JSON key (e.g. `session_id` → `SESSION_ID`).
-
-| Variable | Required | Default | Description |
-| --- | --- | --- | --- |
-| `CONSOLE_MCP_TOOL_<TOOL>_NAME` | No | built-in | Override the tool's `name` exposed via `tools/list` (the routing key used by `tools/call`). Must match `^[a-zA-Z0-9_-]{1,64}$`; empty / invalid values fall back to the default with a warn log. Overrides that collide with another tool's built-in default name (e.g. setting `ECHO_NAME=pythonExec`) also fall back. After changing this, MCP clients must refresh their cached `tools/list`, otherwise `tools/call` against the old name returns "tool not found". `CONSOLE_HIDDEN_TOOLS` keeps using the internal capability ID (`echo`), not the renamed value. |
-| `CONSOLE_MCP_TOOL_<TOOL>_TITLE` | No | built-in | Override the tool's human-readable title in `tools/list` and `annotations.title`. An empty string falls back to the default and logs a warning. |
-| `CONSOLE_MCP_TOOL_<TOOL>_DESCRIPTION` | No | built-in | Override the tool's `description`. An empty string falls back to the default and logs a warning. |
-| `CONSOLE_MCP_TOOL_<TOOL>_PARAM_<PARAM>_DESCRIPTION` | No | built-in | Override a single parameter's `description` in `inputSchema.properties.<param>`. **Setting this to an empty string hides the parameter from `tools/list`**: the entry is removed from `properties` and `required`, and the schema's `additionalProperties` flips to `true` so MCP / HTTP callers may still transmit the field (the handler still receives it). Every hidden parameter emits a startup `WARN hiding MCP tool parameter ... required=<bool>`; hiding a required parameter means the model cannot construct a valid call. |
-
-Supported `<TOOL>` segments and their `<PARAM>` keys:
-
-| Tool | `<TOOL>` | `<PARAM>` values |
-| --- | --- | --- |
-| `echo` | `ECHO` | `MESSAGE`, `TIMEOUT_MS` |
-| `pythonExec` | `PYTHON_EXEC` | `CODE`, `TIMEOUT_MS` |
-| `terminalExec` | `TERMINAL_EXEC` | `COMMAND`, `SESSION_ID`, `CREATE_IF_MISSING`, `LEASE_TTL_SEC`, `TIMEOUT_MS` |
-| `computerUse` | `COMPUTER_USE` | `COMMAND`, `TIMEOUT_MS`, `REQUEST_ID` |
-| `readImage` | `READ_IMAGE` | `SESSION_ID`, `FILE_PATH`, `TIMEOUT_MS` |
-| `exportFile` | `EXPORT_FILE` | `SESSION_ID`, `FILE_PATH`, `TIMEOUT_MS` |
-
-Example:
-
-```bash
-# Rename the echo tool to "ping", replace its description, and hide terminalExec's session_id parameter
-CONSOLE_MCP_TOOL_ECHO_NAME="ping"
-CONSOLE_MCP_TOOL_ECHO_DESCRIPTION="ping-only echo"
-CONSOLE_MCP_TOOL_TERMINAL_EXEC_PARAM_SESSION_ID_DESCRIPTION=""
-```
 
 ### Export file object store
 
@@ -135,7 +105,6 @@ These variables enable the MCP `exportFile` tool. The tool is registered in `too
 | --- | --- | --- | --- |
 | `CONSOLE_HEARTBEAT_INTERVAL_SEC` | No | `5` | Expected worker heartbeat interval (seconds) |
 | `CONSOLE_OFFLINE_TTL_SEC` | No | `15` | Seconds before a silent worker is marked offline |
-| `CONSOLE_REPLAY_WINDOW_SEC` | No | `60` | Replay window for request deduplication (seconds) |
 
 ### Public preview proxy
 

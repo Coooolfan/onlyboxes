@@ -12,7 +12,6 @@ const (
 	defaultHTTPAddr                = ":8089"
 	defaultGRPCAddr                = ":50051"
 	defaultOfflineTTLSec           = 15
-	defaultReplayWindowSec         = 60
 	defaultHeartbeatIntervalSec    = 5
 	defaultDBPath                  = "./db/onlyboxes-console.db"
 	defaultDBBusyTimeoutMS         = 5000
@@ -39,7 +38,6 @@ type Config struct {
 	HTTPAddr                  string
 	GRPCAddr                  string
 	OfflineTTL                time.Duration
-	ReplayWindow              time.Duration
 	HeartbeatIntervalSec      int32
 	DashboardUsername         string
 	DashboardPassword         string
@@ -62,7 +60,6 @@ type Config struct {
 	EnableRegistration        bool
 	HiddenTools               map[string]bool
 	MCPTokenQueryParam        string
-	MCPToolOverrides          map[string]MCPToolOverride
 	ProxyEnabled              bool
 	ProxyPublicBaseDomain     string
 	ProxyPublicScheme         string
@@ -79,30 +76,10 @@ type Config struct {
 	LogAddSource              bool
 }
 
-// MCPToolOverride holds optional env-driven overrides for a single MCP tool's
-// Name, Title, Description, and per-parameter descriptions.
-//
-// Pointer semantics:
-//   - nil       → env not set, use built-in default.
-//   - non-nil   → env set. For Name/Title/Description: empty string is treated
-//     as invalid (fallback + warn at the handler layer). Name is
-//     additionally validated against an MCP-compatible regex; an
-//     override that collides with another tool's built-in default
-//     name (or another tool's exposed name) also falls back. For
-//     ParamDescriptions: empty string means "hide this parameter
-//     from tools/list inputSchema".
-type MCPToolOverride struct {
-	Name              *string
-	Title             *string
-	Description       *string
-	ParamDescriptions map[string]*string
-}
-
 func Load() Config {
 	src := newSource()
 
 	offlineTTLSec := src.positiveInt("CONSOLE_OFFLINE_TTL_SEC", defaultOfflineTTLSec)
-	replayWindowSec := src.positiveInt("CONSOLE_REPLAY_WINDOW_SEC", defaultReplayWindowSec)
 	heartbeatIntervalSec := src.positiveInt("CONSOLE_HEARTBEAT_INTERVAL_SEC", defaultHeartbeatIntervalSec)
 	dbBusyTimeoutMS := src.positiveInt("CONSOLE_DB_BUSY_TIMEOUT_MS", defaultDBBusyTimeoutMS)
 	taskRetentionDays := src.positiveInt("CONSOLE_TASK_RETENTION_DAYS", defaultTaskRetentionDays)
@@ -118,7 +95,6 @@ func Load() Config {
 		HTTPAddr:                  src.stringValue("CONSOLE_HTTP_ADDR", defaultHTTPAddr),
 		GRPCAddr:                  src.stringValue("CONSOLE_GRPC_ADDR", defaultGRPCAddr),
 		OfflineTTL:                time.Duration(offlineTTLSec) * time.Second,
-		ReplayWindow:              time.Duration(replayWindowSec) * time.Second,
 		HeartbeatIntervalSec:      int32(heartbeatIntervalSec),
 		DashboardUsername:         src.get("CONSOLE_DASHBOARD_USERNAME"),
 		DashboardPassword:         src.get("CONSOLE_DASHBOARD_PASSWORD"),
@@ -141,7 +117,6 @@ func Load() Config {
 		EnableRegistration:        src.boolValue("CONSOLE_ENABLE_REGISTRATION", false),
 		HiddenTools:               src.stringSet("CONSOLE_HIDDEN_TOOLS"),
 		MCPTokenQueryParam:        src.trimmedStringValue("CONSOLE_MCP_TOKEN_QUERY_PARAM", defaultMCPTokenQueryParam),
-		MCPToolOverrides:          src.mcpToolOverrides(),
 		ProxyEnabled:              src.boolValue("CONSOLE_PROXY_ENABLED", false),
 		ProxyPublicBaseDomain:     strings.TrimSpace(strings.ToLower(src.get("CONSOLE_PROXY_PUBLIC_BASE_DOMAIN"))),
 		ProxyPublicScheme:         strings.ToLower(src.trimmedStringValue("CONSOLE_PROXY_PUBLIC_SCHEME", defaultProxyPublicScheme)),
@@ -378,99 +353,4 @@ func (s source) logFormat(key string, defaultValue string) string {
 	default:
 		return defaultValue
 	}
-}
-
-// mcpToolParamCatalog enumerates every (toolName, paramName) pair that participates
-// in env-driven override. Tool names match those registered in NewMCPHandler;
-// param names match the snake_case JSON field keys in each input schema.
-//
-// Keeping this catalog in config (rather than httpapi) avoids an import cycle
-// and localizes the mapping used to derive env var names.
-var mcpToolParamCatalog = []struct {
-	ToolName string
-	Params   []string
-}{
-	{"echo", []string{"message", "timeout_ms"}},
-	{"pythonExec", []string{"code", "timeout_ms"}},
-	{"terminalExec", []string{"command", "session_id", "create_if_missing", "lease_ttl_sec", "timeout_ms"}},
-	{"computerUse", []string{"command", "timeout_ms", "request_id"}},
-	{"readImage", []string{"session_id", "file_path", "timeout_ms"}},
-	{"exportFile", []string{"session_id", "file_path", "timeout_ms"}},
-}
-
-// loadMCPToolOverrides reads env vars of the form:
-//
-//	CONSOLE_MCP_TOOL_<TOOL>_NAME
-//	CONSOLE_MCP_TOOL_<TOOL>_TITLE
-//	CONSOLE_MCP_TOOL_<TOOL>_DESCRIPTION
-//	CONSOLE_MCP_TOOL_<TOOL>_PARAM_<PARAM>_DESCRIPTION
-//
-// where <TOOL> is the camelCase tool name translated to UPPER_SNAKE (e.g.
-// pythonExec → PYTHON_EXEC) and <PARAM> is the snake_case param name uppercased
-// (e.g. session_id → SESSION_ID).
-//
-// The equivalent config file keys are the same names without the CONSOLE_
-// prefix and lowercased, so nested tables such as
-// `[mcp_tool.python_exec] description = "..."` are supported as well.
-//
-// An explicitly empty string is distinguishable from an unset key.
-func (src source) mcpToolOverrides() map[string]MCPToolOverride {
-	result := make(map[string]MCPToolOverride)
-	for _, entry := range mcpToolParamCatalog {
-		toolEnv := toolNameToEnvSegment(entry.ToolName)
-		override := MCPToolOverride{}
-		if v, ok := src.lookup("CONSOLE_MCP_TOOL_" + toolEnv + "_NAME"); ok {
-			s := v
-			override.Name = &s
-		}
-		if v, ok := src.lookup("CONSOLE_MCP_TOOL_" + toolEnv + "_TITLE"); ok {
-			s := v
-			override.Title = &s
-		}
-		if v, ok := src.lookup("CONSOLE_MCP_TOOL_" + toolEnv + "_DESCRIPTION"); ok {
-			s := v
-			override.Description = &s
-		}
-		params := make(map[string]*string)
-		for _, param := range entry.Params {
-			paramEnv := paramNameToEnvSegment(param)
-			if v, ok := src.lookup("CONSOLE_MCP_TOOL_" + toolEnv + "_PARAM_" + paramEnv + "_DESCRIPTION"); ok {
-				s := v
-				params[param] = &s
-			}
-		}
-		if len(params) > 0 {
-			override.ParamDescriptions = params
-		}
-		if override.Name != nil || override.Title != nil || override.Description != nil || override.ParamDescriptions != nil {
-			result[entry.ToolName] = override
-		}
-	}
-	if len(result) == 0 {
-		return nil
-	}
-	return result
-}
-
-// toolNameToEnvSegment converts a camelCase tool name (e.g. "pythonExec") to
-// the UPPER_SNAKE_CASE segment used in env variable names ("PYTHON_EXEC").
-func toolNameToEnvSegment(name string) string {
-	var b strings.Builder
-	for i, r := range name {
-		if i > 0 && r >= 'A' && r <= 'Z' {
-			b.WriteByte('_')
-		}
-		if r >= 'a' && r <= 'z' {
-			b.WriteRune(r - 32)
-		} else {
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
-}
-
-// paramNameToEnvSegment converts a snake_case param name (e.g. "session_id")
-// to the UPPER_SNAKE_CASE segment used in env variable names ("SESSION_ID").
-func paramNameToEnvSegment(name string) string {
-	return strings.ToUpper(name)
 }

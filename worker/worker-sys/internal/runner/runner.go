@@ -6,8 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onlyboxes/onlyboxes/worker/internal/logging"
+	"github.com/onlyboxes/onlyboxes/worker/internal/sessionclient"
 	"github.com/onlyboxes/onlyboxes/worker/worker-sys/internal/config"
-	"github.com/onlyboxes/onlyboxes/worker/worker-sys/internal/logging"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -86,27 +87,9 @@ func Run(ctx context.Context, cfg config.Config) error {
 }
 
 func nextReconnectDelay(current time.Duration) time.Duration {
-	if current <= 0 {
-		return initialReconnectDelay
-	}
-	next := current * 2
-	if next > maxReconnectDelay {
-		return maxReconnectDelay
-	}
-	return next
+	return sessionclient.NextReconnectDelay(current, initialReconnectDelay, maxReconnectDelay)
 }
 
 func waitReconnectDelay(ctx context.Context, delay time.Duration) error {
-	if delay <= 0 {
-		delay = initialReconnectDelay
-	}
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
+	return sessionclient.WaitReconnectDelay(ctx, delay, initialReconnectDelay)
 }

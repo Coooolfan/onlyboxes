@@ -32,8 +32,7 @@ type capabilityInflightJSON struct {
 }
 
 type terminalSessionCapacityJSON struct {
-	Known             bool `json:"known"`
-	MaxActiveSessions int  `json:"max_active_sessions"`
+	MaxActiveSessions int `json:"max_active_sessions"`
 }
 
 type workerInflightJSON struct {
@@ -126,7 +125,6 @@ func (h *WorkerHandler) WorkerInflight(c *gin.Context) {
 			NodeID:             snap.NodeID,
 			ActiveSessionCount: snap.ActiveSessionCount,
 			TerminalSessionCapacity: terminalSessionCapacityJSON{
-				Known:             snap.TerminalSessionCapacity.Known,
 				MaxActiveSessions: snap.TerminalSessionCapacity.MaxActiveSessions,
 			},
 			Capabilities: entries,

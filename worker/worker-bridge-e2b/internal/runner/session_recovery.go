@@ -7,8 +7,8 @@ import (
 	"time"
 
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
+	"github.com/onlyboxes/onlyboxes/worker/internal/logging"
 	"github.com/onlyboxes/onlyboxes/worker/worker-bridge-e2b/internal/e2b"
-	"github.com/onlyboxes/onlyboxes/worker/worker-bridge-e2b/internal/logging"
 )
 
 var recoverTerminalSessionsFn = func(

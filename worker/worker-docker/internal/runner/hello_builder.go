@@ -1,12 +1,12 @@
 package runner
 
 import (
-	"fmt"
+	"errors"
 	"strings"
 
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
 	"github.com/onlyboxes/onlyboxes/api/proxytoken"
-	"github.com/onlyboxes/onlyboxes/worker/worker-docker/internal/buildinfo"
+	"github.com/onlyboxes/onlyboxes/worker/internal/hellobuilder"
 	"github.com/onlyboxes/onlyboxes/worker/worker-docker/internal/config"
 )
 
@@ -16,16 +16,7 @@ func buildHello(cfg config.Config) (*registryv1.ConnectHello, error) {
 	}
 	activeSessionCount := activeSessionCountFn()
 	if activeSessionCount < 0 {
-		return nil, fmt.Errorf("terminal active session count must be non-negative")
-	}
-
-	nodeName := strings.TrimSpace(cfg.NodeName)
-	if nodeName == "" {
-		suffix := cfg.WorkerID
-		if len(suffix) > 8 {
-			suffix = suffix[:8]
-		}
-		nodeName = fmt.Sprintf("worker-docker-%s", suffix)
+		return nil, errors.New("terminal active session count must be non-negative")
 	}
 
 	labels := make(map[string]string, len(cfg.Labels)+1)
@@ -39,13 +30,9 @@ func buildHello(cfg config.Config) (*registryv1.ConnectHello, error) {
 		labels[proxytoken.ProxyEndpointLabel] = strings.TrimSpace(cfg.ProxyAdvertiseAddr)
 	}
 
-	hello := &registryv1.ConnectHello{
-		NodeId:       cfg.WorkerID,
-		NodeName:     nodeName,
-		ExecutorKind: cfg.ExecutorKind,
-		Labels:       labels,
-		Version:      buildinfo.Version,
-		WorkerSecret: cfg.WorkerSecret,
+	hello := hellobuilder.Build(hellobuilder.Config{
+		WorkerID: cfg.WorkerID, WorkerSecret: cfg.WorkerSecret, NodeName: cfg.NodeName,
+		NodeNamePrefix: "worker-docker", ExecutorKind: "docker", Labels: labels,
 		TerminalSessionCapacity: &registryv1.TerminalSessionCapacity{
 			MaxActiveSessions:  int32(cfg.TerminalMaxActiveSessions),
 			ActiveSessionCount: activeSessionCount,
@@ -68,6 +55,6 @@ func buildHello(cfg config.Config) (*registryv1.ConnectHello, error) {
 				MaxInflight: int32(cfg.TerminalResourceMaxInflight),
 			},
 		},
-	}
+	})
 	return hello, nil
 }

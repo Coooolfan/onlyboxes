@@ -1,31 +1,15 @@
 package runner
 
 import (
-	"fmt"
-	"strings"
-
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
-	"github.com/onlyboxes/onlyboxes/worker/worker-sys/internal/buildinfo"
+	"github.com/onlyboxes/onlyboxes/worker/internal/hellobuilder"
 	"github.com/onlyboxes/onlyboxes/worker/worker-sys/internal/config"
 )
 
 func buildHello(cfg config.Config) (*registryv1.ConnectHello, error) {
-	nodeName := strings.TrimSpace(cfg.NodeName)
-	if nodeName == "" {
-		suffix := cfg.WorkerID
-		if len(suffix) > 8 {
-			suffix = suffix[:8]
-		}
-		nodeName = fmt.Sprintf("worker-sys-%s", suffix)
-	}
-
-	hello := &registryv1.ConnectHello{
-		NodeId:       cfg.WorkerID,
-		NodeName:     nodeName,
-		ExecutorKind: cfg.ExecutorKind,
-		Labels:       cfg.Labels,
-		Version:      buildinfo.Version,
-		WorkerSecret: cfg.WorkerSecret,
+	hello := hellobuilder.Build(hellobuilder.Config{
+		WorkerID: cfg.WorkerID, WorkerSecret: cfg.WorkerSecret, NodeName: cfg.NodeName,
+		NodeNamePrefix: "worker-sys", ExecutorKind: "sys", Labels: cfg.Labels,
 		Capabilities: []*registryv1.CapabilityDeclaration{
 			{
 				Name:        computerUseCapabilityDeclared,
@@ -36,7 +20,7 @@ func buildHello(cfg config.Config) (*registryv1.ConnectHello, error) {
 				MaxInflight: int32(maxInflightOrDefault(cfg.ReadImageMaxInflight)),
 			},
 		},
-	}
+	})
 	return hello, nil
 }
 

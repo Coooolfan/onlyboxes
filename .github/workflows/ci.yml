@@ -34,8 +34,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      # api/ holds the shared proto and its generated Go module: the three Go
-      # modules pull it in via a replace directive and worker-boxlite compiles
+      # api/ holds the shared proto and its generated Go module: the Go worker
+      # module pulls it in via a replace directive and worker-boxlite compiles
       # api/proto in build.rs, so a change there has to rebuild every backend.
       - name: Filter changed paths
         uses: dorny/paths-filter@v4
@@ -50,15 +50,21 @@ jobs:
               - 'console/**'
             worker-docker:
               - *shared
+              - 'worker/go.*'
+              - 'worker/internal/**'
               - 'worker/worker-docker/**'
             worker-sys:
               - *shared
+              - 'worker/go.*'
+              - 'worker/internal/**'
               - 'worker/worker-sys/**'
             worker-boxlite:
               - *shared
               - 'worker/worker-boxlite/**'
             worker-bridge-e2b:
               - *shared
+              - 'worker/go.*'
+              - 'worker/internal/**'
               - 'worker/worker-bridge-e2b/**'
             web:
               - '.github/workflows/ci.yml'
@@ -106,8 +112,8 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
-          go-version-file: worker/worker-docker/go.mod
-          cache-dependency-path: worker/worker-docker/go.sum
+          go-version-file: worker/go.mod
+          cache-dependency-path: worker/go.sum
 
       - name: Vet
         run: go vet ./...
@@ -130,8 +136,8 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
-          go-version-file: worker/worker-sys/go.mod
-          cache-dependency-path: worker/worker-sys/go.sum
+          go-version-file: worker/go.mod
+          cache-dependency-path: worker/go.sum
 
       - name: Vet
         run: go vet ./...
@@ -193,8 +199,8 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
-          go-version-file: worker/worker-bridge-e2b/go.mod
-          cache-dependency-path: worker/worker-bridge-e2b/go.sum
+          go-version-file: worker/go.mod
+          cache-dependency-path: worker/go.sum
 
       - name: Vet
         run: go vet ./...

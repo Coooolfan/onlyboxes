@@ -707,7 +707,6 @@ mod tests {
             heartbeat_jitter_pct: 20,
             call_timeout: Duration::from_secs(13),
             node_name: String::new(),
-            executor_kind: "boxlite".to_owned(),
             labels: Default::default(),
             boxlite_home: String::new(),
             python_exec_image: "ghcr.io/astral-sh/uv:python3.12-bookworm-slim".to_owned(),

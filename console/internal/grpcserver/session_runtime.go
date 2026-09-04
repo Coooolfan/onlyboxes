@@ -29,7 +29,6 @@ type sessionCapability struct {
 }
 
 type terminalSessionCapacitySnapshot struct {
-	known              bool
 	maxActiveSessions  int
 	activeSessionCount int
 	observedAt         time.Time
@@ -95,7 +94,6 @@ func newActiveSessionAt(nodeID string, sessionID string, hello *registryv1.Conne
 	session.recoveryComplete = !session.recoveryRequired
 	if capacity := hello.GetTerminalSessionCapacity(); capacity != nil {
 		session.terminalCapacity = terminalSessionCapacitySnapshot{
-			known:              true,
 			maxActiveSessions:  int(capacity.GetMaxActiveSessions()),
 			activeSessionCount: int(capacity.GetActiveSessionCount()),
 			observedAt:         observedAt,

@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onlyboxes/onlyboxes/worker/internal/logging"
 	"github.com/onlyboxes/onlyboxes/worker/worker-bridge-e2b/internal/config"
 	"github.com/onlyboxes/onlyboxes/worker/worker-bridge-e2b/internal/e2b"
-	"github.com/onlyboxes/onlyboxes/worker/worker-bridge-e2b/internal/logging"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"maps"
 	"strings"
 
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
@@ -198,7 +199,7 @@ func (s *RegistryService) resolveHelloByWorkerType(hello *registryv1.ConnectHell
 		})
 	}
 
-	labels := cloneLabels(hello.GetLabels())
+	labels := maps.Clone(hello.GetLabels())
 	return &registryv1.ConnectHello{
 		NodeId:       hello.GetNodeId(),
 		NodeName:     hello.GetNodeName(),
@@ -218,17 +219,6 @@ func sysCapabilityMaxInflight(declared int) int {
 		return 1
 	}
 	return declared
-}
-
-func cloneLabels(labels map[string]string) map[string]string {
-	if len(labels) == 0 {
-		return map[string]string{}
-	}
-	cloned := make(map[string]string, len(labels))
-	for key, value := range labels {
-		cloned[key] = value
-	}
-	return cloned
 }
 
 func (s *RegistryService) handleHeartbeat(ctx context.Context, session *activeSession, heartbeat *registryv1.HeartbeatFrame) error {
@@ -289,7 +279,11 @@ func validateHello(hello *registryv1.ConnectHello) error {
 	if err := validateNodeID(hello.GetNodeId()); err != nil {
 		return err
 	}
-	if capacity := hello.GetTerminalSessionCapacity(); capacity != nil {
+	capacity := hello.GetTerminalSessionCapacity()
+	if _, terminalCapable := capabilitiesFromHello(hello)[taskCapabilityTerminalExec]; terminalCapable && capacity == nil {
+		return status.Error(codes.InvalidArgument, "terminal_session_capacity is required for terminalExec workers")
+	}
+	if capacity != nil {
 		if capacity.GetMaxActiveSessions() < 0 {
 			return status.Error(codes.InvalidArgument, "terminal_session_capacity.max_active_sessions must be non-negative")
 		}
@@ -301,7 +295,7 @@ func validateHello(hello *registryv1.ConnectHello) error {
 }
 
 func logTerminalSessionCapacityInvariant(nodeID string, snapshot terminalSessionCapacitySnapshot) {
-	if !snapshot.known || snapshot.maxActiveSessions <= 0 || snapshot.activeSessionCount <= snapshot.maxActiveSessions {
+	if snapshot.maxActiveSessions <= 0 || snapshot.activeSessionCount <= snapshot.maxActiveSessions {
 		return
 	}
 	slog.Warn(

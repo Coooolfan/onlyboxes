@@ -644,7 +644,6 @@ mod tests {
             heartbeat_jitter_pct: 0,
             call_timeout: Duration::from_millis(250),
             node_name: "worker-boxlite-test".to_owned(),
-            executor_kind: "boxlite".to_owned(),
             labels: BTreeMap::new(),
             boxlite_home: std::env::temp_dir()
                 .join(format!(

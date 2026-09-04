@@ -11,7 +11,6 @@ const (
 	defaultConsoleTarget             = "127.0.0.1:50051"
 	defaultHeartbeatInterval         = 5
 	defaultHeartbeatJitter           = 20
-	defaultExecutorKind              = "docker"
 	defaultPythonExecImage           = "ghcr.io/astral-sh/uv:python3.12-bookworm-slim"
 	defaultPythonExecMemoryMiB       = 256
 	defaultPythonExecCPULimit        = "1.0"
@@ -43,7 +42,6 @@ type Config struct {
 	HeartbeatJitter             int
 	CallTimeout                 time.Duration
 	NodeName                    string
-	ExecutorKind                string
 	PythonExecDockerImage       string
 	PythonExecMemoryLimit       string
 	PythonExecCPULimit          string
@@ -84,7 +82,7 @@ func Load() Config {
 		terminalLeaseMaxSec = terminalLeaseMinSec
 	}
 	terminalLeaseDefaultSec := src.positiveInt("WORKER_TERMINAL_LEASE_DEFAULT_SEC", defaultTerminalLeaseTTL)
-	terminalLeaseDefaultSec = clampInt(terminalLeaseDefaultSec, terminalLeaseMinSec, terminalLeaseMaxSec)
+	terminalLeaseDefaultSec = min(max(terminalLeaseDefaultSec, terminalLeaseMinSec), terminalLeaseMaxSec)
 	terminalOutputLimitBytes := src.positiveInt("WORKER_TERMINAL_OUTPUT_LIMIT_BYTES", defaultTerminalOutputMax)
 	terminalExportMaxBytes := src.positiveInt("WORKER_TERMINAL_EXPORT_MAX_BYTES", 0)
 
@@ -100,7 +98,6 @@ func Load() Config {
 		HeartbeatJitter:             heartbeatJitter,
 		CallTimeout:                 time.Duration(callTimeoutSec) * time.Second,
 		NodeName:                    src.get("WORKER_NODE_NAME"),
-		ExecutorKind:                defaultExecutorKind,
 		PythonExecDockerImage:       src.stringValue("WORKER_PYTHON_EXEC_DOCKER_IMAGE", defaultPythonExecImage),
 		PythonExecMemoryLimit:       src.dockerMemoryLimitMiB("WORKER_PYTHON_EXEC_MEMORY_MIB", defaultPythonExecMemoryMiB),
 		PythonExecCPULimit:          src.dockerCPULimit("WORKER_PYTHON_EXEC_CPUS", defaultPythonExecCPULimit),
@@ -273,14 +270,4 @@ func normalizeLabels(raw map[string]string) map[string]string {
 		labels[key] = strings.TrimSpace(value)
 	}
 	return labels
-}
-
-func clampInt(value int, minValue int, maxValue int) int {
-	if value < minValue {
-		return minValue
-	}
-	if value > maxValue {
-		return maxValue
-	}
-	return value
 }

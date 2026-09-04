@@ -418,7 +418,6 @@ Worker 类型：
       "node_id": "worker-1",
       "active_session_count": 3,
       "terminal_session_capacity": {
-        "known": true,
         "max_active_sessions": 4
       },
       "capabilities": [
@@ -434,8 +433,7 @@ Worker 类型：
 
 - 普通用户响应仅包含本人 `worker-sys`。
 - `active_session_count` 是 worker 最近一次上报的 terminal reservation 数。
-- `terminal_session_capacity.known=false` 表示旧 worker 未声明最大值，不能解释为不限。
-- `known=true,max_active_sessions=0` 明确表示 active terminal session 数不限。
+- `terminal_session_capacity.max_active_sessions=0` 表示 active terminal session 数不限。
 
 ### 5.4 创建 Worker 凭据
 
@@ -644,7 +642,7 @@ Worker 类型：
 - `429` 无可用并发容量或 terminal session 容量
   - `no_capacity` 表示 worker 级的该能力配额耗尽，而非单个 session 的上限。
   - `session_capacity_exceeded` 表示本次新 session 可派发到的 worker 均已实际拒绝创建，因为它们达到了 `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS`；已有 session 仍可在绑定 worker 上使用。
-  - 对 console 自动生成 `session_id` 的新 session 请求，调度依次优先使用已知有空位、旧版/容量未知、已报告满载的 worker；已报告满载的 worker 只作为最后探测。
+  - 对 console 自动生成 `session_id` 的新 session 请求，调度优先使用有空位或不限容量的 worker；已报告满载的 worker 只作为最后探测。
   - 只有 worker 明确返回该执行前容量错误且 provisional route 能安全移除时才改派；transport、超时和其他执行错误不会自动重试。
   - 这与 `session_busy` 不同，后者表示单个 session 内的命令并发上限已达到。
 - `503` 无可用 worker
@@ -883,8 +881,6 @@ Task 所有权按账号隔离（由 token 对应账号决定）。
 
 > 在 `CONSOLE_HIDDEN_TOOLS` 中列出的工具不会出现在 `tools/list` 中；如果客户端已知工具名，仍可继续通过 `tools/call` 调用。
 
-> 每个工具的 `name` / `title` / `description`、以及每个参数的 `description` 可以通过 `CONSOLE_MCP_TOOL_<TOOL>_NAME`、`CONSOLE_MCP_TOOL_<TOOL>_TITLE`、`CONSOLE_MCP_TOOL_<TOOL>_DESCRIPTION`、`CONSOLE_MCP_TOOL_<TOOL>_PARAM_<PARAM>_DESCRIPTION` 在运行时覆盖。`_NAME` 会改变客户端在 `tools/list` 中看到、`tools/call` 用作路由键的值（必须匹配 `^[a-zA-Z0-9_-]{1,64}$`，若与其他工具的内置默认名冲突会回退）；`CONSOLE_HIDDEN_TOOLS` 仍然填内部 capability ID，不能填改名后的值。将参数描述设置为空字符串会把该参数从 `inputSchema.properties` 与 `required` 中移除（并把对应 schema 的 `additionalProperties` 翻转为 `true`），但 `tools/call` 依然会接受该字段。完整的 `<TOOL>` / `<PARAM>` 映射详见 Console 配置文档。
-
 #### 工具：`echo`
 
 输入：
@@ -1040,8 +1036,8 @@ Console 回包：
 
 ### 10.2 核心消息
 
-- `ConnectHello` 包含 worker 标识、能力声明、labels、version、`worker_secret` 和可选 `terminal_session_capacity`。
-  - 缺少 `terminal_session_capacity` 表示旧版 worker 或容量未知。
+- `ConnectHello` 包含 worker 标识、能力声明、labels、version、`worker_secret`，终端型 worker 还包含 `terminal_session_capacity`。
+  - 声明 `terminalExec` 的 worker 必须包含 `terminal_session_capacity`；其他类型可以省略。
   - 声明存在时，`max_active_sessions` 表示最大 active session 数（`0` 表示不限），`active_session_count` 表示构造 Hello 时的 reservation 数。
   - sandbox worker 每次连接和重连都会发送该声明；`worker-sys` 不声明 terminal capacity。
 - `HeartbeatFrame.active_session_count` 在 Hello 后持续刷新 reservation 数；Hello 或 heartbeat 中的负容量值会被拒绝。

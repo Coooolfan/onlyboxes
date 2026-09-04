@@ -416,7 +416,6 @@ Success `200`:
       "node_id": "worker-1",
       "active_session_count": 3,
       "terminal_session_capacity": {
-        "known": true,
         "max_active_sessions": 4
       },
       "capabilities": [
@@ -432,8 +431,7 @@ Notes:
 
 - non-admin responses are scoped to the caller-owned `worker-sys`.
 - `active_session_count` is the worker's latest terminal reservation count.
-- `terminal_session_capacity.known=false` means a legacy worker did not declare a maximum; it must not be interpreted as unlimited.
-- `known=true,max_active_sessions=0` explicitly means unlimited active terminal sessions.
+- `terminal_session_capacity.max_active_sessions=0` means unlimited active terminal sessions.
 
 ### 5.4 Create Worker Credential
 
@@ -642,7 +640,7 @@ Errors:
 - `429` no worker capacity or terminal session capacity
   - `no_capacity` means the worker-level quota for the capability is exhausted, not a single session's.
   - `session_capacity_exceeded` means every dispatchable sandbox worker attempted for this new session rejected creation because it had reached `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS`; existing sessions remain usable on their bound worker.
-  - for a console-generated new `session_id`, capacity-aware dispatch prefers workers that report available session capacity, then legacy/unknown workers, and treats reported-full workers as last-resort probes.
+  - for a console-generated new `session_id`, capacity-aware dispatch prefers workers that report available or unlimited session capacity and treats reported-full workers as last-resort probes.
   - a worker-side capacity rejection is retried only when the worker explicitly confirms this pre-execution error and the provisional route can be removed safely; transport, timeout, and other execution errors are not retried.
   - these are separate from `session_busy`, which means the per-session command limit was reached.
 - `503` no compatible worker
@@ -881,8 +879,6 @@ Unknown arguments are rejected with JSON-RPC `-32602 invalid params`.
 
 > Tools listed in `CONSOLE_HIDDEN_TOOLS` are omitted from `tools/list`. They remain callable via `tools/call` if the client already knows the tool name.
 
-> Each tool's `name` / `title` / `description` and each parameter's `description` can be overridden at runtime via `CONSOLE_MCP_TOOL_<TOOL>_NAME`, `CONSOLE_MCP_TOOL_<TOOL>_TITLE`, `CONSOLE_MCP_TOOL_<TOOL>_DESCRIPTION`, and `CONSOLE_MCP_TOOL_<TOOL>_PARAM_<PARAM>_DESCRIPTION`. The `_NAME` override changes the value clients see in `tools/list` and use as the `tools/call` routing key (must match `^[a-zA-Z0-9_-]{1,64}$`; conflicts with another tool's built-in name fall back); `CONSOLE_HIDDEN_TOOLS` always uses the internal capability ID, never the renamed value. Setting a parameter description to an empty string removes that parameter from `inputSchema.properties` and `required` (and flips `additionalProperties` to `true` on that schema), while `tools/call` still accepts the field. See the Console Configuration doc for the full `<TOOL>` / `<PARAM>` mapping.
-
 #### Tool: `echo`
 
 Input:
@@ -1038,8 +1034,8 @@ Console responds with:
 
 ### 10.2 Key Messages
 
-- `ConnectHello` includes worker identity, capabilities, labels, version, `worker_secret`, and optional `terminal_session_capacity`.
-  - a missing `terminal_session_capacity` means legacy/unknown capacity.
+- `ConnectHello` includes worker identity, capabilities, labels, version, `worker_secret`, and `terminal_session_capacity` for terminal-capable workers.
+  - workers that declare `terminalExec` must include `terminal_session_capacity`; other worker types may omit it.
   - a present declaration carries `max_active_sessions` (`0` means unlimited) and the reservation count in `active_session_count` at Hello construction time.
   - sandbox workers send the declaration on every connection, including reconnects; `worker-sys` does not declare terminal capacity.
 - `HeartbeatFrame.active_session_count` refreshes the reservation count after Hello. Negative Hello or heartbeat capacity values are rejected.

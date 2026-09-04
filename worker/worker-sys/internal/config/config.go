@@ -11,7 +11,6 @@ const (
 	defaultConsoleTarget             = "127.0.0.1:50051"
 	defaultHeartbeatIntervalSec      = 5
 	defaultHeartbeatJitterPct        = 20
-	defaultExecutorKind              = "sys"
 	defaultComputerUseOutputMaxByte  = 1024 * 1024
 	computerUseWhitelistModePrefix   = "prefix"
 	computerUseWhitelistModeExact    = "exact"
@@ -34,7 +33,6 @@ type Config struct {
 	HeartbeatJitter            int
 	CallTimeout                time.Duration
 	NodeName                   string
-	ExecutorKind               string
 	Labels                     map[string]string
 	ComputerUseOutputLimitByte int
 	ComputerUseWhitelistMode   string
@@ -68,7 +66,6 @@ func Load() Config {
 		HeartbeatJitter:            heartbeatJitter,
 		CallTimeout:                time.Duration(callTimeoutSec) * time.Second,
 		NodeName:                   src.get("WORKER_NODE_NAME"),
-		ExecutorKind:               defaultExecutorKind,
 		Labels:                     parseLabels(src.get("WORKER_LABELS")),
 		ComputerUseOutputLimitByte: outputLimit,
 		ComputerUseWhitelistMode:   whitelistMode,

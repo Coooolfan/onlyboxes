@@ -31,9 +31,8 @@ func TestRegisterAndListLifecycle(t *testing.T) {
 		store,
 		map[string]string{workerID: workerSecret},
 		5,
-		15,
-		60*time.Second,
-	)
+		15)
+
 	grpcSrv := grpcserver.NewServer(registrySvc)
 	grpcListener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -153,9 +152,8 @@ func TestEchoCommandLifecycle(t *testing.T) {
 		store,
 		map[string]string{workerID: workerSecret},
 		5,
-		15,
-		60*time.Second,
-	)
+		15)
+
 	grpcSrv := grpcserver.NewServer(registrySvc)
 	grpcListener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -257,9 +255,8 @@ func TestTaskLifecycleSync(t *testing.T) {
 		store,
 		map[string]string{workerID: workerSecret},
 		5,
-		15,
-		60*time.Second,
-	)
+		15)
+
 	grpcSrv := grpcserver.NewServer(registrySvc)
 	grpcListener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -367,9 +364,8 @@ func TestMCPLifecycle(t *testing.T) {
 		store,
 		map[string]string{workerID: workerSecret},
 		5,
-		15,
-		60*time.Second,
-	)
+		15)
+
 	grpcSrv := grpcserver.NewServer(registrySvc)
 	grpcListener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -558,9 +554,8 @@ func TestTerminalLifecycle(t *testing.T) {
 		store,
 		map[string]string{workerID: workerSecret},
 		5,
-		15,
-		60*time.Second,
-	)
+		15)
+
 	grpcSrv := grpcserver.NewServer(registrySvc)
 	grpcListener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -599,8 +594,9 @@ func TestTerminalLifecycle(t *testing.T) {
 			{Name: terminalExecCapabilityName, MaxInflight: 4},
 			{Name: terminalResourceCapabilityName, MaxInflight: 4},
 		},
-		Version:      "v0.1.0",
-		WorkerSecret: workerSecret,
+		TerminalSessionCapacity: &registryv1.TerminalSessionCapacity{},
+		Version:                 "v0.1.0",
+		WorkerSecret:            workerSecret,
 	}
 	if err := stream.Send(&registryv1.ConnectRequest{
 		Payload: &registryv1.ConnectRequest_Hello{Hello: hello},
@@ -1044,9 +1040,8 @@ func TestTokenIsolationLifecycle(t *testing.T) {
 		store,
 		map[string]string{workerID: workerSecret},
 		5,
-		15,
-		60*time.Second,
-	)
+		15)
+
 	grpcSrv := grpcserver.NewServer(registrySvc)
 	grpcListener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -1101,8 +1096,9 @@ func TestTokenIsolationLifecycle(t *testing.T) {
 			{Name: terminalExecCapabilityName, MaxInflight: 4},
 			{Name: terminalResourceCapabilityName, MaxInflight: 4},
 		},
-		Version:      "v0.1.0",
-		WorkerSecret: workerSecret,
+		TerminalSessionCapacity: &registryv1.TerminalSessionCapacity{},
+		Version:                 "v0.1.0",
+		WorkerSecret:            workerSecret,
 	}
 	if err := stream.Send(&registryv1.ConnectRequest{
 		Payload: &registryv1.ConnectRequest_Hello{Hello: hello},
@@ -1597,9 +1593,8 @@ func TestReadImageComputerUseRoutesByOwner(t *testing.T) {
 			workerBID: workerBSecret,
 		},
 		5,
-		15,
-		60*time.Second,
-	)
+		15)
+
 	grpcSrv := grpcserver.NewServer(registrySvc)
 	grpcListener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
