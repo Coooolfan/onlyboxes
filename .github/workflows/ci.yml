@@ -72,6 +72,8 @@ jobs:
             website:
               - '.github/workflows/ci.yml'
               - 'website/**'
+              - 'scripts/install.*'
+              - 'static/**'
 
   console:
     name: Check console

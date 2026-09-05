@@ -9,5 +9,4 @@ const (
 
 type source struct{ configsource.Source }
 
-func newSource() source                { return source{Source: configsource.New()} }
-func (s source) get(key string) string { return s.Get(key) }
+func newSource() source { return source{Source: configsource.New()} }

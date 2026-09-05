@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"net/url"
 	"path/filepath"
@@ -17,13 +18,7 @@ const (
 	exportFileDownloadPresignTTL = 1 * time.Hour
 )
 
-var newExportObjectID = func() string {
-	value, err := randomHex(16)
-	if err != nil {
-		panic(err)
-	}
-	return value
-}
+var newExportObjectID = rand.Text
 
 type ExportStore interface {
 	PresignUpload(ctx context.Context, objectKey string, expiresIn time.Duration) (string, error)

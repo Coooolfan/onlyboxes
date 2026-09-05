@@ -86,18 +86,18 @@ func Load() Config {
 	terminalOutputLimitBytes := src.positiveInt("WORKER_TERMINAL_OUTPUT_LIMIT_BYTES", defaultTerminalOutputMax)
 	terminalExportMaxBytes := src.positiveInt("WORKER_TERMINAL_EXPORT_MAX_BYTES", 0)
 
-	labelsCSV := src.get("WORKER_LABELS")
+	labelsCSV := src.Get("WORKER_LABELS")
 
 	return Config{
 		ConfigFile:                  src.Path(),
 		ConsoleGRPCTarget:           src.stringValue("WORKER_CONSOLE_GRPC_TARGET", defaultConsoleTarget),
-		ConsoleTLS:                  src.get("WORKER_CONSOLE_INSECURE") != "true",
-		WorkerID:                    strings.TrimSpace(src.get("WORKER_ID")),
-		WorkerSecret:                strings.TrimSpace(src.get("WORKER_SECRET")),
+		ConsoleTLS:                  src.Get("WORKER_CONSOLE_INSECURE") != "true",
+		WorkerID:                    strings.TrimSpace(src.Get("WORKER_ID")),
+		WorkerSecret:                strings.TrimSpace(src.Get("WORKER_SECRET")),
 		HeartbeatInterval:           time.Duration(heartbeatSec) * time.Second,
 		HeartbeatJitter:             heartbeatJitter,
 		CallTimeout:                 time.Duration(callTimeoutSec) * time.Second,
-		NodeName:                    src.get("WORKER_NODE_NAME"),
+		NodeName:                    src.Get("WORKER_NODE_NAME"),
 		PythonExecDockerImage:       src.stringValue("WORKER_PYTHON_EXEC_DOCKER_IMAGE", defaultPythonExecImage),
 		PythonExecMemoryLimit:       src.dockerMemoryLimitMiB("WORKER_PYTHON_EXEC_MEMORY_MIB", defaultPythonExecMemoryMiB),
 		PythonExecCPULimit:          src.dockerCPULimit("WORKER_PYTHON_EXEC_CPUS", defaultPythonExecCPULimit),
@@ -120,7 +120,7 @@ func Load() Config {
 		TerminalResourceMaxInflight: src.positiveInt("WORKER_TERMINAL_RESOURCE_MAX_INFLIGHT", defaultMaxInflight),
 		ProxyEnabled:                src.boolValue("WORKER_PROXY_ENABLED", false),
 		ProxyListenAddr:             strings.TrimSpace(src.stringValue("WORKER_PROXY_LISTEN_ADDR", defaultProxyListenAddr)),
-		ProxyAdvertiseAddr:          strings.TrimSpace(src.get("WORKER_PROXY_ADVERTISE_ADDR")),
+		ProxyAdvertiseAddr:          strings.TrimSpace(src.Get("WORKER_PROXY_ADVERTISE_ADDR")),
 		LogLevel:                    src.logLevel("WORKER_LOG_LEVEL", defaultLogLevel),
 		LogFormat:                   src.logFormat("WORKER_LOG_FORMAT", defaultLogFormat),
 		LogAddSource:                src.boolValue("WORKER_LOG_ADD_SOURCE", defaultLogAddSource),
@@ -128,7 +128,7 @@ func Load() Config {
 }
 
 func (s source) stringValue(key string, defaultValue string) string {
-	value := s.get(key)
+	value := s.Get(key)
 	if value == "" {
 		return defaultValue
 	}
@@ -136,7 +136,7 @@ func (s source) stringValue(key string, defaultValue string) string {
 }
 
 func (s source) positiveInt(key string, defaultValue int) int {
-	value := strings.TrimSpace(s.get(key))
+	value := strings.TrimSpace(s.Get(key))
 	if value == "" {
 		return defaultValue
 	}
@@ -148,7 +148,7 @@ func (s source) positiveInt(key string, defaultValue int) int {
 }
 
 func (s source) nonNegativeInt(key string, defaultValue int) int {
-	value := strings.TrimSpace(s.get(key))
+	value := strings.TrimSpace(s.Get(key))
 	if value == "" {
 		return defaultValue
 	}
@@ -160,7 +160,7 @@ func (s source) nonNegativeInt(key string, defaultValue int) int {
 }
 
 func (s source) dockerCPULimit(key string, defaultValue string) string {
-	value := strings.TrimSpace(s.get(key))
+	value := strings.TrimSpace(s.Get(key))
 	if value == "" {
 		return defaultValue
 	}
@@ -177,7 +177,7 @@ func (s source) dockerMemoryLimitMiB(key string, defaultValueMiB int) string {
 }
 
 func (s source) percent(key string, defaultValue int) int {
-	value := strings.TrimSpace(s.get(key))
+	value := strings.TrimSpace(s.Get(key))
 	if value == "" {
 		return defaultValue
 	}
@@ -189,7 +189,7 @@ func (s source) percent(key string, defaultValue int) int {
 }
 
 func (s source) boolValue(key string, defaultValue bool) bool {
-	switch strings.TrimSpace(strings.ToLower(s.get(key))) {
+	switch strings.TrimSpace(strings.ToLower(s.Get(key))) {
 	case "1", "true", "yes", "on":
 		return true
 	case "0", "false", "no", "off":
@@ -200,7 +200,7 @@ func (s source) boolValue(key string, defaultValue bool) bool {
 }
 
 func (s source) logLevel(key string, defaultValue string) string {
-	value := strings.TrimSpace(strings.ToLower(s.get(key)))
+	value := strings.TrimSpace(strings.ToLower(s.Get(key)))
 	switch value {
 	case "debug", "info", "warn", "error":
 		return value
@@ -210,7 +210,7 @@ func (s source) logLevel(key string, defaultValue string) string {
 }
 
 func (s source) logFormat(key string, defaultValue string) string {
-	value := strings.TrimSpace(strings.ToLower(s.get(key)))
+	value := strings.TrimSpace(strings.ToLower(s.Get(key)))
 	switch value {
 	case "json", "text":
 		return value

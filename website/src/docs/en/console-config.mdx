@@ -21,9 +21,6 @@ http_addr = ":8089"
 grpc_addr = ":50051"
 db_path = "./db/onlyboxes-console.db"
 log_level = "info"
-
-[mcp_tool.python_exec]
-description = "Execute Python code in a sandbox."
 ```
 
 Keep secrets such as `hash_key`, `dashboard_password`, `jit_signing_key`, and `export_file_sk` in environment variables when possible. See the [annotated configuration template](https://github.com/Coooolfan/onlyboxes/blob/main/console/config.example.toml) for all available keys.

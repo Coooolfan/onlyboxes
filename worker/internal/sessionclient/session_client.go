@@ -53,7 +53,6 @@ type HeartbeatConfig struct {
 	Interval      time.Duration
 	JitterPercent int
 	CallTimeout   time.Duration
-	Minimum       time.Duration
 	ActiveCount   func() int32
 	ApplyJitter   func(time.Duration, int) time.Duration
 }
@@ -68,10 +67,7 @@ func HeartbeatLoop(
 	interval := config.Interval
 	consecutiveAckTimeouts := 0
 	for {
-		waitFor := JitterDuration(interval, config.JitterPercent, config.Minimum)
-		if config.ApplyJitter != nil {
-			waitFor = config.ApplyJitter(interval, config.JitterPercent)
-		}
+		waitFor := config.ApplyJitter(interval, config.JitterPercent)
 		timer := time.NewTimer(waitFor)
 		select {
 		case <-ctx.Done():
@@ -83,10 +79,7 @@ func HeartbeatLoop(
 		case <-timer.C:
 		}
 
-		activeCount := int32(0)
-		if config.ActiveCount != nil {
-			activeCount = config.ActiveCount()
-		}
+		activeCount := config.ActiveCount()
 		if err := Enqueue(ctx, outbound, &registryv1.ConnectRequest{
 			Payload: &registryv1.ConnectRequest_Heartbeat{Heartbeat: &registryv1.HeartbeatFrame{
 				NodeId: config.WorkerID, SessionId: config.SessionID, ActiveSessionCount: activeCount,
@@ -172,9 +165,6 @@ func RecvWithTimeout(
 func DurationFromServer(seconds int32, fallback time.Duration) time.Duration {
 	if seconds > 0 {
 		return time.Duration(seconds) * time.Second
-	}
-	if fallback <= 0 {
-		return 5 * time.Second
 	}
 	return fallback
 }

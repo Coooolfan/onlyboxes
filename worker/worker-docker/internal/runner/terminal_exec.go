@@ -616,11 +616,7 @@ func (m *terminalSessionManager) claimSession(
 	}
 
 	if sessionID == "" {
-		generatedID, err := randomTerminalSessionID()
-		if err != nil {
-			return nil, false, fmt.Errorf("generate terminal session ID: %w", err)
-		}
-		session, err := m.newSessionLocked(generatedID, leaseTarget)
+		session, err := m.newSessionLocked(rand.Text(), leaseTarget)
 		return session, true, err
 	}
 
@@ -645,14 +641,6 @@ func (m *terminalSessionManager) claimSession(
 
 	session, err := m.newSessionLocked(sessionID, leaseTarget)
 	return session, true, err
-}
-
-func randomTerminalSessionID() (string, error) {
-	var raw [16]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(raw[:]), nil
 }
 
 func (m *terminalSessionManager) newSessionLocked(sessionID string, leaseTarget time.Time) (*terminalSession, error) {

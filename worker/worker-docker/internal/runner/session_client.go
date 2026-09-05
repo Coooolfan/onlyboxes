@@ -42,7 +42,7 @@ func runSession(ctx context.Context, cfg config.Config) error {
 		return fmt.Errorf("send hello: %w", err)
 	}
 
-	resp, err := recvWithTimeout(ctx, cfg.CallTimeout, stream.Recv)
+	resp, err := sessionclient.RecvWithTimeout(ctx, cfg.CallTimeout, stream.Recv)
 	if err != nil {
 		return fmt.Errorf("recv connect_ack: %w", err)
 	}
@@ -55,7 +55,7 @@ func runSession(ctx context.Context, cfg config.Config) error {
 		return fmt.Errorf("connect_ack.session_id is required")
 	}
 
-	heartbeatInterval := durationFromServer(ack.GetHeartbeatIntervalSec(), cfg.HeartbeatInterval)
+	heartbeatInterval := sessionclient.DurationFromServer(ack.GetHeartbeatIntervalSec(), cfg.HeartbeatInterval)
 	recoveryResults, err := recoverTerminalSessionsWithTimeout(ctx, cfg.CallTimeout, ack.GetTerminalSessionRecoveryCandidates())
 	if err != nil {
 		return fmt.Errorf("recover terminal sessions: %w", err)
@@ -67,7 +67,7 @@ func runSession(ctx context.Context, cfg config.Config) error {
 	}); err != nil {
 		return fmt.Errorf("send terminal session recovery report: %w", err)
 	}
-	recoveryResp, err := recvWithTimeout(ctx, cfg.CallTimeout, stream.Recv)
+	recoveryResp, err := sessionclient.RecvWithTimeout(ctx, cfg.CallTimeout, stream.Recv)
 	if err != nil {
 		return fmt.Errorf("recv terminal session recovery ack: %w", err)
 	}
@@ -84,7 +84,7 @@ func runSession(ctx context.Context, cfg config.Config) error {
 	heartbeatAckCh := make(chan *registryv1.HeartbeatAck, 16)
 	sessionErrCh := make(chan error, 4)
 
-	go senderLoop(sessionCtx, stream, outbound, sessionErrCh)
+	go sessionclient.SenderLoop(sessionCtx, stream, outbound, sessionErrCh)
 	go receiverLoop(sessionCtx, stream, outbound, heartbeatAckCh, sessionErrCh)
 
 	return heartbeatLoop(sessionCtx, outbound, heartbeatAckCh, sessionErrCh, cfg, sessionID, heartbeatInterval)
@@ -126,15 +126,6 @@ func logTerminalRecoverySummary(results []*registryv1.TerminalSessionRecoveryRes
 	)
 }
 
-func senderLoop(
-	ctx context.Context,
-	stream grpc.BidiStreamingClient[registryv1.ConnectRequest, registryv1.ConnectResponse],
-	outbound <-chan *registryv1.ConnectRequest,
-	errCh chan<- error,
-) {
-	sessionclient.SenderLoop(ctx, stream, outbound, errCh)
-}
-
 func receiverLoop(
 	ctx context.Context,
 	stream grpc.BidiStreamingClient[registryv1.ConnectRequest, registryv1.ConnectResponse],
@@ -145,7 +136,7 @@ func receiverLoop(
 	for {
 		resp, err := stream.Recv()
 		if err != nil {
-			reportSessionErr(errCh, fmt.Errorf("stream receive failed: %w", err))
+			sessionclient.ReportError(errCh, fmt.Errorf("stream receive failed: %w", err))
 			return
 		}
 
@@ -165,21 +156,21 @@ func receiverLoop(
 
 			dispatchCopy, ok := proto.Clone(dispatch).(*registryv1.CommandDispatch)
 			if !ok || dispatchCopy == nil {
-				reportSessionErr(errCh, errors.New("clone command dispatch failed"))
+				sessionclient.ReportError(errCh, errors.New("clone command dispatch failed"))
 				return
 			}
 
 			go func(dispatch *registryv1.CommandDispatch) {
 				resultReq := buildCommandResultWithContext(ctx, dispatch)
-				if sendErr := enqueueRequest(ctx, outbound, resultReq); sendErr != nil {
+				if sendErr := sessionclient.Enqueue(ctx, outbound, resultReq); sendErr != nil {
 					if errors.Is(sendErr, context.Canceled) || errors.Is(sendErr, context.DeadlineExceeded) {
 						return
 					}
-					reportSessionErr(errCh, fmt.Errorf("enqueue command result: %w", sendErr))
+					sessionclient.ReportError(errCh, fmt.Errorf("enqueue command result: %w", sendErr))
 				}
 			}(dispatchCopy)
 		default:
-			reportSessionErr(errCh, errors.New("unexpected response frame"))
+			sessionclient.ReportError(errCh, errors.New("unexpected response frame"))
 			return
 		}
 	}
@@ -278,28 +269,8 @@ func heartbeatLoop(
 	return sessionclient.HeartbeatLoop(ctx, outbound, heartbeatAckCh, sessionErrCh, sessionclient.HeartbeatConfig{
 		WorkerID: cfg.WorkerID, SessionID: sessionID, Interval: heartbeatInterval,
 		JitterPercent: cfg.HeartbeatJitter, CallTimeout: cfg.CallTimeout,
-		Minimum: minHeartbeatInterval, ActiveCount: activeSessionCountFn, ApplyJitter: applyJitter,
+		ActiveCount: activeSessionCountFn, ApplyJitter: applyJitter,
 	})
-}
-
-func enqueueRequest(ctx context.Context, outbound chan<- *registryv1.ConnectRequest, req *registryv1.ConnectRequest) error {
-	return sessionclient.Enqueue(ctx, outbound, req)
-}
-
-func reportSessionErr(errCh chan<- error, err error) {
-	sessionclient.ReportError(errCh, err)
-}
-
-func recvWithTimeout(
-	ctx context.Context,
-	timeout time.Duration,
-	recv func() (*registryv1.ConnectResponse, error),
-) (*registryv1.ConnectResponse, error) {
-	return sessionclient.RecvWithTimeout(ctx, timeout, recv)
-}
-
-func durationFromServer(seconds int32, fallback time.Duration) time.Duration {
-	return sessionclient.DurationFromServer(seconds, fallback)
 }
 
 func jitterDuration(base time.Duration, jitterPct int) time.Duration {

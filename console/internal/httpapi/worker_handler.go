@@ -232,12 +232,16 @@ func (h *WorkerHandler) ListWorkers(c *gin.Context) {
 	}
 	items := make([]workerItem, 0, len(workers))
 	for _, worker := range workers {
+		labels := worker.Labels
+		if labels == nil {
+			labels = map[string]string{}
+		}
 		items = append(items, workerItem{
 			NodeID:       worker.NodeID,
 			NodeName:     worker.NodeName,
 			ExecutorKind: worker.ExecutorKind,
-			Capabilities: worker.Capabilities,
-			Labels:       worker.Labels,
+			Capabilities: append([]registry.CapabilityDeclaration{}, worker.Capabilities...),
+			Labels:       labels,
 			Version:      worker.Version,
 			Status:       worker.Status,
 			RegisteredAt: worker.RegisteredAt,

@@ -28,14 +28,6 @@ func NewMCPHandler(
 		},
 	})
 
-	nameToCapabilityID := map[string]string{
-		"echo":         "echo",
-		"pythonExec":   "pythonExec",
-		"terminalExec": "terminalExec",
-		"computerUse":  "computerUse",
-		"readImage":    "readImage",
-		"exportFile":   "exportFile",
-	}
 	mcp.AddTool(server, &mcp.Tool{
 		Title:       mcpEchoToolTitle,
 		Name:        "echo",
@@ -155,11 +147,7 @@ func NewMCPHandler(
 					if tool == nil {
 						continue
 					}
-					capID, ok := nameToCapabilityID[tool.Name]
-					if !ok {
-						capID = tool.Name
-					}
-					if isCapabilityHidden(hiddenTools, capID) {
+					if isCapabilityHidden(hiddenTools, tool.Name) {
 						continue
 					}
 					filtered = append(filtered, tool)

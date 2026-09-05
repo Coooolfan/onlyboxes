@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -316,11 +315,7 @@ func (c *Client) Run(
 	baseURL := c.sandboxBaseURL(sandbox)
 	rpc := processv1connect.NewProcessClient(c.sandboxHTTP, baseURL, connect.WithProtoJSON())
 	stdin := false
-	randomID, err := randomID()
-	if err != nil {
-		return CommandResult{}, fmt.Errorf("generate process tag: %w", err)
-	}
-	tag := "onlyboxes-" + randomID
+	tag := "onlyboxes-" + rand.Text()
 	req := connect.NewRequest(&processv1.StartRequest{
 		Process: &processv1.ProcessConfig{
 			Cmd:  "/bin/bash",
@@ -390,14 +385,6 @@ func (c *Client) Run(
 	result.StdoutTruncated = stdout.truncated
 	result.StderrTruncated = stderr.truncated
 	return result, nil
-}
-
-func randomID() (string, error) {
-	var raw [16]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(raw[:]), nil
 }
 
 func (c *Client) stopProcess(sandbox *Sandbox, pid uint32, tag string) error {

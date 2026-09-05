@@ -52,21 +52,21 @@ func Load() Config {
 	heartbeatJitter := src.percent("WORKER_HEARTBEAT_JITTER_PCT", defaultHeartbeatJitterPct)
 	callTimeoutSec := src.positiveInt("WORKER_CALL_TIMEOUT_SEC", defaultCallTimeoutSec(heartbeatSec))
 	outputLimit := src.positiveInt("WORKER_COMPUTER_USE_OUTPUT_LIMIT_BYTES", defaultComputerUseOutputMaxByte)
-	whitelistMode := parseComputerUseWhitelistMode(src.get("WORKER_COMPUTER_USE_COMMAND_WHITELIST_MODE"))
-	whitelist := parseComputerUseWhitelist(src.get("WORKER_COMPUTER_USE_COMMAND_WHITELIST"))
-	readImageAllowedPaths := parseReadImageAllowedPaths(src.get("WORKER_READ_IMAGE_ALLOWED_PATHS"))
+	whitelistMode := parseComputerUseWhitelistMode(src.Get("WORKER_COMPUTER_USE_COMMAND_WHITELIST_MODE"))
+	whitelist := parseComputerUseWhitelist(src.Get("WORKER_COMPUTER_USE_COMMAND_WHITELIST"))
+	readImageAllowedPaths := parseReadImageAllowedPaths(src.Get("WORKER_READ_IMAGE_ALLOWED_PATHS"))
 
 	return Config{
 		ConfigFile:                 src.Path(),
 		ConsoleGRPCTarget:          src.stringValue("WORKER_CONSOLE_GRPC_TARGET", defaultConsoleTarget),
-		ConsoleTLS:                 src.get("WORKER_CONSOLE_INSECURE") != "true",
-		WorkerID:                   strings.TrimSpace(src.get("WORKER_ID")),
-		WorkerSecret:               strings.TrimSpace(src.get("WORKER_SECRET")),
+		ConsoleTLS:                 src.Get("WORKER_CONSOLE_INSECURE") != "true",
+		WorkerID:                   strings.TrimSpace(src.Get("WORKER_ID")),
+		WorkerSecret:               strings.TrimSpace(src.Get("WORKER_SECRET")),
 		HeartbeatInterval:          time.Duration(heartbeatSec) * time.Second,
 		HeartbeatJitter:            heartbeatJitter,
 		CallTimeout:                time.Duration(callTimeoutSec) * time.Second,
-		NodeName:                   src.get("WORKER_NODE_NAME"),
-		Labels:                     parseLabels(src.get("WORKER_LABELS")),
+		NodeName:                   src.Get("WORKER_NODE_NAME"),
+		Labels:                     parseLabels(src.Get("WORKER_LABELS")),
 		ComputerUseOutputLimitByte: outputLimit,
 		ComputerUseWhitelistMode:   whitelistMode,
 		ComputerUseWhitelist:       whitelist,
@@ -80,7 +80,7 @@ func Load() Config {
 }
 
 func (s source) stringValue(key string, defaultValue string) string {
-	value := s.get(key)
+	value := s.Get(key)
 	if value == "" {
 		return defaultValue
 	}
@@ -88,7 +88,7 @@ func (s source) stringValue(key string, defaultValue string) string {
 }
 
 func (s source) positiveInt(key string, defaultValue int) int {
-	value := strings.TrimSpace(s.get(key))
+	value := strings.TrimSpace(s.Get(key))
 	if value == "" {
 		return defaultValue
 	}
@@ -100,7 +100,7 @@ func (s source) positiveInt(key string, defaultValue int) int {
 }
 
 func (s source) percent(key string, defaultValue int) int {
-	value := strings.TrimSpace(s.get(key))
+	value := strings.TrimSpace(s.Get(key))
 	if value == "" {
 		return defaultValue
 	}
@@ -112,7 +112,7 @@ func (s source) percent(key string, defaultValue int) int {
 }
 
 func (s source) boolValue(key string, defaultValue bool) bool {
-	switch strings.TrimSpace(strings.ToLower(s.get(key))) {
+	switch strings.TrimSpace(strings.ToLower(s.Get(key))) {
 	case "1", "true", "yes", "on":
 		return true
 	case "0", "false", "no", "off":
@@ -123,7 +123,7 @@ func (s source) boolValue(key string, defaultValue bool) bool {
 }
 
 func (s source) logLevel(key string, defaultValue string) string {
-	value := strings.TrimSpace(strings.ToLower(s.get(key)))
+	value := strings.TrimSpace(strings.ToLower(s.Get(key)))
 	switch value {
 	case "debug", "info", "warn", "error":
 		return value
@@ -133,7 +133,7 @@ func (s source) logLevel(key string, defaultValue string) string {
 }
 
 func (s source) logFormat(key string, defaultValue string) string {
-	value := strings.TrimSpace(strings.ToLower(s.get(key)))
+	value := strings.TrimSpace(strings.ToLower(s.Get(key)))
 	switch value {
 	case "json", "text":
 		return value

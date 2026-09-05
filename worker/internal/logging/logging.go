@@ -9,8 +9,6 @@ import (
 
 var singleLineReplacer = strings.NewReplacer("\r\n", "\\n", "\n", "\\n", "\r", "\\r")
 
-func init() { Configure("info", "json", false) }
-
 func Configure(level, format string, addSource bool) {
 	resolvedLevel := slog.LevelInfo
 	switch strings.TrimSpace(strings.ToLower(level)) {

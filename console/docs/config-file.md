@@ -49,7 +49,4 @@ http_addr = ":8089"
 grpc_addr = ":50051"
 db_path = "./db/onlyboxes-console.db"
 log_level = "info"
-
-[mcp_tool.python_exec]
-description = "Execute python code in a sandbox."
 ```
