@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"net/url"
 	"path/filepath"
@@ -9,7 +10,6 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -18,9 +18,7 @@ const (
 	exportFileDownloadPresignTTL = 1 * time.Hour
 )
 
-var newExportObjectID = func() string {
-	return uuid.NewString()
-}
+var newExportObjectID = rand.Text
 
 type ExportStore interface {
 	PresignUpload(ctx context.Context, objectKey string, expiresIn time.Duration) (string, error)

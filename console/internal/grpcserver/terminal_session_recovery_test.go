@@ -10,7 +10,7 @@ import (
 )
 
 func TestTerminalRouteDisconnectRecoveryRoundTrip(t *testing.T) {
-	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, time.Minute)
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 	base := time.Unix(1_700_100_000, 0)
 	lease := base.Add(10 * time.Minute).UnixMilli()
 	svc.nowFn = func() time.Time { return base.Add(time.Second) }
@@ -62,7 +62,7 @@ func TestTerminalRouteDisconnectRecoveryRoundTrip(t *testing.T) {
 }
 
 func TestTerminalRecoveryMissingDeletesRoute(t *testing.T) {
-	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, time.Minute)
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 	base := time.Unix(1_700_200_000, 0)
 	svc.bindTerminalSessionRoute("session-missing", "node-a", base)
 	svc.updateTerminalSessionRouteLease("session-missing", "node-a", base.Add(time.Minute).UnixMilli(), base)
@@ -86,7 +86,7 @@ func TestTerminalRecoveryMissingDeletesRoute(t *testing.T) {
 }
 
 func TestTerminalRecoveryUsesLegacyRouteTTLFallback(t *testing.T) {
-	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, time.Minute)
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 	svc.terminalRouteTTL = 30 * time.Minute
 	base := time.Unix(1_700_300_000, 0)
 	svc.bindTerminalSessionRoute("legacy-session", "node-a", base)
@@ -99,7 +99,7 @@ func TestTerminalRecoveryUsesLegacyRouteTTLFallback(t *testing.T) {
 }
 
 func TestTerminalRecoveryDropsRouteWhoseLeaseExpiredOffline(t *testing.T) {
-	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, time.Minute)
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 	base := time.Unix(1_700_350_000, 0)
 	svc.bindTerminalSessionRoute("expired-session", "node-a", base)
 	svc.updateTerminalSessionRouteLease("expired-session", "node-a", base.Add(time.Minute).UnixMilli(), base)
@@ -113,7 +113,7 @@ func TestTerminalRecoveryDropsRouteWhoseLeaseExpiredOffline(t *testing.T) {
 }
 
 func TestPruneUsesExactLeaseWhenLegacyTTLDisabled(t *testing.T) {
-	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, time.Minute)
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 	svc.terminalRouteTTL = 0
 	base := time.Unix(1_700_375_000, 0)
 	svc.bindTerminalSessionRoute("expired-session", "node-a", base)
@@ -124,7 +124,7 @@ func TestPruneUsesExactLeaseWhenLegacyTTLDisabled(t *testing.T) {
 }
 
 func TestTerminalRecoveryReportMustCoverCandidates(t *testing.T) {
-	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, time.Minute)
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 	base := time.Unix(1_700_400_000, 0)
 	svc.bindTerminalSessionRoute("session-a", "node-a", base)
 	svc.updateTerminalSessionRouteLease("session-a", "node-a", base.Add(time.Minute).UnixMilli(), base)
@@ -140,7 +140,7 @@ func TestTerminalRecoveryReportMustCoverCandidates(t *testing.T) {
 }
 
 func TestTerminalRecoveryReportIsIdempotentOnlyWhenUnchanged(t *testing.T) {
-	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, time.Minute)
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 	base := time.Unix(1_700_500_000, 0)
 	svc.bindTerminalSessionRoute("session-a", "node-a", base)
 	svc.updateTerminalSessionRouteLease("session-a", "node-a", base.Add(time.Minute).UnixMilli(), base)
@@ -168,7 +168,7 @@ func TestTerminalRecoveryReportIsIdempotentOnlyWhenUnchanged(t *testing.T) {
 }
 
 func TestTerminalRecoveryRejectsCandidateReassignedToAnotherWorker(t *testing.T) {
-	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, time.Minute)
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 	base := time.Unix(1_700_600_000, 0)
 	svc.bindTerminalSessionRoute("session-a", "node-a", base)
 	svc.updateTerminalSessionRouteLease("session-a", "node-a", base.Add(time.Minute).UnixMilli(), base)

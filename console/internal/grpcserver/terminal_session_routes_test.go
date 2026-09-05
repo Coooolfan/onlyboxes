@@ -148,7 +148,7 @@ func newFakeRouteStore(t testing.TB) *fakeTerminalSessionRouteStore {
 
 func TestCommitConfirmedRouteFailsOnStoreError(t *testing.T) {
 	store := newFakeRouteStore(t)
-	svc := NewRegistryService(store.inner, nil, 5, 15, time.Minute)
+	svc := NewRegistryService(store.inner, nil, 5, 15)
 	svc.terminalRouteStore = store
 	base := time.Unix(1_700_700_000, 0)
 	svc.nowFn = func() time.Time { return base }
@@ -189,7 +189,7 @@ func TestCommitConfirmedRouteFailsOnStoreError(t *testing.T) {
 
 func TestRecoveryReportFailsOnStoreError(t *testing.T) {
 	store := newFakeRouteStore(t)
-	svc := NewRegistryService(store.inner, nil, 5, 15, time.Minute)
+	svc := NewRegistryService(store.inner, nil, 5, 15)
 	svc.terminalRouteStore = store
 	base := time.Unix(1_700_710_000, 0)
 	svc.nowFn = func() time.Time { return base }
@@ -223,7 +223,7 @@ func TestRecoveryReportFailsOnStoreError(t *testing.T) {
 // ---- ABA tests ----
 
 func TestLateCommandResultDoesNotConfirmReassignedRoute(t *testing.T) {
-	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, time.Minute)
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 	base := time.Unix(1_700_720_000, 0)
 	svc.nowFn = func() time.Time { return base }
 
@@ -259,7 +259,7 @@ func TestLateCommandResultDoesNotConfirmReassignedRoute(t *testing.T) {
 }
 
 func TestStaleReservationClearDoesNotDeleteConfirmedRoute(t *testing.T) {
-	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, time.Minute)
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 	base := time.Unix(1_700_730_000, 0)
 	svc.nowFn = func() time.Time { return base }
 
@@ -295,7 +295,7 @@ func TestStaleReservationClearDoesNotDeleteConfirmedRoute(t *testing.T) {
 }
 
 func TestLateRecoveryReportDoesNotDeleteReassignedRoute(t *testing.T) {
-	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, time.Minute)
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 	base := time.Unix(1_700_740_000, 0)
 	svc.nowFn = func() time.Time { return base }
 
@@ -328,7 +328,7 @@ func TestLateRecoveryReportDoesNotDeleteReassignedRoute(t *testing.T) {
 }
 
 func TestSessionNotFoundDeletesOnlyMatchingNode(t *testing.T) {
-	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, time.Minute)
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 	base := time.Unix(1_700_750_000, 0)
 	svc.nowFn = func() time.Time { return base }
 
@@ -366,7 +366,7 @@ func TestRestoreTerminalSessionRoutesLoadsActiveRoutes(t *testing.T) {
 	lease := base.Add(30 * time.Minute).UnixMilli()
 
 	// First service: persist a confirmed route.
-	svc1 := NewRegistryService(store, nil, 5, 15, time.Minute)
+	svc1 := NewRegistryService(store, nil, 5, 15)
 	svc1.nowFn = func() time.Time { return base }
 	ctx := context.Background()
 	if err := store.UpsertConfirmedTerminalSessionRoute(ctx, registry.TerminalSessionRoute{
@@ -381,7 +381,7 @@ func TestRestoreTerminalSessionRoutesLoadsActiveRoutes(t *testing.T) {
 	}
 
 	// Second service: simulate restart.
-	svc2 := NewRegistryService(store, nil, 5, 15, time.Minute)
+	svc2 := NewRegistryService(store, nil, 5, 15)
 	svc2.nowFn = func() time.Time { return base.Add(time.Second) }
 	if err := svc2.RestoreTerminalSessionRoutes(ctx, base.Add(time.Second)); err != nil {
 		t.Fatalf("restore routes: %v", err)
@@ -424,7 +424,7 @@ func TestRestoreTerminalSessionRoutesDeletesExpiredRoutes(t *testing.T) {
 		t.Fatalf("persist expired route: %v", err)
 	}
 
-	svc := NewRegistryService(store, nil, 5, 15, time.Minute)
+	svc := NewRegistryService(store, nil, 5, 15)
 	svc.nowFn = func() time.Time { return base }
 	if err := svc.RestoreTerminalSessionRoutes(ctx, base); err != nil {
 		t.Fatalf("restore routes: %v", err)
@@ -450,7 +450,7 @@ func TestRestoreTerminalSessionRoutesDeletesExpiredRoutes(t *testing.T) {
 }
 
 func TestRestoreTerminalSessionRoutesRejectsAlreadyInitialized(t *testing.T) {
-	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, time.Minute)
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 	base := time.Unix(1_700_820_000, 0)
 	svc.nowFn = func() time.Time { return base }
 
@@ -483,7 +483,7 @@ func TestConsoleRestartRecoveryRoundTrip(t *testing.T) {
 	}
 
 	// Second service: restart and restore.
-	svc := NewRegistryService(store, nil, 5, 15, time.Minute)
+	svc := NewRegistryService(store, nil, 5, 15)
 	restartTime := base.Add(5 * time.Second)
 	svc.nowFn = func() time.Time { return restartTime }
 	if err := svc.RestoreTerminalSessionRoutes(ctx, restartTime); err != nil {
@@ -555,7 +555,7 @@ func TestConsoleRestartExpiredLeaseNotOfferedForRecovery(t *testing.T) {
 
 	// Restart after the lease has expired.
 	restartTime := base.Add(2 * time.Minute)
-	svc := NewRegistryService(store, nil, 5, 15, time.Minute)
+	svc := NewRegistryService(store, nil, 5, 15)
 	svc.nowFn = func() time.Time { return restartTime }
 	if err := svc.RestoreTerminalSessionRoutes(ctx, restartTime); err != nil {
 		t.Fatalf("restore routes: %v", err)
@@ -585,7 +585,7 @@ func TestDeleteProvisionedWorkerRemovesPersistedRoutes(t *testing.T) {
 		t.Fatalf("persist route: %v", err)
 	}
 
-	svc := NewRegistryService(store, nil, 5, 15, time.Minute)
+	svc := NewRegistryService(store, nil, 5, 15)
 	svc.nowFn = func() time.Time { return base }
 
 	// Manually bind the route in memory so deleteTerminalSessionRoutesByNode has something to remove.
@@ -622,7 +622,7 @@ func TestDeleteProvisionedWorkerRemovesPersistedRoutes(t *testing.T) {
 
 func TestPruneExpiredTerminalSessionRoutesDeletesFromPersistence(t *testing.T) {
 	store := registrytest.NewStore(t)
-	svc := NewRegistryService(store, nil, 5, 15, time.Minute)
+	svc := NewRegistryService(store, nil, 5, 15)
 	revoker := &recordingProxyRouteSessionRevoker{}
 	svc.SetProxyRouteSessionRevoker(revoker)
 	base := time.Unix(1_700_860_000, 0)

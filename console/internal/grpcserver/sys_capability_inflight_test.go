@@ -38,7 +38,7 @@ func TestResolveHelloByWorkerTypeKeepsSysDeclaredMaxInflight(t *testing.T) {
 		t.Fatalf("expected one seeded worker, got %d", seeded)
 	}
 
-	svc := NewRegistryService(store, map[string]string{"node-sys": "secret-sys"}, 5, 15, 60*time.Second)
+	svc := NewRegistryService(store, map[string]string{"node-sys": "secret-sys"}, 5, 15)
 
 	resolved, err := svc.resolveHelloByWorkerType(&registryv1.ConnectHello{
 		NodeId: "node-sys",
@@ -76,7 +76,7 @@ func TestResolveHelloByWorkerTypeDefaultsSysMaxInflight(t *testing.T) {
 		},
 	}, now, 15*time.Second)
 
-	svc := NewRegistryService(store, map[string]string{"node-sys": "secret-sys"}, 5, 15, 60*time.Second)
+	svc := NewRegistryService(store, map[string]string{"node-sys": "secret-sys"}, 5, 15)
 
 	resolved, err := svc.resolveHelloByWorkerType(&registryv1.ConnectHello{
 		NodeId: "node-sys",

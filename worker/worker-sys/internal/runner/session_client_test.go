@@ -13,25 +13,25 @@ import (
 func TestCommandExecSlotAcquireRelease(t *testing.T) {
 	commandExecSlots := newCommandSlots(config.Config{})
 
-	if !tryAcquireCommandSlot(commandExecSlots, computerUseCapabilityName) {
+	if !commandExecSlots.tryAcquire(computerUseCapabilityName) {
 		t.Fatalf("expected first slot acquire to succeed")
 	}
-	if tryAcquireCommandSlot(commandExecSlots, computerUseCapabilityName) {
+	if commandExecSlots.tryAcquire(computerUseCapabilityName) {
 		t.Fatalf("expected second slot acquire to fail while slot is held")
 	}
 
-	releaseCommandSlot(commandExecSlots, computerUseCapabilityName)
-	if !tryAcquireCommandSlot(commandExecSlots, computerUseCapabilityName) {
+	commandExecSlots.release(computerUseCapabilityName)
+	if !commandExecSlots.tryAcquire(computerUseCapabilityName) {
 		t.Fatalf("expected slot acquire to succeed after release")
 	}
 }
 
 func TestHandleCommandDispatchBusyReturnsSessionBusyWithoutExecution(t *testing.T) {
 	commandExecSlots := newCommandSlots(config.Config{})
-	if !tryAcquireCommandSlot(commandExecSlots, computerUseCapabilityName) {
+	if !commandExecSlots.tryAcquire(computerUseCapabilityName) {
 		t.Fatalf("expected to acquire slot for busy-state setup")
 	}
-	defer releaseCommandSlot(commandExecSlots, computerUseCapabilityName)
+	defer commandExecSlots.release(computerUseCapabilityName)
 
 	outbound := make(chan *registryv1.ConnectRequest, 1)
 	errCh := make(chan error, 1)
@@ -142,7 +142,7 @@ func TestHandleCommandDispatchRunsExecutionAndReleasesSlot(t *testing.T) {
 	default:
 	}
 
-	if !tryAcquireCommandSlot(commandExecSlots, computerUseCapabilityName) {
+	if !commandExecSlots.tryAcquire(computerUseCapabilityName) {
 		t.Fatalf("expected slot to be released after execution")
 	}
 }

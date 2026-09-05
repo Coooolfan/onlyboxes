@@ -12,14 +12,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-func TestActiveSessionTerminalCapacityPresence(t *testing.T) {
+func TestActiveSessionTerminalCapacity(t *testing.T) {
 	now := time.Unix(1_700_200_000, 0)
-	legacy := newActiveSessionAt("legacy", "session-legacy", &registryv1.ConnectHello{}, now)
-	legacySnapshot := legacy.terminalSessionCapacitySnapshot()
-	if legacySnapshot.known {
-		t.Fatalf("legacy hello must remain capacity unknown: %#v", legacySnapshot)
-	}
-
 	unlimited := newActiveSessionAt("unlimited", "session-unlimited", &registryv1.ConnectHello{
 		TerminalSessionCapacity: &registryv1.TerminalSessionCapacity{
 			MaxActiveSessions:  0,
@@ -27,7 +21,7 @@ func TestActiveSessionTerminalCapacityPresence(t *testing.T) {
 		},
 	}, now)
 	unlimitedSnapshot := unlimited.terminalSessionCapacitySnapshot()
-	if !unlimitedSnapshot.known || unlimitedSnapshot.maxActiveSessions != 0 || unlimitedSnapshot.activeSessionCount != 9 {
+	if unlimitedSnapshot.maxActiveSessions != 0 || unlimitedSnapshot.activeSessionCount != 9 {
 		t.Fatalf("explicit unlimited capacity was not preserved: %#v", unlimitedSnapshot)
 	}
 	if !unlimitedSnapshot.observedAt.Equal(now) {
@@ -38,7 +32,7 @@ func TestActiveSessionTerminalCapacityPresence(t *testing.T) {
 func TestConnectInitializesAndHeartbeatUpdatesTerminalCapacity(t *testing.T) {
 	store := registrytest.NewStore(t)
 	now := time.Unix(1_700_200_100, 0)
-	svc := NewRegistryService(store, map[string]string{"node-1": "secret-1"}, 5, 15, time.Minute)
+	svc := NewRegistryService(store, map[string]string{"node-1": "secret-1"}, 5, 15)
 	svc.nowFn = func() time.Time { return now }
 	client, cleanup := newBufClient(t, svc)
 	defer cleanup()
@@ -62,7 +56,7 @@ func TestConnectInitializesAndHeartbeatUpdatesTerminalCapacity(t *testing.T) {
 		t.Fatal("expected active session")
 	}
 	initial := session.terminalSessionCapacitySnapshot()
-	if !initial.known || initial.maxActiveSessions != 4 || initial.activeSessionCount != 3 || !initial.observedAt.Equal(now) {
+	if initial.maxActiveSessions != 4 || initial.activeSessionCount != 3 || !initial.observedAt.Equal(now) {
 		t.Fatalf("unexpected initial capacity snapshot: %#v", initial)
 	}
 
@@ -83,7 +77,7 @@ func TestConnectInitializesAndHeartbeatUpdatesTerminalCapacity(t *testing.T) {
 	}
 
 	updated := session.terminalSessionCapacitySnapshot()
-	if !updated.known || updated.maxActiveSessions != 4 || updated.activeSessionCount != 2 || !updated.observedAt.Equal(now) {
+	if updated.maxActiveSessions != 4 || updated.activeSessionCount != 2 || !updated.observedAt.Equal(now) {
 		t.Fatalf("unexpected updated capacity snapshot: %#v", updated)
 	}
 }
@@ -94,9 +88,8 @@ func TestReconnectReplacesTerminalCapacityBeforeFirstHeartbeat(t *testing.T) {
 		registrytest.NewStore(t),
 		map[string]string{"node-1": "secret-1"},
 		5,
-		15,
-		time.Minute,
-	)
+		15)
+
 	svc.nowFn = func() time.Time { return now }
 	client, cleanup := newBufClient(t, svc)
 	defer cleanup()
@@ -129,7 +122,7 @@ func TestReconnectReplacesTerminalCapacityBeforeFirstHeartbeat(t *testing.T) {
 		t.Fatal("expected replacement session")
 	}
 	snapshot := session.terminalSessionCapacitySnapshot()
-	if !snapshot.known || snapshot.maxActiveSessions != 4 || snapshot.activeSessionCount != 4 || !snapshot.observedAt.Equal(now) {
+	if snapshot.maxActiveSessions != 4 || snapshot.activeSessionCount != 4 || !snapshot.observedAt.Equal(now) {
 		t.Fatalf("replacement Hello did not initialize capacity: %#v", snapshot)
 	}
 }
@@ -166,10 +159,20 @@ func TestValidateHelloRejectsNegativeTerminalCapacity(t *testing.T) {
 	}
 }
 
+func TestValidateHelloRequiresTerminalCapacityForTerminalExec(t *testing.T) {
+	err := validateHello(&registryv1.ConnectHello{
+		NodeId:       "node-1",
+		Capabilities: []*registryv1.CapabilityDeclaration{{Name: taskCapabilityTerminalExec, MaxInflight: 1}},
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("expected InvalidArgument, got %v", err)
+	}
+}
+
 func TestHandleHeartbeatRejectsNegativeActiveSessionCount(t *testing.T) {
 	store := registrytest.NewStore(t)
 	now := time.Unix(1_700_200_200, 0)
-	svc := NewRegistryService(store, nil, 5, 15, time.Minute)
+	svc := NewRegistryService(store, nil, 5, 15)
 	svc.nowFn = func() time.Time { return now }
 	hello := &registryv1.ConnectHello{
 		NodeId: "node-1",
@@ -196,33 +199,18 @@ func TestHandleHeartbeatRejectsNegativeActiveSessionCount(t *testing.T) {
 	}
 }
 
-func TestLegacyHeartbeatUpdatesActiveCountWithoutClaimingCapacityKnown(t *testing.T) {
-	now := time.Unix(1_700_200_300, 0)
-	session := newActiveSessionAt("legacy", "session-legacy", &registryv1.ConnectHello{}, now)
-	session.setActiveSessionCount(7, now.Add(time.Second))
-	snapshot := session.terminalSessionCapacitySnapshot()
-	if snapshot.known || snapshot.activeSessionCount != 7 {
-		t.Fatalf("legacy heartbeat changed capacity presence semantics: %#v", snapshot)
-	}
-}
-
-func TestInflightStatsExposeTerminalCapacityPresence(t *testing.T) {
+func TestInflightStatsExposeTerminalCapacity(t *testing.T) {
 	now := time.Unix(1_700_200_350, 0)
-	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, time.Minute)
-	addTerminalCapacityTestWorker(t, svc, "known", now, terminalCapacity(4, 3))
-	addTerminalCapacityTestWorker(t, svc, "legacy", now, nil)
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
+	addTerminalCapacityTestWorker(t, svc, "worker", now, terminalCapacity(4, 3))
 
 	byNode := make(map[string]WorkerInflightSnapshot)
 	for _, snapshot := range svc.InflightStats() {
 		byNode[snapshot.NodeID] = snapshot
 	}
-	known := byNode["known"]
-	if known.ActiveSessionCount != 3 || !known.TerminalSessionCapacity.Known || known.TerminalSessionCapacity.MaxActiveSessions != 4 {
-		t.Fatalf("unexpected known inflight snapshot: %#v", known)
-	}
-	legacy := byNode["legacy"]
-	if legacy.TerminalSessionCapacity.Known {
-		t.Fatalf("legacy capacity unexpectedly known: %#v", legacy)
+	worker := byNode["worker"]
+	if worker.ActiveSessionCount != 3 || worker.TerminalSessionCapacity.MaxActiveSessions != 4 {
+		t.Fatalf("unexpected inflight snapshot: %#v", worker)
 	}
 }
 
@@ -240,7 +228,7 @@ func TestResolveWorkerSysHelloDropsTerminalCapacity(t *testing.T) {
 	}, now, 15*time.Second); seeded != 1 {
 		t.Fatalf("expected one seeded worker, got %d", seeded)
 	}
-	svc := NewRegistryService(store, nil, 5, 15, time.Minute)
+	svc := NewRegistryService(store, nil, 5, 15)
 
 	resolved, err := svc.resolveHelloByWorkerType(&registryv1.ConnectHello{
 		NodeId: "node-sys",

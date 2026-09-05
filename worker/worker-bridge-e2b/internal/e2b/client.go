@@ -3,10 +3,12 @@ package e2b
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"mime"
 	"net"
 	"net/http"
@@ -18,7 +20,6 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	"github.com/google/uuid"
 	processv1 "github.com/onlyboxes/onlyboxes/worker/worker-bridge-e2b/internal/e2b/process/v1"
 	"github.com/onlyboxes/onlyboxes/worker/worker-bridge-e2b/internal/e2b/process/v1/processv1connect"
 )
@@ -167,7 +168,7 @@ func (c *Client) CreateWithMetadata(ctx context.Context, template string, timeou
 		AutoPause:           false,
 		Secure:              true,
 		AllowInternetAccess: true,
-		Metadata:            cloneMetadata(metadata),
+		Metadata:            maps.Clone(metadata),
 		EnvVars:             map[string]string{},
 	}
 	if c.restrictPublicTraffic {
@@ -262,14 +263,6 @@ func (c *Client) Connect(ctx context.Context, sandboxID string, timeoutSec int) 
 	}, nil
 }
 
-func cloneMetadata(metadata map[string]string) map[string]string {
-	out := make(map[string]string, len(metadata))
-	for key, value := range metadata {
-		out[key] = value
-	}
-	return out
-}
-
 func (sandbox *Sandbox) ProxyURL(port int) (string, string, error) {
 	if sandbox == nil || strings.TrimSpace(sandbox.ID) == "" {
 		return "", "", errors.New("sandbox is required")
@@ -322,7 +315,7 @@ func (c *Client) Run(
 	baseURL := c.sandboxBaseURL(sandbox)
 	rpc := processv1connect.NewProcessClient(c.sandboxHTTP, baseURL, connect.WithProtoJSON())
 	stdin := false
-	tag := "onlyboxes-" + uuid.NewString()
+	tag := "onlyboxes-" + rand.Text()
 	req := connect.NewRequest(&processv1.StartRequest{
 		Process: &processv1.ProcessConfig{
 			Cmd:  "/bin/bash",

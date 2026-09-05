@@ -6,8 +6,8 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/onlyboxes/onlyboxes/worker/internal/logging"
 	"github.com/onlyboxes/onlyboxes/worker/worker-bridge-e2b/internal/config"
-	"github.com/onlyboxes/onlyboxes/worker/worker-bridge-e2b/internal/logging"
 	"github.com/onlyboxes/onlyboxes/worker/worker-bridge-e2b/internal/runner"
 )
 

@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -10,9 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/onlyboxes/onlyboxes/worker/internal/logging"
 	"github.com/onlyboxes/onlyboxes/worker/worker-bridge-e2b/internal/e2b"
-	"github.com/onlyboxes/onlyboxes/worker/worker-bridge-e2b/internal/logging"
 )
 
 const (
@@ -338,7 +338,7 @@ func (m *terminalSessionManager) claimSession(sessionID string, leaseTarget time
 		return nil, false, newTerminalExecError("execution_failed", terminalExecNotReadyMessage)
 	}
 	if sessionID == "" {
-		session, err := m.newSessionLocked(uuid.NewString(), leaseTarget)
+		session, err := m.newSessionLocked(rand.Text(), leaseTarget)
 		m.mu.Unlock()
 		return session, true, err
 	}

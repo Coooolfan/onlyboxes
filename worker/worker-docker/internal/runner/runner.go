@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onlyboxes/onlyboxes/worker/internal/logging"
 	"github.com/onlyboxes/onlyboxes/worker/worker-docker/internal/config"
-	"github.com/onlyboxes/onlyboxes/worker/worker-docker/internal/logging"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

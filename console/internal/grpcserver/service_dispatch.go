@@ -496,8 +496,7 @@ func (s *RegistryService) pickSessionForCapability(
 	}
 
 	const (
-		capacityGroupKnownAvailable = iota
-		capacityGroupUnknown
+		capacityGroupAvailable = iota
 		capacityGroupReportedFull
 		capacityGroupCount
 	)
@@ -530,15 +529,10 @@ func (s *RegistryService) pickSessionForCapability(
 		}
 
 		terminalCapacity := session.terminalSessionCapacitySnapshot()
-		group := capacityGroupKnownAvailable
-		if capacityAware {
-			switch {
-			case !terminalCapacity.known:
-				group = capacityGroupUnknown
-			case terminalCapacity.maxActiveSessions > 0 &&
-				terminalCapacity.activeSessionCount >= terminalCapacity.maxActiveSessions:
-				group = capacityGroupReportedFull
-			}
+		group := capacityGroupAvailable
+		if capacityAware && terminalCapacity.maxActiveSessions > 0 &&
+			terminalCapacity.activeSessionCount >= terminalCapacity.maxActiveSessions {
+			group = capacityGroupReportedFull
 		}
 		groups[group] = append(groups[group], candidate{
 			session:          session,
@@ -681,10 +675,8 @@ type CapabilityInflightEntry struct {
 	MaxInflight int
 }
 
-// TerminalSessionCapacityInflightEntry describes whether a worker declared a
-// terminal session limit and, when known, its configured maximum.
+// TerminalSessionCapacityInflightEntry describes a worker's terminal session limit.
 type TerminalSessionCapacityInflightEntry struct {
-	Known             bool
 	MaxActiveSessions int
 }
 
@@ -724,7 +716,6 @@ func (s *RegistryService) InflightStats() []WorkerInflightSnapshot {
 			NodeID:             session.nodeID,
 			ActiveSessionCount: capacity.activeSessionCount,
 			TerminalSessionCapacity: TerminalSessionCapacityInflightEntry{
-				Known:             capacity.known,
 				MaxActiveSessions: capacity.maxActiveSessions,
 			},
 			Capabilities: entries,

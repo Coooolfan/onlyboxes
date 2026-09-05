@@ -219,7 +219,6 @@ func consoleTestConfig() config.Config {
 		HeartbeatJitter:             0,
 		CallTimeout:                 time.Second,
 		NodeName:                    "e2b-test",
-		ExecutorKind:                "e2b",
 		EchoMaxInflight:             4,
 		PythonExecMaxInflight:       4,
 		TerminalExecMaxInflight:     4,

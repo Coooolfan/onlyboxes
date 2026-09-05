@@ -39,7 +39,7 @@ func insertQueuedTaskForTest(t *testing.T, svc *RegistryService, taskID string, 
 }
 
 func TestExecuteTaskMarksPersistenceErrorWhenMarkDispatchedFails(t *testing.T) {
-	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, 60*time.Second)
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 	now := time.Unix(1_700_000_000, 0)
 	svc.nowFn = func() time.Time { return now }
 
@@ -90,7 +90,7 @@ END`,
 }
 
 func TestTaskStateTransitionsReturnErrorWhenDBUnavailable(t *testing.T) {
-	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, 60*time.Second)
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 	now := time.Unix(1_700_000_100, 0)
 	svc.nowFn = func() time.Time { return now }
 
@@ -113,7 +113,7 @@ func TestTaskStateTransitionsReturnErrorWhenDBUnavailable(t *testing.T) {
 }
 
 func TestCancelTaskReturnsErrorWhenTerminalWriteFails(t *testing.T) {
-	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, 60*time.Second)
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 	now := time.Unix(1_700_000_200, 0)
 	svc.nowFn = func() time.Time { return now }
 
@@ -139,7 +139,7 @@ END`,
 }
 
 func TestFailTaskOnPersistenceErrorTriggersCriticalHookWhenFallbackAlsoFails(t *testing.T) {
-	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, 60*time.Second)
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 	now := time.Unix(1_700_000_300, 0)
 	svc.nowFn = func() time.Time { return now }
 
@@ -175,7 +175,7 @@ func TestFailTaskOnPersistenceErrorTriggersCriticalHookWhenFallbackAlsoFails(t *
 }
 
 func TestFailTaskOnPersistenceErrorDoesNotPanicWithDefaultCriticalHook(t *testing.T) {
-	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, 60*time.Second)
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 	now := time.Unix(1_700_000_350, 0)
 	svc.nowFn = func() time.Time { return now }
 

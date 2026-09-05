@@ -3,6 +3,8 @@ package registry
 import (
 	"context"
 	"errors"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -91,8 +93,8 @@ func (s *Store) listFilteredViews(
 			Provisioned:  node.Provisioned != 0,
 			NodeName:     node.NodeName,
 			ExecutorKind: node.ExecutorKind,
-			Capabilities: cloneCapabilities(capabilityByNode[node.NodeID]),
-			Labels:       cloneMap(labelsByNode[node.NodeID]),
+			Capabilities: slices.Clone(capabilityByNode[node.NodeID]),
+			Labels:       maps.Clone(labelsByNode[node.NodeID]),
 			Version:      node.Version,
 			RegisteredAt: time.UnixMilli(node.RegisteredAtUnixMs),
 			LastSeenAt:   time.UnixMilli(node.LastSeenAtUnixMs),

@@ -6,7 +6,6 @@ use crate::config_source::Source;
 const DEFAULT_CONSOLE_TARGET: &str = "127.0.0.1:50051";
 const DEFAULT_HEARTBEAT_INTERVAL_SEC: u64 = 5;
 const DEFAULT_HEARTBEAT_JITTER_PCT: u8 = 20;
-const DEFAULT_EXECUTOR_KIND: &str = "boxlite";
 const DEFAULT_PYTHON_EXEC_IMAGE: &str = "ghcr.io/astral-sh/uv:python3.12-bookworm-slim";
 const DEFAULT_PYTHON_EXEC_MEMORY_MIB: u32 = 256;
 const DEFAULT_PYTHON_EXEC_CPUS: u32 = 1;
@@ -41,7 +40,6 @@ pub struct Config {
     pub heartbeat_jitter_pct: u8,
     pub call_timeout: Duration,
     pub node_name: String,
-    pub executor_kind: String,
     pub labels: BTreeMap<String, String>,
     pub boxlite_home: String,
     pub python_exec_image: String,
@@ -120,7 +118,6 @@ impl Config {
             heartbeat_jitter_pct,
             call_timeout: Duration::from_secs(call_timeout_sec),
             node_name: src.get("WORKER_NODE_NAME"),
-            executor_kind: DEFAULT_EXECUTOR_KIND.to_owned(),
             labels: parse_labels(&src.get("WORKER_LABELS")),
             boxlite_home: src.get("WORKER_BOXLITE_HOME"),
             python_exec_image: src.string_value(

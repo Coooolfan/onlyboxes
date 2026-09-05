@@ -1,6 +1,8 @@
 package registry
 
 import (
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -23,13 +25,9 @@ func statusOf(lastSeenAt time.Time, now time.Time, offlineTTL time.Duration) Wor
 }
 
 func cloneWorker(worker Worker) Worker {
-	worker.Capabilities = cloneCapabilities(worker.Capabilities)
-	worker.Labels = cloneMap(worker.Labels)
+	worker.Capabilities = slices.Clone(worker.Capabilities)
+	worker.Labels = maps.Clone(worker.Labels)
 	return worker
-}
-
-func resolveProtoCapabilities(capabilities []*registryv1.CapabilityDeclaration) []CapabilityDeclaration {
-	return cloneProtoCapabilities(capabilities)
 }
 
 func cloneProtoCapabilities(capabilities []*registryv1.CapabilityDeclaration) []CapabilityDeclaration {
@@ -53,28 +51,11 @@ func cloneProtoCapabilities(capabilities []*registryv1.CapabilityDeclaration) []
 	return cloned
 }
 
-func cloneCapabilities(capabilities []CapabilityDeclaration) []CapabilityDeclaration {
-	if len(capabilities) == 0 {
-		return []CapabilityDeclaration{}
-	}
-	cloned := make([]CapabilityDeclaration, len(capabilities))
-	copy(cloned, capabilities)
-	return cloned
-}
-
-func cloneMap(input map[string]string) map[string]string {
-	if len(input) == 0 {
-		return map[string]string{}
-	}
-	cloned := make(map[string]string, len(input))
-	for k, v := range input {
-		cloned[k] = v
-	}
-	return cloned
-}
-
 func mergeLabels(base map[string]string, override map[string]string) map[string]string {
-	merged := cloneMap(base)
+	merged := maps.Clone(base)
+	if merged == nil {
+		merged = map[string]string{}
+	}
 	for key, value := range override {
 		merged[key] = value
 	}

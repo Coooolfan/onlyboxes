@@ -28,12 +28,6 @@ enable_registration = true
 hidden_tools = ["echo", "pythonExec"]
 mcp_token_query_param = "access_token"
 log_level = "debug"
-
-[mcp_tool.python_exec]
-description = "run python"
-
-[mcp_tool.python_exec.param.code]
-description = ""
 `)
 
 	cfg := Load()
@@ -60,18 +54,6 @@ description = ""
 	}
 	if cfg.LogLevel != "debug" {
 		t.Fatalf("unexpected log level %q", cfg.LogLevel)
-	}
-
-	override, ok := cfg.MCPToolOverrides["pythonExec"]
-	if !ok {
-		t.Fatalf("expected pythonExec override, got %v", cfg.MCPToolOverrides)
-	}
-	if override.Description == nil || *override.Description != "run python" {
-		t.Fatalf("unexpected description override %v", override.Description)
-	}
-	code, ok := override.ParamDescriptions["code"]
-	if !ok || code == nil || *code != "" {
-		t.Fatalf("expected empty code param description override, got %v", override.ParamDescriptions)
 	}
 }
 

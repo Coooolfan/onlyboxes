@@ -22,7 +22,6 @@ hash_key = ""
 
 # Worker session policy.
 offline_ttl_sec = 15
-replay_window_sec = 60
 heartbeat_interval_sec = 5
 
 # Dashboard registration.
@@ -64,18 +63,6 @@ export_return_schema = "ALL"
 mcp_token_query_param = "token"
 # Hidden tools, equivalent to CONSOLE_HIDDEN_TOOLS="echo,pythonExec".
 hidden_tools = []
-
-# MCP tool overrides. Section keys mirror the environment variable names:
-# [mcp_tool.python_exec] name/title/description
-# [mcp_tool.python_exec.param.<param>] description
-# An empty param description hides the parameter from tools/list.
-# [mcp_tool.python_exec]
-# name = "runPython"
-# title = "Run Python"
-# description = "Execute python code in a sandbox."
-#
-# [mcp_tool.python_exec.param.code]
-# description = "Python source to execute."
 
 # Logging.
 log_level = "info"

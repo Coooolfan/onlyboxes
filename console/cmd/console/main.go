@@ -90,7 +90,6 @@ func main() {
 		initialCredentialHashes,
 		cfg.HeartbeatIntervalSec,
 		int32(cfg.OfflineTTL/time.Second),
-		cfg.ReplayWindow,
 	)
 	registryService.SetHasher(db.Hasher)
 	registryService.SetTaskRetention(time.Duration(cfg.TaskRetentionDays) * 24 * time.Hour)
@@ -181,7 +180,7 @@ func main() {
 	if err != nil {
 		fatal("failed to initialize api key auth", "error", err)
 	}
-	router, err := httpapi.NewRouter(httpHandler, consoleAuth, mcpAuth, apiKeyAuth, cfg.HiddenTools, cfg.MCPToolOverrides)
+	router, err := httpapi.NewRouter(httpHandler, consoleAuth, mcpAuth, apiKeyAuth, cfg.HiddenTools)
 	if err != nil {
 		fatal("failed to initialize http router", "error", err)
 	}

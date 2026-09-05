@@ -9,7 +9,6 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("CONSOLE_HTTP_ADDR", "")
 	t.Setenv("CONSOLE_GRPC_ADDR", "")
 	t.Setenv("CONSOLE_OFFLINE_TTL_SEC", "")
-	t.Setenv("CONSOLE_REPLAY_WINDOW_SEC", "")
 	t.Setenv("CONSOLE_HEARTBEAT_INTERVAL_SEC", "")
 	t.Setenv("CONSOLE_DB_PATH", "")
 	t.Setenv("CONSOLE_DASHBOARD_USERNAME", "")
@@ -49,9 +48,6 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.OfflineTTL != time.Duration(defaultOfflineTTLSec)*time.Second {
 		t.Fatalf("unexpected OfflineTTL: %s", cfg.OfflineTTL)
-	}
-	if cfg.ReplayWindow != time.Duration(defaultReplayWindowSec)*time.Second {
-		t.Fatalf("unexpected ReplayWindow: %s", cfg.ReplayWindow)
 	}
 	if cfg.HeartbeatIntervalSec != int32(defaultHeartbeatIntervalSec) {
 		t.Fatalf("unexpected HeartbeatIntervalSec: %d", cfg.HeartbeatIntervalSec)
@@ -121,7 +117,6 @@ func TestLoadReadsDashboardCredentialsAndDurations(t *testing.T) {
 	t.Setenv("CONSOLE_INITIAL_ADMIN_API_KEY", "obxk_testkey123")
 	t.Setenv("CONSOLE_JIT_SIGNING_KEY", "jit-signing-secret")
 	t.Setenv("CONSOLE_OFFLINE_TTL_SEC", "30")
-	t.Setenv("CONSOLE_REPLAY_WINDOW_SEC", "120")
 	t.Setenv("CONSOLE_HEARTBEAT_INTERVAL_SEC", "10")
 	t.Setenv("CONSOLE_DB_PATH", "/var/lib/onlyboxes/console.db")
 	t.Setenv("CONSOLE_EXPORT_FILE_ENDPOINT", "https://minio.example.com")
@@ -164,9 +159,6 @@ func TestLoadReadsDashboardCredentialsAndDurations(t *testing.T) {
 	}
 	if cfg.OfflineTTL != 30*time.Second {
 		t.Fatalf("expected OfflineTTL=30s, got %s", cfg.OfflineTTL)
-	}
-	if cfg.ReplayWindow != 120*time.Second {
-		t.Fatalf("expected ReplayWindow=120s, got %s", cfg.ReplayWindow)
 	}
 	if cfg.HeartbeatIntervalSec != 10 {
 		t.Fatalf("expected HeartbeatIntervalSec=10, got %d", cfg.HeartbeatIntervalSec)
@@ -238,7 +230,6 @@ func TestLoadReadsDashboardCredentialsAndDurations(t *testing.T) {
 
 func TestLoadFallsBackForInvalidNumericEnv(t *testing.T) {
 	t.Setenv("CONSOLE_OFFLINE_TTL_SEC", "-1")
-	t.Setenv("CONSOLE_REPLAY_WINDOW_SEC", "not-a-number")
 	t.Setenv("CONSOLE_HEARTBEAT_INTERVAL_SEC", "0")
 	t.Setenv("CONSOLE_EXPORT_FILE_UPLOAD_PRESIGN_TTL_SEC", "0")
 	t.Setenv("CONSOLE_EXPORT_FILE_DOWNLOAD_PRESIGN_TTL_SEC", "not-a-number")
@@ -250,9 +241,6 @@ func TestLoadFallsBackForInvalidNumericEnv(t *testing.T) {
 	cfg := Load()
 	if cfg.OfflineTTL != time.Duration(defaultOfflineTTLSec)*time.Second {
 		t.Fatalf("expected default offline ttl, got %s", cfg.OfflineTTL)
-	}
-	if cfg.ReplayWindow != time.Duration(defaultReplayWindowSec)*time.Second {
-		t.Fatalf("expected default replay window, got %s", cfg.ReplayWindow)
 	}
 	if cfg.HeartbeatIntervalSec != int32(defaultHeartbeatIntervalSec) {
 		t.Fatalf("expected default heartbeat interval, got %d", cfg.HeartbeatIntervalSec)
@@ -324,125 +312,6 @@ func TestLoadNormalizesHiddenTools(t *testing.T) {
 	for key := range expected {
 		if !cfg.HiddenTools[key] {
 			t.Fatalf("expected hidden tool key %q to be present in %#v", key, cfg.HiddenTools)
-		}
-	}
-}
-
-func TestLoadMCPToolOverrides_NoEnv_Nil(t *testing.T) {
-	cfg := Load()
-	if cfg.MCPToolOverrides != nil {
-		t.Fatalf("expected nil MCPToolOverrides when no env set, got %#v", cfg.MCPToolOverrides)
-	}
-}
-
-func TestLoadMCPToolOverrides_Description_Override(t *testing.T) {
-	t.Setenv("CONSOLE_MCP_TOOL_ECHO_DESCRIPTION", "custom echo")
-	cfg := Load()
-	o, ok := cfg.MCPToolOverrides["echo"]
-	if !ok {
-		t.Fatalf("expected echo override, got %#v", cfg.MCPToolOverrides)
-	}
-	if o.Description == nil || *o.Description != "custom echo" {
-		t.Fatalf("expected description=custom echo, got %#v", o.Description)
-	}
-	if o.Title != nil {
-		t.Fatalf("expected nil Title, got %#v", o.Title)
-	}
-}
-
-func TestLoadMCPToolOverrides_Title_Override(t *testing.T) {
-	t.Setenv("CONSOLE_MCP_TOOL_PYTHON_EXEC_TITLE", "Py Runner")
-	cfg := Load()
-	o := cfg.MCPToolOverrides["pythonExec"]
-	if o.Title == nil || *o.Title != "Py Runner" {
-		t.Fatalf("expected Title=Py Runner, got %#v", o.Title)
-	}
-}
-
-func TestLoadMCPToolOverrides_ParamDescription_Override(t *testing.T) {
-	t.Setenv("CONSOLE_MCP_TOOL_TERMINAL_EXEC_PARAM_SESSION_ID_DESCRIPTION", "session token")
-	cfg := Load()
-	o := cfg.MCPToolOverrides["terminalExec"]
-	got, ok := o.ParamDescriptions["session_id"]
-	if !ok {
-		t.Fatalf("expected session_id param override, got %#v", o.ParamDescriptions)
-	}
-	if got == nil || *got != "session token" {
-		t.Fatalf("expected session_id=session token, got %#v", got)
-	}
-}
-
-func TestLoadMCPToolOverrides_ParamHidden_EmptyString(t *testing.T) {
-	t.Setenv("CONSOLE_MCP_TOOL_TERMINAL_EXEC_PARAM_SESSION_ID_DESCRIPTION", "")
-	cfg := Load()
-	o := cfg.MCPToolOverrides["terminalExec"]
-	got, ok := o.ParamDescriptions["session_id"]
-	if !ok {
-		t.Fatalf("expected session_id override present, got %#v", o.ParamDescriptions)
-	}
-	if got == nil {
-		t.Fatalf("expected non-nil pointer, got nil (means env not detected)")
-	}
-	if *got != "" {
-		t.Fatalf("expected empty string for hidden, got %q", *got)
-	}
-}
-
-func TestLoadMCPToolOverrides_Name_Override(t *testing.T) {
-	t.Setenv("CONSOLE_MCP_TOOL_PYTHON_EXEC_NAME", "py")
-	cfg := Load()
-	o, ok := cfg.MCPToolOverrides["pythonExec"]
-	if !ok {
-		t.Fatalf("expected pythonExec override, got %#v", cfg.MCPToolOverrides)
-	}
-	if o.Name == nil || *o.Name != "py" {
-		t.Fatalf("expected Name=py, got %#v", o.Name)
-	}
-	if o.Title != nil || o.Description != nil {
-		t.Fatalf("expected only Name to be set, got %#v", o)
-	}
-}
-
-func TestLoadMCPToolOverrides_NameEmptyString_Preserved(t *testing.T) {
-	// Empty string is preserved in config; the handler layer decides the
-	// fallback+warn behavior.
-	t.Setenv("CONSOLE_MCP_TOOL_ECHO_NAME", "")
-	cfg := Load()
-	o := cfg.MCPToolOverrides["echo"]
-	if o.Name == nil {
-		t.Fatalf("expected non-nil Name pointer (env set to empty)")
-	}
-	if *o.Name != "" {
-		t.Fatalf("expected empty string, got %q", *o.Name)
-	}
-}
-
-func TestLoadMCPToolOverrides_DescriptionEmptyString_Preserved(t *testing.T) {
-	// Empty string is preserved in config; the handler layer decides the
-	// fallback+warn for Title/Description.
-	t.Setenv("CONSOLE_MCP_TOOL_ECHO_DESCRIPTION", "")
-	cfg := Load()
-	o := cfg.MCPToolOverrides["echo"]
-	if o.Description == nil {
-		t.Fatalf("expected non-nil Description pointer (env set to empty)")
-	}
-	if *o.Description != "" {
-		t.Fatalf("expected empty string, got %q", *o.Description)
-	}
-}
-
-func TestToolNameToEnvSegment(t *testing.T) {
-	cases := map[string]string{
-		"echo":         "ECHO",
-		"pythonExec":   "PYTHON_EXEC",
-		"terminalExec": "TERMINAL_EXEC",
-		"computerUse":  "COMPUTER_USE",
-		"readImage":    "READ_IMAGE",
-		"exportFile":   "EXPORT_FILE",
-	}
-	for in, want := range cases {
-		if got := toolNameToEnvSegment(in); got != want {
-			t.Errorf("toolNameToEnvSegment(%q)=%q want %q", in, got, want)
 		}
 	}
 }

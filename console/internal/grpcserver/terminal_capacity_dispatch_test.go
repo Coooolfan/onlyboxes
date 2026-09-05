@@ -72,8 +72,8 @@ func terminalCapacity(maxActiveSessions int32, activeSessionCount int32) *regist
 func TestPickSessionForCapabilityUsesTerminalCapacityGroups(t *testing.T) {
 	now := time.Unix(1_700_100_000, 0)
 
-	t.Run("known available skips reported full", func(t *testing.T) {
-		svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, time.Minute)
+	t.Run("available skips reported full", func(t *testing.T) {
+		svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 		svc.nowFn = func() time.Time { return now }
 		full := addTerminalCapacityTestWorker(t, svc, "node-a", now, terminalCapacity(1, 1))
 		available := addTerminalCapacityTestWorker(t, svc, "node-b", now, terminalCapacity(2, 1))
@@ -90,30 +90,8 @@ func TestPickSessionForCapabilityUsesTerminalCapacityGroups(t *testing.T) {
 		}
 	})
 
-	t.Run("known available precedes legacy unknown despite inflight", func(t *testing.T) {
-		svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, time.Minute)
-		svc.nowFn = func() time.Time { return now }
-		unknown := addTerminalCapacityTestWorker(t, svc, "node-a", now, nil)
-		available := addTerminalCapacityTestWorker(t, svc, "node-b", now, terminalCapacity(2, 0))
-		if !available.tryAcquireCapability(taskCapabilityTerminalExec) {
-			t.Fatal("pre-acquire available worker capability")
-		}
-		defer available.releaseCapability(taskCapabilityTerminalExec)
-
-		picked, err := svc.pickSessionForCapability(taskCapabilityTerminalExec, "owner-a", sessionPickOptions{
-			terminalSessionIntent: terminalSessionIntentKnownNew,
-		})
-		if err != nil {
-			t.Fatalf("pick terminal worker: %v", err)
-		}
-		defer picked.releaseCapability(taskCapabilityTerminalExec)
-		if picked != available {
-			t.Fatalf("expected known available worker %s before unknown %s, got %s", available.nodeID, unknown.nodeID, picked.nodeID)
-		}
-	})
-
 	t.Run("unknown intent preserves inflight selection", func(t *testing.T) {
-		svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, time.Minute)
+		svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 		svc.nowFn = func() time.Time { return now }
 		full := addTerminalCapacityTestWorker(t, svc, "node-a", now, terminalCapacity(1, 1))
 		available := addTerminalCapacityTestWorker(t, svc, "node-b", now, terminalCapacity(2, 0))
@@ -133,7 +111,7 @@ func TestPickSessionForCapabilityUsesTerminalCapacityGroups(t *testing.T) {
 	})
 
 	t.Run("reported full remains last resort", func(t *testing.T) {
-		svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, time.Minute)
+		svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 		svc.nowFn = func() time.Time { return now }
 		addTerminalCapacityTestWorker(t, svc, "node-a", now, terminalCapacity(1, 1))
 		addTerminalCapacityTestWorker(t, svc, "node-b", now, terminalCapacity(3, 3))
@@ -147,8 +125,8 @@ func TestPickSessionForCapabilityUsesTerminalCapacityGroups(t *testing.T) {
 		picked.releaseCapability(taskCapabilityTerminalExec)
 	})
 
-	t.Run("explicit unlimited is known available", func(t *testing.T) {
-		svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, time.Minute)
+	t.Run("explicit unlimited is available", func(t *testing.T) {
+		svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 		svc.nowFn = func() time.Time { return now }
 		unlimited := addTerminalCapacityTestWorker(t, svc, "node-a", now, terminalCapacity(0, 99))
 		addTerminalCapacityTestWorker(t, svc, "node-b", now, terminalCapacity(1, 1))
@@ -168,7 +146,7 @@ func TestPickSessionForCapabilityUsesTerminalCapacityGroups(t *testing.T) {
 
 func TestExistingTerminalRouteIgnoresActiveSessionCapacity(t *testing.T) {
 	now := time.Unix(1_700_100_100, 0)
-	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, time.Minute)
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 	svc.nowFn = func() time.Time { return now }
 	full := addTerminalCapacityTestWorker(t, svc, "node-a", now, terminalCapacity(1, 1))
 	addTerminalCapacityTestWorker(t, svc, "node-b", now, terminalCapacity(2, 0))
@@ -191,7 +169,7 @@ func TestExistingTerminalRouteIgnoresActiveSessionCapacity(t *testing.T) {
 
 func TestTerminalCapacityDoesNotAffectOtherCapabilities(t *testing.T) {
 	now := time.Unix(1_700_100_200, 0)
-	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, time.Minute)
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 	svc.nowFn = func() time.Time { return now }
 	full := addTerminalCapacityTestWorker(t, svc, "node-a", now, terminalCapacity(1, 1))
 	available := addTerminalCapacityTestWorker(t, svc, "node-b", now, terminalCapacity(2, 0))
@@ -214,7 +192,7 @@ func TestTerminalCapacityDoesNotAffectOtherCapabilities(t *testing.T) {
 
 func TestDispatchCommandRetriesTerminalCapacityOnAnotherWorker(t *testing.T) {
 	now := time.Unix(1_700_100_300, 0)
-	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, time.Minute)
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 	svc.nowFn = func() time.Time { return now }
 	workerA := addTerminalCapacityTestWorker(t, svc, "node-a", now, terminalCapacity(2, 0))
 	workerB := addTerminalCapacityTestWorker(t, svc, "node-b", now, terminalCapacity(2, 0))
@@ -299,9 +277,8 @@ func TestSubmitTaskSkipsReportedFullConnectedWorker(t *testing.T) {
 		registrytest.NewStore(t),
 		map[string]string{"node-a": "secret-a", "node-b": "secret-b"},
 		5,
-		15,
-		time.Minute,
-	)
+		15)
+
 	svc.nowFn = func() time.Time { return now }
 	svc.newTaskIDFn = func() (string, error) { return "task-connected-skip", nil }
 	svc.newTerminalSessionIDFn = func() (string, error) { return "session-connected-skip", nil }
@@ -404,9 +381,8 @@ func TestSubmitTaskRetriesCapacityAcrossConnectedWorkers(t *testing.T) {
 		registrytest.NewStore(t),
 		map[string]string{"node-a": "secret-a", "node-b": "secret-b"},
 		5,
-		15,
-		time.Minute,
-	)
+		15)
+
 	svc.nowFn = func() time.Time { return now }
 	svc.newTaskIDFn = func() (string, error) { return "task-connected-retry", nil }
 	svc.newTerminalSessionIDFn = func() (string, error) { return "external-session", nil }
@@ -580,7 +556,7 @@ func TestTerminalCapacityRetryWorksForAllTaskModes(t *testing.T) {
 	for _, mode := range modes {
 		t.Run(string(mode), func(t *testing.T) {
 			now := time.Unix(1_700_100_360, 0)
-			svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, time.Minute)
+			svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 			svc.nowFn = func() time.Time { return now }
 			svc.newTaskIDFn = func() (string, error) { return "task-mode-" + string(mode), nil }
 			svc.newTerminalSessionIDFn = func() (string, error) { return "session-mode-" + string(mode), nil }
@@ -658,7 +634,7 @@ func TestDispatchCommandDoesNotRetryNonCapacityOrAmbiguousFailures(t *testing.T)
 	now := time.Unix(1_700_100_375, 0)
 
 	t.Run("session busy", func(t *testing.T) {
-		svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, time.Minute)
+		svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 		svc.nowFn = func() time.Time { return now }
 		workerA := addTerminalCapacityTestWorker(t, svc, "node-a", now, terminalCapacity(2, 0))
 		workerB := addTerminalCapacityTestWorker(t, svc, "node-b", now, terminalCapacity(2, 0))
@@ -693,7 +669,7 @@ func TestDispatchCommandDoesNotRetryNonCapacityOrAmbiguousFailures(t *testing.T)
 	})
 
 	t.Run("worker stream closes after enqueue", func(t *testing.T) {
-		svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, time.Minute)
+		svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 		svc.nowFn = func() time.Time { return now }
 		workerA := addTerminalCapacityTestWorker(t, svc, "node-a", now, terminalCapacity(2, 0))
 		workerB := addTerminalCapacityTestWorker(t, svc, "node-b", now, terminalCapacity(2, 0))
@@ -723,7 +699,7 @@ func TestDispatchCommandDoesNotRetryNonCapacityOrAmbiguousFailures(t *testing.T)
 
 func TestConcurrentProvisionalCapacityOnlyLastRollbackRetries(t *testing.T) {
 	now := time.Unix(1_700_100_390, 0)
-	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, time.Minute)
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 	svc.nowFn = func() time.Time { return now }
 	workerA := addTerminalCapacityTestWorker(t, svc, "node-a", now, terminalCapacity(2, 0))
 	workerB := addTerminalCapacityTestWorker(t, svc, "node-b", now, terminalCapacity(2, 0))
@@ -796,7 +772,7 @@ func TestConcurrentProvisionalCapacityOnlyLastRollbackRetries(t *testing.T) {
 
 func TestDispatchCommandPreservesCapacityErrorAfterAllWorkersReject(t *testing.T) {
 	now := time.Unix(1_700_100_400, 0)
-	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, time.Minute)
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 	svc.nowFn = func() time.Time { return now }
 	workerA := addTerminalCapacityTestWorker(t, svc, "node-a", now, terminalCapacity(1, 1))
 	workerB := addTerminalCapacityTestWorker(t, svc, "node-b", now, terminalCapacity(1, 1))
@@ -839,7 +815,7 @@ func TestDispatchCommandPreservesCapacityErrorAfterAllWorkersReject(t *testing.T
 
 func TestDispatchCommandPreservesSessionCapacityWhenRemainingWorkerInflightIsFull(t *testing.T) {
 	now := time.Unix(1_700_100_450, 0)
-	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, time.Minute)
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 	svc.nowFn = func() time.Time { return now }
 	workerA := addTerminalCapacityTestWorker(t, svc, "node-a", now, terminalCapacity(2, 0))
 	workerB := addTerminalCapacityTestWorker(t, svc, "node-b", now, terminalCapacity(2, 0))
@@ -882,7 +858,7 @@ func TestDispatchCommandPreservesSessionCapacityWhenRemainingWorkerInflightIsFul
 
 func TestDispatchCommandCancellationAfterEnqueueDoesNotTryAnotherWorker(t *testing.T) {
 	now := time.Unix(1_700_100_475, 0)
-	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, time.Minute)
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 	svc.nowFn = func() time.Time { return now }
 	workerA := addTerminalCapacityTestWorker(t, svc, "node-a", now, terminalCapacity(2, 0))
 	workerB := addTerminalCapacityTestWorker(t, svc, "node-b", now, terminalCapacity(2, 0))
@@ -917,7 +893,7 @@ func TestDispatchCommandCancellationAfterEnqueueDoesNotTryAnotherWorker(t *testi
 
 func TestDispatchCommandDoesNotRetryCapacityForConfirmedRoute(t *testing.T) {
 	now := time.Unix(1_700_100_500, 0)
-	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, time.Minute)
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 	svc.nowFn = func() time.Time { return now }
 	workerA := addTerminalCapacityTestWorker(t, svc, "node-a", now, terminalCapacity(1, 1))
 	workerB := addTerminalCapacityTestWorker(t, svc, "node-b", now, terminalCapacity(2, 0))
@@ -958,7 +934,7 @@ func TestDispatchCommandDoesNotRetryCapacityForConfirmedRoute(t *testing.T) {
 
 func TestDispatchCommandStopsRetryWhenTaskPersistenceCallbackFails(t *testing.T) {
 	now := time.Unix(1_700_100_600, 0)
-	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, time.Minute)
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 	svc.nowFn = func() time.Time { return now }
 	workerA := addTerminalCapacityTestWorker(t, svc, "node-a", now, terminalCapacity(2, 0))
 	workerB := addTerminalCapacityTestWorker(t, svc, "node-b", now, terminalCapacity(2, 0))
@@ -984,7 +960,7 @@ func TestDispatchCommandStopsRetryWhenTaskPersistenceCallbackFails(t *testing.T)
 
 func TestPickSessionForDispatchStopsWhenRouteReturnsToAttemptedNode(t *testing.T) {
 	now := time.Unix(1_700_100_700, 0)
-	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, time.Minute)
+	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15)
 	svc.nowFn = func() time.Time { return now }
 	addTerminalCapacityTestWorker(t, svc, "node-a", now, terminalCapacity(1, 1))
 	addTerminalCapacityTestWorker(t, svc, "node-b", now, terminalCapacity(2, 0))

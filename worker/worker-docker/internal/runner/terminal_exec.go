@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -12,8 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/onlyboxes/onlyboxes/worker/worker-docker/internal/logging"
+	"github.com/onlyboxes/onlyboxes/worker/internal/logging"
 )
 
 const (
@@ -616,7 +616,7 @@ func (m *terminalSessionManager) claimSession(
 	}
 
 	if sessionID == "" {
-		session, err := m.newSessionLocked(uuid.NewString(), leaseTarget)
+		session, err := m.newSessionLocked(rand.Text(), leaseTarget)
 		return session, true, err
 	}
 

@@ -314,7 +314,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: "1.24.x"
-          cache-dependency-path: worker/worker-docker/go.sum
+          cache-dependency-path: worker/go.sum
 
       - name: Build worker binary
         run: |
@@ -323,7 +323,7 @@ jobs:
           (
             cd worker/worker-docker
             CGO_ENABLED=0 GOOS="${GOOS}" GOARCH="${GOARCH}" go build -trimpath \
-              -ldflags "-X github.com/onlyboxes/onlyboxes/worker/worker-docker/internal/buildinfo.Version=${VERSION_RAW}" \
+              -ldflags "-X github.com/onlyboxes/onlyboxes/worker/internal/buildinfo.Version=${VERSION_RAW}" \
               -o "../../build/${WORKER_BIN}" \
               ./cmd/worker-docker
           )
@@ -412,8 +412,8 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
-          go-version-file: worker/worker-bridge-e2b/go.mod
-          cache-dependency-path: worker/worker-bridge-e2b/go.sum
+          go-version-file: worker/go.mod
+          cache-dependency-path: worker/go.sum
 
       - name: Build worker binary
         run: |
@@ -422,7 +422,7 @@ jobs:
           (
             cd worker/worker-bridge-e2b
             CGO_ENABLED=0 GOOS="${GOOS}" GOARCH="${GOARCH}" go build -trimpath \
-              -ldflags "-X github.com/onlyboxes/onlyboxes/worker/worker-bridge-e2b/internal/buildinfo.Version=${VERSION_RAW}" \
+              -ldflags "-X github.com/onlyboxes/onlyboxes/worker/internal/buildinfo.Version=${VERSION_RAW}" \
               -o "../../build/${WORKER_BIN}" \
               ./cmd/worker-bridge-e2b
           )
@@ -526,7 +526,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: "1.24.x"
-          cache-dependency-path: worker/worker-sys/go.sum
+          cache-dependency-path: worker/go.sum
 
       - name: Build worker binary
         run: |
@@ -535,7 +535,7 @@ jobs:
           (
             cd worker/worker-sys
             CGO_ENABLED=0 GOOS="${GOOS}" GOARCH="${GOARCH}" go build -trimpath \
-              -ldflags "-X github.com/onlyboxes/onlyboxes/worker/worker-sys/internal/buildinfo.Version=${VERSION_RAW}" \
+              -ldflags "-X github.com/onlyboxes/onlyboxes/worker/internal/buildinfo.Version=${VERSION_RAW}" \
               -o "../../build/${WORKER_BIN}" \
               ./cmd/worker-sys
           )

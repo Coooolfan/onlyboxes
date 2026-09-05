@@ -93,6 +93,38 @@ func TestListWorkersEmpty(t *testing.T) {
 	}
 }
 
+func TestListWorkersSerializesEmptyCollections(t *testing.T) {
+	store := registrytest.NewStore(t)
+	now := time.Unix(1_700_000_050, 0)
+	if err := store.Upsert(&registryv1.ConnectHello{NodeId: "node-empty"}, "session-empty", now); err != nil {
+		t.Fatalf("seed worker: %v", err)
+	}
+
+	handler := NewWorkerHandler(store, 15*time.Second, nil, nil, nil, "")
+	handler.nowFn = func() time.Time { return now }
+	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
+	cookie := loginSessionCookie(t, router)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workers", nil)
+	req.AddCookie(cookie)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", res.Code)
+	}
+	var payload listWorkersResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(payload.Items) != 1 {
+		t.Fatalf("expected one worker, got %d", len(payload.Items))
+	}
+	if payload.Items[0].Capabilities == nil || payload.Items[0].Labels == nil {
+		t.Fatal("expected non-nil empty collections")
+	}
+}
+
 func TestListWorkersPaginationAndFilter(t *testing.T) {
 	store := registrytest.NewStore(t)
 	base := time.Unix(1_700_000_100, 0)
@@ -621,7 +653,7 @@ func TestTrustedTokenEndpointsRejectDashboardJIT(t *testing.T) {
 
 func TestNewRouterReturnsErrorWhenMCPAuthIsNil(t *testing.T) {
 	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, nil, nil, ":50051")
-	router, err := NewRouter(handler, newTestConsoleAuth(t), nil, nil, nil, nil)
+	router, err := NewRouter(handler, newTestConsoleAuth(t), nil, nil, nil)
 	if !errors.Is(err, ErrMCPAuthRequired) {
 		t.Fatalf("expected ErrMCPAuthRequired, got %v", err)
 	}

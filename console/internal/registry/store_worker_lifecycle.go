@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -40,7 +41,7 @@ func (s *Store) Upsert(req *registryv1.ConnectHello, sessionID string, now time.
 		nodeName = existingNode.NodeName
 	}
 
-	labels := cloneMap(req.GetLabels())
+	labels := maps.Clone(req.GetLabels())
 	provisioned := int64(0)
 	if hasExisting && existingNode.Provisioned != 0 {
 		provisioned = 1
@@ -55,7 +56,7 @@ func (s *Store) Upsert(req *registryv1.ConnectHello, sessionID string, now time.
 		labels = mergeLabelsPreserveKeys(base, labels, LabelOwnerIDKey, LabelWorkerTypeKey)
 	}
 
-	capabilities := resolveProtoCapabilities(req.GetCapabilities())
+	capabilities := cloneProtoCapabilities(req.GetCapabilities())
 	nowMS := now.UnixMilli()
 
 	return s.db.WithTx(ctx, func(q *sqlc.Queries) error {
@@ -120,7 +121,7 @@ func (s *Store) SeedProvisionedWorkers(workers []ProvisionedWorker, now time.Tim
 
 		nodeName := fmt.Sprintf("worker-%s", shortNodeID(nodeID))
 
-		labels := cloneMap(worker.Labels)
+		labels := maps.Clone(worker.Labels)
 
 		inserted := int64(0)
 		err := s.db.WithTx(context.Background(), func(q *sqlc.Queries) error {

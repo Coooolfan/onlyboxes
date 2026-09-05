@@ -3170,7 +3170,7 @@ __metadata:
     react-router-dom: "npm:^7.13.2"
     rehype-slug: "npm:^6.0.0"
     remark-gfm: "npm:^4.0.1"
-    rollup: "npm:^4.60.0"
+    rollup: "npm:4.60.0"
     tailwindcss: "npm:^4.2.2"
     typescript: "npm:~6.0.2"
     vite: "npm:^8.0.2"
@@ -3635,7 +3635,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"rollup@npm:^4.60.0":
+"rollup@npm:4.60.0":
   version: 4.60.0
   resolution: "rollup@npm:4.60.0"
   dependencies:

@@ -100,9 +100,7 @@ func NewRegistryService(
 	initialCredentials map[string]string,
 	heartbeatIntervalSec int32,
 	offlineTTLSec int32,
-	replayWindow time.Duration,
 ) *RegistryService {
-	_ = replayWindow
 	credentialCopy := make(map[string]string, len(initialCredentials))
 	for workerID, secret := range initialCredentials {
 		credentialCopy[workerID] = secret

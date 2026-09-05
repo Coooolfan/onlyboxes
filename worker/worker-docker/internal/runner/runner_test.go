@@ -923,7 +923,6 @@ func testConfig() config.Config {
 		HeartbeatJitter:             0,
 		CallTimeout:                 50 * time.Millisecond,
 		NodeName:                    "node-test",
-		ExecutorKind:                "docker",
 		EchoMaxInflight:             defaultMaxInflight,
 		PythonExecMaxInflight:       defaultMaxInflight,
 		TerminalExecMaxInflight:     defaultMaxInflight,

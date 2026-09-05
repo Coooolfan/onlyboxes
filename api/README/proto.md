@@ -24,7 +24,7 @@ Make sure `$(go env GOPATH)/bin` is in your `PATH`.
 
 Sandbox workers send `ConnectHello.terminal_session_capacity` on every connection:
 
-- message absence means legacy/unknown capacity;
+- workers declaring `terminalExec` must include the message; non-terminal workers omit it;
 - `max_active_sessions=0` in a present message means unlimited;
 - positive `max_active_sessions` declares the worker-local session limit;
 - `active_session_count` is the reservation count when Hello is built and closes the reconnect window before the first heartbeat;

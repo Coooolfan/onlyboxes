@@ -17,7 +17,7 @@ import (
 
 func TestDirectProxyAuthorizationResolvesE2BOriginThroughWorker(t *testing.T) {
 	now := time.UnixMilli(1_730_000_000_000)
-	service := NewRegistryService(nil, nil, 5, 15, time.Minute)
+	service := NewRegistryService(nil, nil, 5, 15)
 	service.nowFn = func() time.Time { return now }
 	service.ConfigureProxy(true, nil, nil, []string{"e2b.app"})
 	hello := &registryv1.ConnectHello{
@@ -65,7 +65,7 @@ func TestDirectProxyAuthorizationResolvesE2BOriginThroughWorker(t *testing.T) {
 }
 
 func TestDirectProxyCapabilityCannotBeSubmittedAsUserTask(t *testing.T) {
-	service := NewRegistryService(nil, nil, 5, 15, time.Minute)
+	service := NewRegistryService(nil, nil, 5, 15)
 	_, err := service.SubmitTask(context.Background(), SubmitTaskRequest{
 		OwnerID: "owner-a", Capability: "terminalProxy", InputJSON: []byte(`{"session_id":"other-owner-session","port":8080}`),
 	})
@@ -76,7 +76,7 @@ func TestDirectProxyCapabilityCannotBeSubmittedAsUserTask(t *testing.T) {
 
 func TestRejectedProxyReconnectDoesNotChangeTerminalRouteRecoveryState(t *testing.T) {
 	now := time.UnixMilli(1_730_000_000_000)
-	service := NewRegistryService(registrytest.NewStore(t), map[string]string{"worker-1": "worker-secret"}, 5, 15, time.Minute)
+	service := NewRegistryService(registrytest.NewStore(t), map[string]string{"worker-1": "worker-secret"}, 5, 15)
 	service.nowFn = func() time.Time { return now }
 	service.ConfigureProxy(true, []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}, []uint16{8091}, []string{"e2b.app"})
 	scopedSessionID := scopeTerminalSessionID("owner-a", "session-a")
@@ -113,7 +113,7 @@ func TestRejectedProxyReconnectDoesNotChangeTerminalRouteRecoveryState(t *testin
 
 func TestProxySessionResolveAndAuthorize(t *testing.T) {
 	now := time.UnixMilli(1_730_000_000_000)
-	service := NewRegistryService(nil, nil, 5, 15, time.Minute)
+	service := NewRegistryService(nil, nil, 5, 15)
 	service.nowFn = func() time.Time { return now }
 	service.ConfigureProxy(true, []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}, []uint16{8091}, []string{"e2b.app"})
 
@@ -331,7 +331,7 @@ func TestValidateDirectProxyURLRestrictsDomain(t *testing.T) {
 
 func newProxyRegistryServiceForTest(t *testing.T, now time.Time) (*RegistryService, string) {
 	t.Helper()
-	service := NewRegistryService(nil, nil, 5, 15, time.Minute)
+	service := NewRegistryService(nil, nil, 5, 15)
 	service.terminalRouteStore = nil
 	service.nowFn = func() time.Time { return now }
 	service.ConfigureProxy(true, []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}, []uint16{8091}, []string{"e2b.app"})

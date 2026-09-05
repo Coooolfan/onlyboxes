@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/onlyboxes/onlyboxes/console/internal/config"
 	"github.com/onlyboxes/onlyboxes/console/internal/grpcserver"
 	"github.com/onlyboxes/onlyboxes/console/internal/registry"
 )
@@ -106,7 +105,7 @@ func (h *WorkerHandler) SetProxyRouteHandler(handler *ProxyRouteHandler) {
 	h.proxyRoutes = handler
 }
 
-func NewRouter(workerHandler *WorkerHandler, consoleAuth *ConsoleAuth, mcpAuth *MCPAuth, apiKeyAuth *APIKeyAuth, hiddenTools map[string]bool, mcpToolOverrides map[string]config.MCPToolOverride) (*gin.Engine, error) {
+func NewRouter(workerHandler *WorkerHandler, consoleAuth *ConsoleAuth, mcpAuth *MCPAuth, apiKeyAuth *APIKeyAuth, hiddenTools map[string]bool) (*gin.Engine, error) {
 	if mcpAuth == nil {
 		return nil, ErrMCPAuthRequired
 	}
@@ -125,7 +124,6 @@ func NewRouter(workerHandler *WorkerHandler, consoleAuth *ConsoleAuth, mcpAuth *
 		workerHandler.exportUploadTTL,
 		workerHandler.exportDownloadTTL,
 		workerHandler.exportReturnSchema,
-		mcpToolOverrides,
 	)))
 
 	api := router.Group("/api/v1")
@@ -234,12 +232,16 @@ func (h *WorkerHandler) ListWorkers(c *gin.Context) {
 	}
 	items := make([]workerItem, 0, len(workers))
 	for _, worker := range workers {
+		labels := worker.Labels
+		if labels == nil {
+			labels = map[string]string{}
+		}
 		items = append(items, workerItem{
 			NodeID:       worker.NodeID,
 			NodeName:     worker.NodeName,
 			ExecutorKind: worker.ExecutorKind,
-			Capabilities: worker.Capabilities,
-			Labels:       worker.Labels,
+			Capabilities: append([]registry.CapabilityDeclaration{}, worker.Capabilities...),
+			Labels:       labels,
 			Version:      worker.Version,
 			Status:       worker.Status,
 			RegisteredAt: worker.RegisteredAt,

@@ -153,7 +153,7 @@ func mustNewRouter(t *testing.T, workerHandler *WorkerHandler, consoleAuth *Cons
 	if len(hiddenTools) > 0 {
 		ht = hiddenTools[0]
 	}
-	router, err := NewRouter(workerHandler, consoleAuth, mcpAuth, apiKeyAuth, ht, nil)
+	router, err := NewRouter(workerHandler, consoleAuth, mcpAuth, apiKeyAuth, ht)
 	if err != nil {
 		t.Fatalf("new router: %v", err)
 	}

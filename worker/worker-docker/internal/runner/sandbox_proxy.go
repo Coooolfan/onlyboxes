@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/onlyboxes/onlyboxes/api/proxytoken"
+	"github.com/onlyboxes/onlyboxes/worker/internal/logging"
 	"github.com/onlyboxes/onlyboxes/worker/worker-docker/internal/config"
-	"github.com/onlyboxes/onlyboxes/worker/worker-docker/internal/logging"
 )
 
 const (
