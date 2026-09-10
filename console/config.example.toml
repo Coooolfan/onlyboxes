@@ -24,6 +24,8 @@ hash_key = ""
 offline_ttl_sec = 15
 replay_window_sec = 60
 heartbeat_interval_sec = 5
+# REPLACE | REJECT
+worker_connection_conflict_policy = "REPLACE"
 
 # Dashboard registration.
 enable_registration = false

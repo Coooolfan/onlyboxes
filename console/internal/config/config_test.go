@@ -11,6 +11,7 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("CONSOLE_OFFLINE_TTL_SEC", "")
 	t.Setenv("CONSOLE_REPLAY_WINDOW_SEC", "")
 	t.Setenv("CONSOLE_HEARTBEAT_INTERVAL_SEC", "")
+	t.Setenv("CONSOLE_WORKER_CONNECTION_CONFLICT_POLICY", "")
 	t.Setenv("CONSOLE_DB_PATH", "")
 	t.Setenv("CONSOLE_DASHBOARD_USERNAME", "")
 	t.Setenv("CONSOLE_DASHBOARD_PASSWORD", "")
@@ -55,6 +56,9 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.HeartbeatIntervalSec != int32(defaultHeartbeatIntervalSec) {
 		t.Fatalf("unexpected HeartbeatIntervalSec: %d", cfg.HeartbeatIntervalSec)
+	}
+	if cfg.WorkerConnectionPolicy != WorkerConnectionConflictPolicyReplace {
+		t.Fatalf("unexpected WorkerConnectionConflictPolicy: %q", cfg.WorkerConnectionPolicy)
 	}
 	if cfg.DBPath != defaultDBPath {
 		t.Fatalf("expected DBPath=%q, got %q", defaultDBPath, cfg.DBPath)
@@ -287,6 +291,24 @@ func TestLoadRegistrationFlagFallback(t *testing.T) {
 	cfg := Load()
 	if cfg.EnableRegistration {
 		t.Fatalf("expected invalid bool value to fallback to false")
+	}
+}
+
+func TestLoadWorkerConnectionConflictPolicy(t *testing.T) {
+	for _, tt := range []struct {
+		value string
+		want  WorkerConnectionConflictPolicy
+	}{
+		{value: "REPLACE", want: WorkerConnectionConflictPolicyReplace},
+		{value: " reject ", want: WorkerConnectionConflictPolicyReject},
+		{value: "invalid", want: WorkerConnectionConflictPolicyReplace},
+	} {
+		t.Run(tt.value, func(t *testing.T) {
+			t.Setenv("CONSOLE_WORKER_CONNECTION_CONFLICT_POLICY", tt.value)
+			if got := Load().WorkerConnectionPolicy; got != tt.want {
+				t.Fatalf("expected policy %q, got %q", tt.want, got)
+			}
+		})
 	}
 }
 

@@ -74,20 +74,25 @@ func (s *RegistryService) Connect(stream grpc.BidiStreamingServer[registryv1.Con
 	if err := s.configureSessionProxy(session, hello, workerSecret); err != nil {
 		return status.Errorf(codes.InvalidArgument, "invalid proxy endpoint: %v", err)
 	}
+	if s.workerConnectionPolicy == registry.WorkerConnectionConflictPolicyReject && !s.claimSessionIfAvailable(session) {
+		return status.Error(codes.FailedPrecondition, "worker already has an active connection")
+	}
+	defer func() {
+		s.removeSession(session)
+		session.close(retErr)
+	}()
 	recoveryCandidates, err := s.beginTerminalSessionRecoveryWithError(session.nodeID, now)
 	if err != nil {
 		return status.Errorf(codes.Internal, "prepare terminal session recovery: %v", err)
 	}
 	session.setRecoveryCandidates(recoveryCandidates)
 	logTerminalSessionCapacityInvariant(session.nodeID, session.terminalSessionCapacitySnapshot())
-	replaced := s.swapSession(session)
-	if replaced != nil {
-		replaced.close(status.Error(codes.FailedPrecondition, "session replaced by a newer connection"))
+	if s.workerConnectionPolicy != registry.WorkerConnectionConflictPolicyReject {
+		replaced := s.swapSession(session)
+		if replaced != nil {
+			replaced.close(status.Error(codes.FailedPrecondition, "session replaced by a newer connection"))
+		}
 	}
-	defer func() {
-		s.removeSession(session)
-		session.close(retErr)
-	}()
 
 	if err := s.store.Upsert(hello, sessionID, now); err != nil {
 		return status.Error(codes.Internal, "failed to persist worker registration")
@@ -339,6 +344,23 @@ func (s *RegistryService) getSession(nodeID string) *activeSession {
 	s.sessionsMu.RLock()
 	defer s.sessionsMu.RUnlock()
 	return s.sessions[nodeID]
+}
+
+func (s *RegistryService) claimSessionIfAvailable(session *activeSession) bool {
+	if session == nil {
+		return false
+	}
+	s.sessionsMu.Lock()
+	defer s.sessionsMu.Unlock()
+	if current := s.sessions[session.nodeID]; current != nil {
+		select {
+		case <-current.done:
+		default:
+			return false
+		}
+	}
+	s.sessions[session.nodeID] = session
+	return true
 }
 
 func (s *RegistryService) swapSession(session *activeSession) *activeSession {

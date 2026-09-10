@@ -14,10 +14,15 @@ var ErrPersistenceDBRequired = errors.New("registry store requires non-nil persi
 
 type WorkerStatus string
 
+type WorkerConnectionConflictPolicy string
+
 const (
 	StatusAll     WorkerStatus = "all"
 	StatusOnline  WorkerStatus = "online"
 	StatusOffline WorkerStatus = "offline"
+
+	WorkerConnectionConflictPolicyReplace WorkerConnectionConflictPolicy = "REPLACE"
+	WorkerConnectionConflictPolicyReject  WorkerConnectionConflictPolicy = "REJECT"
 )
 
 type CapabilityDeclaration struct {

@@ -57,6 +57,7 @@ type RegistryService struct {
 	hasher                    *persistence.Hasher
 	heartbeatIntervalSec      int32
 	offlineTTLSec             int32
+	workerConnectionPolicy    registry.WorkerConnectionConflictPolicy
 	nowFn                     func() time.Time
 	newSessionIDFn            func() (string, error)
 	newCommandIDFn            func() (string, error)
@@ -113,6 +114,7 @@ func NewRegistryService(
 		credentialHashAlgo:           "legacy-plain",
 		heartbeatIntervalSec:         heartbeatIntervalSec,
 		offlineTTLSec:                offlineTTLSec,
+		workerConnectionPolicy:       registry.WorkerConnectionConflictPolicyReplace,
 		nowFn:                        time.Now,
 		newSessionIDFn:               generateUUIDv4,
 		newCommandIDFn:               generateUUIDv4,
@@ -128,6 +130,17 @@ func NewRegistryService(
 		taskRequestReservations:      make(map[string]struct{}),
 		criticalPersistenceFailureFn: func(error) {},
 	}
+}
+
+func (s *RegistryService) SetWorkerConnectionConflictPolicy(policy registry.WorkerConnectionConflictPolicy) {
+	if s == nil {
+		return
+	}
+	if policy == registry.WorkerConnectionConflictPolicyReject {
+		s.workerConnectionPolicy = policy
+		return
+	}
+	s.workerConnectionPolicy = registry.WorkerConnectionConflictPolicyReplace
 }
 
 func (s *RegistryService) SetTaskRetention(retention time.Duration) {

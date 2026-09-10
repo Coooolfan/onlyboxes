@@ -93,6 +93,7 @@ func main() {
 		cfg.ReplayWindow,
 	)
 	registryService.SetHasher(db.Hasher)
+	registryService.SetWorkerConnectionConflictPolicy(cfg.WorkerConnectionPolicy)
 	registryService.SetTaskRetention(time.Duration(cfg.TaskRetentionDays) * 24 * time.Hour)
 	registryService.ConfigureProxy(cfg.ProxyEnabled, cfg.ProxyAllowedWorkerCIDRs, cfg.ProxyAllowedWorkerPorts, cfg.ProxyAllowedDirectDomains)
 	restoreCtx, restoreCancel := context.WithTimeout(context.Background(), 10*time.Second)
