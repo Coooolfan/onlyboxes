@@ -136,6 +136,7 @@ These variables enable the MCP `exportFile` tool. The tool is registered in `too
 | `CONSOLE_HEARTBEAT_INTERVAL_SEC` | No | `5` | Expected worker heartbeat interval (seconds) |
 | `CONSOLE_OFFLINE_TTL_SEC` | No | `15` | Seconds before a silent worker is marked offline |
 | `CONSOLE_REPLAY_WINDOW_SEC` | No | `60` | Replay window for request deduplication (seconds) |
+| `CONSOLE_WORKER_CONNECTION_CONFLICT_POLICY` | No | `REPLACE` | Policy when the same worker is already connected: `REPLACE` disconnects the existing connection and accepts the new one; `REJECT` keeps the existing connection and rejects the new one |
 
 ### Public preview proxy
 

@@ -190,6 +190,7 @@ curl -fsSL https://onlybox.es/install.sh | bash
 | --- | --- | --- |
 | `CONSOLE_HTTP_ADDR` | `:8089` | 控制台与 REST API 监听地址 |
 | `CONSOLE_GRPC_ADDR` | `:50051` | Worker 注册 gRPC 监听地址 |
+| `CONSOLE_WORKER_CONNECTION_CONFLICT_POLICY` | `REPLACE` | Worker 重复连接策略：`REPLACE` 断开已有连接；`REJECT` 拒绝新连接 |
 | `CONSOLE_HASH_KEY` | _(必填)_ | 用于哈希 `worker_secret` 和访问 token 的 HMAC 密钥 |
 | `CONSOLE_DB_PATH` | `./db/onlyboxes-console.db` | SQLite 数据库路径 |
 | `CONSOLE_DB_BUSY_TIMEOUT_MS` | `5000` | SQLite busy timeout |

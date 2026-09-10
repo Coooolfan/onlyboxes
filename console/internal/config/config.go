@@ -6,9 +6,16 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/onlyboxes/onlyboxes/console/internal/registry"
 )
 
+type WorkerConnectionConflictPolicy = registry.WorkerConnectionConflictPolicy
+
 const (
+	WorkerConnectionConflictPolicyReplace = registry.WorkerConnectionConflictPolicyReplace
+	WorkerConnectionConflictPolicyReject  = registry.WorkerConnectionConflictPolicyReject
+
 	defaultHTTPAddr                = ":8089"
 	defaultGRPCAddr                = ":50051"
 	defaultOfflineTTLSec           = 15
@@ -41,6 +48,7 @@ type Config struct {
 	OfflineTTL                time.Duration
 	ReplayWindow              time.Duration
 	HeartbeatIntervalSec      int32
+	WorkerConnectionPolicy    WorkerConnectionConflictPolicy
 	DashboardUsername         string
 	DashboardPassword         string
 	InitialAdminAPIKey        string
@@ -120,6 +128,7 @@ func Load() Config {
 		OfflineTTL:                time.Duration(offlineTTLSec) * time.Second,
 		ReplayWindow:              time.Duration(replayWindowSec) * time.Second,
 		HeartbeatIntervalSec:      int32(heartbeatIntervalSec),
+		WorkerConnectionPolicy:    src.workerConnectionConflictPolicy("CONSOLE_WORKER_CONNECTION_CONFLICT_POLICY"),
 		DashboardUsername:         src.get("CONSOLE_DASHBOARD_USERNAME"),
 		DashboardPassword:         src.get("CONSOLE_DASHBOARD_PASSWORD"),
 		InitialAdminAPIKey:        src.get("CONSOLE_INITIAL_ADMIN_API_KEY"),
@@ -367,6 +376,15 @@ func (s source) exportReturnSchema(key string) string {
 		return value
 	default:
 		return "ALL"
+	}
+}
+
+func (s source) workerConnectionConflictPolicy(key string) WorkerConnectionConflictPolicy {
+	switch strings.TrimSpace(strings.ToUpper(s.get(key))) {
+	case string(WorkerConnectionConflictPolicyReject):
+		return WorkerConnectionConflictPolicyReject
+	default:
+		return WorkerConnectionConflictPolicyReplace
 	}
 }
 

@@ -627,6 +627,52 @@ func TestConnectReplacesOldSession(t *testing.T) {
 	}
 }
 
+func TestConnectRejectsNewSessionWhenConflictPolicyIsReject(t *testing.T) {
+	svc := NewRegistryService(registrytest.NewStore(t), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
+	svc.SetWorkerConnectionConflictPolicy(registry.WorkerConnectionConflictPolicyReject)
+	sessionIDs := []string{"session-a", "session-b"}
+	svc.newSessionIDFn = func() (string, error) {
+		session := sessionIDs[0]
+		sessionIDs = sessionIDs[1:]
+		return session, nil
+	}
+
+	client, cleanup := newBufClient(t, svc)
+	defer cleanup()
+
+	streamA, sessionA, err := connectWorker(client, "node-1", "secret-1", "nonce-a", []string{"echo"})
+	if err != nil {
+		t.Fatalf("connect worker A failed: %v", err)
+	}
+	defer streamA.CloseSend()
+
+	_, _, err = connectWorker(client, "node-1", "secret-1", "nonce-b", []string{"echo"})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("expected FailedPrecondition for conflicting connection, got %v", err)
+	}
+	if current := svc.getSession("node-1"); current == nil || current.sessionID != sessionA {
+		t.Fatalf("expected original session %q to remain active, got %#v", sessionA, current)
+	}
+
+	if err := streamA.Send(&registryv1.ConnectRequest{
+		Payload: &registryv1.ConnectRequest_Heartbeat{
+			Heartbeat: &registryv1.HeartbeatFrame{
+				NodeId:    "node-1",
+				SessionId: sessionA,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("send original-session heartbeat failed: %v", err)
+	}
+	response, err := streamA.Recv()
+	if err != nil {
+		t.Fatalf("recv original-session heartbeat ack failed: %v", err)
+	}
+	if response.GetHeartbeatAck() == nil {
+		t.Fatalf("expected heartbeat_ack, got %#v", response.GetPayload())
+	}
+}
+
 func TestDispatchEchoSuccess(t *testing.T) {
 	svc := NewRegistryService(registrytest.NewStore(t), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
 	client, cleanup := newBufClient(t, svc)

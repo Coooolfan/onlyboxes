@@ -190,6 +190,7 @@ Default endpoints:
 | --- | --- | --- |
 | `CONSOLE_HTTP_ADDR` | `:8089` | Dashboard + REST API listen address |
 | `CONSOLE_GRPC_ADDR` | `:50051` | Worker registry gRPC listen address |
+| `CONSOLE_WORKER_CONNECTION_CONFLICT_POLICY` | `REPLACE` | Duplicate Worker connection policy: `REPLACE` disconnects the existing connection; `REJECT` rejects the new connection |
 | `CONSOLE_HASH_KEY` | _(required)_ | HMAC key for hashing worker secrets and access tokens |
 | `CONSOLE_DB_PATH` | `./db/onlyboxes-console.db` | SQLite database path |
 | `CONSOLE_DB_BUSY_TIMEOUT_MS` | `5000` | SQLite busy timeout |

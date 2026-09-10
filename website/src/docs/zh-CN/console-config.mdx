@@ -136,6 +136,7 @@ CONSOLE_MCP_TOOL_TERMINAL_EXEC_PARAM_SESSION_ID_DESCRIPTION=""
 | `CONSOLE_HEARTBEAT_INTERVAL_SEC` | 否 | `5` | 期望的 worker 心跳间隔（秒） |
 | `CONSOLE_OFFLINE_TTL_SEC` | 否 | `15` | worker 静默多少秒后标记为离线 |
 | `CONSOLE_REPLAY_WINDOW_SEC` | 否 | `60` | 请求去重的重放窗口（秒） |
+| `CONSOLE_WORKER_CONNECTION_CONFLICT_POLICY` | 否 | `REPLACE` | 同一 worker 已连接时的处理策略：`REPLACE` 断开已有连接并接受新连接；`REJECT` 保留已有连接并拒绝新连接 |
 
 ### 公开预览代理
 
