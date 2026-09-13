@@ -475,7 +475,7 @@ API Keys are for programmatic access to most management endpoints. Unlike execut
 | Stats | All workers | Own `worker-sys` only |
 | Inflight | All workers | Own `worker-sys` only |
 | Create `normal` | Yes | No |
-| Create `worker-sys` | Yes (max 1 per account) | Yes (max 1 per account) |
+| Create `worker-sys` | Yes (multiple per account) | Yes (multiple per account) |
 | Delete any worker | Yes | No |
 | Delete own `worker-sys` | Yes | Yes |
 
@@ -626,7 +626,6 @@ Worker types: `normal` (backed by `worker-docker`/`worker-boxlite`), `worker-sys
 |--------|-------------|
 | `400` | Malformed body / invalid `type` value |
 | `403` | Regular user attempting to create a `normal` worker |
-| `409` | Account already has a `worker-sys` |
 | `503` | Provisioning service unavailable |
 | `500` | Creation failure |
 
@@ -801,6 +800,8 @@ Executes a shell command inside a persistent terminal session, supporting state 
 | `timeout_ms` | int | No | `1..600000`, default `60000` |
 | `request_id` | string | No | Idempotency key, scoped per account |
 
+When `create_if_missing=true`, a `session_id` beginning with the reserved Computer Use prefix (`CU:` by default) is rejected. With `create_if_missing=false`, it remains an ordinary sandbox-session lookup.
+
 **Response `200`:**
 
 ```json
@@ -845,13 +846,14 @@ Executes a shell command inside a persistent terminal session, supporting state 
 
 `POST /api/v1/commands/computer-use`
 
-Executes a shell command on the calling account's own `worker-sys` (real host machine). No session state is maintained; concurrency is fixed at 1 per account.
+Lists the calling account's Worker Systems or executes a shell command on one selected `worker-sys` host. Execution is pinned to the requested Worker and never falls back.
 
 **Request body:**
 
 ```json
 {
   "command": "pwd",
+  "worker_id": "worker-id",
   "timeout_ms": 60000,
   "request_id": "optional-idempotency-key"
 }
@@ -859,11 +861,20 @@ Executes a shell command on the calling account's own `worker-sys` (real host ma
 
 | Field | Type | Required | Constraints |
 |-------|------|----------|-------------|
-| `command` | string | Yes | Trimmed non-empty |
+| `worker_id` | string | No | Caller-owned `worker-sys`; omit for list mode |
+| `command` | string | Conditional | Required and non-empty when `worker_id` is present |
 | `timeout_ms` | int | No | `1..600000`, default `60000` |
 | `request_id` | string | No | Idempotency key, scoped per account |
 
 **Response `200`:**
+
+Without `worker_id`, Console performs no Worker dispatch and returns all caller-owned online and offline Worker Systems:
+
+```json
+{"worker_list":[{"worker_id":"worker-id","node_name":"laptop","status":"online","capabilities":[]}]}
+```
+
+With `worker_id`, the response is:
 
 ```json
 {
@@ -875,7 +886,7 @@ Executes a shell command on the calling account's own `worker-sys` (real host ma
 }
 ```
 
-> Unlike Terminal Execution, Computer Use has no session (`session_id` absent). Each command runs via `/bin/sh -lc` directly on the host; there is no container isolation.
+> Unlike Terminal Execution, Computer Use has no session (`session_id` absent). Each command runs directly on the selected host; there is no container isolation.
 
 **Error codes:**
 
@@ -884,7 +895,7 @@ Executes a shell command on the calling account's own `worker-sys` (real host ma
 | `400` | `invalid_payload` | Invalid request parameters |
 | `409` | `session_busy` | Worker busy or task cancelled |
 | `429` | `no_capacity` | No available concurrency capacity |
-| `503` | `no_worker` | Account has no online `worker-sys` |
+| `503` | — | Selected Worker is offline or lacks the capability |
 | `504` | — | Execution timed out |
 | `502` | — | Other execution failure |
 
@@ -974,6 +985,12 @@ Tasks are suited for asynchronous execution or polling workflows. Ownership is s
 | `wait_ms` | int | No | `1..60000`, default `1500`; max milliseconds to wait in `auto` mode |
 | `timeout_ms` | int | No | `1..600000`, default `60000`; total task timeout |
 | `request_id` | string | No | Idempotency key, scoped per account |
+
+Capability-specific routing is identical to MCP and the dedicated command endpoints:
+
+- `computerUse` reads `input.worker_id`; when omitted, the task completes locally with `result.worker_list` and no Worker dispatch.
+- `readImage` uses `input.session_id="CU:<worker_id>"` to target a caller-owned Worker System. Other values are sandbox terminal session IDs.
+- `terminalExec` rejects `create_if_missing=true` when `input.session_id` starts with the reserved Computer Use prefix.
 
 > One task keeps the same `task_id` and `request_id` across internal terminal capacity retries; `command_id` is the current or last worker dispatch attempt, so it can change while the task is running.
 

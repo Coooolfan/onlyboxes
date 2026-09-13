@@ -20,6 +20,7 @@ func NewMCPHandler(
 	exportUploadTTL time.Duration,
 	exportDownloadTTL time.Duration,
 	exportReturnSchema string,
+	computerUseSessionIDPrefix string,
 	toolOverrides map[string]config.MCPToolOverride,
 ) http.Handler {
 	logger := slog.Default()
@@ -179,7 +180,7 @@ func NewMCPHandler(
 		},
 		InputSchema: applyInputSchemaOverride(mcpReadImageInputSchema, riOverride.ParamDescriptions, logger, "readImage"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpReadImageToolInput) (*mcp.CallToolResult, any, error) {
-		return handleMCPReadImageTool(ctx, dispatcher, input)
+		return handleMCPReadImageTool(ctx, dispatcher, computerUseSessionIDPrefix, input)
 	})
 
 	if exportStore != nil && strings.TrimSpace(exportPrefix) != "" {
@@ -200,7 +201,7 @@ func NewMCPHandler(
 			InputSchema:  applyInputSchemaOverride(mcpExportFileInputSchema, efOverride.ParamDescriptions, logger, "exportFile"),
 			OutputSchema: exportFileOutputSchemaForMode(exportReturnSchema),
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpExportFileToolInput) (*mcp.CallToolResult, mcpExportFileToolOutput, error) {
-			return handleMCPExportFileTool(ctx, dispatcher, exportStore, exportPrefix, exportUploadTTL, exportDownloadTTL, exportReturnSchema, input)
+			return handleMCPExportFileTool(ctx, dispatcher, exportStore, exportPrefix, exportUploadTTL, exportDownloadTTL, exportReturnSchema, computerUseSessionIDPrefix, input)
 		})
 	}
 

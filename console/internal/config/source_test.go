@@ -27,6 +27,7 @@ offline_ttl_sec = 30
 enable_registration = true
 hidden_tools = ["echo", "pythonExec"]
 mcp_token_query_param = "access_token"
+computer_use_session_id_prefix = "SYS:"
 log_level = "debug"
 
 [mcp_tool.python_exec]
@@ -57,6 +58,9 @@ description = ""
 	}
 	if cfg.MCPTokenQueryParam != "access_token" {
 		t.Fatalf("unexpected mcp token query param %q", cfg.MCPTokenQueryParam)
+	}
+	if cfg.ComputerUseSessionIDPrefix != "SYS:" {
+		t.Fatalf("unexpected computer-use session prefix %q", cfg.ComputerUseSessionIDPrefix)
 	}
 	if cfg.LogLevel != "debug" {
 		t.Fatalf("unexpected log level %q", cfg.LogLevel)

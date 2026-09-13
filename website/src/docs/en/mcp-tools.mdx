@@ -154,6 +154,8 @@ Executes a shell command inside a persistent terminal session, with state preser
 | `lease_ttl_sec` | integer | No | Session lease duration in seconds; clamped to worker's configured `[min, max]` range (default min/default: `60`, default max: `1800`) |
 | `timeout_ms` | integer | No | `1..600000`, default `60000` |
 
+When `create_if_missing=true`, a `session_id` beginning with the reserved Computer Use prefix (`CU:` by default) is rejected. With `create_if_missing=false`, the same value is handled as an ordinary sandbox session lookup.
+
 **Input example:**
 
 ```json
@@ -206,13 +208,14 @@ These conditions are returned as MCP tool errors with `isError: true`, and the e
 
 ### `computerUse`
 
-Executes a shell command directly on the calling account's own `worker-sys` (real host machine). No session state is maintained; concurrency is fixed at 1 per account.
+Lists or targets the calling account's `worker-sys` instances. A command is pinned to the selected real host machine and never falls back to another Worker. No session state is maintained.
 
 **Input:**
 
 | Field | Type | Required | Constraints |
 |-------|------|----------|-------------|
-| `command` | string | Yes | Shell command to execute |
+| `worker_id` | string | No | Caller-owned `worker-sys` ID. Omit to enter list mode |
+| `command` | string | Conditional | Required and non-empty when `worker_id` is present |
 | `timeout_ms` | integer | No | `1..600000`, default `60000` |
 | `request_id` | string | No | Idempotency key, scoped per account |
 
@@ -220,6 +223,7 @@ Executes a shell command directly on the calling account's own `worker-sys` (rea
 
 ```json
 {
+  "worker_id": "worker-id",
   "command": "screencapture -x /tmp/screenshot.png",
   "timeout_ms": 30000,
   "request_id": "req-001"
@@ -227,6 +231,18 @@ Executes a shell command directly on the calling account's own `worker-sys` (rea
 ```
 
 **Output:**
+
+When `worker_id` is omitted, Console does not dispatch a command—even if `command` is also present—and returns every caller-owned online and offline Worker System:
+
+```json
+{
+  "worker_list": [
+    { "worker_id": "worker-id", "node_name": "laptop", "status": "online", "capabilities": [] }
+  ]
+}
+```
+
+When `worker_id` is present, the execution output is:
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -248,7 +264,7 @@ Executes a shell command directly on the calling account's own `worker-sys` (rea
 }
 ```
 
-> Key difference from `terminalExec`: no session-related fields (`session_id`, `create_if_missing`, `created`, `lease_expires_unix_ms`). Commands run via `/bin/sh -lc` directly on the host with no container isolation. Routes exclusively to the calling account's own `worker-sys`.
+> Key difference from `terminalExec`: no session-related fields (`session_id`, `create_if_missing`, `created`, `lease_expires_unix_ms`). Commands run directly on the selected host with no container isolation.
 
 ---
 
@@ -260,7 +276,7 @@ Reads an image file from a terminal session environment or a `worker-sys` host, 
 
 | Field | Type | Required | Constraints |
 |-------|------|----------|-------------|
-| `session_id` | string | Yes | Target session ID; pass the string `"computerUse"` to route to the account's own `worker-sys` |
+| `session_id` | string | Yes | Terminal session ID, or `CU:<worker_id>` for a caller-owned Worker System |
 | `file_path` | string | Yes | Absolute path to the target file |
 | `timeout_ms` | integer | No | `1..600000`, default `60000` |
 
@@ -268,8 +284,8 @@ Reads an image file from a terminal session environment or a `worker-sys` host, 
 
 | `session_id` value | Routes to |
 |--------------------|-----------|
-| `"computerUse"` | Account's own `worker-sys` `readImage` capability |
-| Any other value | `terminalResource` capability (same worker as `terminalExec`) |
+| `CU:<worker_id>` | That caller-owned `worker-sys` `readImage` capability |
+| Any other value, including `computerUse` | `terminalResource` capability (same worker as `terminalExec`) |
 
 **Input example (from a terminal session):**
 
@@ -280,7 +296,7 @@ Reads an image file from a terminal session environment or a `worker-sys` host, 
 **Input example (from worker-sys host):**
 
 ```json
-{ "session_id": "computerUse", "file_path": "/tmp/screenshot.png", "timeout_ms": 10000 }
+{ "session_id": "CU:worker-id", "file_path": "/tmp/screenshot.png", "timeout_ms": 10000 }
 ```
 
 **Output:**
@@ -302,7 +318,7 @@ Exports a file from a session to the console's configured S3-compatible object s
 
 | Field | Type | Required | Constraints |
 |-------|------|----------|-------------|
-| `session_id` | string | Yes | Session ID; pass the string `"computerUse"` to route to the account's own `worker-sys` |
+| `session_id` | string | Yes | Terminal session ID, or `CU:<worker_id>` for a caller-owned Worker System |
 | `file_path` | string | Yes | Absolute path to the target file |
 | `timeout_ms` | integer | No | `1..600000`, default `60000` |
 
@@ -310,7 +326,7 @@ Exports a file from a session to the console's configured S3-compatible object s
 
 - Available only when the console export object-store environment variables are configured.
 - Upload/download presign TTLs are controlled by `CONSOLE_EXPORT_FILE_UPLOAD_PRESIGN_TTL_SEC` and `CONSOLE_EXPORT_FILE_DOWNLOAD_PRESIGN_TTL_SEC`.
-- When `session_id` is `"computerUse"`, routes to the caller-owned `worker-sys` `readImage` capability with `action="export"`.
+- When `session_id` is `CU:<worker_id>`, routes to that caller-owned `worker-sys` `readImage` capability with `action="export"`.
 - Any other `session_id` routes to `terminalResource` with `action="export"` on the same worker that owns the terminal session.
 - Terminal-session workers first probe the file, then export it from the session filesystem and upload it through a presigned HTTP `PUT` before the console returns a presigned download URL.
 - Non-JSON probe failures inside the worker (for example OCI / `docker exec` startup failures) are surfaced as tool errors with docker exit code and output summary; they are not rewritten as JSON parse errors.
@@ -324,7 +340,7 @@ Exports a file from a session to the console's configured S3-compatible object s
 **Input example (from worker-sys host):**
 
 ```json
-{ "session_id": "computerUse", "file_path": "/tmp/report.png", "timeout_ms": 10000 }
+{ "session_id": "CU:worker-id", "file_path": "/tmp/report.png", "timeout_ms": 10000 }
 ```
 
 **Output:**
@@ -370,10 +386,12 @@ Output fields depend on the `CONSOLE_EXPORT_RETURN_SCHEMA` environment variable:
 | Unknown method | JSON-RPC error `-32601 method not found` |
 | Input contains undefined fields | JSON-RPC error `-32602 invalid params` |
 | Input validation failure | JSON-RPC error `-32602 invalid params` |
-| `computerUse` account has no `worker-sys` | JSON-RPC error `-32010` with `data.error_code="WORKER_SYS_REQUIRED"` |
-| `computerUse` account has a registered but offline `worker-sys` | JSON-RPC error `-32011` with `data.error_code="WORKER_SYS_OFFLINE"` |
+| Invalid, foreign, or non-`worker-sys` target | Same non-disclosing invalid-worker tool error |
+| Selected Worker is offline, lacks the capability, or is at capacity | Distinct tool error for the corresponding condition |
 | `terminalExec` reaches `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS` while creating a session | Returned as MCP tool error content with `isError: true`; the text contains `session_capacity_exceeded` |
 | Tool execution error (timeout, no_worker, etc.) | Returned as MCP tool error content (`isError: true`); not a protocol-level error |
+
+The `CU:` prefix is case-sensitive and can be changed with `CONSOLE_COMPUTER_USE_SESSION_ID_PREFIX`. Changing it alters session-ID interpretation and is generally not recommended. The former public alias `computerUse` is no longer special; clients must list/select a Worker and use its ID. Console still sends the unchanged internal `session_id="computerUse"` value to `worker-sys`.
 
 ---
 

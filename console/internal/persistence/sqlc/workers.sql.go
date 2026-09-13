@@ -306,29 +306,6 @@ func (q *Queries) InsertWorkerLabel(ctx context.Context, arg InsertWorkerLabelPa
 	return err
 }
 
-const insertWorkerSysOwnerClaimIfAbsent = `-- name: InsertWorkerSysOwnerClaimIfAbsent :execrows
-INSERT INTO worker_sys_owner_claims (
-    owner_id,
-    node_id,
-    claimed_at_unix_ms
-) VALUES (?, ?, ?)
-ON CONFLICT(owner_id) DO NOTHING
-`
-
-type InsertWorkerSysOwnerClaimIfAbsentParams struct {
-	OwnerID         string `json:"owner_id"`
-	NodeID          string `json:"node_id"`
-	ClaimedAtUnixMs int64  `json:"claimed_at_unix_ms"`
-}
-
-func (q *Queries) InsertWorkerSysOwnerClaimIfAbsent(ctx context.Context, arg InsertWorkerSysOwnerClaimIfAbsentParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, insertWorkerSysOwnerClaimIfAbsent, arg.OwnerID, arg.NodeID, arg.ClaimedAtUnixMs)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
 const listOnlineWorkerNodeIDsByCapability = `-- name: ListOnlineWorkerNodeIDsByCapability :many
 SELECT wn.node_id
 FROM worker_nodes wn

@@ -68,6 +68,7 @@ description = "在沙箱中执行 Python 代码。"
 | --- | --- | --- | --- |
 | `CONSOLE_HIDDEN_TOOLS` | 否 | | 逗号分隔的 MCP **内部 capability ID** 隐藏列表（`echo`、`pythonExec`、`terminalExec`、`computerUse`、`readImage`、`exportFile`）。这里始终填写内置 ID，**不要**填 `CONSOLE_MCP_TOOL_<TOOL>_NAME` 改名后的对外 name。被隐藏的工具不会出现在 `tools/list` 中，但如果客户端已知工具名，仍可继续调用。 |
 | `CONSOLE_MCP_TOKEN_QUERY_PARAM` | 否 | `token` | `/mcp` URL token 兜底鉴权使用的查询参数名，供无法设置自定义请求头的客户端使用。仍推荐优先使用 Bearer header。 |
+| `CONSOLE_COMPUTER_USE_SESSION_ID_PREFIX` | 否 | `CU:` | 大小写敏感的前缀，使 `readImage` 与 `exportFile` 将后缀解释为当前账号的 Worker System ID。修改会改变 session ID 的解释方式，通常不建议修改。空值或全空白值会回退到 `CU:` 并记录 warning。TOML 键为 `computer_use_session_id_prefix`。 |
 
 #### 工具描述 / 参数描述覆盖
 
@@ -87,7 +88,7 @@ description = "在沙箱中执行 Python 代码。"
 | `echo` | `ECHO` | `MESSAGE`、`TIMEOUT_MS` |
 | `pythonExec` | `PYTHON_EXEC` | `CODE`、`TIMEOUT_MS` |
 | `terminalExec` | `TERMINAL_EXEC` | `COMMAND`、`SESSION_ID`、`CREATE_IF_MISSING`、`LEASE_TTL_SEC`、`TIMEOUT_MS` |
-| `computerUse` | `COMPUTER_USE` | `COMMAND`、`TIMEOUT_MS`、`REQUEST_ID` |
+| `computerUse` | `COMPUTER_USE` | `COMMAND`、`WORKER_ID`、`TIMEOUT_MS`、`REQUEST_ID` |
 | `readImage` | `READ_IMAGE` | `SESSION_ID`、`FILE_PATH`、`TIMEOUT_MS` |
 | `exportFile` | `EXPORT_FILE` | `SESSION_ID`、`FILE_PATH`、`TIMEOUT_MS` |
 

@@ -35,6 +35,7 @@ func handleMCPExportFileTool(
 	uploadPresignTTL time.Duration,
 	downloadPresignTTL time.Duration,
 	returnSchema string,
+	computerUseSessionIDPrefix string,
 	input mcpExportFileToolInput,
 ) (*mcp.CallToolResult, mcpExportFileToolOutput, error) {
 	sessionID := strings.TrimSpace(input.SessionID)
@@ -70,7 +71,7 @@ func handleMCPExportFileTool(
 
 	timeout := time.Duration(timeoutMS) * time.Millisecond
 	resourceCapability := terminalResourceCapabilityName
-	if sessionID == computerUseSessionID {
+	if isComputerUseSessionID(sessionID, computerUseSessionIDPrefix) {
 		resourceCapability = readImageCapabilityName
 	}
 	resourceResult, err := callResourceCapability(ctx, dispatcher, resourceCapability, mcpTerminalResourcePayload{

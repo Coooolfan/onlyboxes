@@ -134,7 +134,13 @@ func (s *RegistryService) SubmitTask(ctx context.Context, req SubmitTaskRequest)
 		return SubmitTaskResult{}, status.Error(codes.InvalidArgument, "input must be valid JSON")
 	}
 	intent := terminalSessionIntentForTaskInput(capability, inputJSON)
-	scopedInputJSON, err := s.scopeTaskInputByOwner(capability, ownerID, inputJSON)
+	prepared, err := s.prepareTaskInput(capability, ownerID, inputJSON)
+	if err != nil {
+		return SubmitTaskResult{}, err
+	}
+	inputJSON = prepared.inputJSON
+	dispatchCapability := prepared.dispatchCapability
+	scopedInputJSON, err := s.scopeTaskInputByOwner(dispatchCapability, ownerID, inputJSON)
 	if err != nil {
 		return SubmitTaskResult{}, err
 	}
@@ -193,8 +199,16 @@ func (s *RegistryService) SubmitTask(ctx context.Context, req SubmitTaskRequest)
 		}
 	}
 
-	if availabilityErr := s.checkCapabilityAvailability(capability, ownerID); availabilityErr != nil {
-		return SubmitTaskResult{}, availabilityErr
+	if prepared.immediateResult == nil {
+		var availabilityErr error
+		if prepared.targetNodeID != "" {
+			availabilityErr = s.checkTargetCapabilityAvailability(prepared.targetNodeID, dispatchCapability)
+		} else {
+			availabilityErr = s.checkCapabilityAvailability(dispatchCapability, ownerID)
+		}
+		if availabilityErr != nil {
+			return SubmitTaskResult{}, availabilityErr
+		}
 	}
 
 	taskID, err := s.newTaskIDFn()
@@ -229,6 +243,22 @@ func (s *RegistryService) SubmitTask(ctx context.Context, req SubmitTaskRequest)
 		}
 		return SubmitTaskResult{}, status.Error(codes.Internal, "failed to create task")
 	}
+	if prepared.immediateResult != nil {
+		if err := s.finishTask(taskID, TaskStatusSucceeded, prepared.immediateResult, "", "", now); err != nil {
+			return SubmitTaskResult{}, status.Error(codes.Internal, "failed to complete task")
+		}
+		if requestReserved {
+			s.tasksMu.Lock()
+			delete(s.taskRequestReservations, requestKey)
+			s.tasksMu.Unlock()
+			requestReserved = false
+		}
+		completed, found := s.getTaskByID(taskID)
+		if !found {
+			return SubmitTaskResult{}, status.Error(codes.Internal, "failed to load completed task")
+		}
+		return SubmitTaskResult{Task: snapshotTask(completed), Completed: true}, nil
+	}
 
 	taskCtx, taskCancel := context.WithTimeout(context.Background(), timeout)
 	runtimeRecord := &taskRecord{
@@ -248,7 +278,7 @@ func (s *RegistryService) SubmitTask(ctx context.Context, req SubmitTaskRequest)
 		requestReserved = false
 	}
 
-	go s.executeTask(taskCtx, taskID, ownerID, capability, inputJSON, intent)
+	go s.executeTask(taskCtx, taskID, ownerID, dispatchCapability, inputJSON, intent, prepared.targetNodeID)
 	return s.resolveSubmitTaskResult(ctx, taskID, runtimeRecord, mode, wait)
 }
 
@@ -374,6 +404,7 @@ func (s *RegistryService) executeTask(
 	capability string,
 	inputJSON []byte,
 	intent terminalSessionIntent,
+	targetNodeID string,
 ) {
 	if err := s.markTaskDispatched(taskID); err != nil {
 		if errors.Is(err, ErrTaskTransitionNotApplied) {
@@ -390,6 +421,7 @@ func (s *RegistryService) executeTask(
 		ownerID:               ownerID,
 		taskID:                taskID,
 		terminalSessionIntent: intent,
+		targetNodeID:          targetNodeID,
 		onDispatched: func(commandID string) error {
 			markRunningErr = s.markTaskRunning(taskID, commandID)
 			if markRunningErr != nil {
@@ -521,6 +553,10 @@ func (s *RegistryService) finishTaskWithError(taskID string, err error) error {
 	switch {
 	case errors.Is(err, ErrNoCapabilityWorker):
 		return s.finishTask(taskID, TaskStatusFailed, nil, defaultTaskNoWorkerCode, "no online worker supports capability", now)
+	case errors.Is(err, ErrTargetWorkerOffline):
+		return s.finishTask(taskID, TaskStatusFailed, nil, defaultTaskNoWorkerCode, ErrTargetWorkerOffline.Error(), now)
+	case errors.Is(err, ErrTargetWorkerCapabilityUnavailable):
+		return s.finishTask(taskID, TaskStatusFailed, nil, defaultTaskNoWorkerCode, ErrTargetWorkerCapabilityUnavailable.Error(), now)
 	case errors.Is(err, ErrNoWorkerCapacity):
 		return s.finishTask(taskID, TaskStatusFailed, nil, defaultTaskNoCapacityCode, "no online worker capacity for capability", now)
 	case errors.Is(err, context.DeadlineExceeded):

@@ -132,7 +132,7 @@ func TestCreateProvisionedWorkerAllowsDynamicConnect(t *testing.T) {
 	_ = stream.CloseSend()
 }
 
-func TestCreateProvisionedWorkerForOwnerLimitsWorkerSysToOne(t *testing.T) {
+func TestCreateProvisionedWorkerForOwnerAllowsMultipleWorkerSys(t *testing.T) {
 	store := registrytest.NewStore(t)
 	svc := NewRegistryService(store, map[string]string{}, 5, 15, 60*time.Second)
 	now := time.Now()
@@ -145,13 +145,13 @@ func TestCreateProvisionedWorkerForOwnerLimitsWorkerSysToOne(t *testing.T) {
 		t.Fatalf("expected non-empty first worker-sys credentials")
 	}
 
-	_, _, err = svc.CreateProvisionedWorkerForOwner("owner-a", registry.WorkerTypeSys, now, 15*time.Second)
-	if !errors.Is(err, ErrWorkerSysAlreadyExists) {
-		t.Fatalf("expected ErrWorkerSysAlreadyExists, got %v", err)
+	secondID, secondSecret, err := svc.CreateProvisionedWorkerForOwner("owner-a", registry.WorkerTypeSys, now, 15*time.Second)
+	if err != nil || strings.TrimSpace(secondID) == "" || strings.TrimSpace(secondSecret) == "" || secondID == firstID {
+		t.Fatalf("create second worker-sys failed: id=%q err=%v", secondID, err)
 	}
 }
 
-func TestCreateProvisionedWorkerForOwnerWorkerSysConcurrentSingleton(t *testing.T) {
+func TestCreateProvisionedWorkerForOwnerWorkerSysConcurrent(t *testing.T) {
 	store := registrytest.NewStore(t)
 	svc := NewRegistryService(store, map[string]string{}, 5, 15, 60*time.Second)
 	now := time.Now()
@@ -185,15 +185,13 @@ func TestCreateProvisionedWorkerForOwnerWorkerSysConcurrentSingleton(t *testing.
 	close(errCh)
 
 	for err := range errCh {
-		if !errors.Is(err, ErrWorkerSysAlreadyExists) {
-			t.Fatalf("expected ErrWorkerSysAlreadyExists for non-winning calls, got %v", err)
-		}
+		t.Fatalf("concurrent worker-sys creation failed: %v", err)
 	}
-	if successCount.Load() != 1 {
-		t.Fatalf("expected exactly one successful worker-sys creation, got %d", successCount.Load())
+	if successCount.Load() != concurrentCreates {
+		t.Fatalf("expected %d successful worker-sys creations, got %d", concurrentCreates, successCount.Load())
 	}
-	if count := store.CountWorkersByOwnerAndType("owner-a", registry.WorkerTypeSys); count != 1 {
-		t.Fatalf("expected one worker-sys in store, got %d", count)
+	if count := store.CountWorkersByOwnerAndType("owner-a", registry.WorkerTypeSys); count != concurrentCreates {
+		t.Fatalf("expected %d worker-sys in store, got %d", concurrentCreates, count)
 	}
 }
 
@@ -712,16 +710,24 @@ func TestSubmitTaskComputerUseRoutesByOwnerAndCapacity(t *testing.T) {
 				registry.LabelWorkerTypeKey: registry.WorkerTypeSys,
 			},
 		},
+		{
+			NodeID: "node-owner-a-spare",
+			Labels: map[string]string{
+				registry.LabelOwnerIDKey:    "owner-a",
+				registry.LabelWorkerTypeKey: registry.WorkerTypeSys,
+			},
+		},
 	}, now, 15*time.Second)
-	if seeded != 2 {
-		t.Fatalf("expected two seeded workers, got %d", seeded)
+	if seeded != 3 {
+		t.Fatalf("expected three seeded workers, got %d", seeded)
 	}
 
 	svc := NewRegistryService(
 		store,
 		map[string]string{
-			"node-owner-a": "secret-owner-a",
-			"node-owner-b": "secret-owner-b",
+			"node-owner-a":       "secret-owner-a",
+			"node-owner-a-spare": "secret-owner-a-spare",
+			"node-owner-b":       "secret-owner-b",
 		},
 		5,
 		15,
@@ -740,13 +746,19 @@ func TestSubmitTaskComputerUseRoutesByOwnerAndCapacity(t *testing.T) {
 		t.Fatalf("connect worker owner-b failed: %v", err)
 	}
 	defer streamB.CloseSend()
+	streamASpare, _, err := connectWorker(client, "node-owner-a-spare", "secret-owner-a-spare", "nonce-owner-a-spare", []string{computerUseCapabilityDeclared, readImageCapabilityDeclared})
+	if err != nil {
+		t.Fatalf("connect spare worker owner-a failed: %v", err)
+	}
+	defer streamASpare.CloseSend()
 
 	go computerUseResponder(streamA, "owner-a")
 	go computerUseResponder(streamB, "owner-b")
+	go computerUseResponder(streamASpare, "owner-a-spare")
 
 	resultB, err := svc.SubmitTask(context.Background(), SubmitTaskRequest{
 		Capability: "computerUse",
-		InputJSON:  []byte(`{"command":"echo owner-b"}`),
+		InputJSON:  []byte(`{"command":"echo owner-b","worker_id":"node-owner-b"}`),
 		Mode:       TaskModeSync,
 		Timeout:    2 * time.Second,
 		OwnerID:    "owner-b",
@@ -772,13 +784,13 @@ func TestSubmitTaskComputerUseRoutesByOwnerAndCapacity(t *testing.T) {
 
 	_, err = svc.SubmitTask(context.Background(), SubmitTaskRequest{
 		Capability: "computerUse",
-		InputJSON:  []byte(`{"command":"echo owner-a"}`),
+		InputJSON:  []byte(`{"command":"echo owner-a","worker_id":"node-owner-a"}`),
 		Mode:       TaskModeSync,
 		Timeout:    500 * time.Millisecond,
 		OwnerID:    "owner-a",
 	})
 	if !errors.Is(err, ErrNoWorkerCapacity) {
-		t.Fatalf("expected ErrNoWorkerCapacity for owner-a, got %v", err)
+		t.Fatalf("expected ErrNoWorkerCapacity for targeted owner-a worker without fallback to spare, got %v", err)
 	}
 }
 
@@ -834,7 +846,7 @@ func TestSubmitTaskReadImageRoutesByOwnerAndCapacity(t *testing.T) {
 
 	resultB, err := svc.SubmitTask(context.Background(), SubmitTaskRequest{
 		Capability: "readImage",
-		InputJSON:  []byte(`{"session_id":"computerUse","file_path":"/workspace/image.png","action":"validate"}`),
+		InputJSON:  []byte(`{"session_id":"CU:node-owner-b","file_path":"/workspace/image.png","action":"validate"}`),
 		Mode:       TaskModeSync,
 		Timeout:    2 * time.Second,
 		OwnerID:    "owner-b",
@@ -860,7 +872,7 @@ func TestSubmitTaskReadImageRoutesByOwnerAndCapacity(t *testing.T) {
 
 	_, err = svc.SubmitTask(context.Background(), SubmitTaskRequest{
 		Capability: "readImage",
-		InputJSON:  []byte(`{"session_id":"computerUse","file_path":"/workspace/image.png","action":"validate"}`),
+		InputJSON:  []byte(`{"session_id":"CU:node-owner-a","file_path":"/workspace/image.png","action":"validate"}`),
 		Mode:       TaskModeSync,
 		Timeout:    500 * time.Millisecond,
 		OwnerID:    "owner-a",

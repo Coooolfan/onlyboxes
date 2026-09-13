@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"log/slog"
 	"regexp"
 )
@@ -15,7 +16,6 @@ const (
 	computerUseCapabilityName      = "computerUse"
 	readImageCapabilityName        = "readImage"
 	exportFileToolName             = "exportFile"
-	computerUseSessionID           = "computerUse"
 	defaultMCPEchoTimeoutMS        = defaultEchoTimeoutMS
 	minMCPTaskTimeoutMS            = 1
 	defaultMCPTaskTimeoutMS        = defaultTaskTimeoutMS
@@ -76,17 +76,29 @@ type mcpTerminalExecToolOutput struct {
 }
 
 type mcpComputerUseToolInput struct {
-	Command   string `json:"command"`
-	TimeoutMS *int   `json:"timeout_ms,omitempty"`
-	RequestID string `json:"request_id,omitempty"`
+	Command   string  `json:"command"`
+	WorkerID  *string `json:"worker_id,omitempty"`
+	TimeoutMS *int    `json:"timeout_ms,omitempty"`
+	RequestID string  `json:"request_id,omitempty"`
 }
 
 type mcpComputerUseToolOutput struct {
-	Stdout          string `json:"stdout"`
-	Stderr          string `json:"stderr"`
-	ExitCode        int    `json:"exit_code"`
-	StdoutTruncated bool   `json:"stdout_truncated"`
-	StderrTruncated bool   `json:"stderr_truncated"`
+	WorkerList      []computerUseWorkerItem `json:"worker_list,omitempty"`
+	Stdout          string                  `json:"stdout"`
+	Stderr          string                  `json:"stderr"`
+	ExitCode        int                     `json:"exit_code"`
+	StdoutTruncated bool                    `json:"stdout_truncated"`
+	StderrTruncated bool                    `json:"stderr_truncated"`
+}
+
+func (r mcpComputerUseToolOutput) MarshalJSON() ([]byte, error) {
+	if r.WorkerList != nil {
+		return json.Marshal(struct {
+			WorkerList []computerUseWorkerItem `json:"worker_list"`
+		}{WorkerList: r.WorkerList})
+	}
+	type executionResult mcpComputerUseToolOutput
+	return json.Marshal(executionResult(r))
 }
 
 type mcpReadImageToolInput struct {
@@ -115,13 +127,13 @@ var mcpEchoToolDescription = "Echoes the input message exactly as returned by an
 
 var mcpPythonExecToolDescription = "Executes Python code in an ephemeral container and returns stdout, stderr, and exit_code. Each invocation runs in a fresh, isolated environment that is destroyed immediately upon completion — no filesystem state, installed packages, or variables persist across calls. If you need to retain files or share state between steps, use terminalExec instead. Third-party packages are NOT available by default and cannot be installed via pip at runtime. The only way to use third-party dependencies is PEP 723 inline script metadata: add a '# /// script' block at the top of your code to declare dependencies (e.g. '# dependencies = [\"requests\"]') — they will be automatically installed before execution. Do not use it for long-running jobs. timeout_ms is a synchronous execution timeout in milliseconds (1-600000, default 60000). A non-zero exit_code is returned as normal tool output, not as a protocol error."
 
-var mcpTerminalExecToolDescription = "Executes shell commands in a container-backed terminal session. Sessions are ephemeral by default but can be made persistent by reusing session_id across calls. Commands are executed with sh -lc, and common tools are preinstalled (python3/pip/venv, git, curl/wget, jq, ripgrep, fd-find, tree, file, zip/unzip, sqlite3, agent-browser). For headless browser automation, run `agent-browser --help` for usage. Omitting session_id creates a new session per call with no state carried over — equivalent to a one-shot execution. To retain filesystem state across calls, supply the same session_id on every call. create_if_missing controls what happens when the given session_id does not exist on the worker: false (default) returns a session_not_found error; true creates the session instead. lease_ttl_sec extends session lease within configured bounds. timeout_ms is a synchronous execution timeout in milliseconds (1-600000, default 60000)."
+var mcpTerminalExecToolDescription = "Executes shell commands in a container-backed terminal session. Sessions are ephemeral by default but can be made persistent by reusing session_id across calls. Commands are executed with sh -lc, and common tools are preinstalled (python3/pip/venv, git, curl/wget, jq, ripgrep, fd-find, tree, file, zip/unzip, sqlite3, agent-browser). For headless browser automation, run `agent-browser --help` for usage. Omitting session_id creates a new session per call with no state carried over — equivalent to a one-shot execution. To retain filesystem state across calls, supply the same session_id on every call. create_if_missing controls what happens when the given session_id does not exist on the worker: false (default) returns a session_not_found error; true creates the session instead. Session IDs using the configured Computer Use prefix (CU: by default) cannot be created by terminalExec. lease_ttl_sec extends session lease within configured bounds. timeout_ms is a synchronous execution timeout in milliseconds (1-600000, default 60000)."
 
-var mcpComputerUseToolDescription = "Executes shell commands directly on the caller-owned worker-sys host OS via /bin/sh -lc. Unlike terminalExec, this tool runs on the bare host without container isolation and is stateless — each invocation is independent with no session persistence. Only one command runs at a time (single concurrency). This tool is account-scoped and requires a user-created worker-sys. timeout_ms is a synchronous execution timeout in milliseconds (1-600000, default 60000). request_id provides idempotency for retries."
+var mcpComputerUseToolDescription = "Lists caller-owned worker-sys instances when worker_id is omitted. When worker_id is provided, executes a shell command directly on that worker's host OS via /bin/sh -lc. Host execution is not container-isolated and is stateless. timeout_ms is a synchronous execution timeout in milliseconds (1-600000, default 60000). request_id provides idempotency for retries."
 
-var mcpReadImageToolDescription = "Reads a file and returns it as inline image content when mime type is image/*. For unsupported mime types, returns a text explanation. When session_id is exactly \"computerUse\", routing uses the caller-owned worker-sys (readImage); otherwise routing uses terminalResource for terminal sessions."
+var mcpReadImageToolDescription = "Reads a file and returns it as inline image content when mime type is image/*. For unsupported mime types, returns a text explanation. A session_id beginning with the configured Computer Use prefix (CU: by default) routes to the caller-owned worker-sys whose worker ID follows the prefix; other values route to terminalResource for terminal sessions."
 
-var mcpExportFileToolDescription = "Exports a file from a session to the configured S3-compatible object store and returns a presigned download URL, object key, and filename. Pass the session_id returned by terminalExec to export from a terminal session, or the exact value \"computerUse\" to export from the caller-owned worker-sys host. timeout_ms is a synchronous execution timeout in milliseconds (1-600000, default 60000)."
+var mcpExportFileToolDescription = "Exports a file from a session to the configured S3-compatible object store and returns a presigned download URL, object key, and filename. Pass the session_id returned by terminalExec for a terminal session, or CU:<worker_id> (using the configured prefix) for a caller-owned worker-sys host. timeout_ms is a synchronous execution timeout in milliseconds (1-600000, default 60000)."
 
 var mcpEchoInputSchema = map[string]any{
 	"type":                 "object",
@@ -208,7 +220,7 @@ var mcpTerminalExecInputSchema = map[string]any{
 		},
 		"create_if_missing": map[string]any{
 			"type":        "boolean",
-			"description": "When true and session_id is missing on worker, create the session instead of returning session_not_found.",
+			"description": "When true and session_id is missing on worker, create the session instead of returning session_not_found. IDs using the reserved Computer Use prefix are rejected.",
 			"default":     false,
 		},
 		"lease_ttl_sec": map[string]any{
@@ -261,11 +273,15 @@ var mcpTerminalExecOutputSchema = map[string]any{
 var mcpComputerUseInputSchema = map[string]any{
 	"type":                 "object",
 	"additionalProperties": false,
-	"required":             []string{"command"},
+	"required":             []string{},
 	"properties": map[string]any{
 		"command": map[string]any{
 			"type":        "string",
 			"description": "Shell command to run on worker-sys host via /bin/sh -lc. Empty or whitespace-only values are rejected.",
+		},
+		"worker_id": map[string]any{
+			"type":        "string",
+			"description": "Optional caller-owned worker-sys ID. Omit it to return worker_list without executing a command.",
 		},
 		"timeout_ms": map[string]any{
 			"type":        "integer",
@@ -281,28 +297,38 @@ var mcpComputerUseInputSchema = map[string]any{
 	},
 }
 
-var mcpComputerUseOutputSchema = map[string]any{
-	"type":                 "object",
-	"additionalProperties": false,
-	"required": []string{
-		"stdout",
-		"stderr",
-		"exit_code",
-		"stdout_truncated",
-		"stderr_truncated",
+var mcpComputerUseOutputProperties = map[string]any{
+	"worker_list": map[string]any{
+		"type": "array",
+		"items": map[string]any{
+			"type": "object", "additionalProperties": false,
+			"required": []string{"worker_id", "node_name", "status", "capabilities"},
+			"properties": map[string]any{
+				"worker_id":    map[string]any{"type": "string"},
+				"node_name":    map[string]any{"type": "string"},
+				"status":       map[string]any{"type": "string", "enum": []string{"online", "offline"}},
+				"capabilities": map[string]any{"type": "array"},
+			},
+		},
 	},
-	"properties": map[string]any{
-		"stdout": map[string]any{"type": "string"},
-		"stderr": map[string]any{"type": "string"},
-		"exit_code": map[string]any{
-			"type": "integer",
-		},
-		"stdout_truncated": map[string]any{
-			"type": "boolean",
-		},
-		"stderr_truncated": map[string]any{
-			"type": "boolean",
-		},
+	"stdout": map[string]any{"type": "string"},
+	"stderr": map[string]any{"type": "string"},
+	"exit_code": map[string]any{
+		"type": "integer",
+	},
+	"stdout_truncated": map[string]any{
+		"type": "boolean",
+	},
+	"stderr_truncated": map[string]any{
+		"type": "boolean",
+	},
+}
+
+var mcpComputerUseOutputSchema = map[string]any{
+	"type": "object", "additionalProperties": false, "properties": mcpComputerUseOutputProperties,
+	"oneOf": []any{
+		map[string]any{"required": []string{"worker_list"}},
+		map[string]any{"required": []string{"stdout", "stderr", "exit_code", "stdout_truncated", "stderr_truncated"}},
 	},
 }
 
@@ -313,7 +339,7 @@ var mcpReadImageInputSchema = map[string]any{
 	"properties": map[string]any{
 		"session_id": map[string]any{
 			"type":        "string",
-			"description": "Terminal session identifier returned by terminalExec. Use exact value \"computerUse\" to route to the caller-owned worker-sys (readImage).",
+			"description": "Terminal session identifier returned by terminalExec, or CU:<worker_id> using the configured prefix for a caller-owned worker-sys.",
 		},
 		"file_path": map[string]any{
 			"type":        "string",
@@ -336,7 +362,7 @@ var mcpExportFileInputSchema = map[string]any{
 	"properties": map[string]any{
 		"session_id": map[string]any{
 			"type":        "string",
-			"description": "Session identifier. Use exact value \"computerUse\" to route to the caller-owned worker-sys (readImage); other values route to terminalResource for terminal sessions.",
+			"description": "Terminal session identifier, or CU:<worker_id> using the configured prefix for a caller-owned worker-sys.",
 		},
 		"file_path": map[string]any{
 			"type":        "string",

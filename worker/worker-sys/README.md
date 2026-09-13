@@ -1,6 +1,8 @@
 # Worker Sys Overview: !!!POC Only!!!
 
 `worker-sys` connects to console over gRPC bidi stream `Connect`, sends hello (`worker_secret`), sends periodic heartbeats, and handles `computerUse` command dispatch/result in the same stream.
+
+An account may provision multiple Worker Systems. Public clients select one with `worker_id` for `computerUse`, or use `CU:<worker_id>` for `readImage` and `exportFile`. Ownership/type validation and target pinning happen in Console. The Worker protocol itself is unchanged: `readImage` and export dispatches still receive `session_id="computerUse"`.
 - heartbeat reconnect policy: worker tolerates one heartbeat ack timeout and reconnects after two consecutive heartbeat ack timeouts.
 - `WORKER_CALL_TIMEOUT_SEC` default is dynamic: `ceil(2.5 * WORKER_HEARTBEAT_INTERVAL_SEC)`.
 

@@ -27,6 +27,8 @@ Value mapping:
 
 Validation is identical to the environment variable path: an invalid or out-of-range value falls back to the default instead of aborting startup. MCP tool overrides keep their `unset` vs `explicitly empty` distinction: a key declared in the config file counts as set, and an empty param description still hides the parameter.
 
+`CONSOLE_COMPUTER_USE_SESSION_ID_PREFIX` / `computer_use_session_id_prefix` controls the case-sensitive prefix used to interpret `readImage` and `exportFile` session IDs as Worker System targets. It defaults to `CU:`; for example, `CU:worker-id` selects that caller-owned Worker System. Changing the prefix changes public session-ID interpretation and is generally not recommended. An empty or whitespace-only value falls back to `CU:` and emits a warning.
+
 The loaded config file path is reported once at startup via the `config file loaded` log line.
 
 Secrets such as `dashboard_password`, `hash_key`, `jit_signing_key` and `export_file_sk` are better supplied through environment variables; keep the config file out of version control when they are inlined.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/netip"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -14,24 +15,25 @@ import (
 )
 
 const (
-	maxNodeIDLength               = 128
-	echoCapabilityName            = "echo"
-	defaultEchoTimeout            = 5 * time.Second
-	defaultCloseMessage           = "session closed"
-	defaultCapabilityMaxInflight  = 4
-	maxProvisioningCreateAttempts = 8
-	heartbeatAckEnqueueTimeout    = 500 * time.Millisecond
-	controlOutboundBufferSize     = 32
-	commandOutboundBufferSize     = 128
-	defaultTaskRetentionWindow    = 10 * time.Minute
-	defaultCommandDispatchTimeout = 60 * time.Second
-	defaultTerminalRouteTTL       = 30 * time.Minute
-	terminalRoutePruneMinInterval = 1 * time.Minute
-	terminalRouteStoreTimeout     = 5 * time.Second
-	computerUseCapabilityName     = "computeruse"
-	computerUseCapabilityDeclared = "computerUse"
-	readImageCapabilityName       = "readimage"
-	readImageCapabilityDeclared   = "readImage"
+	maxNodeIDLength                   = 128
+	echoCapabilityName                = "echo"
+	defaultEchoTimeout                = 5 * time.Second
+	defaultCloseMessage               = "session closed"
+	defaultCapabilityMaxInflight      = 4
+	maxProvisioningCreateAttempts     = 8
+	heartbeatAckEnqueueTimeout        = 500 * time.Millisecond
+	controlOutboundBufferSize         = 32
+	commandOutboundBufferSize         = 128
+	defaultTaskRetentionWindow        = 10 * time.Minute
+	defaultCommandDispatchTimeout     = 60 * time.Second
+	defaultTerminalRouteTTL           = 30 * time.Minute
+	defaultComputerUseSessionIDPrefix = "CU:"
+	terminalRoutePruneMinInterval     = 1 * time.Minute
+	terminalRouteStoreTimeout         = 5 * time.Second
+	computerUseCapabilityName         = "computeruse"
+	computerUseCapabilityDeclared     = "computerUse"
+	readImageCapabilityName           = "readimage"
+	readImageCapabilityDeclared       = "readImage"
 )
 
 // workerSysAllowedCapabilities is the complete capability surface that a
@@ -45,29 +47,32 @@ var ErrNoEchoWorker = errors.New("no online worker supports echo")
 var ErrEchoTimeout = errors.New("echo command timed out")
 var ErrNoCapabilityWorker = errors.New("no online worker supports capability")
 var ErrNoWorkerCapacity = errors.New("no online worker capacity for capability")
+var ErrTargetWorkerOffline = errors.New("target worker-sys is offline")
+var ErrTargetWorkerCapabilityUnavailable = errors.New("target worker-sys does not support capability")
 var ErrTaskRequestInProgress = errors.New("task request already in progress")
 
 type RegistryService struct {
 	registryv1.UnimplementedWorkerRegistryServiceServer
 
-	store                     *registry.Store
-	credentialsMu             sync.RWMutex
-	credentials               map[string]string
-	credentialHashAlgo        string
-	hasher                    *persistence.Hasher
-	heartbeatIntervalSec      int32
-	offlineTTLSec             int32
-	workerConnectionPolicy    registry.WorkerConnectionConflictPolicy
-	nowFn                     func() time.Time
-	newSessionIDFn            func() (string, error)
-	newCommandIDFn            func() (string, error)
-	newTaskIDFn               func() (string, error)
-	newTerminalSessionIDFn    func() (string, error)
-	taskRetention             time.Duration
-	proxyEnabled              bool
-	proxyAllowedWorkerCIDRs   []netip.Prefix
-	proxyAllowedWorkerPorts   []uint16
-	proxyAllowedDirectDomains []string
+	store                      *registry.Store
+	credentialsMu              sync.RWMutex
+	credentials                map[string]string
+	credentialHashAlgo         string
+	hasher                     *persistence.Hasher
+	heartbeatIntervalSec       int32
+	offlineTTLSec              int32
+	workerConnectionPolicy     registry.WorkerConnectionConflictPolicy
+	nowFn                      func() time.Time
+	newSessionIDFn             func() (string, error)
+	newCommandIDFn             func() (string, error)
+	newTaskIDFn                func() (string, error)
+	newTerminalSessionIDFn     func() (string, error)
+	taskRetention              time.Duration
+	computerUseSessionIDPrefix string
+	proxyEnabled               bool
+	proxyAllowedWorkerCIDRs    []netip.Prefix
+	proxyAllowedWorkerPorts    []uint16
+	proxyAllowedDirectDomains  []string
 
 	sessionsMu sync.RWMutex
 	sessions   map[string]*activeSession
@@ -121,6 +126,7 @@ func NewRegistryService(
 		newTaskIDFn:                  generateUUIDv4,
 		newTerminalSessionIDFn:       generateUUIDv4,
 		taskRetention:                defaultTaskRetentionWindow,
+		computerUseSessionIDPrefix:   defaultComputerUseSessionIDPrefix,
 		sessions:                     make(map[string]*activeSession),
 		terminalSessionToNode:        make(map[string]terminalSessionRoute),
 		terminalNodeToSessionIDIndex: make(map[string]map[string]struct{}),
@@ -130,6 +136,17 @@ func NewRegistryService(
 		taskRequestReservations:      make(map[string]struct{}),
 		criticalPersistenceFailureFn: func(error) {},
 	}
+}
+
+func (s *RegistryService) SetComputerUseSessionIDPrefix(prefix string) {
+	if s == nil {
+		return
+	}
+	trimmed := strings.TrimSpace(prefix)
+	if trimmed == "" {
+		trimmed = defaultComputerUseSessionIDPrefix
+	}
+	s.computerUseSessionIDPrefix = trimmed
 }
 
 func (s *RegistryService) SetWorkerConnectionConflictPolicy(policy registry.WorkerConnectionConflictPolicy) {

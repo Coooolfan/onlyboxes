@@ -20,19 +20,20 @@ const (
 var ErrMCPAuthRequired = errors.New("mcp auth is required")
 
 type WorkerHandler struct {
-	store              *registry.Store
-	offlineTTL         time.Duration
-	dispatcher         CommandDispatcher
-	provisioning       WorkerProvisioning
-	inflightStats      InflightStatsProvider
-	consoleGRPCAddr    string
-	exportStore        ExportStore
-	exportPrefix       string
-	exportUploadTTL    time.Duration
-	exportDownloadTTL  time.Duration
-	exportReturnSchema string
-	proxyRoutes        *ProxyRouteHandler
-	nowFn              func() time.Time
+	store                      *registry.Store
+	offlineTTL                 time.Duration
+	dispatcher                 CommandDispatcher
+	provisioning               WorkerProvisioning
+	inflightStats              InflightStatsProvider
+	consoleGRPCAddr            string
+	exportStore                ExportStore
+	exportPrefix               string
+	exportUploadTTL            time.Duration
+	exportDownloadTTL          time.Duration
+	exportReturnSchema         string
+	proxyRoutes                *ProxyRouteHandler
+	nowFn                      func() time.Time
+	computerUseSessionIDPrefix string
 }
 
 type WorkerProvisioning interface {
@@ -78,13 +79,23 @@ func NewWorkerHandler(
 	consoleGRPCAddr string,
 ) *WorkerHandler {
 	return &WorkerHandler{
-		store:           store,
-		offlineTTL:      offlineTTL,
-		dispatcher:      dispatcher,
-		provisioning:    provisioning,
-		inflightStats:   inflightStats,
-		consoleGRPCAddr: strings.TrimSpace(consoleGRPCAddr),
-		nowFn:           time.Now,
+		store:                      store,
+		offlineTTL:                 offlineTTL,
+		dispatcher:                 dispatcher,
+		provisioning:               provisioning,
+		inflightStats:              inflightStats,
+		consoleGRPCAddr:            strings.TrimSpace(consoleGRPCAddr),
+		nowFn:                      time.Now,
+		computerUseSessionIDPrefix: "CU:",
+	}
+}
+
+func (h *WorkerHandler) SetComputerUseSessionIDPrefix(prefix string) {
+	if h == nil {
+		return
+	}
+	if trimmed := strings.TrimSpace(prefix); trimmed != "" {
+		h.computerUseSessionIDPrefix = trimmed
 	}
 }
 
@@ -125,6 +136,7 @@ func NewRouter(workerHandler *WorkerHandler, consoleAuth *ConsoleAuth, mcpAuth *
 		workerHandler.exportUploadTTL,
 		workerHandler.exportDownloadTTL,
 		workerHandler.exportReturnSchema,
+		workerHandler.computerUseSessionIDPrefix,
 		mcpToolOverrides,
 	)))
 
@@ -283,10 +295,6 @@ func (h *WorkerHandler) CreateWorker(c *gin.Context) {
 
 	nodeID, workerSecret, err := h.provisioning.CreateProvisionedWorkerForOwner(ownerID, workerType, h.nowFn(), h.offlineTTL)
 	if err != nil {
-		if errors.Is(err, grpcserver.ErrWorkerSysAlreadyExists) {
-			c.JSON(http.StatusConflict, gin.H{"error": "worker-sys already exists for current account"})
-			return
-		}
 		if errors.Is(err, grpcserver.ErrInvalidWorkerType) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "type must be one of normal|worker-sys"})
 			return

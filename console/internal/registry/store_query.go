@@ -2,7 +2,6 @@ package registry
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"time"
 
@@ -11,6 +10,10 @@ import (
 
 func (s *Store) List(status WorkerStatus, page int, pageSize int, now time.Time, offlineTTL time.Duration) ([]WorkerView, int) {
 	return s.ListScoped(status, page, pageSize, now, offlineTTL, "", "")
+}
+
+func (s *Store) ListByOwnerAndType(ownerID string, workerType string, now time.Time, offlineTTL time.Duration) []WorkerView {
+	return s.listFilteredViews(StatusAll, now, offlineTTL, ownerID, workerType)
 }
 
 func (s *Store) ListScoped(
@@ -243,27 +246,6 @@ func (s *Store) CountWorkersByOwnerAndType(ownerID string, workerType string) in
 		return 0
 	}
 	return int(count)
-}
-
-func (s *Store) ClaimWorkerSysOwner(ownerID string, nodeID string, now time.Time) (bool, error) {
-	trimmedOwnerID := strings.TrimSpace(ownerID)
-	trimmedNodeID := strings.TrimSpace(nodeID)
-	if trimmedOwnerID == "" || trimmedNodeID == "" {
-		return false, errors.New("owner_id and node_id are required")
-	}
-	if s == nil || s.queries == nil {
-		return false, errors.New("registry store is unavailable")
-	}
-
-	rows, err := s.queries.InsertWorkerSysOwnerClaimIfAbsent(context.Background(), sqlc.InsertWorkerSysOwnerClaimIfAbsentParams{
-		OwnerID:         trimmedOwnerID,
-		NodeID:          trimmedNodeID,
-		ClaimedAtUnixMs: now.UnixMilli(),
-	})
-	if err != nil {
-		return false, err
-	}
-	return rows == 1, nil
 }
 
 func (s *Store) ListOnlineNodeIDsByOwnerTypeAndCapability(

@@ -335,7 +335,7 @@ Permission matrix:
 - non-admin:
   - list/stats/inflight: only own `worker-sys`
   - delete: only own `worker-sys` (other targets return `404`)
-  - create: only `worker-sys`, max one per account
+  - create: only `worker-sys`; an account may own multiple Worker Systems
 
 ### 5.1 List Workers
 
@@ -451,7 +451,7 @@ Rules:
 
 - `type` is required, value must be `normal|worker-sys`.
 - only admin can create `normal`.
-- every account can create at most one `worker-sys`.
+- every account may create multiple `worker-sys` workers.
 
 Success `201`:
 
@@ -472,7 +472,6 @@ Errors:
 
 - `400` invalid request body / invalid `type`
 - `403` non-admin creating `normal`
-- `409` caller already owns a `worker-sys`
 - `503` provisioning unavailable
 - `500` create failure
 
@@ -611,6 +610,10 @@ Request:
 Rules:
 
 - `command`: required, non-empty
+- `session_id`: optional; omit it to create a new sandbox terminal session
+- `create_if_missing`: optional; when `true`, a missing named sandbox session is created
+- `lease_ttl_sec`: optional session lease extension
+- `create_if_missing=true` rejects session IDs beginning with the reserved Computer Use prefix (default `CU:`); `create_if_missing=false` retains normal sandbox lookup semantics
 - `timeout_ms`: optional, range `1..600000`, default `60000`
 - `request_id`: optional, idempotency key scoped per account
 
@@ -658,6 +661,7 @@ Request:
 ```json
 {
   "command": "pwd",
+  "worker_id": "caller-owned-worker-id",
   "timeout_ms": 60000,
   "request_id": "optional-idempotency-key"
 }
@@ -665,12 +669,12 @@ Request:
 
 Rules:
 
-- `command`: required, non-empty
+- `worker_id`: optional. When present, it must identify a caller-owned `worker-sys`; dispatch is pinned to it and never falls back.
+- `command`: required and non-empty when `worker_id` is present
 - `timeout_ms`: optional, range `1..600000`, default `60000`
 - `request_id`: optional, idempotency key scoped per account
 - `lease_ttl_sec` is ignored if provided by legacy clients
-- routing is account-scoped: requests are dispatched only to caller-owned `worker-sys`
-- account-scoped concurrency is single-flight (`max_inflight=1`)
+- when `worker_id` is omitted, no command is dispatched (even if `command` is present); the response lists every caller-owned online and offline Worker System
 
 Success `200`:
 
@@ -684,13 +688,19 @@ Success `200`:
 }
 ```
 
+List-mode success:
+
+```json
+{"worker_list":[{"worker_id":"...","node_name":"laptop","status":"online","capabilities":[]}]}
+```
+
 Errors:
 
 - `400` invalid body/params or `invalid_payload`
 - `409` worker `session_busy` or task canceled
   - `session_busy` means the request exceeded the worker's per-capability concurrency limit, which defaults to `1` (`WORKER_COMPUTER_USE_MAX_INFLIGHT`).
 - `429` no worker capacity (`no_capacity`)
-- `503` no caller-owned online `worker-sys` (`no_worker`)
+- `503` selected Worker is offline or lacks the requested capability
 - `504` timeout
 - `502` unexpected execution failure
 
@@ -768,6 +778,9 @@ Rules:
 - `wait_ms`: `1..60000`, default `1500`
 - `timeout_ms`: `1..600000`, default `60000`
 - `request_id`: optional dedupe key (scoped per account)
+- `computerUse` reads its target from `input.worker_id`. Without it, the task is completed locally with `result.worker_list` and produces no Worker dispatch.
+- `readImage` uses `input.session_id="CU:<worker_id>"` for a Worker System target; other values are sandbox session IDs.
+- `terminalExec` rejects `create_if_missing=true` when `input.session_id` begins with the reserved Computer Use prefix.
 - for `terminalResource` export payloads, `input.headers` is filtered before dispatch; only `x-amz-*`, `Content-Type`, and `Content-MD5` upload headers are forwarded to workers.
 - one task keeps the same `task_id` and `request_id` across internal terminal capacity retries; `command_id` is the current or last worker dispatch attempt, so it can change while the task is running.
 
@@ -936,6 +949,7 @@ Input:
 - `command` required
 - `session_id` optional
 - `create_if_missing` optional, default `false`
+- `create_if_missing=true` rejects session IDs using the reserved Computer Use prefix (default `CU:`)
 - `lease_ttl_sec` optional
 - `timeout_ms` optional, `1..600000`, default `60000`
 
@@ -961,15 +975,18 @@ Input:
 ```json
 {
   "command": "pwd",
+  "worker_id": "caller-owned-worker-id",
   "timeout_ms": 60000,
   "request_id": "optional-idempotency-key"
 }
 ```
 
-- `command` required
+- `worker_id` optional; when present, it must select a caller-owned `worker-sys`, with no fallback to another Worker
+- `command` required when `worker_id` is present
+- without `worker_id`, no command is dispatched and output is `{"worker_list":[...]}` including online and offline Worker Systems
 - `timeout_ms` optional, `1..600000`, default `60000`
 - `request_id` optional, idempotency key scoped per account
-- routed only to caller-owned `worker-sys`
+- routed only to the selected caller-owned `worker-sys`
 - no terminal session fields (`session_id`, `create_if_missing`, `created`)
 
 Output:
@@ -995,8 +1012,8 @@ Input:
 - `session_id` required
 - `file_path` required
 - `timeout_ms` optional, `1..600000`, default `60000`
-- when `session_id` is exactly `computerUse`, routing uses caller-owned `worker-sys` `readImage` capability
-- for other `session_id` values, routing uses `terminalResource` capability
+- `session_id="CU:<worker_id>"` routes to that caller-owned `worker-sys`; Console sends the unchanged internal `session_id="computerUse"` to the Worker
+- all other values, including the former public alias `computerUse`, route as sandbox session IDs through `terminalResource`
 
 Behavior:
 
@@ -1004,12 +1021,19 @@ Behavior:
 - If non-image MIME: returns one text content item:
   - `unsupported mime type: <mime>; expected image/*`
 
+#### Tool: `exportFile`
+
+- Uses the same session routing as `readImage`: `CU:<worker_id>` selects a caller-owned Worker System, and other values select a sandbox terminal session.
+- Console maps Worker System requests to the internal `session_id="computerUse"` protocol value before dispatch.
+- The `CU:` prefix is case-sensitive and configurable with `CONSOLE_COMPUTER_USE_SESSION_ID_PREFIX` / `computer_use_session_id_prefix`. Changing it changes session-ID interpretation and is generally not recommended; blank values fall back to `CU:` with a warning.
+- This is a public protocol change: `computerUse` is no longer a public alias. Clients must list/select a Worker and send its ID.
+
 ### 9.3 MCP Errors
 
 - Missing/invalid token: HTTP `401`
 - Invalid tool params: JSON-RPC error `-32602`
-- `computerUse` without a caller-owned `worker-sys`: JSON-RPC error `-32010` with `data.error_code="WORKER_SYS_REQUIRED"`
-- `computerUse` with a registered but offline caller-owned `worker-sys`: JSON-RPC error `-32011` with `data.error_code="WORKER_SYS_OFFLINE"`
+- invalid, foreign, or non-`worker-sys` target IDs return the same non-disclosing invalid-worker error
+- a selected offline Worker, missing capability, and exhausted capacity remain distinct tool errors
 - Execution failures: returned as MCP tool error content (`isError=true`)
 
 ## 10. Worker gRPC API (`api/proto/registry/v1/registry.proto`)

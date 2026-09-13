@@ -27,6 +27,8 @@ export const meta = {
 2. 执行请求被作为原生 OS 进程在宿主机上启动。
 3. 进程的 stdout/stderr 通过控制面流式返回。
 
+一个账号可以配置多个 `worker-sys`。公开 `computerUse` 调用通过 `worker_id` 选择其中一个；省略时列出当前账号全部实例及其在线/离线状态。公开 `readImage` 与 `exportFile` 使用 `CU:<worker_id>`。Console 会校验归属和类型，将执行固定投递到该 Worker 且不回退，并把公开 session ID 转换为 `worker-sys` 所理解的内部 `session_id="computerUse"`。
+
 ### Shell 选择（跨平台）
 
 `computerUse` 通过宿主机的系统 shell 执行命令，shell 按平台自动选择：

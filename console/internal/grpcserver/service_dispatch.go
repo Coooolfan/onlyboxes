@@ -27,6 +27,7 @@ type dispatchOptions struct {
 	ownerID               string
 	taskID                string
 	terminalSessionIntent terminalSessionIntent
+	targetNodeID          string
 	onDispatched          func(commandID string) error
 }
 
@@ -34,6 +35,7 @@ type sessionPickOptions struct {
 	terminalSessionIntent terminalSessionIntent
 	excludedNodeIDs       map[string]struct{}
 	taskID                string
+	targetNodeID          string
 }
 
 type dispatchAttemptResult struct {
@@ -141,6 +143,7 @@ func (s *RegistryService) dispatchCommand(
 		terminalSessionIntent: options.terminalSessionIntent,
 		excludedNodeIDs:       attemptedNodeIDs,
 		taskID:                options.taskID,
+		targetNodeID:          options.targetNodeID,
 	}
 	var lastCapacityOutcome *commandOutcome
 
@@ -378,6 +381,15 @@ func (s *RegistryService) pickSessionForDispatch(
 	terminalSessionID string,
 	options sessionPickOptions,
 ) (*activeSession, uint64, error) {
+	if targetNodeID := strings.TrimSpace(options.targetNodeID); targetNodeID != "" {
+		session, err := s.pickSessionForNodeAndCapability(targetNodeID, capability)
+		if errors.Is(err, ErrNoCapabilityWorker) {
+			if targetErr := s.checkTargetCapabilityAvailability(targetNodeID, capability); targetErr != nil {
+				return nil, 0, targetErr
+			}
+		}
+		return session, 0, err
+	}
 	normalizedTerminalSessionID := strings.TrimSpace(terminalSessionID)
 	if normalizedTerminalSessionID == "" {
 		session, err := s.pickSessionForCapability(capability, ownerID, options)

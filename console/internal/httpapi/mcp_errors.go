@@ -91,6 +91,10 @@ func mapMCPToolTaskSubmitError(err error) error {
 		return errors.New("task request already in progress")
 	case errors.Is(err, grpcserver.ErrNoCapabilityWorker):
 		return errors.New("no online worker supports requested capability")
+	case errors.Is(err, grpcserver.ErrTargetWorkerOffline):
+		return errors.New(grpcserver.ErrTargetWorkerOffline.Error())
+	case errors.Is(err, grpcserver.ErrTargetWorkerCapabilityUnavailable):
+		return errors.New(grpcserver.ErrTargetWorkerCapabilityUnavailable.Error())
 	case errors.Is(err, grpcserver.ErrNoWorkerCapacity):
 		return errors.New("no online worker capacity for requested capability")
 	case errors.As(err, &commandErr):

@@ -174,14 +174,6 @@ JOIN worker_labels type_label
 WHERE owner_label.label_value = ?
   AND type_label.label_value = ?;
 
--- name: InsertWorkerSysOwnerClaimIfAbsent :execrows
-INSERT INTO worker_sys_owner_claims (
-    owner_id,
-    node_id,
-    claimed_at_unix_ms
-) VALUES (?, ?, ?)
-ON CONFLICT(owner_id) DO NOTHING;
-
 -- name: ListOnlineWorkerNodeIDsByOwnerTypeAndCapability :many
 SELECT wn.node_id
 FROM worker_nodes wn

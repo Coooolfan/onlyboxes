@@ -11,7 +11,6 @@ import (
 	"time"
 
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
-	"github.com/onlyboxes/onlyboxes/console/internal/grpcserver"
 	"github.com/onlyboxes/onlyboxes/console/internal/registry"
 	"github.com/onlyboxes/onlyboxes/console/internal/testutil/registrytest"
 )
@@ -248,25 +247,6 @@ func TestCreateWorkerRejectsNormalTypeForNonAdmin(t *testing.T) {
 
 	if res.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d body=%s", res.Code, res.Body.String())
-	}
-}
-
-func TestCreateWorkerMapsWorkerSysConflict(t *testing.T) {
-	provisioning := &fakeWorkerProvisioning{
-		createErr: grpcserver.ErrWorkerSysAlreadyExists,
-	}
-	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, provisioning, nil, ":50051")
-	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
-	cookie := loginSessionCookie(t, router)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/workers", strings.NewReader(`{"type":"worker-sys"}`))
-	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(cookie)
-	res := httptest.NewRecorder()
-	router.ServeHTTP(res, req)
-
-	if res.Code != http.StatusConflict {
-		t.Fatalf("expected 409, got %d body=%s", res.Code, res.Body.String())
 	}
 }
 

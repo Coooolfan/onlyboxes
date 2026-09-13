@@ -64,6 +64,9 @@ export_return_schema = "ALL"
 
 # MCP.
 mcp_token_query_param = "token"
+# Case-sensitive prefix for routing readImage/exportFile to worker-sys.
+# Changing this alters session ID interpretation and is generally not recommended.
+computer_use_session_id_prefix = "CU:"
 # Hidden tools, equivalent to CONSOLE_HIDDEN_TOOLS="echo,pythonExec".
 hidden_tools = []
 
