@@ -49,6 +49,8 @@ Console 根据 Worker 声明的 capability 与 `max_inflight` 选择节点，并
 
 worker-sys 没有 terminal session 状态机。`computerUse` 与 `readImage` 分别使用独立的 capability 并发槽，默认上限均为 `1`；超限返回 `session_busy`。提高上限会让更多命令直接并发使用宿主机资源，只应在已配置 cgroup、ulimit 或等效限制的环境中使用。
 
+同一账号可以拥有多个 worker-sys。`computerUse` 的并发限制按选定 Worker 的 capability 计算，而不是账号级单例限制；指定 `worker_id` 后不会在容量不足时回退到同账号的其他 Worker。
+
 ## 配置
 
 ### Sandbox Worker

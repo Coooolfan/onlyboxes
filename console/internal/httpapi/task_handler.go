@@ -167,6 +167,10 @@ func (h *WorkerHandler) writeTaskSubmitError(c *gin.Context, err error) {
 		c.JSON(http.StatusConflict, gin.H{"error": "task request already in progress"})
 	case errors.Is(err, grpcserver.ErrNoCapabilityWorker):
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "no online worker supports requested capability"})
+	case errors.Is(err, grpcserver.ErrTargetWorkerOffline):
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": grpcserver.ErrTargetWorkerOffline.Error()})
+	case errors.Is(err, grpcserver.ErrTargetWorkerCapabilityUnavailable):
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": grpcserver.ErrTargetWorkerCapabilityUnavailable.Error()})
 	case errors.Is(err, grpcserver.ErrNoWorkerCapacity):
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": "no online worker capacity for requested capability"})
 	case errors.As(err, &commandErr):

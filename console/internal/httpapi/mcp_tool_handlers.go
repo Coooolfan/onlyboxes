@@ -161,8 +161,15 @@ func handleMCPTerminalExecTool(ctx context.Context, dispatcher CommandDispatcher
 }
 
 func handleMCPComputerUseTool(ctx context.Context, dispatcher CommandDispatcher, workerSysCounter WorkerSysCounter, input mcpComputerUseToolInput) (*mcp.CallToolResult, mcpComputerUseToolOutput, error) {
-	if strings.TrimSpace(input.Command) == "" {
-		return nil, mcpComputerUseToolOutput{}, invalidParamsError("command is required")
+	workerID := ""
+	if input.WorkerID != nil {
+		workerID = strings.TrimSpace(*input.WorkerID)
+		if workerID == "" {
+			return nil, mcpComputerUseToolOutput{}, invalidParamsError("worker_id is invalid")
+		}
+		if strings.TrimSpace(input.Command) == "" {
+			return nil, mcpComputerUseToolOutput{}, invalidParamsError("command is required")
+		}
 	}
 
 	timeoutMS := defaultMCPTaskTimeoutMS
@@ -180,7 +187,7 @@ func handleMCPComputerUseTool(ctx context.Context, dispatcher CommandDispatcher,
 		return nil, mcpComputerUseToolOutput{}, errors.New("request owner is required")
 	}
 
-	payloadJSON, err := json.Marshal(computerUsePayload{Command: input.Command})
+	payloadJSON, err := json.Marshal(computerUsePayload{Command: input.Command, WorkerID: workerID})
 	if err != nil {
 		return nil, mcpComputerUseToolOutput{}, errors.New("failed to encode computerUse payload")
 	}
@@ -228,7 +235,7 @@ func handleMCPComputerUseTool(ctx context.Context, dispatcher CommandDispatcher,
 	}
 }
 
-func handleMCPReadImageTool(ctx context.Context, dispatcher CommandDispatcher, input mcpReadImageToolInput) (*mcp.CallToolResult, any, error) {
+func handleMCPReadImageTool(ctx context.Context, dispatcher CommandDispatcher, computerUseSessionIDPrefix string, input mcpReadImageToolInput) (*mcp.CallToolResult, any, error) {
 	sessionID := strings.TrimSpace(input.SessionID)
 	if sessionID == "" {
 		return nil, nil, invalidParamsError("session_id is required")
@@ -251,7 +258,7 @@ func handleMCPReadImageTool(ctx context.Context, dispatcher CommandDispatcher, i
 
 	timeout := time.Duration(timeoutMS) * time.Millisecond
 	resourceCapability := terminalResourceCapabilityName
-	if sessionID == computerUseSessionID {
+	if isComputerUseSessionID(sessionID, computerUseSessionIDPrefix) {
 		resourceCapability = readImageCapabilityName
 	}
 
@@ -307,4 +314,12 @@ func handleMCPReadImageTool(ctx context.Context, dispatcher CommandDispatcher, i
 			},
 		},
 	}, nil, nil
+}
+
+func isComputerUseSessionID(sessionID string, prefix string) bool {
+	normalizedPrefix := strings.TrimSpace(prefix)
+	if normalizedPrefix == "" {
+		normalizedPrefix = "CU:"
+	}
+	return strings.HasPrefix(strings.TrimSpace(sessionID), normalizedPrefix)
 }

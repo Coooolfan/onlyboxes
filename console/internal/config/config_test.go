@@ -27,6 +27,7 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("CONSOLE_EXPORT_FILE_DOWNLOAD_PRESIGN_TTL_SEC", "")
 	t.Setenv("CONSOLE_ENABLE_REGISTRATION", "")
 	t.Setenv("CONSOLE_MCP_TOKEN_QUERY_PARAM", "")
+	t.Setenv("CONSOLE_COMPUTER_USE_SESSION_ID_PREFIX", "")
 	t.Setenv("CONSOLE_PROXY_ENABLED", "")
 	t.Setenv("CONSOLE_PROXY_PUBLIC_BASE_DOMAIN", "")
 	t.Setenv("CONSOLE_PROXY_PUBLIC_SCHEME", "")
@@ -116,6 +117,16 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.LogAddSource != defaultLogAddSource {
 		t.Fatalf("expected LogAddSource=%t, got %t", defaultLogAddSource, cfg.LogAddSource)
+	}
+	if cfg.ComputerUseSessionIDPrefix != defaultComputerUseSessionIDPrefix {
+		t.Fatalf("expected default computer-use session prefix %q, got %q", defaultComputerUseSessionIDPrefix, cfg.ComputerUseSessionIDPrefix)
+	}
+}
+
+func TestLoadComputerUseSessionIDPrefix(t *testing.T) {
+	t.Setenv("CONSOLE_COMPUTER_USE_SESSION_ID_PREFIX", " device: ")
+	if got := Load().ComputerUseSessionIDPrefix; got != "device:" {
+		t.Fatalf("expected trimmed custom computer-use session prefix, got %q", got)
 	}
 }
 

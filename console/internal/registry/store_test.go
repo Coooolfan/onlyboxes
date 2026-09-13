@@ -178,9 +178,16 @@ func TestStoreSeedProvisionedWorkersCountsAsOffline(t *testing.T) {
 	}
 }
 
-func TestStoreClaimWorkerSysOwner(t *testing.T) {
+func TestStoreListsMultipleWorkerSysForOwner(t *testing.T) {
 	store := newTestStore(t)
 	now := time.Unix(1_700_003_500, 0)
+	var claimTableCount int
+	if err := store.Persistence().SQL.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'worker_sys_owner_claims'").Scan(&claimTableCount); err != nil {
+		t.Fatalf("inspect migrated schema: %v", err)
+	}
+	if claimTableCount != 0 {
+		t.Fatalf("worker_sys_owner_claims must be removed by migration 00009")
+	}
 
 	seeded := store.SeedProvisionedWorkers([]ProvisionedWorker{
 		{
@@ -202,32 +209,9 @@ func TestStoreClaimWorkerSysOwner(t *testing.T) {
 		t.Fatalf("expected seeded=2, got %d", seeded)
 	}
 
-	firstClaimed, err := store.ClaimWorkerSysOwner("owner-a", "node-sys-1", now)
-	if err != nil {
-		t.Fatalf("claim first worker-sys failed: %v", err)
-	}
-	if !firstClaimed {
-		t.Fatalf("expected first claim to succeed")
-	}
-
-	secondClaimed, err := store.ClaimWorkerSysOwner("owner-a", "node-sys-2", now)
-	if err != nil {
-		t.Fatalf("claim second worker-sys failed: %v", err)
-	}
-	if secondClaimed {
-		t.Fatalf("expected second claim to be rejected")
-	}
-
-	if removed := store.Delete("node-sys-1"); !removed {
-		t.Fatalf("expected to delete first claimed node")
-	}
-
-	reclaimed, err := store.ClaimWorkerSysOwner("owner-a", "node-sys-2", now.Add(time.Second))
-	if err != nil {
-		t.Fatalf("claim second worker-sys after delete failed: %v", err)
-	}
-	if !reclaimed {
-		t.Fatalf("expected claim to succeed after claimed node deletion")
+	workers := store.ListByOwnerAndType("owner-a", WorkerTypeSys, now, 15*time.Second)
+	if len(workers) != 2 || workers[0].NodeID != "node-sys-1" || workers[1].NodeID != "node-sys-2" {
+		t.Fatalf("unexpected worker-sys list: %#v", workers)
 	}
 }
 

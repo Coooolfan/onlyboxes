@@ -27,7 +27,7 @@ The console service hosts:
     - admin: list/stats/inflight/delete all workers; create `normal` and `worker-sys`
     - non-admin: list/stats/inflight only own `worker-sys`; can create/delete only own `worker-sys`
   - `worker-sys` constraints:
-    - max one per account
+    - an account may own multiple workers; owner/type labels remain the routing boundary
     - at least one capability from the `computerUse` / `readImage` allowlist is required; other capabilities are rejected
     - declared `max_inflight` values are preserved; omitted or non-positive values default to `1`
 - public preview route APIs (dashboard cookie/API key/JIT auth):
@@ -93,27 +93,26 @@ The console service hosts:
       - `command` is required (whitespace-only is rejected).
       - `session_id` is optional; omit to create a new terminal session/container.
       - `create_if_missing` controls behavior when `session_id` does not exist.
+      - when `create_if_missing=true`, session IDs beginning with the reserved Computer Use prefix (default `CU:`) are rejected.
       - session isolation is account-scoped: same-account tokens can reuse `session_id`; cross-account use returns `session_not_found`.
       - `lease_ttl_sec` is optional and validated by worker-side lease bounds.
       - `timeout_ms` is optional, range `1..600000`, default `60000`.
       - output: `{"session_id":"...","created":true,"stdout":"...","stderr":"...","exit_code":0,"stdout_truncated":false,"stderr_truncated":false,"lease_expires_unix_ms":...}`
     - `computerUse`
-      - input: `{"command":"pwd","timeout_ms":60000,"request_id":"optional"}`
-      - `command` is required (whitespace-only is rejected).
+      - execution input: `{"worker_id":"worker-id","command":"pwd","timeout_ms":60000,"request_id":"optional"}`
+      - `worker_id` selects one caller-owned `worker-sys`; `command` is required when it is present. The request never falls back to another worker.
+      - when `worker_id` is omitted, no command is dispatched (even if `command` is present) and the result is `{"worker_list":[...]}` for all caller-owned online and offline Worker Systems.
       - legacy `lease_ttl_sec` is ignored when provided.
       - payload excludes terminal session fields (`session_id`, `create_if_missing`, `created`).
-      - routed only to caller-owned `worker-sys` and account-scoped capacity is single-flight.
+      - routed only to the selected caller-owned `worker-sys`.
       - worker-side concurrency is also enforced per capability; dispatch beyond the worker's declared `computerUse` limit returns `session_busy` (HTTP `409` in command API). The limit defaults to `1`, so concurrent dispatch is rejected unless the worker raises `WORKER_COMPUTER_USE_MAX_INFLIGHT`.
-      - MCP tool readiness failures use JSON-RPC application errors:
-        - `-32010` with `data.error_code="WORKER_SYS_REQUIRED"` when the account has no `worker-sys`.
-        - `-32011` with `data.error_code="WORKER_SYS_OFFLINE"` when a `worker-sys` is registered but offline.
-      - output: `{"stdout":"...","stderr":"...","exit_code":0,"stdout_truncated":false,"stderr_truncated":false}`
+      - invalid/foreign/wrong-type Worker IDs share one non-disclosing invalid-worker error; offline, missing-capability, and capacity errors remain distinct.
+      - execution output: `{"stdout":"...","stderr":"...","exit_code":0,"stdout_truncated":false,"stderr_truncated":false}`; list output contains only `worker_list`.
     - `readImage`
       - input: `{"session_id":"required","file_path":"required","timeout_ms":60000}`
       - `session_id` and `file_path` are required (whitespace-only is rejected).
-      - `session_id=="computerUse"` routes to caller-owned `worker-sys` via `readImage` capability.
-      - other `session_id` values route via worker `terminalResource` capability.
-      - `worker-sys` accepts only `session_id=="computerUse"` for this capability.
+      - `session_id="CU:<worker_id>"` routes to that caller-owned `worker-sys` via `readImage`; all other values, including the old public value `computerUse`, are sandbox session IDs.
+      - Console translates this public ID to the unchanged internal `session_id="computerUse"` Worker protocol value.
       - validates file existence; directories are rejected.
       - output is content-only (no structured output fields).
       - image files (`image/*`) return exactly one `image` content item.
@@ -124,7 +123,7 @@ The console service hosts:
       - input: `{"session_id":"required","file_path":"required","timeout_ms":60000}`
       - `session_id` and `file_path` are required (whitespace-only is rejected).
       - only available when all export-file objectstore env vars are configured.
-      - `session_id=="computerUse"` routes to the caller-owned `worker-sys` via `readImage` capability with `action="export"`.
+      - `session_id="CU:<worker_id>"` routes to that caller-owned `worker-sys` via `readImage` capability with `action="export"`.
       - other `session_id` values route via worker `terminalResource` capability with `action="export"` (Docker-backed terminal sessions).
       - console generates a presigned upload URL, dispatches the appropriate export action based on routing, then returns a presigned download URL.
       - output fields depend on `CONSOLE_EXPORT_RETURN_SCHEMA`:
@@ -187,7 +186,7 @@ MCP tool description / parameter overrides:
 - `CONSOLE_MCP_TOOL_<TOOL>_PARAM_<PARAM>_DESCRIPTION` — override one parameter's `description`; empty string hides the parameter from `tools/list` (removed from `properties` + `required`, `additionalProperties` flipped to `true`) while `tools/call` still accepts the field. Every hidden parameter emits `WARN hiding MCP tool parameter ... required=<bool>` on startup; hiding a required parameter means the model cannot construct a valid call.
 - `<TOOL>` uses `UPPER_SNAKE_CASE` (e.g. `pythonExec` → `PYTHON_EXEC`); `<PARAM>` is the uppercased snake_case JSON key (e.g. `session_id` → `SESSION_ID`).
 - unset vars keep the built-in defaults; `os.LookupEnv` is used so an explicitly empty string is distinguishable.
-- catalog: `ECHO` (`MESSAGE`, `TIMEOUT_MS`), `PYTHON_EXEC` (`CODE`, `TIMEOUT_MS`), `TERMINAL_EXEC` (`COMMAND`, `SESSION_ID`, `CREATE_IF_MISSING`, `LEASE_TTL_SEC`, `TIMEOUT_MS`), `COMPUTER_USE` (`COMMAND`, `TIMEOUT_MS`, `REQUEST_ID`), `READ_IMAGE` (`SESSION_ID`, `FILE_PATH`, `TIMEOUT_MS`), `EXPORT_FILE` (`SESSION_ID`, `FILE_PATH`, `TIMEOUT_MS`).
+- catalog: `ECHO` (`MESSAGE`, `TIMEOUT_MS`), `PYTHON_EXEC` (`CODE`, `TIMEOUT_MS`), `TERMINAL_EXEC` (`COMMAND`, `SESSION_ID`, `CREATE_IF_MISSING`, `LEASE_TTL_SEC`, `TIMEOUT_MS`), `COMPUTER_USE` (`COMMAND`, `WORKER_ID`, `TIMEOUT_MS`, `REQUEST_ID`), `READ_IMAGE` (`SESSION_ID`, `FILE_PATH`, `TIMEOUT_MS`), `EXPORT_FILE` (`SESSION_ID`, `FILE_PATH`, `TIMEOUT_MS`).
 - example: `CONSOLE_MCP_TOOL_ECHO_NAME="ping"`, `CONSOLE_MCP_TOOL_ECHO_DESCRIPTION="ping-only echo"`, `CONSOLE_MCP_TOOL_TERMINAL_EXEC_PARAM_SESSION_ID_DESCRIPTION=""`.
 
 Export file objectstore config:
@@ -218,7 +217,7 @@ Credential behavior:
 - credentials are persisted in SQLite as HMAC-SHA256 hashes only (no plaintext storage).
 - deleting a provisioned worker revokes the credential immediately; if the worker is online, its current session is closed.
 - worker secret is returned only once when creating worker; recovery path is delete + recreate.
-- each account can own at most one `worker-sys`.
+- each account can own multiple `worker-sys` workers.
 
 Defaults:
 - HTTP: `:8089`
@@ -296,6 +295,7 @@ Persistence config:
 - `CONSOLE_JIT_SIGNING_KEY`: optional HMAC key for JIT bearer tokens; when configured, valid JIT tokens can authenticate MCP and execution APIs without a `trusted_tokens` entry
 - `CONSOLE_DASHBOARD_JIT_SIGNING_KEY`: optional HMAC key for dashboard JIT bearer tokens; when configured, valid dashboard JIT tokens can authenticate selected dashboard APIs without a cookie session or console API key
 - `CONSOLE_MCP_TOKEN_QUERY_PARAM`: query parameter name for `/mcp` URL token fallback (default `token`)
+- `CONSOLE_COMPUTER_USE_SESSION_ID_PREFIX`: case-sensitive public session prefix used by `readImage` and `exportFile` to select a Worker System (default `CU:`). Changing it changes session-ID interpretation and is generally not recommended; blank values fall back to `CU:` with a warning.
 - `CONSOLE_PROXY_ENABLED`: enables route management and Nginx resolve endpoints (default `false`)
 - `CONSOLE_PROXY_PUBLIC_BASE_DOMAIN`: wildcard preview base domain
 - `CONSOLE_PROXY_PUBLIC_SCHEME`: route URL scheme, `http` or `https` (default `https`)

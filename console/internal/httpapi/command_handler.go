@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/onlyboxes/onlyboxes/console/internal/grpcserver"
+	"github.com/onlyboxes/onlyboxes/console/internal/registry"
 )
 
 const (
@@ -75,13 +76,15 @@ type terminalExecPayload struct {
 }
 
 type computerUseCommandRequest struct {
-	Command   string `json:"command"`
-	TimeoutMS *int   `json:"timeout_ms,omitempty"`
-	RequestID string `json:"request_id,omitempty"`
+	Command   string          `json:"command"`
+	WorkerID  json.RawMessage `json:"worker_id,omitempty"`
+	TimeoutMS *int            `json:"timeout_ms,omitempty"`
+	RequestID string          `json:"request_id,omitempty"`
 }
 
 type computerUsePayload struct {
-	Command string `json:"command"`
+	Command  string `json:"command,omitempty"`
+	WorkerID string `json:"worker_id,omitempty"`
 }
 
 type terminalCommandResponse struct {
@@ -96,11 +99,29 @@ type terminalCommandResponse struct {
 }
 
 type computerUseCommandResponse struct {
-	Stdout          string `json:"stdout"`
-	Stderr          string `json:"stderr"`
-	ExitCode        int    `json:"exit_code"`
-	StdoutTruncated bool   `json:"stdout_truncated"`
-	StderrTruncated bool   `json:"stderr_truncated"`
+	WorkerList      []computerUseWorkerItem `json:"worker_list,omitempty"`
+	Stdout          string                  `json:"stdout"`
+	Stderr          string                  `json:"stderr"`
+	ExitCode        int                     `json:"exit_code"`
+	StdoutTruncated bool                    `json:"stdout_truncated"`
+	StderrTruncated bool                    `json:"stderr_truncated"`
+}
+
+func (r computerUseCommandResponse) MarshalJSON() ([]byte, error) {
+	if r.WorkerList != nil {
+		return json.Marshal(struct {
+			WorkerList []computerUseWorkerItem `json:"worker_list"`
+		}{WorkerList: r.WorkerList})
+	}
+	type executionResult computerUseCommandResponse
+	return json.Marshal(executionResult(r))
+}
+
+type computerUseWorkerItem struct {
+	WorkerID     string                           `json:"worker_id"`
+	NodeName     string                           `json:"node_name"`
+	Status       registry.WorkerStatus            `json:"status"`
+	Capabilities []registry.CapabilityDeclaration `json:"capabilities"`
 }
 
 func (h *WorkerHandler) EchoCommand(c *gin.Context) {
@@ -249,9 +270,21 @@ func (h *WorkerHandler) ComputerUseCommand(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}
-	if strings.TrimSpace(req.Command) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "command is required"})
-		return
+	workerID := ""
+	if len(req.WorkerID) != 0 {
+		if err := json.Unmarshal(req.WorkerID, &workerID); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "worker_id is invalid"})
+			return
+		}
+		workerID = strings.TrimSpace(workerID)
+		if workerID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "worker_id is invalid"})
+			return
+		}
+		if strings.TrimSpace(req.Command) == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "command is required"})
+			return
+		}
 	}
 
 	timeoutMS := defaultComputerUseTimeoutMS
@@ -263,7 +296,7 @@ func (h *WorkerHandler) ComputerUseCommand(c *gin.Context) {
 		return
 	}
 
-	payloadJSON, err := json.Marshal(computerUsePayload{Command: req.Command})
+	payloadJSON, err := json.Marshal(computerUsePayload{Command: req.Command, WorkerID: workerID})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encode computerUse payload"})
 		return

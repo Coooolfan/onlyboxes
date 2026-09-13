@@ -95,6 +95,7 @@ func main() {
 	registryService.SetHasher(db.Hasher)
 	registryService.SetWorkerConnectionConflictPolicy(cfg.WorkerConnectionPolicy)
 	registryService.SetTaskRetention(time.Duration(cfg.TaskRetentionDays) * 24 * time.Hour)
+	registryService.SetComputerUseSessionIDPrefix(cfg.ComputerUseSessionIDPrefix)
 	registryService.ConfigureProxy(cfg.ProxyEnabled, cfg.ProxyAllowedWorkerCIDRs, cfg.ProxyAllowedWorkerPorts, cfg.ProxyAllowedDirectDomains)
 	restoreCtx, restoreCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	if err := registryService.RestoreTerminalSessionRoutes(restoreCtx, time.Now()); err != nil {
@@ -111,6 +112,7 @@ func main() {
 		registryService,
 		cfg.GRPCAddr,
 	)
+	httpHandler.SetComputerUseSessionIDPrefix(cfg.ComputerUseSessionIDPrefix)
 	var proxyRouteHandler *httpapi.ProxyRouteHandler
 	if cfg.ProxyEnabled {
 		if len(cfg.ProxyAllowedDirectDomains) == 0 {

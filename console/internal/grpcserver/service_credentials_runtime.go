@@ -14,7 +14,6 @@ import (
 )
 
 var ErrInvalidWorkerType = errors.New("invalid worker type")
-var ErrWorkerSysAlreadyExists = errors.New("worker-sys already exists for owner")
 
 const defaultWorkerOwnerID = "system"
 
@@ -58,12 +57,6 @@ func (s *RegistryService) CreateProvisionedWorkerForOwner(
 	if normalizedWorkerType == "" {
 		return "", "", ErrInvalidWorkerType
 	}
-	if normalizedWorkerType == registry.WorkerTypeSys {
-		if count := s.store.CountWorkersByOwnerAndType(normalizedOwnerID, normalizedWorkerType); count > 0 {
-			return "", "", ErrWorkerSysAlreadyExists
-		}
-	}
-
 	for attempt := 0; attempt < maxProvisioningCreateAttempts; attempt++ {
 		workerID, err := generateUUIDv4()
 		if err != nil {
@@ -87,18 +80,6 @@ func (s *RegistryService) CreateProvisionedWorkerForOwner(
 		if seeded != 1 {
 			continue
 		}
-		if normalizedWorkerType == registry.WorkerTypeSys {
-			claimed, claimErr := s.store.ClaimWorkerSysOwner(normalizedOwnerID, workerID, now)
-			if claimErr != nil {
-				s.store.Delete(workerID)
-				return "", "", fmt.Errorf("claim worker-sys owner: %w", claimErr)
-			}
-			if !claimed {
-				s.store.Delete(workerID)
-				return "", "", ErrWorkerSysAlreadyExists
-			}
-		}
-
 		credentialValue := workerSecret
 		hasher, hashAlgo := func() (*persistence.Hasher, string) {
 			s.credentialsMu.RLock()

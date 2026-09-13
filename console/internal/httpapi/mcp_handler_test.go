@@ -293,8 +293,10 @@ func TestMCPToolsList(t *testing.T) {
 		t.Fatalf("unexpected computerUse description: %q", got)
 	}
 	computerUseInputSchema := mustObject(t, computerUseTool["inputSchema"], "computerUse.inputSchema")
-	assertRequiredContains(t, computerUseInputSchema["required"], "command")
 	computerUseInputProperties := mustObject(t, computerUseInputSchema["properties"], "computerUse.inputSchema.properties")
+	if _, ok := computerUseInputProperties["worker_id"]; !ok {
+		t.Fatalf("expected computerUse.inputSchema.properties.worker_id")
+	}
 	if _, ok := computerUseInputProperties["lease_ttl_sec"]; ok {
 		t.Fatalf("did not expect computerUse.inputSchema.properties.lease_ttl_sec")
 	}
@@ -884,6 +886,9 @@ func TestMCPToolCallComputerUseSuccess(t *testing.T) {
 			if payload.Command != "pwd" {
 				t.Fatalf("unexpected command payload: %#v", payload)
 			}
+			if payload.WorkerID != "worker-1" {
+				t.Fatalf("unexpected worker_id payload: %#v", payload)
+			}
 			resultJSON, _ := json.Marshal(mcpComputerUseToolOutput{
 				Stdout:          "/workspace\n",
 				Stderr:          "",
@@ -906,7 +911,7 @@ func TestMCPToolCallComputerUseSuccess(t *testing.T) {
 		},
 	})
 
-	payload := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"computerUse","arguments":{"command":"pwd","request_id":"req-1"}}}`)
+	payload := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"computerUse","arguments":{"command":"pwd","worker_id":"worker-1","request_id":"req-1"}}}`)
 	result := mustMapField(t, payload, "result")
 	if asBool(result["isError"]) {
 		t.Fatalf("expected tool call success, got error payload=%s", mustJSON(t, result))
@@ -917,6 +922,31 @@ func TestMCPToolCallComputerUseSuccess(t *testing.T) {
 	}
 	if got := asInt(t, structured["exit_code"]); got != 0 {
 		t.Fatalf("expected exit_code=0, got %d", got)
+	}
+}
+
+func TestMCPToolCallComputerUseWithoutWorkerIDReturnsWorkerList(t *testing.T) {
+	router := newMCPTestRouter(t, &fakeMCPDispatcher{
+		submitTask: func(ctx context.Context, req grpcserver.SubmitTaskRequest) (grpcserver.SubmitTaskResult, error) {
+			return grpcserver.SubmitTaskResult{Task: grpcserver.TaskSnapshot{
+				TaskID: "task-cu-list", Capability: computerUseCapabilityName, Status: grpcserver.TaskStatusSucceeded,
+				ResultJSON: []byte(`{"worker_list":[{"worker_id":"worker-1","node_name":"laptop","status":"online","capabilities":[]}]}`),
+			}, Completed: true}, nil
+		},
+	})
+
+	payload := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"computerUse","arguments":{"command":"must not execute"}}}`)
+	result := mustMapField(t, payload, "result")
+	if asBool(result["isError"]) {
+		t.Fatalf("expected list mode success, got %s", mustJSON(t, result))
+	}
+	structured := mustMapField(t, result, "structuredContent")
+	workers, ok := structured["worker_list"].([]any)
+	if !ok || len(workers) != 1 {
+		t.Fatalf("expected one worker in structuredContent, got %s", mustJSON(t, structured))
+	}
+	if _, exists := structured["stdout"]; exists {
+		t.Fatalf("list branch must not include execution fields: %s", mustJSON(t, structured))
 	}
 }
 
@@ -1176,8 +1206,8 @@ func TestMCPToolCallExportFileComputerUseSessionRoutesToReadImageCapability(t *t
 			if err := json.Unmarshal(req.InputJSON, &payload); err != nil {
 				t.Fatalf("expected valid readImage payload, got %s", string(req.InputJSON))
 			}
-			if payload.SessionID != computerUseSessionID {
-				t.Fatalf("expected session_id=%q, got %q", computerUseSessionID, payload.SessionID)
+			if payload.SessionID != "CU:worker-1" {
+				t.Fatalf("expected routed session_id, got %q", payload.SessionID)
 			}
 			if payload.Action != "export" {
 				t.Fatalf("expected export action, got %q", payload.Action)
@@ -1206,7 +1236,7 @@ func TestMCPToolCallExportFileComputerUseSessionRoutesToReadImageCapability(t *t
 		},
 	}, store, "exports")
 
-	payload := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"exportFile","arguments":{"session_id":"computerUse","file_path":"/workspace/report.png"}}}`)
+	payload := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"exportFile","arguments":{"session_id":"CU:worker-1","file_path":"/workspace/report.png"}}}`)
 	result := mustMapField(t, payload, "result")
 	if asBool(result["isError"]) {
 		t.Fatalf("expected tool call success, got error payload=%s", mustJSON(t, result))
@@ -1215,7 +1245,7 @@ func TestMCPToolCallExportFileComputerUseSessionRoutesToReadImageCapability(t *t
 	if got := asString(t, structured["signed_url"]); got != "https://downloads.example.com/get" {
 		t.Fatalf("expected signed_url in response, got %q", got)
 	}
-	if got := asString(t, structured["object_key"]); got != "exports/computerUse/fixed-id-report.png" {
+	if got := asString(t, structured["object_key"]); got != "exports/CU:worker-1/fixed-id-report.png" {
 		t.Fatalf("expected object_key in response, got %q", got)
 	}
 	if got := asString(t, structured["filename"]); got != "report.png" {
@@ -1437,7 +1467,7 @@ func TestMCPToolCallReadImageComputerUseSessionRoutesToReadImageCapability(t *te
 		},
 	})
 
-	payload := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"readImage","arguments":{"session_id":"computerUse","file_path":"/workspace/image.png"}}}`)
+	payload := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"readImage","arguments":{"session_id":"CU:worker-1","file_path":"/workspace/image.png"}}}`)
 	result := mustMapField(t, payload, "result")
 	if asBool(result["isError"]) {
 		t.Fatalf("expected tool call success, got error payload=%s", mustJSON(t, result))
@@ -1789,8 +1819,11 @@ func TestMCPToolCallInvalidParams(t *testing.T) {
 	terminalUnknownField := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"terminalExec","arguments":{"command":"pwd","unknown":"x"}}}`)
 	assertMCPInvalidParamsError(t, terminalUnknownField)
 
-	computerUseBlank := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"computerUse","arguments":{"command":"  "}}}`)
+	computerUseBlank := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"computerUse","arguments":{"command":"  ","worker_id":"worker-1"}}}`)
 	assertMCPInvalidParamsError(t, computerUseBlank)
+
+	computerUseBlankWorker := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"computerUse","arguments":{"command":"pwd","worker_id":"  "}}}`)
+	assertMCPInvalidParamsError(t, computerUseBlankWorker)
 
 	computerUseUnknownField := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"computerUse","arguments":{"command":"pwd","unknown":"x"}}}`)
 	assertMCPInvalidParamsError(t, computerUseUnknownField)
@@ -1870,7 +1903,7 @@ func TestMCPToolCallBackendErrorsAsToolErrors(t *testing.T) {
 	resourcePayload := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"readImage","arguments":{"session_id":"missing","file_path":"/workspace/a.txt"}}}`)
 	assertMCPToolError(t, resourcePayload, terminalExecSessionNotFoundCode+": session not found")
 
-	computerUsePayload := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"computerUse","arguments":{"command":"pwd"}}}`)
+	computerUsePayload := mcpPostJSON(t, router, `{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"computerUse","arguments":{"command":"pwd","worker_id":"worker-1"}}}`)
 	assertMCPToolError(t, computerUsePayload, terminalExecSessionNotFoundCode+": session not found")
 }
 

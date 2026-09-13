@@ -9,6 +9,7 @@ sql:
       - "db/migrations/00005_api_keys.sql"
       - "db/migrations/00006_terminal_session_routes.sql"
       - "db/migrations/00007_proxy_routes.sql"
+      - "db/migrations/00009_multiple_worker_sys_per_owner.sql"
     queries:
       - "db/queries/accounts.sql"
       - "db/queries/workers.sql"

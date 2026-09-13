@@ -344,6 +344,9 @@ func TestComputerUseCommandSuccess(t *testing.T) {
 			if payload.Command != "pwd" {
 				t.Fatalf("unexpected command payload: %#v", payload)
 			}
+			if payload.WorkerID != "worker-1" {
+				t.Fatalf("unexpected worker_id payload: %#v", payload)
+			}
 			resultJSON, _ := json.Marshal(computerUseCommandResponse{
 				Stdout:          "/workspace\n",
 				Stderr:          "",
@@ -364,7 +367,7 @@ func TestComputerUseCommandSuccess(t *testing.T) {
 	}, nil, nil, "")
 	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/commands/computer-use", strings.NewReader(`{"command":"pwd"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/commands/computer-use", strings.NewReader(`{"command":"pwd","worker_id":"worker-1"}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	setMCPTokenHeader(req)
@@ -376,6 +379,36 @@ func TestComputerUseCommandSuccess(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"stdout":"/workspace\n"`) {
 		t.Fatalf("expected computerUse payload, got %s", rec.Body.String())
+	}
+}
+
+func TestComputerUseCommandWithoutWorkerIDReturnsWorkerList(t *testing.T) {
+	store := registrytest.NewStore(t)
+	handler := NewWorkerHandler(store, 15*time.Second, &fakeEchoDispatcher{
+		dispatch: func(ctx context.Context, message string, timeout time.Duration) (string, error) { return message, nil },
+		submitTask: func(ctx context.Context, req grpcserver.SubmitTaskRequest) (grpcserver.SubmitTaskResult, error) {
+			if strings.Contains(string(req.InputJSON), "worker_id") {
+				t.Fatalf("list request must not synthesize worker_id: %s", req.InputJSON)
+			}
+			return grpcserver.SubmitTaskResult{Task: grpcserver.TaskSnapshot{
+				TaskID: "task-cu-list", Capability: computerUseCapability, Status: grpcserver.TaskStatusSucceeded,
+				ResultJSON: []byte(`{"worker_list":[{"worker_id":"worker-1","node_name":"laptop","status":"offline","capabilities":[]}]}`),
+			}, Completed: true}, nil
+		},
+	}, nil, nil, "")
+	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/commands/computer-use", strings.NewReader(`{"command":"must not execute"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	setMCPTokenHeader(req)
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"worker_id":"worker-1"`) {
+		t.Fatalf("expected worker list response, got status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `"stdout"`) {
+		t.Fatalf("list response must not contain execution fields: %s", rec.Body.String())
 	}
 }
 
@@ -409,7 +442,7 @@ func TestComputerUseCommandIgnoresLeaseTTLField(t *testing.T) {
 	}, nil, nil, "")
 	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/commands/computer-use", strings.NewReader(`{"command":"pwd","lease_ttl_sec":60}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/commands/computer-use", strings.NewReader(`{"command":"pwd","worker_id":"worker-1","lease_ttl_sec":60}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	setMCPTokenHeader(req)
@@ -456,7 +489,7 @@ func TestComputerUseCommandStatusMappings(t *testing.T) {
 			}, nil, nil, "")
 			router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
 
-			req := httptest.NewRequest(http.MethodPost, "/api/v1/commands/computer-use", strings.NewReader(`{"command":"pwd"}`))
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/commands/computer-use", strings.NewReader(`{"command":"pwd","worker_id":"worker-1"}`))
 			req.Header.Set("Content-Type", "application/json")
 			rec := httptest.NewRecorder()
 			setMCPTokenHeader(req)
@@ -479,7 +512,7 @@ func TestComputerUseCommandRejectsInvalidInput(t *testing.T) {
 	}, nil, nil, "")
 	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newTestMCPAuth(t), nil)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/commands/computer-use", strings.NewReader(`{"command":"   ","timeout_ms":0}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/commands/computer-use", strings.NewReader(`{"command":"   ","worker_id":"worker-1","timeout_ms":0}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	setMCPTokenHeader(req)
@@ -488,5 +521,23 @@ func TestComputerUseCommandRejectsInvalidInput(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	blankWorkerReq := httptest.NewRequest(http.MethodPost, "/api/v1/commands/computer-use", strings.NewReader(`{"command":"pwd","worker_id":"  "}`))
+	blankWorkerReq.Header.Set("Content-Type", "application/json")
+	blankWorkerRec := httptest.NewRecorder()
+	setMCPTokenHeader(blankWorkerReq)
+	router.ServeHTTP(blankWorkerRec, blankWorkerReq)
+	if blankWorkerRec.Code != http.StatusBadRequest || !strings.Contains(blankWorkerRec.Body.String(), "worker_id is invalid") {
+		t.Fatalf("expected blank worker_id rejection, got %d body=%s", blankWorkerRec.Code, blankWorkerRec.Body.String())
+	}
+
+	nullWorkerReq := httptest.NewRequest(http.MethodPost, "/api/v1/commands/computer-use", strings.NewReader(`{"command":"pwd","worker_id":null}`))
+	nullWorkerReq.Header.Set("Content-Type", "application/json")
+	nullWorkerRec := httptest.NewRecorder()
+	setMCPTokenHeader(nullWorkerReq)
+	router.ServeHTTP(nullWorkerRec, nullWorkerReq)
+	if nullWorkerRec.Code != http.StatusBadRequest || !strings.Contains(nullWorkerRec.Body.String(), "worker_id is invalid") {
+		t.Fatalf("expected null worker_id rejection, got %d body=%s", nullWorkerRec.Code, nullWorkerRec.Body.String())
 	}
 }

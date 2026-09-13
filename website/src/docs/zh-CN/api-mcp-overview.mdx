@@ -475,7 +475,7 @@ API Key 用于程序化访问大多数管理端点（与执行 Token 不同，**
 | 查询统计 | 所有 worker | 仅本人 `worker-sys` |
 | 查询并发占用 | 所有 worker | 仅本人 `worker-sys` |
 | 创建 `normal` | 是 | 否 |
-| 创建 `worker-sys` | 是（每账号最多 1 个） | 是（每账号最多 1 个） |
+| 创建 `worker-sys` | 是（每账号可创建多个） | 是（每账号可创建多个） |
 | 删除任意 worker | 是 | 否 |
 | 删除本人 `worker-sys` | 是 | 是 |
 
@@ -626,7 +626,6 @@ Worker 类型：`normal`（对应 `worker-docker`/`worker-boxlite`）、`worker-
 |--------|------|
 | `400` | 请求体非法 / `type` 值不合法 |
 | `403` | 普通用户尝试创建 `normal` 类型 |
-| `409` | 当前账号已存在 `worker-sys` |
 | `503` | provisioning 服务不可用 |
 | `500` | 创建失败 |
 
@@ -801,6 +800,8 @@ Worker 类型：`normal`（对应 `worker-docker`/`worker-boxlite`）、`worker-
 | `timeout_ms` | int | 否 | `1..600000`，默认 `60000` |
 | `request_id` | string | 否 | 幂等键，按账号隔离去重 |
 
+当 `create_if_missing=true` 时，以保留 Computer Use 前缀（默认 `CU:`）开头的 `session_id` 会被拒绝；当 `create_if_missing=false` 时，仍按普通 sandbox session 查找处理。
+
 **响应 `200`：**
 
 ```json
@@ -845,13 +846,14 @@ Worker 类型：`normal`（对应 `worker-docker`/`worker-boxlite`）、`worker-
 
 `POST /api/v1/commands/computer-use`
 
-在调用账号自有的 `worker-sys` 上执行 shell 命令，用于直接操控真实设备。单账号并发固定为 1，无会话状态。
+列出调用账号的 Worker System，或在选定的 `worker-sys` 宿主机上执行 shell 命令。执行固定投递到请求的 Worker，不会回退。
 
 **请求体：**
 
 ```json
 {
   "command": "pwd",
+  "worker_id": "worker-id",
   "timeout_ms": 60000,
   "request_id": "optional-idempotency-key"
 }
@@ -859,11 +861,20 @@ Worker 类型：`normal`（对应 `worker-docker`/`worker-boxlite`）、`worker-
 
 | 字段 | 类型 | 必填 | 约束 |
 |------|------|------|------|
-| `command` | string | 是 | trim 后非空 |
+| `worker_id` | string | 否 | 当前账号的 `worker-sys`；省略时进入列表模式 |
+| `command` | string | 条件必填 | 提供 `worker_id` 时必须为非空命令 |
 | `timeout_ms` | int | 否 | `1..600000`，默认 `60000` |
 | `request_id` | string | 否 | 幂等键，账号维度去重 |
 
 **响应 `200`：**
+
+未提供 `worker_id` 时，Console 不产生 Worker dispatch，并返回当前账号全部在线与离线 Worker System：
+
+```json
+{"worker_list":[{"worker_id":"worker-id","node_name":"laptop","status":"online","capabilities":[]}]}
+```
+
+提供 `worker_id` 时响应为：
 
 ```json
 {
@@ -875,7 +886,7 @@ Worker 类型：`normal`（对应 `worker-docker`/`worker-boxlite`）、`worker-
 }
 ```
 
-> 与 Terminal 执行不同，Computer Use 不维护会话（无 `session_id`），每次命令均在账号绑定的 `worker-sys` 宿主机上通过 `/bin/sh -lc` 执行，无容器隔离。
+> 与 Terminal 执行不同，Computer Use 不维护会话（无 `session_id`），每次命令均直接在选定的 `worker-sys` 宿主机执行，无容器隔离。
 
 **错误码：**
 
@@ -884,7 +895,7 @@ Worker 类型：`normal`（对应 `worker-docker`/`worker-boxlite`）、`worker-
 | `400` | `invalid_payload` | 请求参数非法 |
 | `409` | `session_busy` | worker 正忙，或任务已取消 |
 | `429` | `no_capacity` | 无可用并发容量 |
-| `503` | `no_worker` | 当前账号无在线 `worker-sys` |
+| `503` | — | 指定 Worker 离线或缺少目标 capability |
 | `504` | — | 执行超时 |
 | `502` | — | 其他执行失败 |
 
@@ -974,6 +985,12 @@ Task 适合需要异步执行或结果轮询的场景。所有权按 token 对�
 | `wait_ms` | int | 否 | `1..60000`，默认 `1500`；`auto` 模式下等待完成的最长毫秒数 |
 | `timeout_ms` | int | 否 | `1..600000`，默认 `60000`；任务总超时 |
 | `request_id` | string | 否 | 幂等键，账号维度去重 |
+
+各 capability 的路由规则与 MCP 和专用命令接口一致：
+
+- `computerUse` 从 `input.worker_id` 读取目标；省略时任务在 Console 内直接完成，`result.worker_list` 返回全部自有 Worker System，不产生 Worker dispatch。
+- `readImage` 使用 `input.session_id="CU:<worker_id>"` 指定自有 Worker System；其他值作为 sandbox terminal session ID。
+- `terminalExec` 在 `create_if_missing=true` 且 `input.session_id` 使用保留 Computer Use 前缀时拒绝请求。
 
 > terminal 容量改派期间，同一任务保持 `task_id` 与 `request_id` 不变；`command_id` 表示当前或最后一次 worker 派发，因此任务运行中可能更新。
 

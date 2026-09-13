@@ -27,6 +27,8 @@ The current version of `worker-sys` is feature-complete in terms of capabilities
 2. Execution requests are spawned as native OS processes on the host.
 3. Process stdout/stderr is streamed back through the control plane.
 
+An account can provision multiple `worker-sys` instances. Public `computerUse` calls select one with `worker_id`; omitting it lists all caller-owned instances and their online/offline state. Public `readImage` and `exportFile` calls use `CU:<worker_id>`. Console validates ownership and type, pins execution to that Worker without fallback, and translates the public session ID to the internal `session_id="computerUse"` value understood by `worker-sys`.
+
 ### Shell selection (cross-platform)
 
 `computerUse` runs commands through the host's system shell. The shell is selected per platform:

@@ -1746,7 +1746,7 @@ func TestReadImageComputerUseRoutesByOwner(t *testing.T) {
 	streamB := startWorker(workerBID, workerBSecret, "owner-b")
 	defer streamB.CloseSend()
 
-	callReadImage := func(token string) *mcp.CallToolResult {
+	callReadImage := func(token string, workerID string) *mcp.CallToolResult {
 		client := mcp.NewClient(&mcp.Implementation{
 			Name:    "mcp-read-image-computer-use-client",
 			Version: "v0.1.0",
@@ -1764,7 +1764,7 @@ func TestReadImageComputerUseRoutesByOwner(t *testing.T) {
 		result, err := session.CallTool(ctx, &mcp.CallToolParams{
 			Name: "readImage",
 			Arguments: map[string]any{
-				"session_id": "computerUse",
+				"session_id": "CU:" + workerID,
 				"file_path":  "/workspace/image.png",
 			},
 		})
@@ -1774,7 +1774,7 @@ func TestReadImageComputerUseRoutesByOwner(t *testing.T) {
 		return result
 	}
 
-	resultA := callReadImage(testMCPToken)
+	resultA := callReadImage(testMCPToken, workerAID)
 	if resultA.IsError {
 		t.Fatalf("expected token A readImage computerUse success, got %q", firstTextContent(resultA))
 	}
@@ -1786,7 +1786,7 @@ func TestReadImageComputerUseRoutesByOwner(t *testing.T) {
 		t.Fatalf("expected token A to route owner-a worker, got %q", string(imageA.Data))
 	}
 
-	resultB := callReadImage(testMCPTokenB)
+	resultB := callReadImage(testMCPTokenB, workerAID)
 	if resultB.IsError {
 		t.Fatalf("expected token B readImage computerUse success, got %q", firstTextContent(resultB))
 	}
@@ -1798,7 +1798,7 @@ func TestReadImageComputerUseRoutesByOwner(t *testing.T) {
 		t.Fatalf("expected token B to route owner-a worker, got %q", string(imageB.Data))
 	}
 
-	resultC := callReadImage(tokenC)
+	resultC := callReadImage(tokenC, workerBID)
 	if resultC.IsError {
 		t.Fatalf("expected token C readImage computerUse success, got %q", firstTextContent(resultC))
 	}
@@ -1810,12 +1810,12 @@ func TestReadImageComputerUseRoutesByOwner(t *testing.T) {
 		t.Fatalf("expected token C to route owner-b worker, got %q", string(imageC.Data))
 	}
 
-	resultD := callReadImage(tokenD)
+	resultD := callReadImage(tokenD, workerAID)
 	if !resultD.IsError {
 		t.Fatalf("expected token D readImage computerUse to fail without owned worker-sys")
 	}
-	if got := firstTextContent(resultD); !strings.Contains(got, "no online worker supports requested capability") {
-		t.Fatalf("expected no_worker-style tool error for token D, got %q", got)
+	if got := firstTextContent(resultD); !strings.Contains(got, "worker_id is invalid") {
+		t.Fatalf("expected invalid-worker tool error for token D, got %q", got)
 	}
 }
 

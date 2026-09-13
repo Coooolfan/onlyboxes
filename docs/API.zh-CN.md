@@ -337,7 +337,7 @@ Worker 类型：
 - 普通用户：
   - list/stats/inflight：仅本人 `worker-sys`
   - delete：仅本人 `worker-sys`（其他目标返回 `404`）
-  - create：仅可创建 `worker-sys`，且每账号最多一个
+  - create：仅可创建 `worker-sys`；每个账号可拥有多个 Worker System
 
 ### 5.1 查询 Worker 列表
 
@@ -453,7 +453,7 @@ Worker 类型：
 
 - `type` 必填，取值 `normal|worker-sys`
 - 仅管理员可创建 `normal`
-- 每个账号最多创建一个 `worker-sys`
+- 每个账号可创建多个 `worker-sys`
 
 成功 `201`：
 
@@ -474,7 +474,6 @@ Worker 类型：
 
 - `400` 请求体不合法 / `type` 非法
 - `403` 普通用户创建 `normal`
-- `409` 当前账号已存在 `worker-sys`
 - `503` provisioning 不可用
 - `500` 创建失败
 
@@ -612,7 +611,11 @@ Worker 类型：
 
 约束：
 
-- `command` 必填，trim 后不能为空
+- `command` 必填且 trim 后不能为空
+- `session_id` 可选；省略时创建新的 sandbox terminal session
+- `create_if_missing` 可选；为 `true` 时可创建缺失的具名 sandbox session
+- `lease_ttl_sec` 可选，用于延长 session lease
+- 当 `create_if_missing=true` 时，使用保留 Computer Use 前缀（默认 `CU:`）的 session ID 会被拒绝；`create_if_missing=false` 仍按普通 sandbox 查找语义处理
 - `timeout_ms` 可选，范围 `1..600000`，默认 `60000`
 - `request_id` 可选，幂等键（按账号隔离）
 
@@ -660,6 +663,7 @@ Worker 类型：
 ```json
 {
   "command": "pwd",
+  "worker_id": "当前账号的-worker-id",
   "timeout_ms": 60000,
   "request_id": "optional-idempotency-key"
 }
@@ -667,12 +671,12 @@ Worker 类型：
 
 约束：
 
-- `command` 必填，trim 后不能为空
+- `worker_id` 可选；提供时必须指向当前账号的 `worker-sys`，并固定投递到该节点，不回退到其他 Worker
+- 提供 `worker_id` 时 `command` 必填且 trim 后不能为空
 - `timeout_ms` 可选，范围 `1..600000`，默认 `60000`
 - `request_id` 可选，幂等键（按账号隔离）
 - 兼容旧客户端时，传入 `lease_ttl_sec` 会被忽略
-- 调度只会路由到调用账号自己的 `worker-sys`
-- 单账号并发固定为 1（`max_inflight=1`）
+- 未提供 `worker_id` 时不派发命令（即使同时传了 `command`），而是返回当前账号全部在线和离线 Worker System
 
 成功 `200`：
 
@@ -686,13 +690,19 @@ Worker 类型：
 }
 ```
 
+列表模式成功响应：
+
+```json
+{"worker_list":[{"worker_id":"...","node_name":"laptop","status":"online","capabilities":[]}]}
+```
+
 错误：
 
 - `400` 请求参数非法或 `invalid_payload`
 - `409` worker `session_busy` 或任务被取消
   - `session_busy` 表示请求超出 worker 的单能力并发上限，默认为 `1`（`WORKER_COMPUTER_USE_MAX_INFLIGHT`）。
 - `429` 无可用并发容量（`no_capacity`）
-- `503` 当前账号无在线 `worker-sys`（`no_worker`）
+- `503` 指定 Worker 离线或缺少请求的 capability
 - `504` 超时
 - `502` 其他执行失败
 
@@ -770,6 +780,9 @@ Task 所有权按账号隔离（由 token 对应账号决定）。
 - `wait_ms`：`1..60000`，默认 `1500`
 - `timeout_ms`：`1..600000`，默认 `60000`
 - `request_id`：可选幂等键（账号维度去重）
+- `computerUse` 从 `input.worker_id` 读取目标；缺失时任务在 Console 内直接完成，`result.worker_list` 包含全部自有 Worker System，且不会产生 Worker dispatch。
+- `readImage` 使用 `input.session_id="CU:<worker_id>"` 指定 Worker System；其他值按 sandbox session ID 处理。
+- `terminalExec` 在 `create_if_missing=true` 且 `input.session_id` 使用保留的 Computer Use 前缀时拒绝请求。
 - 对于 `terminalResource` export payload，`input.headers` 会在下发前过滤；只有 `x-amz-*`、`Content-Type`、`Content-MD5` 上传头会转发给 worker。
 - terminal 容量改派期间，同一任务保持 `task_id` 与 `request_id` 不变；`command_id` 表示当前或最后一次 worker 派发，因此任务运行中可能更新。
 
@@ -938,6 +951,7 @@ Task 所有权按账号隔离（由 token 对应账号决定）。
 - `command` 必填
 - `session_id` 可选
 - `create_if_missing` 可选，默认 `false`
+- `create_if_missing=true` 时拒绝使用保留的 Computer Use 前缀（默认 `CU:`）作为 session ID
 - `lease_ttl_sec` 可选
 - `timeout_ms` 可选，`1..600000`，默认 `60000`
 
@@ -963,15 +977,18 @@ Task 所有权按账号隔离（由 token 对应账号决定）。
 ```json
 {
   "command": "pwd",
+  "worker_id": "当前账号的-worker-id",
   "timeout_ms": 60000,
   "request_id": "optional-idempotency-key"
 }
 ```
 
-- `command` 必填
+- `worker_id` 可选；提供时必须选择当前账号的 `worker-sys`，且不会回退到其他 Worker
+- 提供 `worker_id` 时 `command` 必填
+- 未提供 `worker_id` 时不派发命令，输出为包含在线与离线 Worker System 的 `{"worker_list":[...]}`
 - `timeout_ms` 可选，`1..600000`，默认 `60000`
 - `request_id` 可选，幂等键（账号维度）
-- 只会路由到调用账号自己的 `worker-sys`
+- 只会路由到选定的当前账号 `worker-sys`
 - 不包含终端会话字段（`session_id`、`create_if_missing`、`created`）
 
 输出：
@@ -997,8 +1014,8 @@ Task 所有权按账号隔离（由 token 对应账号决定）。
 - `session_id` 必填
 - `file_path` 必填
 - `timeout_ms` 可选，`1..600000`，默认 `60000`
-- 当 `session_id` 精确等于 `computerUse` 时，路由到调用账号自有 `worker-sys` 的 `readImage` capability
-- 其他 `session_id` 仍路由到 `terminalResource` capability
+- `session_id="CU:<worker_id>"` 路由到该账号自有的指定 `worker-sys`；Console 发给 Worker 的内部值仍为 `session_id="computerUse"`
+- 其他值（包括旧公开别名 `computerUse`）均作为 sandbox session ID，通过 `terminalResource` 路由
 
 行为：
 
@@ -1006,12 +1023,19 @@ Task 所有权按账号隔离（由 token 对应账号决定）。
 - 若目标 MIME 非图片：返回一个文本内容项：
   - `unsupported mime type: <mime>; expected image/*`
 
+#### 工具：`exportFile`
+
+- 与 `readImage` 使用相同路由规则：`CU:<worker_id>` 指定当前账号的 Worker System，其他值指定 sandbox terminal session。
+- Worker System 请求派发前会映射为内部协议值 `session_id="computerUse"`。
+- `CU:` 前缀大小写敏感，可通过 `CONSOLE_COMPUTER_USE_SESSION_ID_PREFIX` / `computer_use_session_id_prefix` 配置。修改会改变 session ID 的解释方式，通常不建议修改；空值或全空白值会回退到 `CU:` 并记录 warning。
+- 这是公开协议变更：`computerUse` 不再是公开别名，客户端必须先获取/选择 Worker 并传入其 ID。
+
 ### 9.3 MCP 错误行为
 
 - Token 缺失或无效：HTTP `401`
 - 参数校验失败：JSON-RPC `-32602`
-- `computerUse` 调用账号未创建 `worker-sys`：JSON-RPC `-32010`，`data.error_code="WORKER_SYS_REQUIRED"`
-- `computerUse` 调用账号已注册 `worker-sys` 但不在线：JSON-RPC `-32011`，`data.error_code="WORKER_SYS_OFFLINE"`
+- 未知、跨账号或非 `worker-sys` 的目标 ID 返回同一种不泄露信息的无效 Worker 错误
+- 指定 Worker 离线、缺少目标 capability、容量已满分别保留不同的工具错误语义
 - 执行异常：作为 MCP tool error 内容返回（`isError=true`）
 
 ## 10. Worker gRPC API（`api/proto/registry/v1/registry.proto`）
