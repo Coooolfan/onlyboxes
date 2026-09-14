@@ -129,7 +129,6 @@ func NewRouter(workerHandler *WorkerHandler, consoleAuth *ConsoleAuth, mcpAuth *
 	}
 	router.Any("/mcp", mcpAuth.RequireTokenWithQueryFallback(), gin.WrapH(NewMCPHandler(
 		workerHandler.dispatcher,
-		workerHandler.store,
 		hiddenTools,
 		workerHandler.exportStore,
 		workerHandler.exportPrefix,

@@ -98,7 +98,7 @@ type terminalCommandResponse struct {
 	LeaseExpiresUnixMS int64  `json:"lease_expires_unix_ms"`
 }
 
-type computerUseCommandResponse struct {
+type computerUseResult struct {
 	WorkerList      []computerUseWorkerItem `json:"worker_list,omitempty"`
 	Stdout          string                  `json:"stdout"`
 	Stderr          string                  `json:"stderr"`
@@ -107,15 +107,17 @@ type computerUseCommandResponse struct {
 	StderrTruncated bool                    `json:"stderr_truncated"`
 }
 
-func (r computerUseCommandResponse) MarshalJSON() ([]byte, error) {
+func (r computerUseResult) MarshalJSON() ([]byte, error) {
 	if r.WorkerList != nil {
 		return json.Marshal(struct {
 			WorkerList []computerUseWorkerItem `json:"worker_list"`
 		}{WorkerList: r.WorkerList})
 	}
-	type executionResult computerUseCommandResponse
+	type executionResult computerUseResult
 	return json.Marshal(executionResult(r))
 }
+
+type computerUseCommandResponse = computerUseResult
 
 type computerUseWorkerItem struct {
 	WorkerID     string                           `json:"worker_id"`

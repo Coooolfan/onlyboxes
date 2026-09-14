@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"encoding/json"
 	"log/slog"
 	"regexp"
 )
@@ -82,24 +81,7 @@ type mcpComputerUseToolInput struct {
 	RequestID string  `json:"request_id,omitempty"`
 }
 
-type mcpComputerUseToolOutput struct {
-	WorkerList      []computerUseWorkerItem `json:"worker_list,omitempty"`
-	Stdout          string                  `json:"stdout"`
-	Stderr          string                  `json:"stderr"`
-	ExitCode        int                     `json:"exit_code"`
-	StdoutTruncated bool                    `json:"stdout_truncated"`
-	StderrTruncated bool                    `json:"stderr_truncated"`
-}
-
-func (r mcpComputerUseToolOutput) MarshalJSON() ([]byte, error) {
-	if r.WorkerList != nil {
-		return json.Marshal(struct {
-			WorkerList []computerUseWorkerItem `json:"worker_list"`
-		}{WorkerList: r.WorkerList})
-	}
-	type executionResult mcpComputerUseToolOutput
-	return json.Marshal(executionResult(r))
-}
+type mcpComputerUseToolOutput = computerUseResult
 
 type mcpReadImageToolInput struct {
 	SessionID string `json:"session_id"`

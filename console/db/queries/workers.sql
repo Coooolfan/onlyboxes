@@ -162,18 +162,6 @@ WHERE owner_label.label_value = ?
   AND type_label.label_value = ?
 ORDER BY wn.node_id ASC;
 
--- name: CountWorkerNodesByOwnerAndType :one
-SELECT COUNT(1)
-FROM worker_nodes wn
-JOIN worker_labels owner_label
-  ON owner_label.node_id = wn.node_id
-  AND owner_label.label_key = 'obx.owner_id'
-JOIN worker_labels type_label
-  ON type_label.node_id = wn.node_id
-  AND type_label.label_key = 'obx.worker_type'
-WHERE owner_label.label_value = ?
-  AND type_label.label_value = ?;
-
 -- name: ListOnlineWorkerNodeIDsByOwnerTypeAndCapability :many
 SELECT wn.node_id
 FROM worker_nodes wn
