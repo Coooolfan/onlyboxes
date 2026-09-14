@@ -992,6 +992,8 @@ Capability-specific routing is identical to MCP and the dedicated command endpoi
 - `readImage` uses `input.session_id="CU:<worker_id>"` to target a caller-owned Worker System. Other values are sandbox terminal session IDs.
 - `terminalExec` rejects `create_if_missing=true` when `input.session_id` starts with the reserved Computer Use prefix.
 
+> `CU:` is the default, case-sensitive Computer Use session ID prefix. It can be changed with the `CONSOLE_COMPUTER_USE_SESSION_ID_PREFIX` environment variable or the `computer_use_session_id_prefix` TOML setting; the example above uses the default. Console uses the same setting to interpret session IDs in the task API, MCP `readImage`/`exportFile`, and `terminalExec`.
+
 > One task keeps the same `task_id` and `request_id` across internal terminal capacity retries; `command_id` is the current or last worker dispatch attempt, so it can change while the task is running.
 
 **`mode` field:**

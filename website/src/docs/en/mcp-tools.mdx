@@ -287,6 +287,8 @@ Reads an image file from a terminal session environment or a `worker-sys` host, 
 | `CU:<worker_id>` | That caller-owned `worker-sys` `readImage` capability |
 | Any other value, including `computerUse` | `terminalResource` capability (same worker as `terminalExec`) |
 
+> `CU:` is the default, case-sensitive prefix. It can be changed with the `CONSOLE_COMPUTER_USE_SESSION_ID_PREFIX` environment variable or the `computer_use_session_id_prefix` TOML setting; the examples below use the default. Changing the prefix alters how `readImage`, `exportFile`, and `terminalExec` interpret session IDs and is generally not recommended.
+
 **Input example (from a terminal session):**
 
 ```json
@@ -391,7 +393,7 @@ Output fields depend on the `CONSOLE_EXPORT_RETURN_SCHEMA` environment variable:
 | `terminalExec` reaches `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS` while creating a session | Returned as MCP tool error content with `isError: true`; the text contains `session_capacity_exceeded` |
 | Tool execution error (timeout, no_worker, etc.) | Returned as MCP tool error content (`isError: true`); not a protocol-level error |
 
-The `CU:` prefix is case-sensitive and can be changed with `CONSOLE_COMPUTER_USE_SESSION_ID_PREFIX`. Changing it alters session-ID interpretation and is generally not recommended. The former public alias `computerUse` is no longer special; clients must list/select a Worker and use its ID. Console still sends the unchanged internal `session_id="computerUse"` value to `worker-sys`.
+The former public alias `computerUse` is no longer special; clients must list/select a Worker and use its ID. Console still sends the unchanged internal `session_id="computerUse"` value to `worker-sys`.
 
 ---
 

@@ -992,6 +992,8 @@ Task 适合需要异步执行或结果轮询的场景。所有权按 token 对�
 - `readImage` 使用 `input.session_id="CU:<worker_id>"` 指定自有 Worker System；其他值作为 sandbox terminal session ID。
 - `terminalExec` 在 `create_if_missing=true` 且 `input.session_id` 使用保留 Computer Use 前缀时拒绝请求。
 
+> `CU:` 是默认且大小写敏感的 Computer Use session ID 前缀。可通过环境变量 `CONSOLE_COMPUTER_USE_SESSION_ID_PREFIX` 或 TOML 配置项 `computer_use_session_id_prefix` 修改；上述示例使用默认值。Console 会使用同一配置解释任务 API、MCP `readImage`/`exportFile` 和 `terminalExec` 中的 session ID。
+
 > terminal 容量改派期间，同一任务保持 `task_id` 与 `request_id` 不变；`command_id` 表示当前或最后一次 worker 派发，因此任务运行中可能更新。
 
 **`mode` 字段说明：**

@@ -287,6 +287,8 @@ Accept: application/json, text/event-stream
 | `CU:<worker_id>` | 指定的账号自有 `worker-sys` 的 `readImage` capability |
 | 其他任意值（包括 `computerUse`） | `terminalResource` capability（对应 `terminalExec` 所在 worker） |
 
+> `CU:` 是默认前缀，大小写敏感。可通过环境变量 `CONSOLE_COMPUTER_USE_SESSION_ID_PREFIX` 或 TOML 配置项 `computer_use_session_id_prefix` 修改；下文示例均使用默认值。修改前缀会改变 `readImage`、`exportFile` 以及 `terminalExec` 对 session ID 的解释方式，通常不建议修改。
+
 **入参示例（从 terminal 会话读取）：**
 
 ```json
@@ -391,7 +393,7 @@ unsupported mime type: <mime>; expected image/*
 | `terminalExec` 新建 session 时达到 `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS` | 作为 MCP 工具错误内容返回，`isError: true`，文本包含 `session_capacity_exceeded` |
 | 工具执行异常（超时、no_worker 等） | 作为 MCP 工具错误内容返回（`isError: true`），不是协议层错误 |
 
-`CU:` 前缀大小写敏感，可通过 `CONSOLE_COMPUTER_USE_SESSION_ID_PREFIX` 修改。修改会改变 session ID 的解释方式，通常不建议修改。旧公开别名 `computerUse` 不再具有特殊含义；客户端必须先列出/选择 Worker，再使用其 ID。Console 发给 `worker-sys` 的内部值仍保持 `session_id="computerUse"`。
+旧公开别名 `computerUse` 不再具有特殊含义；客户端必须先列出/选择 Worker，再使用其 ID。Console 发给 `worker-sys` 的内部值仍保持 `session_id="computerUse"`。
 
 ---
 
