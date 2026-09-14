@@ -2,6 +2,26 @@
 DROP TABLE IF EXISTS worker_sys_owner_claims;
 
 -- +goose Down
+CREATE TABLE worker_sys_owner_claims_rollback_guard (
+    owner_id TEXT PRIMARY KEY,
+    violation INTEGER NOT NULL
+        CONSTRAINT rollback_requires_at_most_one_worker_sys_per_owner
+        CHECK (violation = 0)
+);
+
+INSERT INTO worker_sys_owner_claims_rollback_guard (owner_id, violation)
+SELECT owner_label.label_value, 1
+FROM worker_nodes wn
+JOIN worker_labels owner_label
+  ON owner_label.node_id = wn.node_id AND owner_label.label_key = 'obx.owner_id'
+JOIN worker_labels type_label
+  ON type_label.node_id = wn.node_id AND type_label.label_key = 'obx.worker_type'
+WHERE owner_label.label_value <> '' AND LOWER(type_label.label_value) = 'worker-sys'
+GROUP BY owner_label.label_value
+HAVING COUNT(*) > 1;
+
+DROP TABLE worker_sys_owner_claims_rollback_guard;
+
 CREATE TABLE worker_sys_owner_claims (
     owner_id TEXT PRIMARY KEY,
     node_id TEXT NOT NULL UNIQUE,

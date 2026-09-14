@@ -4,10 +4,12 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/onlyboxes/onlyboxes/console/internal/persistence/sqlc"
+	"github.com/pressly/goose/v3"
 )
 
 func TestOpenRunsMigrationAndStartupRecovery(t *testing.T) {
@@ -182,5 +184,70 @@ func TestOpenCreatesParentDirectoryWhenMissing(t *testing.T) {
 	}
 	if !info.IsDir() {
 		t.Fatalf("expected %q to be a directory", parentDir)
+	}
+}
+
+func TestMultipleWorkerSysMigrationRejectsRollbackWithDuplicateOwner(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, Options{
+		Path:             filepath.Join(t.TempDir(), "console-rollback.db"),
+		BusyTimeoutMS:    5000,
+		HashKey:          "test-hash-key",
+		TaskRetentionDay: 30,
+	})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer func() {
+		_ = db.Close()
+	}()
+
+	for _, nodeID := range []string{"worker-sys-1", "worker-sys-2"} {
+		if _, err := db.SQL.ExecContext(ctx, `
+			INSERT INTO worker_nodes (
+				node_id, registered_at_unix_ms, last_seen_at_unix_ms
+			) VALUES (?, 1, 1)
+		`, nodeID); err != nil {
+			t.Fatalf("insert worker node %q: %v", nodeID, err)
+		}
+		for key, value := range map[string]string{
+			"obx.owner_id":    "owner-1",
+			"obx.worker_type": "worker-sys",
+		} {
+			if _, err := db.SQL.ExecContext(ctx, `
+				INSERT INTO worker_labels (node_id, label_key, label_value)
+				VALUES (?, ?, ?)
+			`, nodeID, key, value); err != nil {
+				t.Fatalf("insert worker label %q for %q: %v", key, nodeID, err)
+			}
+		}
+	}
+
+	rollbackErr := goose.DownToContext(ctx, db.SQL, ".", 8)
+	if rollbackErr == nil {
+		t.Fatal("expected migration rollback to reject duplicate worker-sys owner")
+	}
+	if !strings.Contains(rollbackErr.Error(), "rollback_requires_at_most_one_worker_sys_per_owner") {
+		t.Fatalf("expected actionable rollback error, got %v", rollbackErr)
+	}
+
+	version, err := goose.GetDBVersionContext(ctx, db.SQL)
+	if err != nil {
+		t.Fatalf("get migration version: %v", err)
+	}
+	if version != 9 {
+		t.Fatalf("expected failed rollback to retain version 9, got %d", version)
+	}
+
+	var claimTableCount int
+	if err := db.SQL.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM sqlite_master
+		WHERE type = 'table' AND name = 'worker_sys_owner_claims'
+	`).Scan(&claimTableCount); err != nil {
+		t.Fatalf("inspect worker_sys_owner_claims table: %v", err)
+	}
+	if claimTableCount != 0 {
+		t.Fatal("failed rollback must not recreate worker_sys_owner_claims")
 	}
 }
