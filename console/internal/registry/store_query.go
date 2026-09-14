@@ -231,23 +231,6 @@ func (s *Store) ListNodeIDsByOwnerAndType(ownerID string, workerType string) []s
 	return append([]string(nil), nodeIDs...)
 }
 
-func (s *Store) CountWorkersByOwnerAndType(ownerID string, workerType string) int {
-	trimmedOwnerID := strings.TrimSpace(ownerID)
-	normalizedWorkerType := normalizeWorkerType(workerType)
-	if trimmedOwnerID == "" || normalizedWorkerType == "" || s == nil || s.queries == nil {
-		return 0
-	}
-
-	count, err := s.queries.CountWorkerNodesByOwnerAndType(context.Background(), sqlc.CountWorkerNodesByOwnerAndTypeParams{
-		LabelValue:   trimmedOwnerID,
-		LabelValue_2: normalizedWorkerType,
-	})
-	if err != nil {
-		return 0
-	}
-	return int(count)
-}
-
 func (s *Store) ListOnlineNodeIDsByOwnerTypeAndCapability(
 	ownerID string,
 	workerType string,

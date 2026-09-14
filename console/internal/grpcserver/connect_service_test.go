@@ -190,7 +190,7 @@ func TestCreateProvisionedWorkerForOwnerWorkerSysConcurrent(t *testing.T) {
 	if successCount.Load() != concurrentCreates {
 		t.Fatalf("expected %d successful worker-sys creations, got %d", concurrentCreates, successCount.Load())
 	}
-	if count := store.CountWorkersByOwnerAndType("owner-a", registry.WorkerTypeSys); count != concurrentCreates {
+	if count := len(store.ListByOwnerAndType("owner-a", registry.WorkerTypeSys, now, 15*time.Second)); count != concurrentCreates {
 		t.Fatalf("expected %d worker-sys in store, got %d", concurrentCreates, count)
 	}
 }

@@ -56,31 +56,6 @@ func (q *Queries) ClearWorkerSessionByNodeAndSession(ctx context.Context, arg Cl
 	return result.RowsAffected()
 }
 
-const countWorkerNodesByOwnerAndType = `-- name: CountWorkerNodesByOwnerAndType :one
-SELECT COUNT(1)
-FROM worker_nodes wn
-JOIN worker_labels owner_label
-  ON owner_label.node_id = wn.node_id
-  AND owner_label.label_key = 'obx.owner_id'
-JOIN worker_labels type_label
-  ON type_label.node_id = wn.node_id
-  AND type_label.label_key = 'obx.worker_type'
-WHERE owner_label.label_value = ?
-  AND type_label.label_value = ?
-`
-
-type CountWorkerNodesByOwnerAndTypeParams struct {
-	LabelValue   string `json:"label_value"`
-	LabelValue_2 string `json:"label_value_2"`
-}
-
-func (q *Queries) CountWorkerNodesByOwnerAndType(ctx context.Context, arg CountWorkerNodesByOwnerAndTypeParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countWorkerNodesByOwnerAndType, arg.LabelValue, arg.LabelValue_2)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
 const deleteOfflineRuntimeWorkers = `-- name: DeleteOfflineRuntimeWorkers :execrows
 DELETE FROM worker_nodes
 WHERE provisioned = 0
