@@ -2,7 +2,11 @@ package grpcserver
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestTerminalSessionIntentForTaskInput(t *testing.T) {
@@ -85,6 +89,34 @@ func TestScopeAndUnscopeTerminalSessionIDSupportsColonInExternalID(t *testing.T)
 	}
 	if external != "session:part:1" {
 		t.Fatalf("expected external session_id to be preserved, got %q", external)
+	}
+}
+
+func TestScopeTaskInputByOwnerValidatesExternalTerminalSessionID(t *testing.T) {
+	svc := &RegistryService{}
+	tests := []struct {
+		name       string
+		capability string
+		sessionID  string
+		wantCode   codes.Code
+	}{
+		{name: "terminal exec URL-safe ID", capability: taskCapabilityTerminalExec, sessionID: "session-a_1.2:part", wantCode: codes.OK},
+		{name: "terminal resource URL-safe ID", capability: taskCapabilityTerminalResource, sessionID: "session-a_1.2:part", wantCode: codes.OK},
+		{name: "slash", capability: taskCapabilityTerminalExec, sessionID: "session/a", wantCode: codes.InvalidArgument},
+		{name: "query delimiter", capability: taskCapabilityTerminalExec, sessionID: "session?a", wantCode: codes.InvalidArgument},
+		{name: "fragment delimiter", capability: taskCapabilityTerminalResource, sessionID: "session#a", wantCode: codes.InvalidArgument},
+		{name: "internal whitespace", capability: taskCapabilityTerminalExec, sessionID: "session a", wantCode: codes.InvalidArgument},
+		{name: "too long", capability: taskCapabilityTerminalExec, sessionID: "s" + strings.Repeat("a", 256), wantCode: codes.InvalidArgument},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			input := []byte(`{"session_id":"` + tc.sessionID + `"}`)
+			_, err := svc.scopeTaskInputByOwner(tc.capability, "owner-a", input)
+			if got := status.Code(err); got != tc.wantCode {
+				t.Fatalf("status code=%v, want %v: %v", got, tc.wantCode, err)
+			}
+		})
 	}
 }
 

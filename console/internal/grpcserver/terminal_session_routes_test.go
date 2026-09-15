@@ -736,6 +736,47 @@ func TestListTerminalSessionsScopesByOwnerAndSkipsProvisional(t *testing.T) {
 	}
 }
 
+func TestTerminalSessionManagementHidesRouteUntilLeaseIsConfirmed(t *testing.T) {
+	store := registrytest.NewStore(t)
+	svc := NewRegistryService(store, nil, 5, 15, time.Minute)
+	base := time.Unix(1_700_905_000, 0)
+	scopedSessionID := "obx:owner-a:session-canceled"
+
+	nodeID, reservationID := svc.reserveTerminalSessionRoute(scopedSessionID, "node-a", base)
+	if nodeID != "node-a" || reservationID == 0 {
+		t.Fatalf("unexpected reservation node=%q id=%d", nodeID, reservationID)
+	}
+	if !svc.confirmTerminalSessionRoute(scopedSessionID, nodeID, reservationID, base) {
+		t.Fatal("expected cancellation-style in-memory confirmation")
+	}
+
+	if views := svc.ListTerminalSessions("owner-a", base); len(views) != 0 {
+		t.Fatalf("route without a confirmed lease must be hidden, got %#v", views)
+	}
+	if _, ok := svc.GetTerminalSession("owner-a", "session-canceled", base); ok {
+		t.Fatal("route without a confirmed lease must not be readable")
+	}
+	if deleted, err := svc.DeleteTerminalSession("owner-a", "session-canceled", base); err != nil || deleted {
+		t.Fatalf("route without a confirmed lease must not be manageable: deleted=%v err=%v", deleted, err)
+	}
+
+	leaseExpires := base.Add(time.Hour).UnixMilli()
+	confirmed, err := svc.commitConfirmedTerminalSessionRoute(
+		scopedSessionID,
+		nodeID,
+		reservationID,
+		leaseExpires,
+		base.Add(time.Second),
+	)
+	if err != nil || !confirmed {
+		t.Fatalf("commit confirmed route: confirmed=%v err=%v", confirmed, err)
+	}
+	views := svc.ListTerminalSessions("owner-a", base.Add(time.Second))
+	if len(views) != 1 || views[0].SessionID != "session-canceled" || views[0].LeaseExpiresUnixMs != leaseExpires {
+		t.Fatalf("unexpected confirmed views: %#v", views)
+	}
+}
+
 func TestGetAndDeleteTerminalSessionOwnerIsolation(t *testing.T) {
 	store := registrytest.NewStore(t)
 	svc := NewRegistryService(store, nil, 5, 15, time.Minute)
