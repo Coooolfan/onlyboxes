@@ -198,6 +198,21 @@ func NewRouter(workerHandler *WorkerHandler, consoleAuth *ConsoleAuth, mcpAuth *
 	adminManagement.GET("/accounts", consoleAuth.ListAccounts)
 	adminManagement.DELETE("/accounts/:account_id", consoleAuth.DeleteAccount)
 
+	api.POST("/console/login", consoleAuth.Login)
+	api.POST("/console/logout", consoleAuth.Logout)
+	api.GET("/console/session", consoleAuth.RequireAuth(apiKeyAuth), consoleAuth.Session)
+	management.POST("/console/password", consoleAuth.RequireCookieSession(), consoleAuth.ChangePassword)
+	management.GET("/console/api-keys", apiKeyAuth.ListAPIKeys)
+	management.POST("/console/api-keys", consoleAuth.RequireCookieSession(), apiKeyAuth.CreateAPIKey)
+	management.DELETE("/console/api-keys/:api_key_id", consoleAuth.RequireCookieSession(), apiKeyAuth.DeleteAPIKey)
+	management.GET("/console/tokens", consoleAuth.RequireCookieSession(), mcpAuth.ListTokens)
+	management.POST("/console/tokens", consoleAuth.RequireCookieSession(), mcpAuth.CreateToken)
+	management.DELETE("/console/tokens/:token_id", consoleAuth.RequireCookieSession(), mcpAuth.DeleteToken)
+	management.GET("/console/tokens/:token_id/value", consoleAuth.RequireCookieSession(), mcpAuth.GetTokenValue)
+	adminManagement.POST("/console/register", consoleAuth.Register)
+	adminManagement.GET("/console/accounts", consoleAuth.ListAccounts)
+	adminManagement.DELETE("/console/accounts/:account_id", consoleAuth.DeleteAccount)
+
 	if err := registerEmbeddedWebRoutes(router); err != nil {
 		return nil, err
 	}

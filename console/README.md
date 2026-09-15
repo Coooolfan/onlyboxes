@@ -171,6 +171,8 @@ The console service hosts:
     - `POST /api/v1/tokens`
     - `DELETE /api/v1/tokens/:token_id`
     - `GET /api/v1/tokens/:token_id/value`
+  - previously published `/api/v1/console/*` authentication, account, API key, and token paths remain registered as compatibility aliases with identical handlers and authentication requirements.
+  - terminal session management has no `/api/v1/console/sessions*` alias because it was first published at `/api/v1/sessions*`.
 
 Hidden tools (`CONSOLE_HIDDEN_TOOLS`):
 - comma-separated list of tool names to hide from MCP `tools/list`.
