@@ -11,12 +11,6 @@ import (
 
 const defaultSessionPageSize = 20
 
-type TerminalSessionRegistry interface {
-	ListTerminalSessions(ownerID string, now time.Time) []grpcserver.TerminalSessionView
-	GetTerminalSession(ownerID string, sessionID string, now time.Time) (grpcserver.TerminalSessionView, bool)
-	DeleteTerminalSession(ownerID string, sessionID string, now time.Time) (bool, error)
-}
-
 type sessionItem struct {
 	AccountID      string    `json:"account_id"`
 	SessionID      string    `json:"session_id"`
@@ -34,7 +28,7 @@ type listSessionsResponse struct {
 	PageSize int           `json:"page_size"`
 }
 
-func (h *WorkerHandler) SetTerminalSessionRegistry(registry TerminalSessionRegistry) {
+func (h *WorkerHandler) SetTerminalSessionRegistry(registry *grpcserver.RegistryService) {
 	if h == nil {
 		return
 	}
@@ -42,7 +36,7 @@ func (h *WorkerHandler) SetTerminalSessionRegistry(registry TerminalSessionRegis
 }
 
 func (h *WorkerHandler) ListSessions(c *gin.Context) {
-	ownerID, ok := h.resolveConsoleSessionListOwner(c)
+	ownerID, ok := h.resolveConsoleSessionOwner(c, false)
 	if !ok {
 		return
 	}
@@ -90,7 +84,7 @@ func (h *WorkerHandler) ListSessions(c *gin.Context) {
 }
 
 func (h *WorkerHandler) GetSession(c *gin.Context) {
-	ownerID, ok := h.resolveConsoleSessionItemOwner(c)
+	ownerID, ok := h.resolveConsoleSessionOwner(c, true)
 	if !ok {
 		return
 	}
@@ -112,7 +106,7 @@ func (h *WorkerHandler) GetSession(c *gin.Context) {
 }
 
 func (h *WorkerHandler) DeleteSession(c *gin.Context) {
-	ownerID, ok := h.resolveConsoleSessionItemOwner(c)
+	ownerID, ok := h.resolveConsoleSessionOwner(c, true)
 	if !ok {
 		return
 	}
@@ -137,7 +131,7 @@ func (h *WorkerHandler) DeleteSession(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-func (h *WorkerHandler) resolveConsoleSessionListOwner(c *gin.Context) (string, bool) {
+func (h *WorkerHandler) resolveConsoleSessionOwner(c *gin.Context, requireAdminAccountID bool) (string, bool) {
 	accountOwner, isAdmin, ok := resolveWorkerAccessScope(c)
 	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
@@ -145,24 +139,7 @@ func (h *WorkerHandler) resolveConsoleSessionListOwner(c *gin.Context) (string, 
 	}
 	requested := strings.TrimSpace(c.Query("account_id"))
 	if isAdmin {
-		return requested, true
-	}
-	if requested != "" && requested != accountOwner {
-		c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
-		return "", false
-	}
-	return accountOwner, true
-}
-
-func (h *WorkerHandler) resolveConsoleSessionItemOwner(c *gin.Context) (string, bool) {
-	accountOwner, isAdmin, ok := resolveWorkerAccessScope(c)
-	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
-		return "", false
-	}
-	requested := strings.TrimSpace(c.Query("account_id"))
-	if isAdmin {
-		if requested == "" {
+		if requireAdminAccountID && requested == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "account_id is required"})
 			return "", false
 		}

@@ -32,7 +32,7 @@ type WorkerHandler struct {
 	exportDownloadTTL          time.Duration
 	exportReturnSchema         string
 	proxyRoutes                *ProxyRouteHandler
-	sessions                   TerminalSessionRegistry
+	sessions                   *grpcserver.RegistryService
 	nowFn                      func() time.Time
 	computerUseSessionIDPrefix string
 }
@@ -198,6 +198,8 @@ func NewRouter(workerHandler *WorkerHandler, consoleAuth *ConsoleAuth, mcpAuth *
 	adminManagement.GET("/accounts", consoleAuth.ListAccounts)
 	adminManagement.DELETE("/accounts/:account_id", consoleAuth.DeleteAccount)
 
+	// Keep previously published /api/v1/console routes as compatibility aliases.
+	// Terminal session management was first published at /api/v1/sessions.
 	api.POST("/console/login", consoleAuth.Login)
 	api.POST("/console/logout", consoleAuth.Logout)
 	api.GET("/console/session", consoleAuth.RequireAuth(apiKeyAuth), consoleAuth.Session)
