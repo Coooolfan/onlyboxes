@@ -42,7 +42,7 @@ func TestRequireAuthAPIKeyPath(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/console/session", nil)
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/session", nil)
 			if tc.header != "" {
 				req.Header.Set(trustedTokenHeader, tc.header)
 			}
@@ -62,7 +62,7 @@ func TestAPIKeyPathDoesNotFallbackToCookie(t *testing.T) {
 	router := mustNewRouter(t, handler, bundle.ConsoleAuth, bundle.MCPAuth, bundle.APIKeyAuth)
 	cookie := loginSessionCookie(t, router)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/console/session", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/session", nil)
 	req.Header.Set(trustedTokenHeader, "Bearer obxk_invalid")
 	req.AddCookie(cookie)
 	res := httptest.NewRecorder()
@@ -80,7 +80,7 @@ func TestJITTokenDoesNotAuthenticateDashboardRoutes(t *testing.T) {
 	cookie := loginSessionCookie(t, router)
 	jitToken := makeTestJITToken(t, "issuer-dashboard", "subject-dashboard")
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/console/session", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/session", nil)
 	req.Header.Set(trustedTokenHeader, "Bearer "+jitToken)
 	req.AddCookie(cookie)
 	res := httptest.NewRecorder()
@@ -97,7 +97,7 @@ func TestNonBearerAuthorizationFallsBackToCookie(t *testing.T) {
 	router := mustNewRouter(t, handler, bundle.ConsoleAuth, bundle.MCPAuth, bundle.APIKeyAuth)
 	cookie := loginSessionCookie(t, router)
 
-	sessionReq := httptest.NewRequest(http.MethodGet, "/api/v1/console/session", nil)
+	sessionReq := httptest.NewRequest(http.MethodGet, "/api/v1/auth/session", nil)
 	sessionReq.Header.Set(trustedTokenHeader, "Basic ZGFzaGJvYXJkOnNlY3JldA==")
 	sessionReq.AddCookie(cookie)
 	sessionRes := httptest.NewRecorder()
@@ -128,7 +128,7 @@ func TestRequireCookieSessionRejectsAPIKeyForSensitiveEndpoints(t *testing.T) {
 
 	passwordReq := httptest.NewRequest(
 		http.MethodPost,
-		"/api/v1/console/password",
+		"/api/v1/auth/password",
 		strings.NewReader(`{"current_password":"password-test","new_password":"rotated-password"}`),
 	)
 	passwordReq.Header.Set("Content-Type", "application/json")
@@ -141,7 +141,7 @@ func TestRequireCookieSessionRejectsAPIKeyForSensitiveEndpoints(t *testing.T) {
 
 	createReq := httptest.NewRequest(
 		http.MethodPost,
-		"/api/v1/console/api-keys",
+		"/api/v1/api-keys",
 		strings.NewReader(`{"name":"blocked"}`),
 	)
 	createReq.Header.Set("Content-Type", "application/json")
@@ -161,7 +161,7 @@ func TestRequireCookieSessionAllowsCookiePasswordChange(t *testing.T) {
 
 	req := httptest.NewRequest(
 		http.MethodPost,
-		"/api/v1/console/password",
+		"/api/v1/auth/password",
 		strings.NewReader(`{"current_password":"password-test","new_password":"rotated-password"}`),
 	)
 	req.Header.Set("Content-Type", "application/json")
@@ -184,7 +184,7 @@ func TestAPIKeyCRUDFlow(t *testing.T) {
 
 	createReq := httptest.NewRequest(
 		http.MethodPost,
-		"/api/v1/console/api-keys",
+		"/api/v1/api-keys",
 		strings.NewReader(`{"name":"ci-prod"}`),
 	)
 	createReq.Header.Set("Content-Type", "application/json")
@@ -206,7 +206,7 @@ func TestAPIKeyCRUDFlow(t *testing.T) {
 		t.Fatalf("expected masked key distinct from plaintext, got %#v", created)
 	}
 
-	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/console/api-keys", nil)
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/api-keys", nil)
 	listReq.AddCookie(cookie)
 	listRes := httptest.NewRecorder()
 	router.ServeHTTP(listRes, listReq)
@@ -225,7 +225,7 @@ func TestAPIKeyCRUDFlow(t *testing.T) {
 		t.Fatalf("expected masked key %q, got %#v", created.KeyMasked, listed.Items[0])
 	}
 
-	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/v1/console/api-keys/"+created.ID, nil)
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/v1/api-keys/"+created.ID, nil)
 	deleteReq.AddCookie(cookie)
 	deleteRes := httptest.NewRecorder()
 	router.ServeHTTP(deleteRes, deleteReq)
@@ -256,7 +256,7 @@ func TestAPIKeyAccountIsolation(t *testing.T) {
 	router := mustNewRouter(t, handler, bundle.ConsoleAuth, bundle.MCPAuth, bundle.APIKeyAuth)
 	cookie := loginSessionCookie(t, router)
 
-	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/console/api-keys", nil)
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/api-keys", nil)
 	listReq.AddCookie(cookie)
 	listRes := httptest.NewRecorder()
 	router.ServeHTTP(listRes, listReq)
@@ -272,7 +272,7 @@ func TestAPIKeyAccountIsolation(t *testing.T) {
 		t.Fatalf("expected only first account api key, got %#v", payload)
 	}
 
-	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/v1/console/api-keys/"+secondRecord.ID, nil)
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/v1/api-keys/"+secondRecord.ID, nil)
 	deleteReq.AddCookie(cookie)
 	deleteRes := httptest.NewRecorder()
 	router.ServeHTTP(deleteRes, deleteReq)
@@ -291,7 +291,7 @@ func TestDashboardEndpointsAllowAPIKey(t *testing.T) {
 		t.Fatalf("create api key: %v", err)
 	}
 
-	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/console/api-keys", nil)
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/api-keys", nil)
 	listReq.Header.Set(trustedTokenHeader, "Bearer "+validRecord.Key)
 	listRes := httptest.NewRecorder()
 	router.ServeHTTP(listRes, listReq)
@@ -299,7 +299,7 @@ func TestDashboardEndpointsAllowAPIKey(t *testing.T) {
 		t.Fatalf("expected api key list 200, got %d body=%s", listRes.Code, listRes.Body.String())
 	}
 
-	sessionReq := httptest.NewRequest(http.MethodGet, "/api/v1/console/session", nil)
+	sessionReq := httptest.NewRequest(http.MethodGet, "/api/v1/auth/session", nil)
 	sessionReq.Header.Set(trustedTokenHeader, "Bearer "+validRecord.Key)
 	sessionRes := httptest.NewRecorder()
 	router.ServeHTTP(sessionRes, sessionReq)
@@ -327,7 +327,7 @@ func TestDashboardEndpointsAllowAPIKey(t *testing.T) {
 func assertAPIKeyListTotal(t *testing.T, router http.Handler, cookie *http.Cookie, total int) {
 	t.Helper()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/console/api-keys", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/api-keys", nil)
 	if cookie != nil {
 		req.AddCookie(cookie)
 	}

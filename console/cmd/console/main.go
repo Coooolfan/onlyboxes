@@ -113,6 +113,7 @@ func main() {
 		cfg.GRPCAddr,
 	)
 	httpHandler.SetComputerUseSessionIDPrefix(cfg.ComputerUseSessionIDPrefix)
+	httpHandler.SetTerminalSessionRegistry(registryService)
 	var proxyRouteHandler *httpapi.ProxyRouteHandler
 	if cfg.ProxyEnabled {
 		if len(cfg.ProxyAllowedDirectDomains) == 0 {

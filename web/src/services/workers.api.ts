@@ -129,7 +129,7 @@ export async function deleteWorkerAPI(nodeID: string): Promise<void> {
 export async function fetchTrustedTokensAPI(
   signal: AbortSignal,
 ): Promise<TrustedTokenListResponse> {
-  const response = await request('/api/v1/console/tokens', { signal })
+  const response = await request('/api/v1/tokens', { signal })
   if (!response.ok) {
     throw new Error(await parseAPIError(response))
   }
@@ -144,7 +144,7 @@ export async function fetchTrustedTokensAPI(
 export async function createTrustedTokenAPI(
   input: TrustedTokenCreateInput,
 ): Promise<TrustedTokenCreateResponse> {
-  const response = await request('/api/v1/console/tokens', {
+  const response = await request('/api/v1/tokens', {
     method: 'POST',
     headers: {
       Accept: 'application/json',
@@ -172,7 +172,7 @@ export async function createTrustedTokenAPI(
 }
 
 export async function deleteTrustedTokenAPI(tokenID: string): Promise<void> {
-  const response = await request(`/api/v1/console/tokens/${encodeURIComponent(tokenID)}`, {
+  const response = await request(`/api/v1/tokens/${encodeURIComponent(tokenID)}`, {
     method: 'DELETE',
   })
 
@@ -186,7 +186,7 @@ export async function deleteTrustedTokenAPI(tokenID: string): Promise<void> {
 }
 
 export async function fetchAPIKeysAPI(signal: AbortSignal): Promise<APIKeyListResponse> {
-  const response = await request('/api/v1/console/api-keys', { signal })
+  const response = await request('/api/v1/api-keys', { signal })
   if (!response.ok) {
     throw new Error(await parseAPIError(response))
   }
@@ -199,7 +199,7 @@ export async function fetchAPIKeysAPI(signal: AbortSignal): Promise<APIKeyListRe
 }
 
 export async function createAPIKeyAPI(input: APIKeyCreateInput): Promise<APIKeyCreateResponse> {
-  const response = await request('/api/v1/console/api-keys', {
+  const response = await request('/api/v1/api-keys', {
     method: 'POST',
     headers: {
       Accept: 'application/json',
@@ -226,7 +226,7 @@ export async function createAPIKeyAPI(input: APIKeyCreateInput): Promise<APIKeyC
 }
 
 export async function deleteAPIKeyAPI(keyID: string): Promise<void> {
-  const response = await request(`/api/v1/console/api-keys/${encodeURIComponent(keyID)}`, {
+  const response = await request(`/api/v1/api-keys/${encodeURIComponent(keyID)}`, {
     method: 'DELETE',
   })
 

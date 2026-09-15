@@ -62,6 +62,20 @@ func scopeTerminalSessionID(ownerID string, externalSessionID string) string {
 	}, taskOwnerScopeSeparator)
 }
 
+func parseScopedTerminalSessionID(scopedSessionID string) (ownerID string, sessionID string, ok bool) {
+	normalized := strings.TrimSpace(scopedSessionID)
+	parts := strings.SplitN(normalized, taskOwnerScopeSeparator, 3)
+	if len(parts) != 3 || parts[0] != taskOwnerScopePrefix {
+		return "", "", false
+	}
+	ownerID = strings.TrimSpace(parts[1])
+	sessionID = strings.TrimSpace(parts[2])
+	if ownerID == "" || sessionID == "" {
+		return "", "", false
+	}
+	return ownerID, sessionID, true
+}
+
 func unscopeTerminalSessionID(ownerID string, scopedSessionID string) (string, bool) {
 	normalizedOwnerID := normalizeTaskOwnerID(ownerID)
 	normalizedSessionID := strings.TrimSpace(scopedSessionID)

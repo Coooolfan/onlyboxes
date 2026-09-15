@@ -215,9 +215,9 @@ Default endpoints:
 
 ## API Surfaces
 
-- Dashboard auth: `/api/v1/console/*`
-- Worker management (admin): `/api/v1/workers*`
-- Command execution: `/api/v1/commands/echo`, `/api/v1/commands/terminal`
+- Authentication: `/api/v1/auth/*`
+- Resource management: `/api/v1/accounts*`, `/api/v1/api-keys*`, `/api/v1/tokens*`, `/api/v1/sessions*`, `/api/v1/workers*`, `/api/v1/proxy-routes*`
+- Command execution: `/api/v1/commands/*`
 - Task execution: `/api/v1/tasks*`
 - MCP (Streamable HTTP): `POST /mcp`
 

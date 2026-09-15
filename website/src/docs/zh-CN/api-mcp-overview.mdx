@@ -35,12 +35,12 @@ Console 提供五种鉴权凭据，覆盖不同使用场景：
 | 项目 | Cookie 会话 | API Key（Bearer） | Dashboard JIT（Bearer） | 执行 Token（Bearer） | MCP JIT（Bearer） |
 |------|------------|------------------|-------------------------|---------------------|------------------|
 | 凭据类型 | Cookie `onlyboxes_console_session` | `Authorization: Bearer obxk_*` | `Authorization: Bearer obx_dashboard_jit_v1.*` | `Authorization: Bearer obx_*` | `Authorization: Bearer obx_jit_v1.*` |
-| 来源 | `POST /api/v1/console/login` | `POST /api/v1/console/api-keys`（仅 Cookie） | 外部签名（HMAC-SHA256，`CONSOLE_DASHBOARD_JIT_SIGNING_KEY`） | `POST /api/v1/console/tokens`（仅 Cookie） | 外部签名（HMAC-SHA256，`CONSOLE_JIT_SIGNING_KEY`） |
+| 来源 | `POST /api/v1/auth/login` | `POST /api/v1/api-keys`（仅 Cookie） | 外部签名（HMAC-SHA256，`CONSOLE_DASHBOARD_JIT_SIGNING_KEY`） | `POST /api/v1/tokens`（仅 Cookie） | 外部签名（HMAC-SHA256，`CONSOLE_JIT_SIGNING_KEY`） |
 | 有效期 | 12 小时（内存态，console 重启后全部失效） | 持久，直到手动删除 | 无状态；通过 payload `exp` 过期或轮换签名密钥吊销 | 持久，直到手动删除 | 无状态；轮换签名密钥即可吊销 |
-| 适用端点 | 所有管理端点 | 大多数管理端点（只读及部分写） | 用于 worker-sys 配置的部分 Dashboard API | `/api/v1/commands/*`、`/api/v1/tasks*`、`/mcp` | `/api/v1/commands/*`、`/api/v1/tasks*`、`/mcp` |
+| 适用端点 | 所有管理端点 | 大多数管理端点（只读及部分写） | 用于 worker-sys 配置的部分管理 API | `/api/v1/commands/*`、`/api/v1/tasks*`、`/mcp` | `/api/v1/commands/*`、`/api/v1/tasks*`、`/mcp` |
 | 主要用途 | Web UI 管理操作 | 程序化管理操作 | 不授予 MCP 访问权的服务端 Dashboard 自动化 | 命令执行与 MCP | 无需预创建账户的第三方执行集成 |
 
-> 以下端点**仅接受 Cookie 会话**，拒绝 API Key Bearer 与 Dashboard JIT：`POST /console/password`、`POST /console/api-keys`、`DELETE /console/api-keys/:api_key_id`，以及所有 `/console/tokens*` 端点。
+> 以下端点**仅接受 Cookie 会话**，拒绝 API Key Bearer 与 Dashboard JIT：`POST /api/v1/auth/password`、`POST /api/v1/api-keys`、`DELETE /api/v1/api-keys/:api_key_id`，以及所有 `/api/v1/tokens*` 端点。
 >
 > 如果系统中没有任何执行 Token，命令执行端点及 `/mcp` 的 trusted-token 鉴权会返回 `401`；配置 `CONSOLE_JIT_SIGNING_KEY` 后，有效 MCP JIT token 仍可鉴权。
 >
@@ -48,15 +48,15 @@ Console 提供五种鉴权凭据，覆盖不同使用场景：
 
 ---
 
-## 仪表盘 API / 开放 API
+## REST API
 
-以下端点需要有效的控制台 Cookie 会话（`onlyboxes_console_session`）。
+Web UI 与第三方集成使用同一套资源式端点，每个端点分别执行下文标注的管理凭据或执行凭据要求。
 
-### 控制台认证
+### 身份认证与账号
 
 #### 登录
 
-`POST /api/v1/console/login`
+`POST /api/v1/auth/login`
 
 **请求体：**
 
@@ -102,9 +102,9 @@ Console 提供五种鉴权凭据，覆盖不同使用场景：
 
 #### 查询会话
 
-`GET /api/v1/console/session`
+`GET /api/v1/auth/session`
 
-需要有效 Cookie 会话。返回结构与登录响应一致。
+接受控制台 Cookie、Console API Key 或 Dashboard JIT 鉴权。返回结构与登录响应一致。
 
 **错误码：**
 
@@ -116,7 +116,7 @@ Console 提供五种鉴权凭据，覆盖不同使用场景：
 
 #### 登出
 
-`POST /api/v1/console/logout`
+`POST /api/v1/auth/logout`
 
 清理响应 Cookie 并销毁内存会话（若存在）。
 
@@ -126,9 +126,9 @@ Console 提供五种鉴权凭据，覆盖不同使用场景：
 
 #### 注册账号（仅管理员）
 
-`POST /api/v1/console/register`
+`POST /api/v1/accounts`
 
-注册一个新的普通账号。需要管理员会话，且系统注册开关（`CONSOLE_ENABLE_REGISTRATION`）须为 `true`。
+注册一个新的普通账号。需要管理员身份鉴权，且系统注册开关（`CONSOLE_ENABLE_REGISTRATION`）须为 `true`。
 
 **请求体：**
 
@@ -171,7 +171,7 @@ Console 提供五种鉴权凭据，覆盖不同使用场景：
 
 #### 修改当前账号密码
 
-`POST /api/v1/console/password`
+`POST /api/v1/auth/password`
 
 修改当前登录账号的密码。密码更新后会轮换该账号的所有活动会话。
 
@@ -202,7 +202,7 @@ Console 提供五种鉴权凭据，覆盖不同使用场景：
 
 #### 查询账号列表（仅管理员）
 
-`GET /api/v1/console/accounts`
+`GET /api/v1/accounts`
 
 **查询参数：**
 
@@ -242,7 +242,7 @@ Console 提供五种鉴权凭据，覆盖不同使用场景：
 
 #### 删除账号（仅管理员）
 
-`DELETE /api/v1/console/accounts/:account_id`
+`DELETE /api/v1/accounts/:account_id`
 
 **路径参数：**
 
@@ -269,7 +269,7 @@ Token 按账号隔离，每个账号只能管理自己的 token。
 
 #### 查询 Token 列表
 
-`GET /api/v1/console/tokens`
+`GET /api/v1/tokens`
 
 **响应 `200`：**
 
@@ -294,7 +294,7 @@ Token 按账号隔离，每个账号只能管理自己的 token。
 
 #### 创建 Token
 
-`POST /api/v1/console/tokens`
+`POST /api/v1/tokens`
 
 **请求体：**
 
@@ -338,7 +338,7 @@ Token 按账号隔离，每个账号只能管理自己的 token。
 
 #### 删除 Token
 
-`DELETE /api/v1/console/tokens/:token_id`
+`DELETE /api/v1/tokens/:token_id`
 
 **路径参数：**
 
@@ -357,7 +357,7 @@ Token 按账号隔离，每个账号只能管理自己的 token。
 
 #### 获取 Token 明文
 
-`GET /api/v1/console/tokens/:token_id/value`
+`GET /api/v1/tokens/:token_id/value`
 
 此端点永远返回 `410 Gone`，token 明文仅在创建时返回一次。
 
@@ -375,7 +375,7 @@ API Key 用于程序化访问大多数管理端点（与执行 Token 不同，**
 
 #### 查询 API Key 列表
 
-`GET /api/v1/console/api-keys`
+`GET /api/v1/api-keys`
 
 **鉴权：** Cookie 会话或 API Key Bearer
 
@@ -400,7 +400,7 @@ API Key 用于程序化访问大多数管理端点（与执行 Token 不同，**
 
 #### 创建 API Key
 
-`POST /api/v1/console/api-keys`
+`POST /api/v1/api-keys`
 
 **鉴权：仅 Cookie 会话**
 
@@ -443,7 +443,7 @@ API Key 用于程序化访问大多数管理端点（与执行 Token 不同，**
 
 #### 删除 API Key
 
-`DELETE /api/v1/console/api-keys/:api_key_id`
+`DELETE /api/v1/api-keys/:api_key_id`
 
 **鉴权：仅 Cookie 会话**
 
@@ -663,6 +663,101 @@ Worker 类型：`normal`（对应 `worker-docker`/`worker-boxlite`）、`worker-
   "error": "worker secret is returned only when creating the worker; delete and recreate to get a new startup command"
 }
 ```
+
+---
+
+### Terminal Session API
+
+这些端点需要管理鉴权（Cookie、Console API Key 或 Dashboard JIT）。它们列出、查询并删除已确认的 terminal session。尚未完成首次 `terminalExec` 的 session 不可见。
+
+作用域：
+
+- 非管理员：只能看到自己的 session；`account_id` 指向其他账号时返回 `404`
+- 管理员：默认全站；`account_id` 用于过滤列表。查询/删除单条必须带 `account_id`，因为 `session_id` 只在账号内唯一
+
+`status` 取值：
+
+- `ready`：绑定的 Worker 可调度
+- `unavailable`：绑定的 Worker 已断开；session 仍保留原 Worker 与 lease
+- `reconciling`：绑定的 Worker 正在重连并核对 session 资源
+
+删除 session 会立即移除 Console 路由，以及该 session 的公开预览路由。Worker 上的沙箱在 lease 到期后回收。
+
+#### 查询 Session 列表
+
+`GET /api/v1/sessions`
+
+**查询参数：**
+
+| 参数 | 类型 | 默认值 | 约束 |
+|------|------|--------|------|
+| `page` | int | `1` | 正整数 |
+| `page_size` | int | `20` | 正整数，最大 `100` |
+| `account_id` | string | | 可选。管理员用来过滤；非管理员只能传自己的账号 |
+
+**响应 `200`：**
+
+```json
+{
+  "items": [
+    {
+      "account_id": "acc_xxx",
+      "session_id": "sess_xxx",
+      "worker_id": "worker-1",
+      "status": "ready",
+      "lease_expires_at": "2026-02-21T00:01:00Z",
+      "last_used_at": "2026-02-21T00:00:30Z",
+      "created_at": "2026-02-21T00:00:00Z"
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "page_size": 20
+}
+```
+
+**错误码：**
+
+| 状态码 | 说明 |
+|--------|------|
+| `400` | 查询参数非法 |
+| `401` | 控制台凭据缺失或无效 |
+| `404` | 非管理员查询了其他账号 |
+| `503` | session registry 不可用 |
+
+---
+
+#### 查询单个 Session
+
+`GET /api/v1/sessions/:session_id?account_id=acc_xxx`
+
+成功 `200`：结构与列表中的单项相同。
+
+**错误码：**
+
+| 状态码 | 说明 |
+|--------|------|
+| `400` | 管理员未提供 `account_id` |
+| `401` | 控制台凭据缺失或无效 |
+| `404` | session 不存在（含跨账号访问） |
+| `503` | session registry 不可用 |
+
+---
+
+#### 删除 Session
+
+`DELETE /api/v1/sessions/:session_id?account_id=acc_xxx`
+
+**响应：**
+
+| 状态码 | 说明 |
+|--------|------|
+| `204` | 删除成功 |
+| `400` | 管理员未提供 `account_id` |
+| `401` | 控制台凭据缺失或无效 |
+| `404` | session 不存在（含跨账号访问） |
+| `500` | 删除失败 |
+| `503` | session registry 不可用 |
 
 ---
 
@@ -1123,7 +1218,7 @@ Onlyboxes 有两条 JIT 通道，分别使用不同前缀和签名密钥：
 | 通道 | 前缀 | 签名密钥 | 必需 Payload | 接受方 | 拒绝方 |
 |------|------|----------|--------------|--------|--------|
 | MCP JIT | `obx_jit_v1.` | `CONSOLE_JIT_SIGNING_KEY` | `iss`、`sub`；可选 `exp` | `/api/v1/commands/*`、`/api/v1/tasks*`、`/mcp` | Dashboard 管理 API |
-| Dashboard JIT | `obx_dashboard_jit_v1.` | `CONSOLE_DASHBOARD_JIT_SIGNING_KEY` | `iss`、`sub`、`scope:"dashboard"`；可选 `exp` | 部分 Dashboard API，例如 worker-sys 配置 | `/mcp` 与 cookie-only 接口 |
+| Dashboard JIT | `obx_dashboard_jit_v1.` | `CONSOLE_DASHBOARD_JIT_SIGNING_KEY` | `iss`、`sub`、`scope:"dashboard"`；可选 `exp` | 部分管理 API，例如 worker-sys 配置 | `/mcp` 与 cookie-only 接口 |
 
 两把签名密钥必须不同。这样即使两条通道共享账号派生逻辑，MCP 执行访问权与 Dashboard 自动化访问权仍然彼此隔离。
 
@@ -1199,14 +1294,14 @@ Payload 示例：
 
 **用法：** `Authorization: Bearer obx_dashboard_jit_v1.<payload>.<signature>`
 
-**接受端点：** 适合非管理员账号级自动化的部分 Dashboard API，例如在派生账号下创建与查询 `worker-sys`。
+**接受端点：** 适合非管理员账号级自动化的部分管理 API，例如在派生账号下创建与查询 `worker-sys`。
 
 **拒绝端点：**
 
 - `/mcp`
 - MCP/执行 REST API
-- admin-only Dashboard API
-- cookie-only Dashboard API，包括所有 `/api/v1/console/tokens*` 端点
+- admin-only 管理 API
+- cookie-only 管理 API，包括所有 `/api/v1/tokens*` 端点
 
 ### 签名流程
 

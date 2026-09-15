@@ -12,22 +12,23 @@
 
 Onlyboxes 有以下鉴权路径：
 
-1. 控制台会话（Cookie）：用于管理类 API
-2. 控制台 Bearer 凭据：用于部分控制台自动化 API
-3. 访问令牌（Bearer Token）：用于执行类 API 与 MCP
+1. 控制台会话（Cookie）：用于管理 API
+2. 管理 Bearer 凭据：用于部分管理自动化 API
+3. 访问令牌（Bearer Token）：用于执行 API 与 MCP
 
 ### 1.1 控制台会话（Cookie）
 
 - Cookie 名称：`onlyboxes_console_session`
-- 由 `POST /api/v1/console/login` 创建
-- 用于：
-  - `/api/v1/console/session`
-  - `/api/v1/console/logout`
-  - `/api/v1/console/password`
-  - `/api/v1/console/register`
-  - `/api/v1/console/accounts*`
-  - `/api/v1/console/tokens*`
+- 由 `POST /api/v1/auth/login` 创建
+- 用于管理端点：
+  - `/api/v1/auth/session`
+  - `/api/v1/auth/logout`
+  - `/api/v1/auth/password`
+  - `/api/v1/accounts*`
+  - `/api/v1/api-keys*`
+  - `/api/v1/tokens*`
   - `/api/v1/workers*`（按角色作用域）
+  - `/api/v1/sessions*`（按角色作用域的 terminal session）
   - `/api/v1/proxy-routes*`（按账号隔离的公开预览路由）
 - 会话有效期为 12 小时（内存态）；console 重启后会话全部失效。
 
@@ -43,10 +44,10 @@ Onlyboxes 有以下鉴权路径：
   - 配置 `CONSOLE_JIT_SIGNING_KEY` 后可用的 MCP JIT token（`obx_jit_v1.<payload>.<signature>`）
 - 若系统中没有 trusted token，trusted-token 鉴权会返回 `401`；配置后，有效 MCP JIT token 仍可鉴权。
 
-### 1.3 控制台 Bearer 凭据
+### 1.3 管理 Bearer 凭据
 
 - 请求头格式：`Authorization: Bearer <credential>`
-- Console API key 可用于控制台 API，但不能访问要求 Cookie 会话的接口。
+- Console API key 可用于管理 API，但不能访问要求 Cookie 会话的接口。
 - Dashboard JIT token 可用于服务端到服务端的 worker-sys 配置场景：
   - 格式：`obx_dashboard_jit_v1.<payload>.<signature>`
   - 签名：使用 `CONSOLE_DASHBOARD_JIT_SIGNING_KEY` 对 `obx_dashboard_jit_v1.<payload>` 做 HMAC-SHA256
@@ -54,8 +55,8 @@ Onlyboxes 有以下鉴权路径：
   - `CONSOLE_DASHBOARD_JIT_SIGNING_KEY` 必须与 `CONSOLE_JIT_SIGNING_KEY` 不同。
 - Dashboard JIT 与 MCP JIT 使用相同的 `(iss, sub) -> account` 派生逻辑，首次使用会创建非管理员账号，但不能鉴权 `/mcp`。
 - MCP JIT payload 同样支持可选 `exp`（Unix 毫秒）。
-- MCP JIT token（`obx_jit_v1.*`）会被控制台鉴权拒绝。
-- Cookie-only 接口会拒绝控制台 Bearer 凭据。
+- MCP JIT token（`obx_jit_v1.*`）会被管理鉴权拒绝。
+- Cookie-only 接口会拒绝管理 Bearer 凭据。
 
 ## 2. REST 通用约定
 
@@ -69,11 +70,11 @@ Onlyboxes 有以下鉴权路径：
 - 时间字段使用 RFC3339。
 - ID 字段均为不透明字符串（如 `acc_*`、`tok_*`、worker UUID、task ID）。
 
-## 3. 控制台认证 API
+## 3. 身份认证与账号 API
 
 ### 3.1 登录
 
-`POST /api/v1/console/login`
+`POST /api/v1/auth/login`
 
 请求：
 
@@ -108,9 +109,9 @@ Onlyboxes 有以下鉴权路径：
 
 ### 3.2 会话信息
 
-`GET /api/v1/console/session`
+`GET /api/v1/auth/session`
 
-- 需要控制台 Cookie 会话。
+- 接受控制台 Cookie、Console API Key 或 Dashboard JIT 鉴权。
 - 成功返回结构与登录响应一致。
 
 错误：
@@ -119,7 +120,7 @@ Onlyboxes 有以下鉴权路径：
 
 ### 3.3 登出
 
-`POST /api/v1/console/logout`
+`POST /api/v1/auth/logout`
 
 - 清理 Cookie，并删除内存会话（若存在）。
 
@@ -129,7 +130,7 @@ Onlyboxes 有以下鉴权路径：
 
 ### 3.4 注册普通账号（仅管理员）
 
-`POST /api/v1/console/register`
+`POST /api/v1/accounts`
 
 请求：
 
@@ -164,7 +165,7 @@ Onlyboxes 有以下鉴权路径：
 
 ### 3.5 修改当前账号密码
 
-`POST /api/v1/console/password`
+`POST /api/v1/auth/password`
 
 请求：
 
@@ -189,7 +190,7 @@ Onlyboxes 有以下鉴权路径：
 
 ### 3.6 查询账号列表（仅管理员）
 
-`GET /api/v1/console/accounts?page=1&page_size=20`
+`GET /api/v1/accounts?page=1&page_size=20`
 
 查询参数：
 
@@ -223,7 +224,7 @@ Onlyboxes 有以下鉴权路径：
 
 ### 3.7 删除账号（仅管理员）
 
-`DELETE /api/v1/console/accounts/:account_id`
+`DELETE /api/v1/accounts/:account_id`
 
 响应：
 
@@ -233,15 +234,15 @@ Onlyboxes 有以下鉴权路径：
 - `404` 账号不存在
 - `500` 内部错误
 
-## 4. Token 管理 API（控制台 Cookie 会话鉴权）
+## 4. Token 管理 API（Cookie 会话鉴权）
 
 Token 按账号隔离；每个账号只能管理自己的 token。
 
-本节所有接口都要求控制台 Cookie 会话。Console API key 与 Dashboard JIT token 会被拒绝，避免控制台 Bearer 凭据创建或管理 MCP trusted token。
+本节所有接口都要求控制台 Cookie 会话。Console API Key 与 Dashboard JIT token 会被拒绝，避免管理 Bearer 凭据创建或管理 MCP trusted token。
 
 ### 4.1 查询 Token 列表
 
-`GET /api/v1/console/tokens`
+`GET /api/v1/tokens`
 
 成功 `200`：
 
@@ -262,7 +263,7 @@ Token 按账号隔离；每个账号只能管理自己的 token。
 
 ### 4.2 创建 Token
 
-`POST /api/v1/console/tokens`
+`POST /api/v1/tokens`
 
 请求：
 
@@ -302,7 +303,7 @@ Token 按账号隔离；每个账号只能管理自己的 token。
 
 ### 4.3 删除 Token
 
-`DELETE /api/v1/console/tokens/:token_id`
+`DELETE /api/v1/tokens/:token_id`
 
 响应：
 
@@ -311,7 +312,7 @@ Token 按账号隔离；每个账号只能管理自己的 token。
 
 ### 4.4 查询 Token 明文
 
-`GET /api/v1/console/tokens/:token_id/value`
+`GET /api/v1/tokens/:token_id/value`
 
 固定返回 `410 Gone`：
 
@@ -321,7 +322,7 @@ Token 按账号隔离；每个账号只能管理自己的 token。
 }
 ```
 
-## 5. Worker 管理 API（控制台会话鉴权，按角色作用域）
+## 5. Worker 管理 API（管理鉴权，按角色作用域）
 
 Worker 类型：
 
@@ -706,11 +707,90 @@ Worker 类型：
 - `504` 超时
 - `502` 其他执行失败
 
-## 7. Sandbox 元数据 API（Bearer Token 鉴权）
+## 7. Terminal Session API（管理鉴权，按角色作用域）
+
+这些端点需要管理鉴权（Cookie、Console API Key 或 Dashboard JIT）。它们列出、查询并删除已确认的 terminal session。尚未完成首次 `terminalExec` 的 session 不可见。
+
+作用域：
+
+- 非管理员：只能看到自己的 session；`account_id` 指向其他账号时返回 `404`
+- 管理员：默认全站；`account_id` 用于过滤列表。查询/删除单条必须带 `account_id`，因为 `session_id` 只在账号内唯一
+
+`status` 取值：
+
+- `ready`：绑定的 Worker 可调度
+- `unavailable`：绑定的 Worker 已断开；session 仍保留原 Worker 与 lease
+- `reconciling`：绑定的 Worker 正在重连并核对 session 资源
+
+删除 session 会立即移除 Console 路由，以及该 session 的公开预览路由。Worker 上的沙箱在 lease 到期后回收。
+
+### 7.1 查询 Session 列表
+
+`GET /api/v1/sessions?page=1&page_size=20&account_id=acc_xxx`
+
+查询参数：
+
+- `page`：正整数，默认 `1`
+- `page_size`：正整数，默认 `20`，最大 `100`
+- `account_id`：可选。管理员用来过滤；非管理员只能传自己的账号
+
+成功 `200`：
+
+```json
+{
+  "items": [
+    {
+      "account_id": "acc_xxx",
+      "session_id": "sess_xxx",
+      "worker_id": "worker-1",
+      "status": "ready",
+      "lease_expires_at": "2026-02-21T00:01:00Z",
+      "last_used_at": "2026-02-21T00:00:30Z",
+      "created_at": "2026-02-21T00:00:00Z"
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "page_size": 20
+}
+```
+
+错误：
+
+- `400` 查询参数非法
+- `401` 控制台凭据缺失或无效
+- `404` 非管理员查询了其他账号
+- `503` session registry 不可用
+
+### 7.2 查询单个 Session
+
+`GET /api/v1/sessions/:session_id?account_id=acc_xxx`
+
+成功 `200`：结构与列表中的单项相同。
+
+错误：
+
+- `400` 管理员未提供 `account_id`
+- `401` 控制台凭据缺失或无效
+- `404` session 不存在（含跨账号访问）
+- `503` session registry 不可用
+
+### 7.3 删除 Session
+
+`DELETE /api/v1/sessions/:session_id?account_id=acc_xxx`
+
+- `204` 删除成功
+- `400` 管理员未提供 `account_id`
+- `401` 控制台凭据缺失或无效
+- `404` session 不存在（含跨账号访问）
+- `500` 删除失败
+- `503` session registry 不可用
+
+## 8. Sandbox 元数据 API（Bearer Token 鉴权）
 
 该接口需要执行 token 鉴权。Trusted token 与 MCP JIT token 均可调用。按账号隔离的字段仅限调用账号自有的 `worker-sys` 能力，例如 `computerUse` 与 `readImage`；共享 sandbox 能力与 worker 汇总来自全局 worker 池。
 
-### 7.1 获取 Sandbox 元数据
+### 8.1 获取 Sandbox 元数据
 
 `GET /api/v1/sandbox/metadata`
 
@@ -751,11 +831,11 @@ Worker 类型：
 - `terminalExec`、`terminalResource`、`pythonExec`、`echo` 返回全局在线 worker 可用性。
 - Token 缺失或无效返回 `401`。
 
-## 8. 任务 API（Bearer Token 鉴权）
+## 9. 任务 API（Bearer Token 鉴权）
 
 Task 所有权按账号隔离（由 token 对应账号决定）。
 
-### 8.1 提交任务
+### 9.1 提交任务
 
 `POST /api/v1/tasks`
 
@@ -849,7 +929,7 @@ Task 所有权按账号隔离（由 token 对应账号决定）。
 - `504` 请求超时
 - `502` 提交失败
 
-### 8.2 查询任务
+### 9.2 查询任务
 
 `GET /api/v1/tasks/:task_id`
 
@@ -858,7 +938,7 @@ Task 所有权按账号隔离（由 token 对应账号决定）。
 - `200` 返回任务快照
 - `404` 任务不存在（包含跨账号访问）
 
-### 8.3 取消任务
+### 9.3 取消任务
 
 `POST /api/v1/tasks/:task_id/cancel`
 
@@ -869,7 +949,7 @@ Task 所有权按账号隔离（由 token 对应账号决定）。
 - `409` 任务已终态（返回任务快照）
 - `500` 取消失败
 
-## 9. MCP API（Bearer Token 鉴权）
+## 10. MCP API（Bearer Token 鉴权）
 
 端点：`POST /mcp`
 
@@ -881,7 +961,7 @@ Task 所有权按账号隔离（由 token 对应账号决定）。
   - `Content-Type: application/json`
   - `Accept: application/json, text/event-stream`
 
-### 9.1 MCP 基础方法
+### 10.1 MCP 基础方法
 
 支持标准 MCP 调用流程，包括：
 
@@ -889,7 +969,7 @@ Task 所有权按账号隔离（由 token 对应账号决定）。
 - `tools/list`
 - `tools/call`
 
-### 9.2 工具定义
+### 10.2 工具定义
 
 所有工具参数 schema 都是 `additionalProperties=false`。
 传入未定义参数会返回 JSON-RPC `-32602 invalid params`。
@@ -1030,7 +1110,7 @@ Task 所有权按账号隔离（由 token 对应账号决定）。
 - `CU:` 前缀大小写敏感，可通过 `CONSOLE_COMPUTER_USE_SESSION_ID_PREFIX` / `computer_use_session_id_prefix` 配置。修改会改变 session ID 的解释方式，通常不建议修改；空值或全空白值会回退到 `CU:` 并记录 warning。
 - 这是公开协议变更：`computerUse` 不再是公开别名，客户端必须先获取/选择 Worker 并传入其 ID。
 
-### 9.3 MCP 错误行为
+### 10.3 MCP 错误行为
 
 - Token 缺失或无效：HTTP `401`
 - 参数校验失败：JSON-RPC `-32602`
@@ -1038,7 +1118,7 @@ Task 所有权按账号隔离（由 token 对应账号决定）。
 - 指定 Worker 离线、缺少目标 capability、容量已满分别保留不同的工具错误语义
 - 执行异常：作为 MCP tool error 内容返回（`isError=true`）
 
-## 10. Worker gRPC API（`api/proto/registry/v1/registry.proto`）
+## 11. Worker gRPC API（`api/proto/registry/v1/registry.proto`）
 
 服务定义：
 
@@ -1048,7 +1128,7 @@ service WorkerRegistryService {
 }
 ```
 
-### 10.1 流程
+### 11.1 流程
 
 Worker 建立双向流后，通常会发送：
 
@@ -1062,7 +1142,7 @@ Console 回包：
 2. `ConnectResponse.heartbeat_ack`（`HeartbeatAck`）
 3. 下发执行任务 `ConnectResponse.command_dispatch`（`CommandDispatch`）
 
-### 10.2 核心消息
+### 11.2 核心消息
 
 - `ConnectHello` 包含 worker 标识、能力声明、labels、version、`worker_secret` 和可选 `terminal_session_capacity`。
   - 缺少 `terminal_session_capacity` 表示旧版 worker 或容量未知。
@@ -1080,7 +1160,7 @@ Console 回包：
   - `payload_json`
   - `completed_unix_ms`
 
-## 11. 安全说明
+## 12. 安全说明
 
 - 当前版本 console gRPC 不提供内建 TLS/mTLS。
 - `worker-docker` 默认会拒绝不安全 console 端点，只有显式设置 `WORKER_CONSOLE_INSECURE=true` 才允许明文连接。
@@ -1093,4 +1173,4 @@ Console 回包：
 - 必须妥善保管 `CONSOLE_PROXY_INTERNAL_AUTH_TOKEN`，并将 `CONSOLE_PROXY_ALLOWED_WORKER_CIDRS` / `CONSOLE_PROXY_ALLOWED_WORKER_PORTS` 收窄到真实 Worker 入口。
 - 必须将 `CONSOLE_PROXY_ALLOWED_DIRECT_DOMAINS` 收窄到部署实际使用的 E2B 域名（默认 `e2b.app`）。
 - Token 明文与 `WORKER_SECRET` 仅在创建时返回一次。
-- `GET /api/v1/console/tokens/:token_id/value` 与 `GET /api/v1/workers/:node_id/startup-command` 设计为永久 `410 Gone`。
+- `GET /api/v1/tokens/:token_id/value` 与 `GET /api/v1/workers/:node_id/startup-command` 设计为永久 `410 Gone`。

@@ -206,7 +206,7 @@ func TestInitializeAdminAccountCreatesInitialAPIKeyOnFirstRun(t *testing.T) {
 	}
 	router := mustNewRouter(t, handler, consoleAuth, mcpAuth, apiKeyAuth)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/console/session", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/session", nil)
 	req.Header.Set(trustedTokenHeader, "Bearer "+result.APIKeyPlaintext)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -317,7 +317,7 @@ func TestConsoleAuthLoginLogoutLifecycle(t *testing.T) {
 	auth := newTestConsoleAuth(t)
 	router := mustNewRouter(t, handler, auth, newTestMCPAuth(t), nil)
 
-	failedReq := httptest.NewRequest(http.MethodPost, "/api/v1/console/login", strings.NewReader(`{"username":"wrong","password":"wrong"}`))
+	failedReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username":"wrong","password":"wrong"}`))
 	failedReq.Header.Set("Content-Type", "application/json")
 	failedRec := httptest.NewRecorder()
 	router.ServeHTTP(failedRec, failedReq)
@@ -335,7 +335,7 @@ func TestConsoleAuthLoginLogoutLifecycle(t *testing.T) {
 		t.Fatalf("expected 200 for authenticated admin list request, got %d body=%s", listRec.Code, listRec.Body.String())
 	}
 
-	logoutReq := httptest.NewRequest(http.MethodPost, "/api/v1/console/logout", nil)
+	logoutReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
 	logoutReq.AddCookie(sessionCookie)
 	logoutRec := httptest.NewRecorder()
 	router.ServeHTTP(logoutRec, logoutReq)
@@ -358,7 +358,7 @@ func TestConsoleAuthSessionEndpoint(t *testing.T) {
 	router := mustNewRouter(t, handler, auth, newTestMCPAuth(t), nil)
 	cookie := loginSessionCookie(t, router)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/console/session", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/session", nil)
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -416,7 +416,7 @@ func TestConsoleAuthRegisterAndAdminGuard(t *testing.T) {
 	adminCookie := loginSessionCookie(t, router)
 
 	registerBody := []byte(`{"username":"member-a","password":"member-a-pass"}`)
-	registerReq := httptest.NewRequest(http.MethodPost, "/api/v1/console/register", bytes.NewReader(registerBody))
+	registerReq := httptest.NewRequest(http.MethodPost, "/api/v1/accounts", bytes.NewReader(registerBody))
 	registerReq.Header.Set("Content-Type", "application/json")
 	registerReq.AddCookie(adminCookie)
 	registerRec := httptest.NewRecorder()
@@ -435,7 +435,7 @@ func TestConsoleAuthRegisterAndAdminGuard(t *testing.T) {
 		t.Fatalf("expected 200 for non-admin workers access, got %d body=%s", workersRec.Code, workersRec.Body.String())
 	}
 
-	nonAdminRegisterReq := httptest.NewRequest(http.MethodPost, "/api/v1/console/register", bytes.NewReader(registerBody))
+	nonAdminRegisterReq := httptest.NewRequest(http.MethodPost, "/api/v1/accounts", bytes.NewReader(registerBody))
 	nonAdminRegisterReq.Header.Set("Content-Type", "application/json")
 	nonAdminRegisterReq.AddCookie(nonAdminCookie)
 	nonAdminRegisterRec := httptest.NewRecorder()
@@ -451,7 +451,7 @@ func TestConsoleAuthRegisterDuplicateUsernameConflict(t *testing.T) {
 	router := mustNewRouter(t, handler, auth, newTestMCPAuth(t), nil)
 	adminCookie := loginSessionCookie(t, router)
 
-	registerReqA := httptest.NewRequest(http.MethodPost, "/api/v1/console/register", strings.NewReader(`{"username":"member-dup","password":"member-pass"}`))
+	registerReqA := httptest.NewRequest(http.MethodPost, "/api/v1/accounts", strings.NewReader(`{"username":"member-dup","password":"member-pass"}`))
 	registerReqA.Header.Set("Content-Type", "application/json")
 	registerReqA.AddCookie(adminCookie)
 	registerRecA := httptest.NewRecorder()
@@ -460,7 +460,7 @@ func TestConsoleAuthRegisterDuplicateUsernameConflict(t *testing.T) {
 		t.Fatalf("expected first register 201, got %d body=%s", registerRecA.Code, registerRecA.Body.String())
 	}
 
-	registerReqB := httptest.NewRequest(http.MethodPost, "/api/v1/console/register", strings.NewReader(`{"username":"MEMBER-dup","password":"member-pass-2"}`))
+	registerReqB := httptest.NewRequest(http.MethodPost, "/api/v1/accounts", strings.NewReader(`{"username":"MEMBER-dup","password":"member-pass-2"}`))
 	registerReqB.Header.Set("Content-Type", "application/json")
 	registerReqB.AddCookie(adminCookie)
 	registerRecB := httptest.NewRecorder()
@@ -479,7 +479,7 @@ func TestConsoleAuthRegisterDisabled(t *testing.T) {
 	router := mustNewRouter(t, handler, auth, newTestMCPAuth(t), nil)
 	adminCookie := loginSessionCookie(t, router)
 
-	registerReq := httptest.NewRequest(http.MethodPost, "/api/v1/console/register", strings.NewReader(`{"username":"member-x","password":"pass"}`))
+	registerReq := httptest.NewRequest(http.MethodPost, "/api/v1/accounts", strings.NewReader(`{"username":"member-x","password":"pass"}`))
 	registerReq.Header.Set("Content-Type", "application/json")
 	registerReq.AddCookie(adminCookie)
 	registerRec := httptest.NewRecorder()
@@ -495,7 +495,7 @@ func TestConsoleAuthChangePasswordLifecycle(t *testing.T) {
 	router := mustNewRouter(t, handler, auth, newTestMCPAuth(t), nil)
 	originalCookie := loginSessionCookie(t, router)
 
-	changeReq := httptest.NewRequest(http.MethodPost, "/api/v1/console/password", strings.NewReader(`{"current_password":"password-test","new_password":"password-next"}`))
+	changeReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/password", strings.NewReader(`{"current_password":"password-test","new_password":"password-next"}`))
 	changeReq.Header.Set("Content-Type", "application/json")
 	changeReq.AddCookie(originalCookie)
 	changeRec := httptest.NewRecorder()
@@ -526,7 +526,7 @@ func TestConsoleAuthChangePasswordLifecycle(t *testing.T) {
 		t.Fatalf("expected old session to be invalidated, got %d body=%s", oldSessionRec.Code, oldSessionRec.Body.String())
 	}
 
-	oldPasswordReq := httptest.NewRequest(http.MethodPost, "/api/v1/console/login", strings.NewReader(`{"username":"admin-test","password":"password-test"}`))
+	oldPasswordReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username":"admin-test","password":"password-test"}`))
 	oldPasswordReq.Header.Set("Content-Type", "application/json")
 	oldPasswordRec := httptest.NewRecorder()
 	router.ServeHTTP(oldPasswordRec, oldPasswordReq)
@@ -550,7 +550,7 @@ func TestConsoleAuthChangePasswordValidationAndCurrentPassword(t *testing.T) {
 	router := mustNewRouter(t, handler, auth, newTestMCPAuth(t), nil)
 	cookie := loginSessionCookie(t, router)
 
-	missingCurrentReq := httptest.NewRequest(http.MethodPost, "/api/v1/console/password", strings.NewReader(`{"new_password":"password-next"}`))
+	missingCurrentReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/password", strings.NewReader(`{"new_password":"password-next"}`))
 	missingCurrentReq.Header.Set("Content-Type", "application/json")
 	missingCurrentReq.AddCookie(cookie)
 	missingCurrentRec := httptest.NewRecorder()
@@ -562,7 +562,7 @@ func TestConsoleAuthChangePasswordValidationAndCurrentPassword(t *testing.T) {
 		t.Fatalf("expected current password required message, got %s", missingCurrentRec.Body.String())
 	}
 
-	invalidCurrentReq := httptest.NewRequest(http.MethodPost, "/api/v1/console/password", strings.NewReader(`{"current_password":"wrong-pass","new_password":"password-next"}`))
+	invalidCurrentReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/password", strings.NewReader(`{"current_password":"wrong-pass","new_password":"password-next"}`))
 	invalidCurrentReq.Header.Set("Content-Type", "application/json")
 	invalidCurrentReq.AddCookie(cookie)
 	invalidCurrentRec := httptest.NewRecorder()
@@ -582,7 +582,7 @@ func TestConsoleAuthListAccountsAdminOnlyAndPagination(t *testing.T) {
 	adminCookie := loginSessionCookie(t, router)
 
 	for _, username := range []string{"member-a", "member-b"} {
-		registerReq := httptest.NewRequest(http.MethodPost, "/api/v1/console/register", strings.NewReader(`{"username":"`+username+`","password":"member-pass"}`))
+		registerReq := httptest.NewRequest(http.MethodPost, "/api/v1/accounts", strings.NewReader(`{"username":"`+username+`","password":"member-pass"}`))
 		registerReq.Header.Set("Content-Type", "application/json")
 		registerReq.AddCookie(adminCookie)
 		registerRec := httptest.NewRecorder()
@@ -592,7 +592,7 @@ func TestConsoleAuthListAccountsAdminOnlyAndPagination(t *testing.T) {
 		}
 	}
 
-	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/console/accounts?page=1&page_size=2", nil)
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/accounts?page=1&page_size=2", nil)
 	listReq.AddCookie(adminCookie)
 	listRec := httptest.NewRecorder()
 	router.ServeHTTP(listRec, listReq)
@@ -615,7 +615,7 @@ func TestConsoleAuthListAccountsAdminOnlyAndPagination(t *testing.T) {
 	}
 
 	nonAdminCookie := loginSessionCookieFor(t, router, "member-a", "member-pass")
-	nonAdminListReq := httptest.NewRequest(http.MethodGet, "/api/v1/console/accounts", nil)
+	nonAdminListReq := httptest.NewRequest(http.MethodGet, "/api/v1/accounts", nil)
 	nonAdminListReq.AddCookie(nonAdminCookie)
 	nonAdminListRec := httptest.NewRecorder()
 	router.ServeHTTP(nonAdminListRec, nonAdminListReq)
@@ -653,7 +653,7 @@ func TestConsoleAuthDeleteAccountGuardsAndCascade(t *testing.T) {
 	router := mustNewRouter(t, handler, auth, mcpAuth, nil)
 	adminCookie := loginSessionCookie(t, router)
 
-	registerReq := httptest.NewRequest(http.MethodPost, "/api/v1/console/register", strings.NewReader(`{"username":"member-to-delete","password":"member-pass"}`))
+	registerReq := httptest.NewRequest(http.MethodPost, "/api/v1/accounts", strings.NewReader(`{"username":"member-to-delete","password":"member-pass"}`))
 	registerReq.Header.Set("Content-Type", "application/json")
 	registerReq.AddCookie(adminCookie)
 	registerRec := httptest.NewRecorder()
@@ -680,7 +680,7 @@ func TestConsoleAuthDeleteAccountGuardsAndCascade(t *testing.T) {
 	seedProxyRouteForAccount(t, store, proxyHandler, memberRouteKey, memberID, now)
 	seedProxyRouteForAccount(t, store, proxyHandler, adminRouteKey, testDashboardAccountID, now)
 
-	deleteSelfReq := httptest.NewRequest(http.MethodDelete, "/api/v1/console/accounts/"+testDashboardAccountID, nil)
+	deleteSelfReq := httptest.NewRequest(http.MethodDelete, "/api/v1/accounts/"+testDashboardAccountID, nil)
 	deleteSelfReq.AddCookie(adminCookie)
 	deleteSelfRec := httptest.NewRecorder()
 	router.ServeHTTP(deleteSelfRec, deleteSelfReq)
@@ -691,7 +691,7 @@ func TestConsoleAuthDeleteAccountGuardsAndCascade(t *testing.T) {
 		t.Fatal("rejected self-deletion revoked account proxy route")
 	}
 
-	deleteAdminReq := httptest.NewRequest(http.MethodDelete, "/api/v1/console/accounts/acc-admin-second", nil)
+	deleteAdminReq := httptest.NewRequest(http.MethodDelete, "/api/v1/accounts/acc-admin-second", nil)
 	deleteAdminReq.AddCookie(adminCookie)
 	deleteAdminRec := httptest.NewRecorder()
 	router.ServeHTTP(deleteAdminRec, deleteAdminReq)
@@ -699,7 +699,7 @@ func TestConsoleAuthDeleteAccountGuardsAndCascade(t *testing.T) {
 		t.Fatalf("expected 403 for deleting admin account, got %d body=%s", deleteAdminRec.Code, deleteAdminRec.Body.String())
 	}
 
-	deleteMissingReq := httptest.NewRequest(http.MethodDelete, "/api/v1/console/accounts/acc-missing", nil)
+	deleteMissingReq := httptest.NewRequest(http.MethodDelete, "/api/v1/accounts/acc-missing", nil)
 	deleteMissingReq.AddCookie(adminCookie)
 	deleteMissingRec := httptest.NewRecorder()
 	router.ServeHTTP(deleteMissingRec, deleteMissingReq)
@@ -710,7 +710,7 @@ func TestConsoleAuthDeleteAccountGuardsAndCascade(t *testing.T) {
 		t.Fatal("rejected account deletion changed unrelated proxy route")
 	}
 
-	deleteMemberReq := httptest.NewRequest(http.MethodDelete, "/api/v1/console/accounts/"+memberID, nil)
+	deleteMemberReq := httptest.NewRequest(http.MethodDelete, "/api/v1/accounts/"+memberID, nil)
 	deleteMemberReq.AddCookie(adminCookie)
 	deleteMemberRec := httptest.NewRecorder()
 	router.ServeHTTP(deleteMemberRec, deleteMemberReq)
@@ -724,7 +724,7 @@ func TestConsoleAuthDeleteAccountGuardsAndCascade(t *testing.T) {
 		t.Fatal("deleting member revoked another account's proxy route")
 	}
 
-	memberSessionReq := httptest.NewRequest(http.MethodGet, "/api/v1/console/tokens", nil)
+	memberSessionReq := httptest.NewRequest(http.MethodGet, "/api/v1/tokens", nil)
 	memberSessionReq.AddCookie(memberCookie)
 	memberSessionRec := httptest.NewRecorder()
 	router.ServeHTTP(memberSessionRec, memberSessionReq)
@@ -732,7 +732,7 @@ func TestConsoleAuthDeleteAccountGuardsAndCascade(t *testing.T) {
 		t.Fatalf("expected deleted member session to be invalidated, got %d body=%s", memberSessionRec.Code, memberSessionRec.Body.String())
 	}
 
-	memberLoginReq := httptest.NewRequest(http.MethodPost, "/api/v1/console/login", strings.NewReader(`{"username":"member-to-delete","password":"member-pass"}`))
+	memberLoginReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username":"member-to-delete","password":"member-pass"}`))
 	memberLoginReq.Header.Set("Content-Type", "application/json")
 	memberLoginRec := httptest.NewRecorder()
 	router.ServeHTTP(memberLoginRec, memberLoginReq)
@@ -810,7 +810,7 @@ func loginSessionCookieFor(t *testing.T, router http.Handler, username string, p
 	if err != nil {
 		t.Fatalf("marshal login payload: %v", err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/console/login", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)

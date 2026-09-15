@@ -43,13 +43,13 @@ describe('Worker Startup Tool Page', () => {
   it('allows non-admin users to access the route without loading workers/accounts/tokens APIs', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(memberSessionPayload)
       }
       if (
         url.startsWith('/api/v1/workers') ||
-        url.startsWith('/api/v1/console/accounts') ||
-        url.startsWith('/api/v1/console/tokens')
+        url.startsWith('/api/v1/accounts') ||
+        url.startsWith('/api/v1/tokens')
       ) {
         throw new Error(`unexpected dashboard api call: ${url}`)
       }
@@ -65,8 +65,8 @@ describe('Worker Startup Tool Page', () => {
 
     const requestedURLs = fetchMock.mock.calls.map(([input]) => String(input))
     expect(requestedURLs.some((url) => url.startsWith('/api/v1/workers'))).toBe(false)
-    expect(requestedURLs.some((url) => url.startsWith('/api/v1/console/accounts'))).toBe(false)
-    expect(requestedURLs.some((url) => url.startsWith('/api/v1/console/tokens'))).toBe(false)
+    expect(requestedURLs.some((url) => url.startsWith('/api/v1/accounts'))).toBe(false)
+    expect(requestedURLs.some((url) => url.startsWith('/api/v1/tokens'))).toBe(false)
 
     wrapper.unmount()
   })
@@ -74,7 +74,7 @@ describe('Worker Startup Tool Page', () => {
   it('updates command preview after switching worker type', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(memberSessionPayload)
       }
       throw new Error(`unexpected url: ${url}`)
@@ -100,7 +100,7 @@ describe('Worker Startup Tool Page', () => {
   it('updates command preview after switching to worker-boxlite', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(memberSessionPayload)
       }
       throw new Error(`unexpected url: ${url}`)
@@ -122,7 +122,7 @@ describe('Worker Startup Tool Page', () => {
   it('renders and downloads config.toml from the preview panel', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(memberSessionPayload)
       }
       throw new Error(`unexpected url: ${url}`)
@@ -167,7 +167,7 @@ describe('Worker Startup Tool Page', () => {
   it('shows prefilled credential hints and blocks route leave when opened from goToStartupTool', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(memberSessionPayload)
       }
       throw new Error(`unexpected url: ${url}`)
@@ -209,7 +209,7 @@ describe('Worker Startup Tool Page', () => {
   it('applies Temporary Probe preset without clearing prefilled credentials', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(memberSessionPayload)
       }
       throw new Error(`unexpected url: ${url}`)
@@ -259,7 +259,7 @@ describe('Worker Startup Tool Page', () => {
   it('reflects advanced sys inputs into command preview', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(memberSessionPayload)
       }
       throw new Error(`unexpected url: ${url}`)
@@ -289,7 +289,7 @@ describe('Worker Startup Tool Page', () => {
   it('disables whitelist textarea in allow_all mode', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(memberSessionPayload)
       }
       throw new Error(`unexpected url: ${url}`)

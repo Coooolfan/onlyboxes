@@ -355,8 +355,8 @@ func TestMCPAuthRequireTokenAllowsJITTokenAndCreatesAccount(t *testing.T) {
 		t.Fatalf("new console auth: %v", err)
 	}
 	loginRouter := gin.New()
-	loginRouter.POST("/api/v1/console/login", consoleAuth.Login)
-	loginReq := httptest.NewRequest(http.MethodPost, "/api/v1/console/login", strings.NewReader(`{"username":"`+expectedIdentity.Username+`","password":"any-password"}`))
+	loginRouter.POST("/api/v1/auth/login", consoleAuth.Login)
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username":"`+expectedIdentity.Username+`","password":"any-password"}`))
 	loginReq.Header.Set("Content-Type", "application/json")
 	loginRec := httptest.NewRecorder()
 	loginRouter.ServeHTTP(loginRec, loginReq)

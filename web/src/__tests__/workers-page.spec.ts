@@ -29,7 +29,7 @@ describe('Workers Page', () => {
   it('shows worker health and active sessions in the stats grid', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(adminSessionPayload)
       }
       if (url.startsWith('/api/v1/workers/stats')) {
@@ -61,10 +61,10 @@ describe('Workers Page', () => {
     let authenticated = true
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return authenticated ? jsonResponse(adminSessionPayload) : unauthorizedResponse()
       }
-      if (url === '/api/v1/console/logout') {
+      if (url === '/api/v1/auth/logout') {
         authenticated = false
         return noContentResponse()
       }
@@ -94,9 +94,7 @@ describe('Workers Page', () => {
     await waitForRoute('/login')
 
     expect(router.currentRoute.value.path).toBe('/login')
-    expect(fetchMock.mock.calls.some(([url]) => String(url) === '/api/v1/console/logout')).toBe(
-      true,
-    )
+    expect(fetchMock.mock.calls.some(([url]) => String(url) === '/api/v1/auth/logout')).toBe(true)
 
     wrapper.unmount()
   })
@@ -105,7 +103,7 @@ describe('Workers Page', () => {
     let forceUnauthorized = false
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(adminSessionPayload)
       }
       if (url.startsWith('/api/v1/workers/stats')) {
@@ -148,7 +146,7 @@ describe('Workers Page', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       const method = String(init?.method ?? 'GET').toUpperCase()
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(adminSessionPayload)
       }
       if (url.startsWith('/api/v1/workers/stats')) {
@@ -196,7 +194,7 @@ describe('Workers Page', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       const method = String(init?.method ?? 'GET').toUpperCase()
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(adminSessionPayload)
       }
       if (url.startsWith('/api/v1/workers/stats')) {
@@ -269,7 +267,7 @@ describe('Workers Page', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       const method = String(init?.method ?? 'GET').toUpperCase()
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(adminSessionPayload)
       }
       if (url.startsWith('/api/v1/workers/stats')) {
@@ -343,7 +341,7 @@ describe('Workers Page', () => {
 
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(adminSessionPayload)
       }
       if (url.startsWith('/api/v1/workers/stats')) {
@@ -398,7 +396,7 @@ describe('Workers Page', () => {
 
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(adminSessionPayload)
       }
       if (url.startsWith('/api/v1/workers/stats')) {
@@ -457,7 +455,7 @@ describe('Workers Page', () => {
 
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(adminSessionPayload)
       }
       if (url.startsWith('/api/v1/workers/stats')) {
@@ -494,7 +492,7 @@ describe('Workers Page', () => {
 
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(adminSessionPayload)
       }
       if (url.startsWith('/api/v1/workers/stats')) {
@@ -536,7 +534,7 @@ describe('Workers Page', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       const method = String(init?.method ?? 'GET').toUpperCase()
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(adminSessionPayload)
       }
       if (url.startsWith('/api/v1/workers/stats')) {
@@ -548,7 +546,7 @@ describe('Workers Page', () => {
       if (url.startsWith('/api/v1/workers?')) {
         return jsonResponse(workersPayload)
       }
-      if (url === '/api/v1/console/password' && method === 'POST') {
+      if (url === '/api/v1/auth/password' && method === 'POST') {
         return noContentResponse()
       }
       throw new Error(`unexpected url: ${url} method=${method}`)
@@ -584,7 +582,7 @@ describe('Workers Page', () => {
       expect(document.body.textContent ?? '').toContain('Password updated successfully.')
       const passwordCall = fetchMock.mock.calls.find(
         ([url, init]) =>
-          String(url) === '/api/v1/console/password' &&
+          String(url) === '/api/v1/auth/password' &&
           String((init as RequestInit | undefined)?.method).toUpperCase() === 'POST',
       )
       expect(passwordCall).toBeTruthy()
@@ -604,7 +602,7 @@ describe('Workers Page', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       const method = String(init?.method ?? 'GET').toUpperCase()
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(memberSessionPayload)
       }
       if (url.startsWith('/api/v1/workers/stats')) {

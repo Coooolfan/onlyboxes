@@ -28,10 +28,10 @@ describe('Accounts Page', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       const method = String(init?.method ?? 'GET').toUpperCase()
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(adminSessionPayload)
       }
-      if (url.startsWith('/api/v1/console/accounts?')) {
+      if (url.startsWith('/api/v1/accounts?')) {
         return jsonResponse({
           items: accountItems,
           total: accountItems.length,
@@ -39,7 +39,7 @@ describe('Accounts Page', () => {
           page_size: 20,
         })
       }
-      if (url === '/api/v1/console/accounts/acc-member' && method === 'DELETE') {
+      if (url === '/api/v1/accounts/acc-member' && method === 'DELETE') {
         accountItems = accountItems.filter((item) => item.account_id !== 'acc-member')
         return noContentResponse()
       }
@@ -59,7 +59,7 @@ describe('Accounts Page', () => {
 
       const deleteCall = fetchMock.mock.calls.find(
         ([url, init]) =>
-          String(url) === '/api/v1/console/accounts/acc-member' &&
+          String(url) === '/api/v1/accounts/acc-member' &&
           String((init as RequestInit | undefined)?.method).toUpperCase() === 'DELETE',
       )
       expect(deleteCall).toBeTruthy()
@@ -73,13 +73,13 @@ describe('Accounts Page', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       const method = String(init?.method ?? 'GET').toUpperCase()
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(adminSessionPayload)
       }
-      if (url.startsWith('/api/v1/console/accounts?')) {
+      if (url.startsWith('/api/v1/accounts?')) {
         return jsonResponse(defaultAccountsPayload())
       }
-      if (url === '/api/v1/console/register' && method === 'POST') {
+      if (url === '/api/v1/accounts' && method === 'POST') {
         return jsonResponse({
           account: {
             account_id: 'acc-member-new',
@@ -130,7 +130,7 @@ describe('Accounts Page', () => {
       expect(createAccountPasswordInput?.value ?? '').toBe('')
       const registerCall = fetchMock.mock.calls.find(
         ([url, init]) =>
-          String(url) === '/api/v1/console/register' &&
+          String(url) === '/api/v1/accounts' &&
           String((init as RequestInit | undefined)?.method).toUpperCase() === 'POST',
       )
       expect(registerCall).toBeTruthy()
@@ -142,13 +142,13 @@ describe('Accounts Page', () => {
   it('hides create-account panel when registration is disabled', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse({
           ...adminSessionPayload,
           registration_enabled: false,
         })
       }
-      if (url.startsWith('/api/v1/console/accounts?')) {
+      if (url.startsWith('/api/v1/accounts?')) {
         return jsonResponse(defaultAccountsPayload())
       }
       throw new Error(`unexpected url: ${url}`)
@@ -167,10 +167,10 @@ describe('Accounts Page', () => {
     let forceUnauthorized = false
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(adminSessionPayload)
       }
-      if (url.startsWith('/api/v1/console/accounts?')) {
+      if (url.startsWith('/api/v1/accounts?')) {
         return forceUnauthorized ? unauthorizedResponse() : jsonResponse(defaultAccountsPayload())
       }
       throw new Error(`unexpected url: ${url}`)
@@ -197,13 +197,13 @@ describe('Accounts Page', () => {
     let authenticated = true
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return authenticated ? jsonResponse(adminSessionPayload) : unauthorizedResponse()
       }
-      if (url.startsWith('/api/v1/console/accounts?')) {
+      if (url.startsWith('/api/v1/accounts?')) {
         return authenticated ? jsonResponse(defaultAccountsPayload()) : unauthorizedResponse()
       }
-      if (url === '/api/v1/console/logout') {
+      if (url === '/api/v1/auth/logout') {
         authenticated = false
         return noContentResponse()
       }
@@ -223,9 +223,7 @@ describe('Accounts Page', () => {
       await waitForRoute('/login')
 
       expect(router.currentRoute.value.path).toBe('/login')
-      expect(fetchMock.mock.calls.some(([url]) => String(url) === '/api/v1/console/logout')).toBe(
-        true,
-      )
+      expect(fetchMock.mock.calls.some(([url]) => String(url) === '/api/v1/auth/logout')).toBe(true)
     } finally {
       wrapper.unmount()
     }
@@ -235,13 +233,13 @@ describe('Accounts Page', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       const method = String(init?.method ?? 'GET').toUpperCase()
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(adminSessionPayload)
       }
-      if (url.startsWith('/api/v1/console/accounts?')) {
+      if (url.startsWith('/api/v1/accounts?')) {
         return jsonResponse(defaultAccountsPayload())
       }
-      if (url === '/api/v1/console/password' && method === 'POST') {
+      if (url === '/api/v1/auth/password' && method === 'POST') {
         return noContentResponse()
       }
       throw new Error(`unexpected url: ${url}, method=${method}`)
@@ -277,7 +275,7 @@ describe('Accounts Page', () => {
       expect(document.body.textContent ?? '').toContain('Password updated successfully.')
       const passwordCall = fetchMock.mock.calls.find(
         ([url, init]) =>
-          String(url) === '/api/v1/console/password' &&
+          String(url) === '/api/v1/auth/password' &&
           String((init as RequestInit | undefined)?.method).toUpperCase() === 'POST',
       )
       expect(passwordCall).toBeTruthy()

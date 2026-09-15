@@ -41,18 +41,18 @@ describe('API Keys Modal', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       const method = String(init?.method ?? 'GET').toUpperCase()
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return authenticated ? jsonResponse(memberSessionPayload) : unauthorizedResponse()
       }
-      if (url === '/api/v1/console/tokens') {
+      if (url === '/api/v1/tokens') {
         return authenticated ? jsonResponse(defaultTokensPayload()) : unauthorizedResponse()
       }
-      if (url === '/api/v1/console/api-keys' && method === 'GET') {
+      if (url === '/api/v1/api-keys' && method === 'GET') {
         return authenticated
           ? jsonResponse({ items: apiKeys, total: apiKeys.length })
           : unauthorizedResponse()
       }
-      if (url === '/api/v1/console/api-keys' && method === 'POST') {
+      if (url === '/api/v1/api-keys' && method === 'POST') {
         apiKeys = [
           ...apiKeys,
           {
@@ -72,11 +72,11 @@ describe('API Keys Modal', () => {
           updated_at: '2026-02-16T10:01:00Z',
         })
       }
-      if (url === '/api/v1/console/api-keys/apik-1' && method === 'DELETE') {
+      if (url === '/api/v1/api-keys/apik-1' && method === 'DELETE') {
         apiKeys = apiKeys.filter((item) => item.id !== 'apik-1')
         return noContentResponse()
       }
-      if (url === '/api/v1/console/logout') {
+      if (url === '/api/v1/auth/logout') {
         authenticated = false
         return noContentResponse()
       }
@@ -183,13 +183,13 @@ describe('API Keys Modal', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       const method = String(init?.method ?? 'GET').toUpperCase()
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(memberSessionPayload)
       }
-      if (url === '/api/v1/console/tokens') {
+      if (url === '/api/v1/tokens') {
         return jsonResponse(defaultTokensPayload())
       }
-      if (url === '/api/v1/console/api-keys' && method === 'GET') {
+      if (url === '/api/v1/api-keys' && method === 'GET') {
         return forceUnauthorized ? unauthorizedResponse() : jsonResponse(defaultAPIKeysPayload())
       }
       throw new Error(`unexpected url: ${url}, method=${method}`)

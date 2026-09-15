@@ -476,7 +476,7 @@ def render_compose(
 
 def wait_console_ready(http_port: int, admin_password: str) -> None:
     info("Waiting for console to become ready...")
-    url = f"http://127.0.0.1:{http_port}/api/v1/console/session"
+    url = f"http://127.0.0.1:{http_port}/api/v1/auth/session"
     deadline = time.monotonic() + CONSOLE_READY_TIMEOUT
     while time.monotonic() < deadline:
         try:

@@ -12,13 +12,16 @@ The console service hosts:
   - `GET /static/*` serves embedded static public files such as `/static/worker-startup.sh`.
   - unknown `GET/HEAD` routes return `404 Not Found`.
   - `/api/*` and `/mcp` are reserved for backend handlers and are not served as frontend pages.
-- REST APIs for worker data (dashboard authentication, role-scoped):
+- REST APIs for worker data (management authentication, role-scoped):
   - `GET /api/v1/workers` for paginated worker listing.
   - `GET /api/v1/workers/stats` for aggregated worker status metrics.
   - `GET /api/v1/workers/inflight` for per-capability inflight and terminal session capacity snapshots.
   - `POST /api/v1/workers` for creating provisioned worker credentials and returning startup command.
   - `DELETE /api/v1/workers/:node_id` for deleting a provisioned worker and revoking its credential (online worker is disconnected immediately).
   - `GET /api/v1/workers/:node_id/startup-command` always returns `410 Gone`.
+  - `GET /api/v1/sessions` lists confirmed terminal sessions (admin: all accounts, optional `account_id`; non-admin: own account).
+  - `GET /api/v1/sessions/:session_id` returns one confirmed terminal session (`account_id` required for admin).
+  - `DELETE /api/v1/sessions/:session_id` deletes an owned terminal session route and its public preview routes (`account_id` required for admin).
   - `worker_secret` is returned once in `POST /api/v1/workers` response and is not queryable from read APIs.
   - worker types:
     - `normal` (maps to `worker-docker`)
@@ -30,7 +33,7 @@ The console service hosts:
     - an account may own multiple workers; owner/type labels remain the routing boundary
     - at least one capability from the `computerUse` / `readImage` allowlist is required; other capabilities are rejected
     - declared `max_inflight` values are preserved; omitted or non-positive values default to `1`
-- public preview route APIs (dashboard cookie/API key/JIT auth):
+- public preview route APIs (management cookie/API key/JIT auth):
   - `POST /api/v1/proxy-routes` creates an anonymous preview URL for an owned terminal session and port.
   - `GET /api/v1/proxy-routes` lists only the current account's active routes.
   - `DELETE /api/v1/proxy-routes/:route_key` deletes only the current account's route; cross-account access returns `404`.
@@ -47,7 +50,7 @@ The console service hosts:
   - `POST /api/v1/tasks/:task_id/cancel` for best-effort task cancellation.
   - request header: `Authorization: Bearer <access-token>`.
   - accepted bearer token types:
-    - trusted token managed by dashboard `GET/POST/DELETE /api/v1/console/tokens`
+    - trusted token managed through cookie-authenticated `GET/POST/DELETE /api/v1/tokens`
     - JIT token (`obx_jit_v1.<payload>.<signature>`) signed with `CONSOLE_JIT_SIGNING_KEY`
   - owner isolation is account-scoped: token resolves to `account_id`, and task/session ownership uses `account_id`.
   - task visibility: task lookup/cancel is owner-scoped by account; same-account tokens can access shared tasks, cross-account access returns `404`.
@@ -70,7 +73,7 @@ The console service hosts:
     The query parameter name defaults to `token` and can be changed with `CONSOLE_MCP_TOKEN_QUERY_PARAM`.
     Prefer the header when available because URL query tokens can be captured by logs, browser history, or intermediaries; use HTTPS in production.
   - accepted bearer token types:
-    - trusted token managed by dashboard `GET/POST/DELETE /api/v1/console/tokens`
+    - trusted token managed through cookie-authenticated `GET/POST/DELETE /api/v1/tokens`
     - JIT token (`obx_jit_v1.<payload>.<signature>`) signed with `CONSOLE_JIT_SIGNING_KEY`
   - if the trusted token list is empty, trusted-token auth for `/mcp` is unavailable; valid JIT tokens can still authenticate when `CONSOLE_JIT_SIGNING_KEY` is configured.
   - `GET /mcp` is intentionally unsupported and returns `405` with `Allow: POST`.
@@ -132,42 +135,42 @@ The console service hosts:
         - `OBJECTKEY`: `{"object_key":"...","filename":"..."}`
       - when `OBJECTKEY` is configured, the console skips generating a presigned download URL entirely.
       - non-format failures (session/file missing, busy, timeout, upload failure) are returned as tool errors.
-- dashboard authentication APIs:
-  - `POST /api/v1/console/login` with `{"username":"...","password":"..."}`.
+- authentication and account APIs:
+  - `POST /api/v1/auth/login` with `{"username":"...","password":"..."}`.
   - login response includes `authenticated`, `account`, `registration_enabled`, `console_version`, `console_repo_url`.
-  - `POST /api/v1/console/logout`.
-  - `GET /api/v1/console/session` returns current session account payload with `console_version` and `console_repo_url`.
-  - `POST /api/v1/console/password` changes current account password (requires `current_password` + `new_password`; successful update rotates account sessions).
-  - `POST /api/v1/console/register` creates non-admin account (admin-only, and only when `CONSOLE_ENABLE_REGISTRATION=true`).
+  - `POST /api/v1/auth/logout`.
+  - `GET /api/v1/auth/session` returns current session account payload with `console_version` and `console_repo_url`.
+  - `POST /api/v1/auth/password` changes current account password (requires `current_password` + `new_password`; successful update rotates account sessions).
+  - `POST /api/v1/accounts` creates non-admin account (admin-only, and only when `CONSOLE_ENABLE_REGISTRATION=true`).
   - account management (admin only):
-    - `GET /api/v1/console/accounts` lists accounts with pagination (`page`, `page_size`).
-    - `DELETE /api/v1/console/accounts/:account_id` deletes a non-admin account.
+    - `GET /api/v1/accounts` lists accounts with pagination (`page`, `page_size`).
+    - `DELETE /api/v1/accounts/:account_id` deletes a non-admin account.
     - deleting self and deleting admin accounts are both rejected with `403`.
-  - token management (requires dashboard cookie session auth):
-    - `GET /api/v1/console/tokens` list current account token metadata (`id`, `name`, masked token).
-    - `POST /api/v1/console/tokens` create token bound to current account (manual token or auto-generated, plaintext returned only in create response).
-    - `GET /api/v1/console/tokens/:token_id/value` always returns `410 Gone`.
-    - token plaintext is delivered in `POST /api/v1/console/tokens` response only.
-    - `DELETE /api/v1/console/tokens/:token_id` delete token (current account only, cross-account returns `404`).
-    - console API keys and dashboard JIT tokens are rejected for these endpoints so dashboard bearer credentials cannot mint MCP trusted tokens.
-  - console API key management (dashboard auth):
-    - `GET /api/v1/console/api-keys` lists current account API key metadata (`id`, `name`, masked key).
-    - `POST /api/v1/console/api-keys` creates an auto-generated API key bound to current account; plaintext is returned only in the create response.
-    - `DELETE /api/v1/console/api-keys/:api_key_id` deletes current account API key; cross-account delete returns `404`.
-  - dashboard auth accepts cookie session, console API key via `Authorization: Bearer <api-key>`, or dashboard JIT bearer token when configured.
-  - dashboard JIT bearer token format is `obx_dashboard_jit_v1.<payload>.<signature>` with `CONSOLE_DASHBOARD_JIT_SIGNING_KEY`.
-  - dashboard JIT tokens require payload `iss`, `sub`, `scope:"dashboard"`, optional `exp` (Unix milliseconds), and use the same `(iss, sub) -> account` derivation as MCP JIT.
-  - dashboard JIT accounts are non-admin, cannot log in with a password, and cannot authenticate `/mcp`.
-  - bearer precedence is strict for dashboard auth: if `Authorization: Bearer <api-key>` is present, cookie session is not used as fallback.
-  - non-Bearer `Authorization` headers do not participate in dashboard API key auth and do not block cookie-session auth.
+  - token management (requires console cookie session auth):
+    - `GET /api/v1/tokens` list current account token metadata (`id`, `name`, masked token).
+    - `POST /api/v1/tokens` create token bound to current account (manual token or auto-generated, plaintext returned only in create response).
+    - `GET /api/v1/tokens/:token_id/value` always returns `410 Gone`.
+    - token plaintext is delivered in `POST /api/v1/tokens` response only.
+    - `DELETE /api/v1/tokens/:token_id` delete token (current account only, cross-account returns `404`).
+    - console API keys and Dashboard JIT tokens are rejected for these endpoints so management bearer credentials cannot mint MCP trusted tokens.
+  - console API key management (management auth):
+    - `GET /api/v1/api-keys` lists current account API key metadata (`id`, `name`, masked key).
+    - `POST /api/v1/api-keys` creates an auto-generated API key bound to current account; plaintext is returned only in the create response.
+    - `DELETE /api/v1/api-keys/:api_key_id` deletes current account API key; cross-account delete returns `404`.
+  - management auth accepts cookie session, console API key via `Authorization: Bearer <api-key>`, or Dashboard JIT bearer token when configured.
+  - Dashboard JIT bearer token format is `obx_dashboard_jit_v1.<payload>.<signature>` with `CONSOLE_DASHBOARD_JIT_SIGNING_KEY`.
+  - Dashboard JIT tokens require payload `iss`, `sub`, `scope:"dashboard"`, optional `exp` (Unix milliseconds), and use the same `(iss, sub) -> account` derivation as MCP JIT.
+  - Dashboard JIT accounts are non-admin, cannot log in with a password, and cannot authenticate `/mcp`.
+  - bearer precedence is strict for management auth: if `Authorization: Bearer <api-key>` is present, cookie session is not used as fallback.
+  - non-Bearer `Authorization` headers do not participate in management API key auth and do not block cookie-session auth.
   - sensitive account actions require cookie session only:
-    - `POST /api/v1/console/password`
-    - `POST /api/v1/console/api-keys`
-    - `DELETE /api/v1/console/api-keys/:api_key_id`
-    - `GET /api/v1/console/tokens`
-    - `POST /api/v1/console/tokens`
-    - `DELETE /api/v1/console/tokens/:token_id`
-    - `GET /api/v1/console/tokens/:token_id/value`
+    - `POST /api/v1/auth/password`
+    - `POST /api/v1/api-keys`
+    - `DELETE /api/v1/api-keys/:api_key_id`
+    - `GET /api/v1/tokens`
+    - `POST /api/v1/tokens`
+    - `DELETE /api/v1/tokens/:token_id`
+    - `GET /api/v1/tokens/:token_id/value`
 
 Hidden tools (`CONSOLE_HIDDEN_TOOLS`):
 - comma-separated list of tool names to hide from MCP `tools/list`.
@@ -246,7 +249,7 @@ Dashboard account behavior:
 - if initialized during startup, the initial admin API key plaintext is logged only when `console admin account initialized` is emitted for the first time.
 - dashboard session is in-memory only; restarting `console` invalidates all dashboard login sessions.
 - changing account password rotates (invalidates + recreates) current account sessions.
-- admin can create non-admin accounts via `POST /api/v1/console/register` when `CONSOLE_ENABLE_REGISTRATION=true`.
+- admin can create non-admin accounts via `POST /api/v1/accounts` when `CONSOLE_ENABLE_REGISTRATION=true`.
 - admin can list all accounts and delete non-admin accounts; deleting self/admin accounts is blocked.
 - dashboard API keys are persisted in SQLite table `api_keys`.
 - API key value is stored as HMAC-SHA256 hash only; plaintext is returned once at creation time.
@@ -254,7 +257,7 @@ Dashboard account behavior:
 - API key metadata includes `name` (case-insensitive unique within the same account) and masked key (`key_masked`).
 
 Trusted token behavior:
-- tokens are persisted in SQLite and managed by dashboard APIs.
+- tokens are persisted in SQLite and managed by management APIs.
 - token value is stored as HMAC-SHA256 hash only; plaintext is returned once at creation time.
 - tokens are bound to `account_id`.
 - token metadata includes `name` (case-insensitive unique within the same account) and masked token (`token_masked`).
@@ -270,12 +273,12 @@ JIT token behavior:
 - a valid JIT token deterministically derives an account-scoped owner identity from `iss` + `sub`.
 - on first use, the derived account is auto-created as a non-admin account with disabled dashboard credentials and reused on later requests.
 - JIT-created accounts own execution resources but cannot log in through dashboard password authentication.
-- dashboard routes under `/api/v1/console/*` do not accept JIT tokens as session or API key credentials.
+- management routes under `/api/v1/*` reject MCP JIT tokens.
 - `CONSOLE_JIT_SIGNING_KEY` should be treated as a high-privilege signing secret: its holder can mint bearer tokens for any `iss`/`sub` identity.
 - MCP JIT and Dashboard JIT payloads may include `exp` in Unix milliseconds; expired tokens are rejected.
 - Dashboard JIT tokens use sibling format `obx_dashboard_jit_v1.<payload>.<signature>`, are signed with `CONSOLE_DASHBOARD_JIT_SIGNING_KEY`, and additionally require `scope:"dashboard"`.
 - `CONSOLE_DASHBOARD_JIT_SIGNING_KEY` must differ from `CONSOLE_JIT_SIGNING_KEY`.
-- Dashboard JIT tokens are for dashboard automation such as worker-sys provisioning; they are rejected by `/mcp` and cannot access cookie-only token management endpoints.
+- Dashboard JIT tokens are for management automation such as worker-sys provisioning; they are rejected by `/mcp` and cannot access cookie-only token management endpoints.
 
 Task and terminal-session persistence behavior:
 - task input/result/status lifecycle is persisted in SQLite.
@@ -293,7 +296,7 @@ Persistence config:
 - `CONSOLE_TASK_RETENTION_DAYS`: terminal task retention days (default `30`)
 - `CONSOLE_HASH_KEY`: required HMAC key for hashing worker secret and trusted token; missing value fails startup
 - `CONSOLE_JIT_SIGNING_KEY`: optional HMAC key for JIT bearer tokens; when configured, valid JIT tokens can authenticate MCP and execution APIs without a `trusted_tokens` entry
-- `CONSOLE_DASHBOARD_JIT_SIGNING_KEY`: optional HMAC key for dashboard JIT bearer tokens; when configured, valid dashboard JIT tokens can authenticate selected dashboard APIs without a cookie session or console API key
+- `CONSOLE_DASHBOARD_JIT_SIGNING_KEY`: optional HMAC key for dashboard JIT bearer tokens; when configured, valid dashboard JIT tokens can authenticate selected management APIs without a cookie session or console API key
 - `CONSOLE_MCP_TOKEN_QUERY_PARAM`: query parameter name for `/mcp` URL token fallback (default `token`)
 - `CONSOLE_COMPUTER_USE_SESSION_ID_PREFIX`: case-sensitive public session prefix used by `readImage` and `exportFile` to select a Worker System (default `CU:`). Changing it changes session-ID interpretation and is generally not recommended; blank values fall back to `CU:` with a warning.
 - `CONSOLE_PROXY_ENABLED`: enables route management and Nginx resolve endpoints (default `false`)

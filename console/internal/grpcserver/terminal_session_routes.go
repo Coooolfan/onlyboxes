@@ -34,12 +34,31 @@ type terminalSessionRoute struct {
 	NodeID             string
 	LastUsedUnixMs     int64
 	LeaseExpiresUnixMs int64
+	CreatedAtUnixMs    int64
 	RecoveryState      terminalSessionRecoveryState
 	// ReservationID is non-zero only while the first dispatch is provisional.
 	// A successful result confirms the route by clearing it.
 	ReservationID          uint64
 	ConfirmedReservationID uint64
 	ProvisionalUses        uint64
+}
+
+const (
+	TerminalSessionStatusReady       = "ready"
+	TerminalSessionStatusUnavailable = "unavailable"
+	TerminalSessionStatusReconciling = "reconciling"
+)
+
+// TerminalSessionView is the owner-scoped confirmed terminal session snapshot
+// exposed by the session HTTP APIs.
+type TerminalSessionView struct {
+	AccountID          string
+	SessionID          string
+	WorkerID           string
+	Status             string
+	LeaseExpiresUnixMs int64
+	LastUsedUnixMs     int64
+	CreatedAtUnixMs    int64
 }
 
 type terminalSessionRecoveryState uint8
@@ -77,6 +96,7 @@ func (s *RegistryService) RestoreTerminalSessionRoutes(ctx context.Context, now 
 			NodeID:             nodeID,
 			LastUsedUnixMs:     route.LastUsedUnixMs,
 			LeaseExpiresUnixMs: route.LeaseExpiresUnixMs,
+			CreatedAtUnixMs:    route.CreatedAtUnixMs,
 			RecoveryState:      terminalSessionRecoveryUnavailable,
 		}
 		if index[nodeID] == nil {
@@ -125,9 +145,14 @@ func (s *RegistryService) bindTerminalSessionRoute(sessionID string, nodeID stri
 		}
 	}
 
+	createdAtUnixMs := nowUnixMs
+	if exists && existing.CreatedAtUnixMs > 0 {
+		createdAtUnixMs = existing.CreatedAtUnixMs
+	}
 	s.terminalSessionToNode[normalizedSessionID] = terminalSessionRoute{
 		NodeID:          normalizedNodeID,
 		LastUsedUnixMs:  nowUnixMs,
+		CreatedAtUnixMs: createdAtUnixMs,
 		RecoveryState:   terminalSessionRecoveryReady,
 		ReservationID:   0,
 		ProvisionalUses: 0,
@@ -326,6 +351,9 @@ func (s *RegistryService) commitConfirmedTerminalSessionRoute(
 	if route.LeaseExpiresUnixMs < leaseExpiresUnixMs {
 		route.LeaseExpiresUnixMs = leaseExpiresUnixMs
 	}
+	if route.CreatedAtUnixMs <= 0 {
+		route.CreatedAtUnixMs = nowUnixMs
+	}
 	if s.terminalRouteStore != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), terminalRouteStoreTimeout)
 		err := s.terminalRouteStore.UpsertConfirmedTerminalSessionRoute(ctx, registry.TerminalSessionRoute{
@@ -333,7 +361,7 @@ func (s *RegistryService) commitConfirmedTerminalSessionRoute(
 			NodeID:             normalizedNodeID,
 			LeaseExpiresUnixMs: route.LeaseExpiresUnixMs,
 			LastUsedUnixMs:     nowUnixMs,
-			CreatedAtUnixMs:    nowUnixMs,
+			CreatedAtUnixMs:    route.CreatedAtUnixMs,
 			UpdatedAtUnixMs:    nowUnixMs,
 		})
 		cancel()
@@ -743,4 +771,141 @@ func routeNowUnixMs(now time.Time) int64 {
 		return time.Now().UnixMilli()
 	}
 	return now.UnixMilli()
+}
+
+func terminalSessionStatusName(state terminalSessionRecoveryState) string {
+	switch state {
+	case terminalSessionRecoveryUnavailable:
+		return TerminalSessionStatusUnavailable
+	case terminalSessionRecoveryReconciling:
+		return TerminalSessionStatusReconciling
+	default:
+		return TerminalSessionStatusReady
+	}
+}
+
+func terminalSessionViewFromRoute(accountID string, sessionID string, route terminalSessionRoute) TerminalSessionView {
+	createdAtUnixMs := route.CreatedAtUnixMs
+	if createdAtUnixMs <= 0 {
+		createdAtUnixMs = route.LastUsedUnixMs
+	}
+	return TerminalSessionView{
+		AccountID:          accountID,
+		SessionID:          sessionID,
+		WorkerID:           route.NodeID,
+		Status:             terminalSessionStatusName(route.RecoveryState),
+		LeaseExpiresUnixMs: route.LeaseExpiresUnixMs,
+		LastUsedUnixMs:     route.LastUsedUnixMs,
+		CreatedAtUnixMs:    createdAtUnixMs,
+	}
+}
+
+func (s *RegistryService) ListTerminalSessions(ownerID string, now time.Time) []TerminalSessionView {
+	if s == nil {
+		return nil
+	}
+	normalizedOwnerID := normalizeTaskOwnerID(ownerID)
+	s.maybePruneTerminalSessionRoutes(now)
+	nowUnixMs := routeNowUnixMs(now)
+
+	s.terminalRoutesMu.Lock()
+	defer s.terminalRoutesMu.Unlock()
+
+	expired := make([]registry.TerminalSessionRouteRef, 0)
+	views := make([]TerminalSessionView, 0)
+	for scopedSessionID, route := range s.terminalSessionToNode {
+		if route.ReservationID != 0 {
+			continue
+		}
+		if route.LeaseExpiresUnixMs > 0 && route.LeaseExpiresUnixMs <= nowUnixMs {
+			expired = append(expired, registry.TerminalSessionRouteRef{
+				ScopedSessionID: scopedSessionID,
+				NodeID:          route.NodeID,
+			})
+			continue
+		}
+		accountID, externalSessionID, ok := parseScopedTerminalSessionID(scopedSessionID)
+		if !ok {
+			continue
+		}
+		if normalizedOwnerID != "" && accountID != normalizedOwnerID {
+			continue
+		}
+		views = append(views, terminalSessionViewFromRoute(accountID, externalSessionID, route))
+	}
+	if len(expired) > 0 && s.terminalRouteStore != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), terminalRouteStoreTimeout)
+		err := s.terminalRouteStore.DeleteTerminalSessionRoutes(ctx, expired)
+		cancel()
+		if err != nil {
+			slog.Error("failed to delete expired terminal session routes", "error", err)
+		} else {
+			for _, ref := range expired {
+				if route, ok := s.terminalSessionToNode[ref.ScopedSessionID]; ok && route.NodeID == ref.NodeID {
+					s.deleteTerminalSessionRouteLocked(ref.ScopedSessionID, route)
+				}
+			}
+		}
+	} else if len(expired) > 0 && s.terminalRouteStore == nil {
+		for _, ref := range expired {
+			if route, ok := s.terminalSessionToNode[ref.ScopedSessionID]; ok && route.NodeID == ref.NodeID {
+				s.deleteTerminalSessionRouteLocked(ref.ScopedSessionID, route)
+			}
+		}
+	}
+
+	sort.Slice(views, func(i, j int) bool {
+		if views[i].CreatedAtUnixMs != views[j].CreatedAtUnixMs {
+			return views[i].CreatedAtUnixMs > views[j].CreatedAtUnixMs
+		}
+		if views[i].AccountID != views[j].AccountID {
+			return views[i].AccountID < views[j].AccountID
+		}
+		return views[i].SessionID < views[j].SessionID
+	})
+	return views
+}
+
+func (s *RegistryService) GetTerminalSession(ownerID string, sessionID string, now time.Time) (TerminalSessionView, bool) {
+	if s == nil {
+		return TerminalSessionView{}, false
+	}
+	normalizedOwnerID := normalizeTaskOwnerID(ownerID)
+	normalizedSessionID := strings.TrimSpace(sessionID)
+	if normalizedOwnerID == "" || normalizedSessionID == "" {
+		return TerminalSessionView{}, false
+	}
+	scopedSessionID := scopeTerminalSessionID(normalizedOwnerID, normalizedSessionID)
+	route, ok := s.terminalSessionRouteSnapshot(scopedSessionID, now)
+	if !ok || route.ReservationID != 0 {
+		return TerminalSessionView{}, false
+	}
+	externalSessionID, ok := unscopeTerminalSessionID(normalizedOwnerID, scopedSessionID)
+	if !ok {
+		return TerminalSessionView{}, false
+	}
+	return terminalSessionViewFromRoute(normalizedOwnerID, externalSessionID, route), true
+}
+
+func (s *RegistryService) DeleteTerminalSession(ownerID string, sessionID string, now time.Time) (bool, error) {
+	if s == nil {
+		return false, nil
+	}
+	normalizedOwnerID := normalizeTaskOwnerID(ownerID)
+	normalizedSessionID := strings.TrimSpace(sessionID)
+	if normalizedOwnerID == "" || normalizedSessionID == "" {
+		return false, nil
+	}
+	scopedSessionID := scopeTerminalSessionID(normalizedOwnerID, normalizedSessionID)
+	route, ok := s.terminalSessionRouteSnapshot(scopedSessionID, now)
+	if !ok || route.ReservationID != 0 {
+		return false, nil
+	}
+	if _, ownerOK := unscopeTerminalSessionID(normalizedOwnerID, scopedSessionID); !ownerOK {
+		return false, nil
+	}
+	if err := s.clearTerminalSessionRoute(scopedSessionID, route.NodeID); err != nil {
+		return false, err
+	}
+	return true, nil
 }
