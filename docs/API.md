@@ -70,6 +70,23 @@ Onlyboxes has these auth paths:
 - Time fields are RFC3339 timestamps.
 - IDs are opaque strings (for example `acc_*`, `tok_*`, worker UUIDs, task IDs).
 
+### 2.1 Legacy Compatibility Aliases
+
+New integrations should use the canonical resource-oriented paths. Previously published `/api/v1/console/*` paths remain available as aliases with identical handlers and authentication requirements:
+
+| Canonical path | Legacy alias |
+| --- | --- |
+| `/api/v1/auth/login` | `/api/v1/console/login` |
+| `/api/v1/auth/logout` | `/api/v1/console/logout` |
+| `/api/v1/auth/session` | `/api/v1/console/session` |
+| `/api/v1/auth/password` | `/api/v1/console/password` |
+| `POST /api/v1/accounts` | `/api/v1/console/register` |
+| `/api/v1/accounts*` | `/api/v1/console/accounts*` |
+| `/api/v1/api-keys*` | `/api/v1/console/api-keys*` |
+| `/api/v1/tokens*` | `/api/v1/console/tokens*` |
+
+`/api/v1/console/sessions*` is not an alias; terminal session management was first published at `/api/v1/sessions*`.
+
 ## 3. Authentication and Account APIs
 
 ### 3.1 Login

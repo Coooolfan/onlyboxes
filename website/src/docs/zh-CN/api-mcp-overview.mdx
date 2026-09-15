@@ -52,6 +52,8 @@ Console 提供五种鉴权凭据，覆盖不同使用场景：
 
 Web UI 与第三方集成使用同一套资源式端点，每个端点分别执行下文标注的管理凭据或执行凭据要求。
 
+已经发布的 `/api/v1/console/*` 身份认证、账号、API Key 和 Token 路径继续作为兼容别名。新集成应使用下文列出的资源式主路径。Terminal session 管理没有 `/api/v1/console/sessions*` 别名，因为它首次发布时使用的路径就是 `/api/v1/sessions*`。
+
 ### 身份认证与账号
 
 #### 登录

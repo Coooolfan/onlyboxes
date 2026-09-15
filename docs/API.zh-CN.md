@@ -70,6 +70,23 @@ Onlyboxes 有以下鉴权路径：
 - 时间字段使用 RFC3339。
 - ID 字段均为不透明字符串（如 `acc_*`、`tok_*`、worker UUID、task ID）。
 
+### 2.1 旧路径兼容别名
+
+新集成应使用资源式主路径。已经发布的 `/api/v1/console/*` 路径继续作为兼容别名，使用完全相同的 Handler 和鉴权要求：
+
+| 主路径 | 兼容别名 |
+| --- | --- |
+| `/api/v1/auth/login` | `/api/v1/console/login` |
+| `/api/v1/auth/logout` | `/api/v1/console/logout` |
+| `/api/v1/auth/session` | `/api/v1/console/session` |
+| `/api/v1/auth/password` | `/api/v1/console/password` |
+| `POST /api/v1/accounts` | `/api/v1/console/register` |
+| `/api/v1/accounts*` | `/api/v1/console/accounts*` |
+| `/api/v1/api-keys*` | `/api/v1/console/api-keys*` |
+| `/api/v1/tokens*` | `/api/v1/console/tokens*` |
+
+`/api/v1/console/sessions*` 不是兼容别名；terminal session 管理首次发布时使用的路径就是 `/api/v1/sessions*`。
+
 ## 3. 身份认证与账号 API
 
 ### 3.1 登录

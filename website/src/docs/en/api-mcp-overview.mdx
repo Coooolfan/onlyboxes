@@ -52,6 +52,8 @@ The Console exposes five credential types for different use cases:
 
 The Web UI and third-party integrations use the same resource-oriented endpoints. Each endpoint enforces the management or execution credential requirements documented below.
 
+Previously published `/api/v1/console/*` authentication, account, API key, and token paths remain available as compatibility aliases. New integrations should use the canonical paths shown below. Terminal session management has no `/api/v1/console/sessions*` alias because it was first published at `/api/v1/sessions*`.
+
 ### Authentication and Accounts
 
 #### Login

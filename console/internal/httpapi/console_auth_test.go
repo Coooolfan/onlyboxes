@@ -352,6 +352,74 @@ func TestConsoleAuthLoginLogoutLifecycle(t *testing.T) {
 	}
 }
 
+func TestLegacyConsoleRouteAliases(t *testing.T) {
+	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, nil, nil, "")
+	auth := newTestConsoleAuthWithRegistration(t, true)
+	router := mustNewRouter(t, handler, auth, newTestMCPAuth(t), nil)
+
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/v1/console/login", strings.NewReader(`{"username":"admin-test","password":"password-test"}`))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginRec := httptest.NewRecorder()
+	router.ServeHTTP(loginRec, loginReq)
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("expected legacy login 200, got %d body=%s", loginRec.Code, loginRec.Body.String())
+	}
+
+	loginResult := loginRec.Result()
+	defer loginResult.Body.Close()
+	var cookie *http.Cookie
+	for _, candidate := range loginResult.Cookies() {
+		if candidate.Name == dashboardSessionCookieName {
+			cookie = candidate
+			break
+		}
+	}
+	if cookie == nil {
+		t.Fatalf("expected legacy login to return %s cookie", dashboardSessionCookieName)
+	}
+
+	sessionReq := httptest.NewRequest(http.MethodGet, "/api/v1/console/session", nil)
+	sessionReq.AddCookie(cookie)
+	sessionRec := httptest.NewRecorder()
+	router.ServeHTTP(sessionRec, sessionReq)
+	if sessionRec.Code != http.StatusOK {
+		t.Fatalf("expected legacy session 200, got %d body=%s", sessionRec.Code, sessionRec.Body.String())
+	}
+
+	protectedRoutes := []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodPost, path: "/api/v1/console/password"},
+		{method: http.MethodGet, path: "/api/v1/console/api-keys"},
+		{method: http.MethodPost, path: "/api/v1/console/api-keys"},
+		{method: http.MethodDelete, path: "/api/v1/console/api-keys/apik_legacy"},
+		{method: http.MethodGet, path: "/api/v1/console/tokens"},
+		{method: http.MethodPost, path: "/api/v1/console/tokens"},
+		{method: http.MethodDelete, path: "/api/v1/console/tokens/tok_legacy"},
+		{method: http.MethodGet, path: "/api/v1/console/tokens/tok_legacy/value"},
+		{method: http.MethodPost, path: "/api/v1/console/register"},
+		{method: http.MethodGet, path: "/api/v1/console/accounts"},
+		{method: http.MethodDelete, path: "/api/v1/console/accounts/acc_legacy"},
+	}
+	for _, route := range protectedRoutes {
+		req := httptest.NewRequest(route.method, route.path, nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("expected unauthenticated legacy %s %s to return 401, got %d body=%s", route.method, route.path, rec.Code, rec.Body.String())
+		}
+	}
+
+	logoutReq := httptest.NewRequest(http.MethodPost, "/api/v1/console/logout", nil)
+	logoutReq.AddCookie(cookie)
+	logoutRec := httptest.NewRecorder()
+	router.ServeHTTP(logoutRec, logoutReq)
+	if logoutRec.Code != http.StatusNoContent {
+		t.Fatalf("expected legacy logout 204, got %d body=%s", logoutRec.Code, logoutRec.Body.String())
+	}
+}
+
 func TestConsoleAuthSessionEndpoint(t *testing.T) {
 	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, nil, nil, "")
 	auth := newTestConsoleAuthWithRegistration(t, true)
