@@ -884,11 +884,7 @@ func (s *RegistryService) GetTerminalSession(ownerID string, sessionID string, n
 	if !ok || !isConfirmedActiveTerminalSessionRoute(route, routeNowUnixMs(now)) {
 		return TerminalSessionView{}, false
 	}
-	externalSessionID, ok := unscopeTerminalSessionID(normalizedOwnerID, scopedSessionID)
-	if !ok {
-		return TerminalSessionView{}, false
-	}
-	return terminalSessionViewFromRoute(normalizedOwnerID, externalSessionID, route), true
+	return terminalSessionViewFromRoute(normalizedOwnerID, normalizedSessionID, route), true
 }
 
 func (s *RegistryService) DeleteTerminalSession(ownerID string, sessionID string, now time.Time) (bool, error) {
@@ -903,9 +899,6 @@ func (s *RegistryService) DeleteTerminalSession(ownerID string, sessionID string
 	scopedSessionID := scopeTerminalSessionID(normalizedOwnerID, normalizedSessionID)
 	route, ok := s.terminalSessionRouteSnapshot(scopedSessionID, now)
 	if !ok || !isConfirmedActiveTerminalSessionRoute(route, routeNowUnixMs(now)) {
-		return false, nil
-	}
-	if _, ownerOK := unscopeTerminalSessionID(normalizedOwnerID, scopedSessionID); !ownerOK {
 		return false, nil
 	}
 	if err := s.clearTerminalSessionRoute(scopedSessionID, route.NodeID); err != nil {
