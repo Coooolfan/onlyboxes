@@ -800,6 +800,10 @@ func terminalSessionViewFromRoute(accountID string, sessionID string, route term
 	}
 }
 
+func isConfirmedActiveTerminalSessionRoute(route terminalSessionRoute, nowUnixMs int64) bool {
+	return route.ReservationID == 0 && route.LeaseExpiresUnixMs > nowUnixMs
+}
+
 func (s *RegistryService) ListTerminalSessions(ownerID string, now time.Time) []TerminalSessionView {
 	if s == nil {
 		return nil
@@ -814,14 +818,14 @@ func (s *RegistryService) ListTerminalSessions(ownerID string, now time.Time) []
 	expired := make([]registry.TerminalSessionRouteRef, 0)
 	views := make([]TerminalSessionView, 0)
 	for scopedSessionID, route := range s.terminalSessionToNode {
-		if route.ReservationID != 0 {
-			continue
-		}
 		if route.LeaseExpiresUnixMs > 0 && route.LeaseExpiresUnixMs <= nowUnixMs {
 			expired = append(expired, registry.TerminalSessionRouteRef{
 				ScopedSessionID: scopedSessionID,
 				NodeID:          route.NodeID,
 			})
+			continue
+		}
+		if !isConfirmedActiveTerminalSessionRoute(route, nowUnixMs) {
 			continue
 		}
 		accountID, externalSessionID, ok := parseScopedTerminalSessionID(scopedSessionID)
@@ -877,7 +881,7 @@ func (s *RegistryService) GetTerminalSession(ownerID string, sessionID string, n
 	}
 	scopedSessionID := scopeTerminalSessionID(normalizedOwnerID, normalizedSessionID)
 	route, ok := s.terminalSessionRouteSnapshot(scopedSessionID, now)
-	if !ok || route.ReservationID != 0 {
+	if !ok || !isConfirmedActiveTerminalSessionRoute(route, routeNowUnixMs(now)) {
 		return TerminalSessionView{}, false
 	}
 	externalSessionID, ok := unscopeTerminalSessionID(normalizedOwnerID, scopedSessionID)
@@ -898,7 +902,7 @@ func (s *RegistryService) DeleteTerminalSession(ownerID string, sessionID string
 	}
 	scopedSessionID := scopeTerminalSessionID(normalizedOwnerID, normalizedSessionID)
 	route, ok := s.terminalSessionRouteSnapshot(scopedSessionID, now)
-	if !ok || route.ReservationID != 0 {
+	if !ok || !isConfirmedActiveTerminalSessionRoute(route, routeNowUnixMs(now)) {
 		return false, nil
 	}
 	if _, ownerOK := unscopeTerminalSessionID(normalizedOwnerID, scopedSessionID); !ownerOK {

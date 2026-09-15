@@ -2,11 +2,14 @@ package grpcserver
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+var externalTerminalSessionIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$`)
 
 const (
 	taskOwnerScopePrefix                = "obx"
@@ -60,6 +63,13 @@ func scopeTerminalSessionID(ownerID string, externalSessionID string) string {
 		normalizedOwnerID,
 		normalizedSessionID,
 	}, taskOwnerScopeSeparator)
+}
+
+func validateExternalTerminalSessionID(sessionID string) error {
+	if !externalTerminalSessionIDPattern.MatchString(sessionID) {
+		return status.Error(codes.InvalidArgument, "session_id must contain only letters, numbers, '.', '_', ':', or '-'")
+	}
+	return nil
 }
 
 func parseScopedTerminalSessionID(scopedSessionID string) (ownerID string, sessionID string, ok bool) {
@@ -139,6 +149,8 @@ func (s *RegistryService) scopeTaskInputByOwner(capability string, ownerID strin
 				return nil, status.Error(codes.Internal, "failed to create session_id")
 			}
 			payload.CreateIfMissing = true
+		} else if err := validateExternalTerminalSessionID(sessionID); err != nil {
+			return nil, err
 		}
 		payload.SessionID = scopeTerminalSessionID(normalizedOwnerID, sessionID)
 		scopedPayload, err := json.Marshal(payload)
@@ -154,6 +166,9 @@ func (s *RegistryService) scopeTaskInputByOwner(capability string, ownerID strin
 		sessionID := strings.TrimSpace(payload.SessionID)
 		if sessionID == "" {
 			return inputJSON, nil
+		}
+		if err := validateExternalTerminalSessionID(sessionID); err != nil {
+			return nil, err
 		}
 		payload.SessionID = scopeTerminalSessionID(normalizedOwnerID, sessionID)
 		payload.Headers = filterTerminalResourceUploadHeaders(payload.Headers)
