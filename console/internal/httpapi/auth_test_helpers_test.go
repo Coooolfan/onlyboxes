@@ -243,7 +243,7 @@ func loginSessionCookie(t *testing.T, router http.Handler) *http.Cookie {
 		t.Fatalf("failed to marshal login request: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/console/login", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)

@@ -494,7 +494,7 @@ func TestListTrustedTokensSuccess(t *testing.T) {
 	router := mustNewRouter(t, handler, newTestConsoleAuth(t), mcpAuth, nil)
 	cookie := loginSessionCookie(t, router)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/console/tokens", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tokens", nil)
 	req.AddCookie(cookie)
 	res := httptest.NewRecorder()
 	router.ServeHTTP(res, req)
@@ -532,7 +532,7 @@ func TestListTrustedTokensRequiresAuthentication(t *testing.T) {
 	handler := NewWorkerHandler(registrytest.NewStore(t), 15*time.Second, nil, nil, nil, ":50051")
 	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newBareTestMCPAuth(t), nil)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/console/tokens", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tokens", nil)
 	res := httptest.NewRecorder()
 	router.ServeHTTP(res, req)
 
@@ -556,23 +556,23 @@ func TestTrustedTokenEndpointsRejectDashboardJIT(t *testing.T) {
 		{
 			name:   "list",
 			method: http.MethodGet,
-			path:   "/api/v1/console/tokens",
+			path:   "/api/v1/tokens",
 		},
 		{
 			name:   "create",
 			method: http.MethodPost,
-			path:   "/api/v1/console/tokens",
+			path:   "/api/v1/tokens",
 			body:   `{"name":"blocked"}`,
 		},
 		{
 			name:   "delete",
 			method: http.MethodDelete,
-			path:   "/api/v1/console/tokens/tok_blocked",
+			path:   "/api/v1/tokens/tok_blocked",
 		},
 		{
 			name:   "value",
 			method: http.MethodGet,
-			path:   "/api/v1/console/tokens/tok_blocked/value",
+			path:   "/api/v1/tokens/tok_blocked/value",
 		},
 	}
 
@@ -615,7 +615,7 @@ func TestCreateTrustedTokenGetValueReturnsGone(t *testing.T) {
 	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newBareTestMCPAuth(t), nil)
 	cookie := loginSessionCookie(t, router)
 
-	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/console/tokens", strings.NewReader(`{"name":"ci-prod"}`))
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/tokens", strings.NewReader(`{"name":"ci-prod"}`))
 	createReq.Header.Set("Content-Type", "application/json")
 	createReq.AddCookie(cookie)
 	createRes := httptest.NewRecorder()
@@ -629,7 +629,7 @@ func TestCreateTrustedTokenGetValueReturnsGone(t *testing.T) {
 		t.Fatalf("decode create response: %v", err)
 	}
 
-	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/console/tokens/"+payload.ID+"/value", nil)
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/tokens/"+payload.ID+"/value", nil)
 	getReq.AddCookie(cookie)
 	getRes := httptest.NewRecorder()
 	router.ServeHTTP(getRes, getReq)
@@ -643,7 +643,7 @@ func TestDeleteTrustedTokenSuccess(t *testing.T) {
 	router := mustNewRouter(t, handler, newTestConsoleAuth(t), newBareTestMCPAuth(t), nil)
 	cookie := loginSessionCookie(t, router)
 
-	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/console/tokens", strings.NewReader(`{"name":"ci-prod","token":"manual-token"}`))
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/tokens", strings.NewReader(`{"name":"ci-prod","token":"manual-token"}`))
 	createReq.Header.Set("Content-Type", "application/json")
 	createReq.AddCookie(cookie)
 	createRes := httptest.NewRecorder()
@@ -656,7 +656,7 @@ func TestDeleteTrustedTokenSuccess(t *testing.T) {
 		t.Fatalf("decode create response: %v", err)
 	}
 
-	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/v1/console/tokens/"+payload.ID, nil)
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/v1/tokens/"+payload.ID, nil)
 	deleteReq.AddCookie(cookie)
 	deleteRes := httptest.NewRecorder()
 	router.ServeHTTP(deleteRes, deleteReq)
@@ -664,7 +664,7 @@ func TestDeleteTrustedTokenSuccess(t *testing.T) {
 		t.Fatalf("expected 204, got %d body=%s", deleteRes.Code, deleteRes.Body.String())
 	}
 
-	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/console/tokens/"+payload.ID+"/value", nil)
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/tokens/"+payload.ID+"/value", nil)
 	getReq.AddCookie(cookie)
 	getRes := httptest.NewRecorder()
 	router.ServeHTTP(getRes, getReq)

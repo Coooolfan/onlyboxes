@@ -53,6 +53,19 @@ func TestTerminalSessionIntentForTaskInput(t *testing.T) {
 	}
 }
 
+func TestParseScopedTerminalSessionID(t *testing.T) {
+	ownerID, sessionID, ok := parseScopedTerminalSessionID("obx:owner-a:session:part:1")
+	if !ok {
+		t.Fatal("expected scoped session id to parse")
+	}
+	if ownerID != "owner-a" || sessionID != "session:part:1" {
+		t.Fatalf("parsed owner=%q session=%q", ownerID, sessionID)
+	}
+	if _, _, ok := parseScopedTerminalSessionID("session-plain"); ok {
+		t.Fatal("plain session id must not parse as scoped")
+	}
+}
+
 func TestUnscopeTerminalSessionIDRejectsOwnerMismatch(t *testing.T) {
 	_, ok := unscopeTerminalSessionID("owner-a", "obx:owner-b:session-1")
 	if ok {

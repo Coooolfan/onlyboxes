@@ -25,10 +25,10 @@ describe('Auth Routing', () => {
     vi.unstubAllGlobals()
   })
 
-  it('bootstraps auth state from /api/v1/console/session', async () => {
+  it('bootstraps auth state from /api/v1/auth/session', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(adminSessionPayload)
       }
       if (url.startsWith('/api/v1/workers/stats')) {
@@ -52,9 +52,7 @@ describe('Auth Routing', () => {
     expect(wrapper.find('.console-footer-link').attributes('href')).toBe(
       'https://github.com/Coooolfan/onlyboxes',
     )
-    expect(fetchMock.mock.calls.some(([url]) => String(url) === '/api/v1/console/session')).toBe(
-      true,
-    )
+    expect(fetchMock.mock.calls.some(([url]) => String(url) === '/api/v1/auth/session')).toBe(true)
 
     wrapper.unmount()
   })
@@ -62,10 +60,10 @@ describe('Auth Routing', () => {
   it('allows admin /accounts access', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(adminSessionPayload)
       }
-      if (url.startsWith('/api/v1/console/accounts?')) {
+      if (url.startsWith('/api/v1/accounts?')) {
         return jsonResponse(defaultAccountsPayload())
       }
       throw new Error(`unexpected url: ${url}`)
@@ -83,7 +81,7 @@ describe('Auth Routing', () => {
   it('allows non-admin /workers access', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(memberSessionPayload)
       }
       if (url.startsWith('/api/v1/workers/stats')) {
@@ -110,16 +108,16 @@ describe('Auth Routing', () => {
   it('allows non-admin /tools/worker-startup access', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(memberSessionPayload)
       }
-      if (url === '/api/v1/console/tokens') {
+      if (url === '/api/v1/tokens') {
         return jsonResponse(defaultTokensPayload())
       }
       if (url.startsWith('/api/v1/workers')) {
         throw new Error(`workers api should not be called on startup tool page: ${url}`)
       }
-      if (url.startsWith('/api/v1/console/accounts')) {
+      if (url.startsWith('/api/v1/accounts')) {
         throw new Error(`accounts api should not be called on startup tool page: ${url}`)
       }
       throw new Error(`unexpected url: ${url}`)
@@ -137,13 +135,13 @@ describe('Auth Routing', () => {
   it('redirects non-admin /accounts access to /tokens', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(memberSessionPayload)
       }
-      if (url === '/api/v1/console/tokens') {
+      if (url === '/api/v1/tokens') {
         return jsonResponse(defaultTokensPayload())
       }
-      if (url.startsWith('/api/v1/console/accounts?')) {
+      if (url.startsWith('/api/v1/accounts?')) {
         throw new Error(`accounts api should not be called for non-admin: ${url}`)
       }
       throw new Error(`unexpected url: ${url}`)
@@ -161,16 +159,16 @@ describe('Auth Routing', () => {
   it('routes non-admin login to /tokens', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return unauthorizedResponse()
       }
-      if (url === '/api/v1/console/login') {
+      if (url === '/api/v1/auth/login') {
         return jsonResponse({
           ...memberSessionPayload,
           authenticated: true,
         })
       }
-      if (url === '/api/v1/console/tokens') {
+      if (url === '/api/v1/tokens') {
         return jsonResponse(defaultTokensPayload())
       }
       throw new Error(`unexpected url: ${url}, method=${String(init?.method ?? 'GET')}`)
@@ -188,7 +186,7 @@ describe('Auth Routing', () => {
     expect(wrapper.text()).toContain('Trusted Token Management')
     expect(wrapper.text()).not.toContain('Execution Node Control Panel')
 
-    const loginCall = fetchMock.mock.calls.find(([url]) => String(url) === '/api/v1/console/login')
+    const loginCall = fetchMock.mock.calls.find(([url]) => String(url) === '/api/v1/auth/login')
     expect(loginCall).toBeTruthy()
 
     wrapper.unmount()
@@ -197,10 +195,10 @@ describe('Auth Routing', () => {
   it('redirects authenticated /login visits to role home', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(memberSessionPayload)
       }
-      if (url === '/api/v1/console/tokens') {
+      if (url === '/api/v1/tokens') {
         return jsonResponse(defaultTokensPayload())
       }
       throw new Error(`unexpected url: ${url}`)
@@ -219,7 +217,7 @@ describe('Auth Routing', () => {
   it('routes unauthenticated / to /login', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return unauthorizedResponse()
       }
       throw new Error(`unexpected url: ${url}`)
@@ -237,10 +235,10 @@ describe('Auth Routing', () => {
   it('routes non-admin / to /tokens', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(memberSessionPayload)
       }
-      if (url === '/api/v1/console/tokens') {
+      if (url === '/api/v1/tokens') {
         return jsonResponse(defaultTokensPayload())
       }
       throw new Error(`unexpected url: ${url}`)
@@ -258,7 +256,7 @@ describe('Auth Routing', () => {
   it('routes admin / to /workers', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(adminSessionPayload)
       }
       if (url.startsWith('/api/v1/workers/stats')) {
@@ -285,10 +283,10 @@ describe('Auth Routing', () => {
   it('routes unknown paths to role home without falling back to /', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(memberSessionPayload)
       }
-      if (url === '/api/v1/console/tokens') {
+      if (url === '/api/v1/tokens') {
         return jsonResponse(defaultTokensPayload())
       }
       if (url.startsWith('/api/v1/workers')) {

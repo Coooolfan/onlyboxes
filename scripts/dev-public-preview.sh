@@ -101,7 +101,7 @@ wait_console() {
     local port code
     port="$(console_http_port)"
     for _ in $(seq 1 60); do
-        code="$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:${port}/api/v1/console/session" 2>/dev/null || true)"
+        code="$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:${port}/api/v1/auth/session" 2>/dev/null || true)"
         [ "$code" != "000" ] && return
         sleep 0.5
     done
@@ -130,7 +130,7 @@ authenticate_console() {
     port="$(console_http_port)"
     for candidate in "${ONLYBOXES_DEV_CONSOLE_API_KEY:-}" "$(dev_env_value CONSOLE_INITIAL_ADMIN_API_KEY)"; do
         [ -n "$candidate" ] || continue
-        if curl -fsS -H "Authorization: Bearer $candidate" "http://127.0.0.1:${port}/api/v1/console/session" >/dev/null 2>&1; then
+        if curl -fsS -H "Authorization: Bearer $candidate" "http://127.0.0.1:${port}/api/v1/auth/session" >/dev/null 2>&1; then
             AUTH_KIND="bearer"
             AUTH_VALUE="$candidate"
             return
@@ -142,7 +142,7 @@ authenticate_console() {
     [ -n "$username" ] && [ -n "$password" ] || die "没有可用的 Console API Key 或管理员凭据；先执行 scripts/dev.sh creds"
     mkdir -p "$STATE_DIR"
     body="$(jq -nc --arg username "$username" --arg password "$password" '{username:$username,password:$password}')"
-    curl -fsS -c "$COOKIE_FILE" -H 'Content-Type: application/json' -d "$body" "http://127.0.0.1:${port}/api/v1/console/login" >/dev/null ||
+    curl -fsS -c "$COOKIE_FILE" -H 'Content-Type: application/json' -d "$body" "http://127.0.0.1:${port}/api/v1/auth/login" >/dev/null ||
         die "Console 管理员登录失败"
     chmod 600 "$COOKIE_FILE"
     AUTH_KIND="cookie"

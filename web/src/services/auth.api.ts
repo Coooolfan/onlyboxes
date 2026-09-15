@@ -63,7 +63,7 @@ function parseAccountListItem(payload: unknown): AccountListItem {
 }
 
 export async function loginAPI(username: string, password: string): Promise<ConsoleSessionPayload> {
-  const response = await fetch('/api/v1/console/login', {
+  const response = await fetch('/api/v1/auth/login', {
     method: 'POST',
     headers: {
       Accept: 'application/json',
@@ -84,7 +84,7 @@ export async function loginAPI(username: string, password: string): Promise<Cons
 }
 
 export async function logoutAPI(): Promise<void> {
-  await fetch('/api/v1/console/logout', {
+  await fetch('/api/v1/auth/logout', {
     method: 'POST',
     headers: {
       Accept: 'application/json',
@@ -94,7 +94,7 @@ export async function logoutAPI(): Promise<void> {
 }
 
 export async function probeSessionAPI(): Promise<ConsoleSessionPayload> {
-  const response = await request('/api/v1/console/session')
+  const response = await request('/api/v1/auth/session')
   if (!response.ok) {
     throw new Error(await parseAPIError(response))
   }
@@ -105,7 +105,7 @@ export async function createAccountAPI(
   username: string,
   password: string,
 ): Promise<RegisterAccountPayload> {
-  const response = await request('/api/v1/console/register', {
+  const response = await request('/api/v1/accounts', {
     method: 'POST',
     headers: {
       Accept: 'application/json',
@@ -129,7 +129,7 @@ export async function changePasswordAPI(
   currentPassword: string,
   newPassword: string,
 ): Promise<void> {
-  const response = await request('/api/v1/console/password', {
+  const response = await request('/api/v1/auth/password', {
     method: 'POST',
     headers: {
       Accept: 'application/json',
@@ -154,7 +154,7 @@ export async function fetchAccountsAPI(
     page: String(page),
     page_size: String(pageSize),
   })
-  const response = await request(`/api/v1/console/accounts?${query.toString()}`, { signal })
+  const response = await request(`/api/v1/accounts?${query.toString()}`, { signal })
   if (!response.ok) {
     throw new Error(await parseAPIError(response))
   }
@@ -169,7 +169,7 @@ export async function fetchAccountsAPI(
 }
 
 export async function deleteAccountAPI(accountID: string): Promise<void> {
-  const response = await request(`/api/v1/console/accounts/${encodeURIComponent(accountID)}`, {
+  const response = await request(`/api/v1/accounts/${encodeURIComponent(accountID)}`, {
     method: 'DELETE',
   })
   if (response.status === 204) {

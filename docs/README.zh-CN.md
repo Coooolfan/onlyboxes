@@ -215,9 +215,9 @@ curl -fsSL https://onlybox.es/install.sh | bash
 
 ## API 面
 
-- 控制台认证：`/api/v1/console/*`
-- Worker 管理（管理员）：`/api/v1/workers*`
-- 命令执行：`/api/v1/commands/echo`、`/api/v1/commands/terminal`
+- 身份认证：`/api/v1/auth/*`
+- 资源管理：`/api/v1/accounts*`、`/api/v1/api-keys*`、`/api/v1/tokens*`、`/api/v1/sessions*`、`/api/v1/workers*`、`/api/v1/proxy-routes*`
+- 命令执行：`/api/v1/commands/*`
 - 任务接口：`/api/v1/tasks*`
 - MCP（Streamable HTTP）：`POST /mcp`
 

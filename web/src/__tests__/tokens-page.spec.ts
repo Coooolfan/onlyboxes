@@ -38,13 +38,13 @@ describe('Tokens Page', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       const method = String(init?.method ?? 'GET').toUpperCase()
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(memberSessionPayload)
       }
-      if (url === '/api/v1/console/tokens' && method === 'GET') {
+      if (url === '/api/v1/tokens' && method === 'GET') {
         return jsonResponse({ items: tokens, total: tokens.length })
       }
-      if (url === '/api/v1/console/tokens' && method === 'POST') {
+      if (url === '/api/v1/tokens' && method === 'POST') {
         tokens = [
           ...tokens,
           {
@@ -65,7 +65,7 @@ describe('Tokens Page', () => {
           updated_at: '2026-02-16T10:01:00Z',
         })
       }
-      if (url === '/api/v1/console/tokens/tok-1' && method === 'DELETE') {
+      if (url === '/api/v1/tokens/tok-1' && method === 'DELETE') {
         tokens = tokens.filter((item) => item.id !== 'tok-1')
         return noContentResponse()
       }
@@ -167,10 +167,10 @@ describe('Tokens Page', () => {
     let forceUnauthorized = false
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(memberSessionPayload)
       }
-      if (url === '/api/v1/console/tokens') {
+      if (url === '/api/v1/tokens') {
         return forceUnauthorized ? unauthorizedResponse() : jsonResponse(defaultTokensPayload())
       }
       throw new Error(`unexpected url: ${url}`)
@@ -198,13 +198,13 @@ describe('Tokens Page', () => {
     let authenticated = true
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return authenticated ? jsonResponse(memberSessionPayload) : unauthorizedResponse()
       }
-      if (url === '/api/v1/console/tokens') {
+      if (url === '/api/v1/tokens') {
         return authenticated ? jsonResponse(defaultTokensPayload()) : unauthorizedResponse()
       }
-      if (url === '/api/v1/console/logout') {
+      if (url === '/api/v1/auth/logout') {
         authenticated = false
         return noContentResponse()
       }
@@ -225,9 +225,7 @@ describe('Tokens Page', () => {
       await waitForRoute('/login', 40)
 
       expect(router.currentRoute.value.path).toBe('/login')
-      expect(fetchMock.mock.calls.some(([url]) => String(url) === '/api/v1/console/logout')).toBe(
-        true,
-      )
+      expect(fetchMock.mock.calls.some(([url]) => String(url) === '/api/v1/auth/logout')).toBe(true)
     } finally {
       wrapper.unmount()
     }
@@ -237,13 +235,13 @@ describe('Tokens Page', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       const method = String(init?.method ?? 'GET').toUpperCase()
-      if (url === '/api/v1/console/session') {
+      if (url === '/api/v1/auth/session') {
         return jsonResponse(memberSessionPayload)
       }
-      if (url === '/api/v1/console/tokens') {
+      if (url === '/api/v1/tokens') {
         return jsonResponse(defaultTokensPayload())
       }
-      if (url === '/api/v1/console/password' && method === 'POST') {
+      if (url === '/api/v1/auth/password' && method === 'POST') {
         return noContentResponse()
       }
       throw new Error(`unexpected url: ${url}, method=${method}`)
@@ -280,7 +278,7 @@ describe('Tokens Page', () => {
       expect(document.body.textContent ?? '').toContain('Password updated successfully.')
       const passwordCall = fetchMock.mock.calls.find(
         ([url, init]) =>
-          String(url) === '/api/v1/console/password' &&
+          String(url) === '/api/v1/auth/password' &&
           String((init as RequestInit | undefined)?.method).toUpperCase() === 'POST',
       )
       expect(passwordCall).toBeTruthy()

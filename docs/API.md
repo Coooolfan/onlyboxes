@@ -12,22 +12,23 @@ This document is the unified reference for all public APIs exposed by Onlyboxes.
 
 Onlyboxes has these auth paths:
 
-1. Dashboard session (cookie): for web/admin APIs
-2. Dashboard bearer credentials: for selected dashboard automation APIs
+1. Console session (cookie): for management APIs
+2. Management bearer credentials: for selected management automation APIs
 3. Access token (Bearer): for execution APIs and MCP
 
-### 1.1 Dashboard Session (Cookie)
+### 1.1 Console Session (Cookie)
 
 - Cookie name: `onlyboxes_console_session`
-- Created by: `POST /api/v1/console/login`
-- Used by:
-  - `/api/v1/console/session`
-  - `/api/v1/console/logout`
-  - `/api/v1/console/password`
-  - `/api/v1/console/register`
-  - `/api/v1/console/accounts*`
-  - `/api/v1/console/tokens*`
+- Created by: `POST /api/v1/auth/login`
+- Used by management endpoints:
+  - `/api/v1/auth/session`
+  - `/api/v1/auth/logout`
+  - `/api/v1/auth/password`
+  - `/api/v1/accounts*`
+  - `/api/v1/api-keys*`
+  - `/api/v1/tokens*`
   - `/api/v1/workers*` (role-scoped worker routes)
+  - `/api/v1/sessions*` (role-scoped terminal session routes)
   - `/api/v1/proxy-routes*` (account-scoped public preview routes)
 - Session TTL is 12 hours in-memory; console restart invalidates all sessions.
 
@@ -39,23 +40,23 @@ Onlyboxes has these auth paths:
   - `/api/v1/tasks*`
   - `/mcp`
 - Accepted token types:
-  - trusted token managed by cookie-authenticated dashboard token APIs
+  - trusted token managed by cookie-authenticated token APIs
   - MCP JIT token (`obx_jit_v1.<payload>.<signature>`) when `CONSOLE_JIT_SIGNING_KEY` is configured
 - If no trusted token exists in console, trusted-token auth returns `401`; valid MCP JIT tokens can still authenticate when configured.
 
-### 1.3 Dashboard Bearer Credentials
+### 1.3 Management Bearer Credentials
 
 - Header format: `Authorization: Bearer <credential>`
-- Console API keys can authenticate dashboard APIs, except endpoints that require a cookie session.
-- Dashboard JIT tokens can authenticate selected dashboard APIs for server-to-server worker-sys provisioning:
+- Console API keys can authenticate management APIs, except endpoints that require a cookie session.
+- Dashboard JIT tokens can authenticate selected management APIs for server-to-server worker-sys provisioning:
   - Format: `obx_dashboard_jit_v1.<payload>.<signature>`
   - Signature: HMAC-SHA256 over `obx_dashboard_jit_v1.<payload>` with `CONSOLE_DASHBOARD_JIT_SIGNING_KEY`
   - Payload requires `iss`, `sub`, `scope:"dashboard"`, and optional `exp` in Unix milliseconds.
   - `CONSOLE_DASHBOARD_JIT_SIGNING_KEY` must differ from `CONSOLE_JIT_SIGNING_KEY`.
 - Dashboard JIT uses the same `(iss, sub) -> account` derivation as MCP JIT, creates a non-admin account on first use, and cannot authenticate `/mcp`.
 - MCP JIT payloads also accept optional `exp` in Unix milliseconds.
-- MCP JIT tokens (`obx_jit_v1.*`) are rejected by dashboard auth.
-- Cookie-only endpoints reject dashboard bearer credentials.
+- MCP JIT tokens (`obx_jit_v1.*`) are rejected by management authentication.
+- Cookie-only endpoints reject management bearer credentials.
 
 ## 2. Common REST Conventions
 
@@ -69,11 +70,11 @@ Onlyboxes has these auth paths:
 - Time fields are RFC3339 timestamps.
 - IDs are opaque strings (for example `acc_*`, `tok_*`, worker UUIDs, task IDs).
 
-## 3. Dashboard Authentication APIs
+## 3. Authentication and Account APIs
 
 ### 3.1 Login
 
-`POST /api/v1/console/login`
+`POST /api/v1/auth/login`
 
 Request:
 
@@ -108,10 +109,10 @@ Errors:
 
 ### 3.2 Session Info
 
-`GET /api/v1/console/session`
+`GET /api/v1/auth/session`
 
-- Requires dashboard cookie auth.
-- Success body format is same as login response.
+- Accepts dashboard cookie, Console API key, or Dashboard JIT authentication.
+- Success body format is the same as the login response.
 
 Errors:
 
@@ -119,7 +120,7 @@ Errors:
 
 ### 3.3 Logout
 
-`POST /api/v1/console/logout`
+`POST /api/v1/auth/logout`
 
 - Clears cookie and removes in-memory session if present.
 
@@ -129,7 +130,7 @@ Response:
 
 ### 3.4 Register Non-Admin Account (Admin Only)
 
-`POST /api/v1/console/register`
+`POST /api/v1/accounts`
 
 Request:
 
@@ -164,7 +165,7 @@ Validation and errors:
 
 ### 3.5 Change Current Account Password
 
-`POST /api/v1/console/password`
+`POST /api/v1/auth/password`
 
 Request:
 
@@ -189,7 +190,7 @@ Notes:
 
 ### 3.6 List Accounts (Admin Only)
 
-`GET /api/v1/console/accounts?page=1&page_size=20`
+`GET /api/v1/accounts?page=1&page_size=20`
 
 Query:
 
@@ -223,7 +224,7 @@ Errors:
 
 ### 3.7 Delete Account (Admin Only)
 
-`DELETE /api/v1/console/accounts/:account_id`
+`DELETE /api/v1/accounts/:account_id`
 
 Responses:
 
@@ -233,15 +234,15 @@ Responses:
 - `404` account not found
 - `500` internal failure
 
-## 4. Token Management APIs (Dashboard Cookie Session Auth)
+## 4. Token Management APIs (Cookie Session Auth)
 
 Tokens are account-scoped. A user can manage only their own tokens.
 
-All endpoints in this section require a dashboard cookie session. Console API keys and dashboard JIT tokens are intentionally rejected so dashboard bearer credentials cannot mint or manage MCP trusted tokens.
+All endpoints in this section require a console cookie session. Console API keys and Dashboard JIT tokens are intentionally rejected so management bearer credentials cannot mint or manage MCP trusted tokens.
 
 ### 4.1 List Tokens
 
-`GET /api/v1/console/tokens`
+`GET /api/v1/tokens`
 
 Success `200`:
 
@@ -262,7 +263,7 @@ Success `200`:
 
 ### 4.2 Create Token
 
-`POST /api/v1/console/tokens`
+`POST /api/v1/tokens`
 
 Request:
 
@@ -300,7 +301,7 @@ Errors:
 
 ### 4.3 Delete Token
 
-`DELETE /api/v1/console/tokens/:token_id`
+`DELETE /api/v1/tokens/:token_id`
 
 Responses:
 
@@ -309,7 +310,7 @@ Responses:
 
 ### 4.4 Get Token Value
 
-`GET /api/v1/console/tokens/:token_id/value`
+`GET /api/v1/tokens/:token_id/value`
 
 Always returns `410 Gone`:
 
@@ -319,7 +320,7 @@ Always returns `410 Gone`:
 }
 ```
 
-## 5. Worker Management APIs (Dashboard Auth, Role-Scoped)
+## 5. Worker Management APIs (Management Auth, Role-Scoped)
 
 Worker types:
 
@@ -704,11 +705,90 @@ Errors:
 - `504` timeout
 - `502` unexpected execution failure
 
-## 7. Sandbox Metadata API (Bearer Token)
+## 7. Terminal Session APIs (Management Auth, Role-Scoped)
+
+These endpoints require management authentication (cookie, Console API key, or Dashboard JIT). They list, inspect, and delete confirmed terminal sessions. Sessions that have not finished their first `terminalExec` are not visible.
+
+Scope:
+
+- non-admin: only the caller's sessions; `account_id` for another account returns `404`
+- admin: all sessions by default; `account_id` filters the list. Get and delete require `account_id` because `session_id` is unique per account, not globally
+
+`status` values:
+
+- `ready`: the bound worker is dispatchable
+- `unavailable`: the bound worker is disconnected; the session keeps its worker and lease
+- `reconciling`: the bound worker is reconnecting and checking the session resource
+
+Deleting a session removes Console's route and any public preview routes for that session immediately. The worker sandbox is reclaimed when its lease expires.
+
+### 7.1 List Sessions
+
+`GET /api/v1/sessions?page=1&page_size=20&account_id=acc_xxx`
+
+Query parameters:
+
+- `page`: positive integer, default `1`
+- `page_size`: positive integer, default `20`, max `100`
+- `account_id`: optional. Admin uses it to filter; non-admin may only pass their own account
+
+Success `200`:
+
+```json
+{
+  "items": [
+    {
+      "account_id": "acc_xxx",
+      "session_id": "sess_xxx",
+      "worker_id": "worker-1",
+      "status": "ready",
+      "lease_expires_at": "2026-02-21T00:01:00Z",
+      "last_used_at": "2026-02-21T00:00:30Z",
+      "created_at": "2026-02-21T00:00:00Z"
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "page_size": 20
+}
+```
+
+Errors:
+
+- `400` invalid query
+- `401` missing or invalid dashboard credential
+- `404` non-admin requested another account
+- `503` session registry unavailable
+
+### 7.2 Get Session
+
+`GET /api/v1/sessions/:session_id?account_id=acc_xxx`
+
+Success `200`: same object as a list item.
+
+Errors:
+
+- `400` admin omitted `account_id`
+- `401` missing or invalid dashboard credential
+- `404` session not found (including cross-account)
+- `503` session registry unavailable
+
+### 7.3 Delete Session
+
+`DELETE /api/v1/sessions/:session_id?account_id=acc_xxx`
+
+- `204` deleted
+- `400` admin omitted `account_id`
+- `401` missing or invalid dashboard credential
+- `404` session not found (including cross-account)
+- `500` failed to delete
+- `503` session registry unavailable
+
+## 8. Sandbox Metadata API (Bearer Token)
 
 This endpoint requires an execution token. Trusted tokens and MCP JIT tokens can call it. Account-scoped fields are limited to caller-owned `worker-sys` capabilities such as `computerUse` and `readImage`; shared sandbox capabilities and the worker summary are reported from the global worker pool.
 
-### 7.1 Get Sandbox Metadata
+### 8.1 Get Sandbox Metadata
 
 `GET /api/v1/sandbox/metadata`
 
@@ -749,11 +829,11 @@ Notes:
 - `terminalExec`, `terminalResource`, `pythonExec`, and `echo` report global online worker availability.
 - Missing/invalid token returns `401`.
 
-## 8. Task APIs (Bearer Token)
+## 9. Task APIs (Bearer Token)
 
 Task ownership is account-scoped by token.
 
-### 8.1 Submit Task
+### 9.1 Submit Task
 
 `POST /api/v1/tasks`
 
@@ -847,7 +927,7 @@ Submit-time errors:
 - `504` deadline exceeded
 - `502` submit failure
 
-### 8.2 Get Task
+### 9.2 Get Task
 
 `GET /api/v1/tasks/:task_id`
 
@@ -856,7 +936,7 @@ Responses:
 - `200` task snapshot
 - `404` task not found (including cross-account access)
 
-### 8.3 Cancel Task
+### 9.3 Cancel Task
 
 `POST /api/v1/tasks/:task_id/cancel`
 
@@ -867,7 +947,7 @@ Responses:
 - `409` task already terminal (returns task snapshot)
 - `500` cancel failure
 
-## 9. MCP API (Bearer Token)
+## 10. MCP API (Bearer Token)
 
 Endpoint: `POST /mcp`
 
@@ -879,7 +959,7 @@ Endpoint: `POST /mcp`
   - `Content-Type: application/json`
   - `Accept: application/json, text/event-stream`
 
-### 9.1 Core MCP Methods
+### 10.1 Core MCP Methods
 
 Supported MCP flow includes standard methods such as:
 
@@ -887,7 +967,7 @@ Supported MCP flow includes standard methods such as:
 - `tools/list`
 - `tools/call`
 
-### 9.2 Tool Definitions
+### 10.2 Tool Definitions
 
 Tool argument schemas use `additionalProperties=false`.
 Unknown arguments are rejected with JSON-RPC `-32602 invalid params`.
@@ -1028,7 +1108,7 @@ Behavior:
 - The `CU:` prefix is case-sensitive and configurable with `CONSOLE_COMPUTER_USE_SESSION_ID_PREFIX` / `computer_use_session_id_prefix`. Changing it changes session-ID interpretation and is generally not recommended; blank values fall back to `CU:` with a warning.
 - This is a public protocol change: `computerUse` is no longer a public alias. Clients must list/select a Worker and send its ID.
 
-### 9.3 MCP Errors
+### 10.3 MCP Errors
 
 - Missing/invalid token: HTTP `401`
 - Invalid tool params: JSON-RPC error `-32602`
@@ -1036,7 +1116,7 @@ Behavior:
 - a selected offline Worker, missing capability, and exhausted capacity remain distinct tool errors
 - Execution failures: returned as MCP tool error content (`isError=true`)
 
-## 10. Worker gRPC API (`api/proto/registry/v1/registry.proto`)
+## 11. Worker gRPC API (`api/proto/registry/v1/registry.proto`)
 
 Service:
 
@@ -1046,7 +1126,7 @@ service WorkerRegistryService {
 }
 ```
 
-### 10.1 Stream Flow
+### 11.1 Stream Flow
 
 Worker establishes a bidirectional stream and typically sends:
 
@@ -1060,7 +1140,7 @@ Console responds with:
 2. `ConnectResponse.heartbeat_ack` (`HeartbeatAck`)
 3. `ConnectResponse.command_dispatch` (`CommandDispatch`)
 
-### 10.2 Key Messages
+### 11.2 Key Messages
 
 - `ConnectHello` includes worker identity, capabilities, labels, version, `worker_secret`, and optional `terminal_session_capacity`.
   - a missing `terminal_session_capacity` means legacy/unknown capacity.
@@ -1078,7 +1158,7 @@ Console responds with:
   - `payload_json`
   - `completed_unix_ms`
 
-## 11. Security Notes
+## 12. Security Notes
 
 - Console gRPC has no built-in TLS/mTLS in this release.
 - `worker-docker` rejects insecure console endpoints by default, and allows plaintext only when `WORKER_CONSOLE_INSECURE=true`.
@@ -1091,4 +1171,4 @@ Console responds with:
 - Keep `CONSOLE_PROXY_INTERNAL_AUTH_TOKEN` secret and restrict `CONSOLE_PROXY_ALLOWED_WORKER_CIDRS` / `CONSOLE_PROXY_ALLOWED_WORKER_PORTS` to actual Worker ingress endpoints.
 - Restrict `CONSOLE_PROXY_ALLOWED_DIRECT_DOMAINS` to the E2B domains used by the deployment (default `e2b.app`).
 - Token plaintext and `WORKER_SECRET` are one-time return values.
-- `GET /api/v1/console/tokens/:token_id/value` and `GET /api/v1/workers/:node_id/startup-command` are intentionally `410 Gone`.
+- `GET /api/v1/tokens/:token_id/value` and `GET /api/v1/workers/:node_id/startup-command` are intentionally `410 Gone`.

@@ -405,6 +405,9 @@ func TestRestoreTerminalSessionRoutesLoadsActiveRoutes(t *testing.T) {
 	if route.LeaseExpiresUnixMs != lease {
 		t.Fatalf("restored route lease=%d, want %d", route.LeaseExpiresUnixMs, lease)
 	}
+	if route.CreatedAtUnixMs != base.UnixMilli() {
+		t.Fatalf("restored route created_at=%d, want %d", route.CreatedAtUnixMs, base.UnixMilli())
+	}
 }
 
 func TestRestoreTerminalSessionRoutesDeletesExpiredRoutes(t *testing.T) {
@@ -666,5 +669,159 @@ func TestPruneExpiredTerminalSessionRoutesDeletesFromPersistence(t *testing.T) {
 	defer revoker.mu.Unlock()
 	if len(revoker.sessionIDs) != 1 || revoker.sessionIDs[0] != "obx:owner-a:session-prune" {
 		t.Fatalf("unexpected revoked proxy route sessions: %#v", revoker.sessionIDs)
+	}
+}
+
+func TestListTerminalSessionsScopesByOwnerAndSkipsProvisional(t *testing.T) {
+	store := registrytest.NewStore(t)
+	svc := NewRegistryService(store, nil, 5, 15, time.Minute)
+	base := time.Unix(1_700_900_000, 0)
+	svc.nowFn = func() time.Time { return base }
+	ctx := context.Background()
+
+	for _, route := range []registry.TerminalSessionRoute{
+		{
+			ScopedSessionID:    "obx:owner-a:session-newer",
+			NodeID:             "node-a",
+			LeaseExpiresUnixMs: base.Add(time.Hour).UnixMilli(),
+			LastUsedUnixMs:     base.Add(2 * time.Minute).UnixMilli(),
+			CreatedAtUnixMs:    base.Add(time.Minute).UnixMilli(),
+			UpdatedAtUnixMs:    base.UnixMilli(),
+		},
+		{
+			ScopedSessionID:    "obx:owner-a:session-older",
+			NodeID:             "node-b",
+			LeaseExpiresUnixMs: base.Add(time.Hour).UnixMilli(),
+			LastUsedUnixMs:     base.UnixMilli(),
+			CreatedAtUnixMs:    base.UnixMilli(),
+			UpdatedAtUnixMs:    base.UnixMilli(),
+		},
+		{
+			ScopedSessionID:    "obx:owner-b:session-other",
+			NodeID:             "node-c",
+			LeaseExpiresUnixMs: base.Add(time.Hour).UnixMilli(),
+			LastUsedUnixMs:     base.UnixMilli(),
+			CreatedAtUnixMs:    base.UnixMilli(),
+			UpdatedAtUnixMs:    base.UnixMilli(),
+		},
+	} {
+		if err := store.UpsertConfirmedTerminalSessionRoute(ctx, route); err != nil {
+			t.Fatalf("persist route %s: %v", route.ScopedSessionID, err)
+		}
+	}
+	if err := svc.RestoreTerminalSessionRoutes(ctx, base); err != nil {
+		t.Fatalf("restore routes: %v", err)
+	}
+	svc.terminalRoutesMu.Lock()
+	svc.terminalSessionToNode["obx:owner-a:session-pending"] = terminalSessionRoute{
+		NodeID:        "node-a",
+		ReservationID: 7,
+	}
+	svc.terminalRoutesMu.Unlock()
+
+	views := svc.ListTerminalSessions("owner-a", base)
+	if len(views) != 2 {
+		t.Fatalf("list len=%d, want 2: %#v", len(views), views)
+	}
+	if views[0].SessionID != "session-newer" || views[0].WorkerID != "node-a" || views[0].Status != TerminalSessionStatusUnavailable || views[0].AccountID != "owner-a" {
+		t.Fatalf("unexpected first session: %#v", views[0])
+	}
+	if views[1].SessionID != "session-older" || views[1].WorkerID != "node-b" {
+		t.Fatalf("unexpected second session: %#v", views[1])
+	}
+
+	all := svc.ListTerminalSessions("", base)
+	if len(all) != 3 {
+		t.Fatalf("unscoped list len=%d, want 3: %#v", len(all), all)
+	}
+}
+
+func TestGetAndDeleteTerminalSessionOwnerIsolation(t *testing.T) {
+	store := registrytest.NewStore(t)
+	svc := NewRegistryService(store, nil, 5, 15, time.Minute)
+	revoker := &recordingProxyRouteSessionRevoker{}
+	svc.SetProxyRouteSessionRevoker(revoker)
+	base := time.Unix(1_700_910_000, 0)
+	svc.nowFn = func() time.Time { return base }
+	ctx := context.Background()
+	if err := store.UpsertConfirmedTerminalSessionRoute(ctx, registry.TerminalSessionRoute{
+		ScopedSessionID:    "obx:owner-a:session-a",
+		NodeID:             "node-a",
+		LeaseExpiresUnixMs: base.Add(time.Hour).UnixMilli(),
+		LastUsedUnixMs:     base.UnixMilli(),
+		CreatedAtUnixMs:    base.UnixMilli(),
+		UpdatedAtUnixMs:    base.UnixMilli(),
+	}); err != nil {
+		t.Fatalf("persist route: %v", err)
+	}
+	if err := svc.RestoreTerminalSessionRoutes(ctx, base); err != nil {
+		t.Fatalf("restore routes: %v", err)
+	}
+
+	if _, ok := svc.GetTerminalSession("owner-b", "session-a", base); ok {
+		t.Fatal("cross-owner get must miss")
+	}
+	view, ok := svc.GetTerminalSession("owner-a", "session-a", base)
+	if !ok {
+		t.Fatal("owner get must hit")
+	}
+	if view.SessionID != "session-a" || view.WorkerID != "node-a" {
+		t.Fatalf("unexpected view: %#v", view)
+	}
+
+	deleted, err := svc.DeleteTerminalSession("owner-b", "session-a", base)
+	if err != nil {
+		t.Fatalf("cross-owner delete: %v", err)
+	}
+	if deleted {
+		t.Fatal("cross-owner delete must be a miss")
+	}
+	deleted, err = svc.DeleteTerminalSession("owner-a", "session-a", base)
+	if err != nil {
+		t.Fatalf("owner delete: %v", err)
+	}
+	if !deleted {
+		t.Fatal("owner delete must succeed")
+	}
+	if _, ok := svc.GetTerminalSession("owner-a", "session-a", base); ok {
+		t.Fatal("deleted session must not be readable")
+	}
+	revoker.mu.Lock()
+	defer revoker.mu.Unlock()
+	if len(revoker.sessionIDs) != 1 || revoker.sessionIDs[0] != "obx:owner-a:session-a" {
+		t.Fatalf("unexpected revoked proxy route sessions: %#v", revoker.sessionIDs)
+	}
+}
+
+func TestListTerminalSessionsOmitsExpiredRoutes(t *testing.T) {
+	store := registrytest.NewStore(t)
+	svc := NewRegistryService(store, nil, 5, 15, time.Minute)
+	base := time.Unix(1_700_920_000, 0)
+	svc.nowFn = func() time.Time { return base }
+	ctx := context.Background()
+	if err := store.UpsertConfirmedTerminalSessionRoute(ctx, registry.TerminalSessionRoute{
+		ScopedSessionID:    "obx:owner-a:session-live",
+		NodeID:             "node-a",
+		LeaseExpiresUnixMs: base.Add(2 * time.Minute).UnixMilli(),
+		LastUsedUnixMs:     base.UnixMilli(),
+		CreatedAtUnixMs:    base.UnixMilli(),
+		UpdatedAtUnixMs:    base.UnixMilli(),
+	}); err != nil {
+		t.Fatalf("persist route: %v", err)
+	}
+	if err := svc.RestoreTerminalSessionRoutes(ctx, base); err != nil {
+		t.Fatalf("restore routes: %v", err)
+	}
+
+	views := svc.ListTerminalSessions("owner-a", base.Add(3*time.Minute))
+	if len(views) != 0 {
+		t.Fatalf("expired sessions must be omitted, got %#v", views)
+	}
+	routes, err := store.LoadActiveTerminalSessionRoutes(ctx, base.Add(3*time.Minute).UnixMilli())
+	if err != nil {
+		t.Fatalf("load active routes: %v", err)
+	}
+	if len(routes) != 0 {
+		t.Fatalf("expired session must be deleted from store, got %#v", routes)
 	}
 }

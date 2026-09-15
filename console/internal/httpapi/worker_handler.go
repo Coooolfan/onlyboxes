@@ -32,6 +32,7 @@ type WorkerHandler struct {
 	exportDownloadTTL          time.Duration
 	exportReturnSchema         string
 	proxyRoutes                *ProxyRouteHandler
+	sessions                   TerminalSessionRegistry
 	nowFn                      func() time.Time
 	computerUseSessionIDPrefix string
 }
@@ -162,37 +163,40 @@ func NewRouter(workerHandler *WorkerHandler, consoleAuth *ConsoleAuth, mcpAuth *
 		return router, nil
 	}
 
-	api.POST("/console/login", consoleAuth.Login)
-	api.POST("/console/logout", consoleAuth.Logout)
-	api.GET("/console/session", consoleAuth.RequireAuth(apiKeyAuth), consoleAuth.Session)
+	api.POST("/auth/login", consoleAuth.Login)
+	api.POST("/auth/logout", consoleAuth.Logout)
+	api.GET("/auth/session", consoleAuth.RequireAuth(apiKeyAuth), consoleAuth.Session)
 
-	dashboard := api.Group("/")
-	dashboard.Use(consoleAuth.RequireAuth(apiKeyAuth))
-	dashboard.POST("/console/password", consoleAuth.RequireCookieSession(), consoleAuth.ChangePassword)
-	dashboard.GET("/console/api-keys", apiKeyAuth.ListAPIKeys)
-	dashboard.POST("/console/api-keys", consoleAuth.RequireCookieSession(), apiKeyAuth.CreateAPIKey)
-	dashboard.DELETE("/console/api-keys/:api_key_id", consoleAuth.RequireCookieSession(), apiKeyAuth.DeleteAPIKey)
-	dashboard.GET("/console/tokens", consoleAuth.RequireCookieSession(), mcpAuth.ListTokens)
-	dashboard.POST("/console/tokens", consoleAuth.RequireCookieSession(), mcpAuth.CreateToken)
-	dashboard.DELETE("/console/tokens/:token_id", consoleAuth.RequireCookieSession(), mcpAuth.DeleteToken)
-	dashboard.GET("/console/tokens/:token_id/value", consoleAuth.RequireCookieSession(), mcpAuth.GetTokenValue)
-	dashboard.POST("/console/register", consoleAuth.RequireAdmin(), consoleAuth.Register)
-	dashboard.GET("/workers", workerHandler.ListWorkers)
-	dashboard.GET("/workers/stats", workerHandler.WorkerStats)
-	dashboard.GET("/workers/inflight", workerHandler.WorkerInflight)
-	dashboard.POST("/workers", workerHandler.CreateWorker)
-	dashboard.DELETE("/workers/:node_id", workerHandler.DeleteWorker)
-	dashboard.GET("/workers/:node_id/startup-command", workerHandler.GetWorkerStartupCommand)
+	management := api.Group("/")
+	management.Use(consoleAuth.RequireAuth(apiKeyAuth))
+	management.POST("/auth/password", consoleAuth.RequireCookieSession(), consoleAuth.ChangePassword)
+	management.GET("/api-keys", apiKeyAuth.ListAPIKeys)
+	management.POST("/api-keys", consoleAuth.RequireCookieSession(), apiKeyAuth.CreateAPIKey)
+	management.DELETE("/api-keys/:api_key_id", consoleAuth.RequireCookieSession(), apiKeyAuth.DeleteAPIKey)
+	management.GET("/tokens", consoleAuth.RequireCookieSession(), mcpAuth.ListTokens)
+	management.POST("/tokens", consoleAuth.RequireCookieSession(), mcpAuth.CreateToken)
+	management.DELETE("/tokens/:token_id", consoleAuth.RequireCookieSession(), mcpAuth.DeleteToken)
+	management.GET("/tokens/:token_id/value", consoleAuth.RequireCookieSession(), mcpAuth.GetTokenValue)
+	management.GET("/workers", workerHandler.ListWorkers)
+	management.GET("/workers/stats", workerHandler.WorkerStats)
+	management.GET("/workers/inflight", workerHandler.WorkerInflight)
+	management.POST("/workers", workerHandler.CreateWorker)
+	management.DELETE("/workers/:node_id", workerHandler.DeleteWorker)
+	management.GET("/workers/:node_id/startup-command", workerHandler.GetWorkerStartupCommand)
+	management.GET("/sessions", workerHandler.ListSessions)
+	management.GET("/sessions/:session_id", workerHandler.GetSession)
+	management.DELETE("/sessions/:session_id", workerHandler.DeleteSession)
 	if workerHandler.proxyRoutes != nil {
-		dashboard.POST("/proxy-routes", workerHandler.proxyRoutes.Create)
-		dashboard.GET("/proxy-routes", workerHandler.proxyRoutes.List)
-		dashboard.DELETE("/proxy-routes/:route_key", workerHandler.proxyRoutes.Delete)
+		management.POST("/proxy-routes", workerHandler.proxyRoutes.Create)
+		management.GET("/proxy-routes", workerHandler.proxyRoutes.List)
+		management.DELETE("/proxy-routes/:route_key", workerHandler.proxyRoutes.Delete)
 	}
 
-	adminDashboard := api.Group("/")
-	adminDashboard.Use(consoleAuth.RequireAuth(apiKeyAuth), consoleAuth.RequireAdmin())
-	adminDashboard.GET("/console/accounts", consoleAuth.ListAccounts)
-	adminDashboard.DELETE("/console/accounts/:account_id", consoleAuth.DeleteAccount)
+	adminManagement := api.Group("/")
+	adminManagement.Use(consoleAuth.RequireAuth(apiKeyAuth), consoleAuth.RequireAdmin())
+	adminManagement.POST("/accounts", consoleAuth.Register)
+	adminManagement.GET("/accounts", consoleAuth.ListAccounts)
+	adminManagement.DELETE("/accounts/:account_id", consoleAuth.DeleteAccount)
 
 	if err := registerEmbeddedWebRoutes(router); err != nil {
 		return nil, err

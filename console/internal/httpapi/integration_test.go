@@ -1986,7 +1986,7 @@ func newAuthenticatedClient(t *testing.T, server *httptest.Server) *http.Client 
 		t.Fatalf("failed to marshal login request: %v", err)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/console/login", bytes.NewReader(reqBody))
+	req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/auth/login", bytes.NewReader(reqBody))
 	if err != nil {
 		t.Fatalf("failed to build login request: %v", err)
 	}
