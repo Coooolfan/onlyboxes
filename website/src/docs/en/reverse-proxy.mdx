@@ -144,7 +144,7 @@ curl -i https://<route-key>.public-preview.example.com/
 | E2B | Browser → Nginx → E2B sandbox origin | Console returns the current sandbox origin and an internal traffic token |
 
 - Token expiry does not end an accepted HTTP/SSE/WebSocket connection.
-- Route access does not renew the Sandbox lease.
+- Route access does not renew the Sandbox lease. Long-running previews must renew the terminal session explicitly with `POST /api/v1/sessions/:session_id/renew`; renewing the session does not extend the route's own expiry.
 - Routes are persisted in Console SQLite. Unexpired routes retain their original URLs across a Console restart, but reject new requests until the owning Worker reconnects and the terminal session finishes recovery.
 - Access logs and SQLite backups may contain route keys — treat them as credentials and limit retention and read access.
 

@@ -106,6 +106,8 @@ See the [annotated configuration template](https://github.com/Coooolfan/onlyboxe
 | `WORKER_TERMINAL_SESSION_MAX_INFLIGHT` | No | `128` | Concurrent operations allowed in one session |
 | `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS` | No | `0` (unlimited) | Maximum terminal sessions managed by this worker process |
 
+The Worker advertises `terminalLeaseRenew` as an internal Console-only capability. It accepts `{"session_id":"required","lease_ttl_sec":300}`, extends an existing lease monotonically, synchronizes the E2B sandbox timeout, and returns the confirmed absolute expiry without executing a command. Its independent `max_inflight` declaration uses the configured `WORKER_TERMINAL_EXEC_MAX_INFLIGHT` value.
+
 `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS` is independent of the per-session and capability concurrency limits. `0` leaves the count unlimited; a positive value counts sessions that are being created, ready, being destroyed, or undergoing E2B cleanup. Existing sessions remain usable when the limit is full, while a new session returns `429 session_capacity_exceeded`. The limit applies only to this worker process, not to all workers sharing an E2B API key; negative or invalid values fall back to `0`.
 
 Terminal commands share the sandbox filesystem but run in separate `/bin/bash -l -c` processes. They do not preserve the current directory, shell variables, or process environment between calls.

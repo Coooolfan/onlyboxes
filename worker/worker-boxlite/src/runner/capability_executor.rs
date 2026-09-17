@@ -122,14 +122,8 @@ where
             .await
         }
         TERMINAL_LEASE_RENEW_CAPABILITY_NAME => {
-            build_terminal_lease_renew_result(
-                cfg,
-                &command_id,
-                &dispatch.payload_json,
-                dispatch.deadline_unix_ms,
-                runtime,
-            )
-            .await
+            build_terminal_lease_renew_result(cfg, &command_id, &dispatch.payload_json, runtime)
+                .await
         }
         TERMINAL_RESOURCE_CAPABILITY_NAME => {
             build_terminal_resource_result(
@@ -153,7 +147,6 @@ async fn build_terminal_lease_renew_result<R>(
     cfg: &Config,
     command_id: &str,
     payload: &[u8],
-    _deadline_unix_ms: i64,
     runtime: &R,
 ) -> ConnectRequest
 where

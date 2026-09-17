@@ -24,7 +24,6 @@ func (s *RegistryService) RenewTerminalSessionLease(
 	ownerID string,
 	sessionID string,
 	leaseTTLSec int,
-	now time.Time,
 ) (TerminalSessionView, error) {
 	if s == nil {
 		return TerminalSessionView{}, ErrTerminalSessionUnavailable
@@ -38,7 +37,7 @@ func (s *RegistryService) RenewTerminalSessionLease(
 		return TerminalSessionView{}, ErrTerminalLeaseInvalid
 	}
 
-	view, ok := s.GetTerminalSession(normalizedOwnerID, normalizedSessionID, now)
+	view, ok := s.GetTerminalSession(normalizedOwnerID, normalizedSessionID, s.nowFn())
 	if !ok {
 		return TerminalSessionView{}, ErrTerminalSessionNotFound
 	}

@@ -670,12 +670,12 @@ Worker 类型：`normal`（对应 `worker-docker`/`worker-boxlite`）、`worker-
 
 ### Terminal Session API
 
-这些端点需要管理鉴权（Cookie、Console API Key 或 Dashboard JIT）。它们列出、查询并删除已确认的 terminal session。尚未完成首次 `terminalExec` 的 session 不可见。
+这些端点需要管理鉴权（Cookie、Console API Key 或 Dashboard JIT）。它们列出、查询、续租并删除已确认的 terminal session。尚未完成首次 `terminalExec` 的 session 不可见。
 
 作用域：
 
 - 非管理员：只能看到自己的 session；`account_id` 指向其他账号时返回 `404`
-- 管理员：默认全站；`account_id` 用于过滤列表。查询/删除单条必须带 `account_id`，因为 `session_id` 只在账号内唯一
+- 管理员：默认全站；`account_id` 用于过滤列表。查询、续租和删除单条必须带 `account_id`，因为 `session_id` 只在账号内唯一
 
 `status` 取值：
 
@@ -746,6 +746,35 @@ Worker 类型：`normal`（对应 `worker-docker`/`worker-boxlite`）、`worker-
 
 ---
 
+#### 续租 Session
+
+`POST /api/v1/sessions/:session_id/renew?account_id=acc_xxx`
+
+Console 会请求持有该 session 的 Worker 延长租约，然后持久化 Worker 确认的绝对到期时间。续租是单调的：较短的 TTL 不会缩短当前租约。续租 session 不会延长任何公开预览 route。
+
+```json
+{
+  "lease_ttl_sec": 300
+}
+```
+
+`lease_ttl_sec` 必须为正数，并位于所属 Worker 配置的 terminal lease 范围内。
+
+成功 `200`：结构与列表中的单项相同，其中 `lease_expires_at` 和 `last_used_at` 已更新。
+
+**错误码：**
+
+| 状态码 | 说明 |
+|--------|------|
+| `400` | 请求体非法、管理员未提供 `account_id`，或 TTL 超出 Worker 的租约范围 |
+| `401` | 控制台凭据缺失或无效 |
+| `404` | session 不存在（含跨账号访问） |
+| `502` | Worker 拒绝续租或返回了非法结果 |
+| `503` | session registry 或绑定的 Worker 不可用 |
+| `504` | 续租超时 |
+
+---
+
 #### 删除 Session
 
 `DELETE /api/v1/sessions/:session_id?account_id=acc_xxx`
@@ -781,6 +810,7 @@ Worker 类型：`normal`（对应 `worker-docker`/`worker-boxlite`）、`worker-
 ```json
 {
   "route_key": "ceirceirceirceirceirceirce",
+  "account_id": "acc_xxx",
   "session_id": "sess_xxx",
   "port": 8080,
   "url": "https://ceirceirceirceirceirceirce.public-preview.example.com",
@@ -803,16 +833,49 @@ Worker 类型：`normal`（对应 `worker-docker`/`worker-boxlite`）、`worker-
 - `429` 当前账号或 Session 达到 route 上限。
 - `503` Session 所在 Worker 没有可用代理入口。
 
-`GET /api/v1/proxy-routes`
+`GET /api/v1/proxy-routes?page=1&page_size=20&account_id=acc_xxx`
 
-成功 `200` 返回当前账号的 route：
+作用域：
+
+- 非管理员只能列出自己的 route；将 `account_id` 指向其他账号会返回 `404`。
+- 管理员默认列出全部账号的 route，也可以通过 `account_id` 过滤单个账号。
+
+**查询参数：**
+
+| 参数 | 类型 | 默认值 | 约束 |
+|------|------|--------|------|
+| `page` | int | `1` | 正整数 |
+| `page_size` | int | `20` | 正整数，最大 `100` |
+| `account_id` | string | | 可选账号过滤条件，规则见上文 |
+
+成功 `200`：
 
 ```json
 {
-  "items": [],
-  "total": 0
+  "items": [
+    {
+      "route_key": "ceirceirceirceirceirceirce",
+      "account_id": "acc_xxx",
+      "session_id": "sess_xxx",
+      "port": 8080,
+      "url": "https://ceirceirceirceirceirceirce.public-preview.example.com",
+      "created_at": "2026-02-21T00:00:00Z",
+      "expires_at": "2026-02-22T00:00:00Z"
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "page_size": 20
 }
 ```
+
+**错误码：**
+
+| 状态码 | 说明 |
+|--------|------|
+| `400` | `page` 或 `page_size` 非法 |
+| `401` | 管理凭据缺失或无效 |
+| `404` | 非管理员请求了其他账号的 route |
 
 `DELETE /api/v1/proxy-routes/:route_key`
 

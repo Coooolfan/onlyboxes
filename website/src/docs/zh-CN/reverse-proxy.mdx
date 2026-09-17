@@ -144,7 +144,7 @@ curl -i https://<route-key>.public-preview.example.com/
 | E2B | 浏览器 → Nginx → E2B sandbox origin | Console 返回当前 sandbox origin 与内部 traffic token |
 
 - Token 过期不会终止已接受的 HTTP/SSE/WebSocket 连接。
-- 访问 route 不会续租 Sandbox lease。
+- 访问 route 不会续租 Sandbox lease。长期运行的预览必须通过 `POST /api/v1/sessions/:session_id/renew` 显式续租 terminal session；续租 session 不会延长 route 自身的到期时间。
 - route 持久化到 Console SQLite，未过期的原 URL 可跨 Console 重启恢复；在所属 Worker 重连并完成 terminal session 恢复前，新请求暂时被拒绝。
 - 访问日志和 SQLite 备份可能包含 routeKey，应按凭据处理并限制留存和读取权限。
 

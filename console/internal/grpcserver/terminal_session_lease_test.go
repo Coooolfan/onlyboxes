@@ -33,7 +33,7 @@ func TestRenewTerminalSessionLeaseDispatchesToBoundWorkerAndPersists(t *testing.
 		err  error
 	}, 1)
 	go func() {
-		view, err := service.RenewTerminalSessionLease(context.Background(), "owner-a", "session-a", 300, now)
+		view, err := service.RenewTerminalSessionLease(context.Background(), "owner-a", "session-a", 300)
 		resultCh <- struct {
 			view TerminalSessionView
 			err  error
