@@ -185,6 +185,7 @@ func NewRouter(workerHandler *WorkerHandler, consoleAuth *ConsoleAuth, mcpAuth *
 	management.GET("/workers/:node_id/startup-command", workerHandler.GetWorkerStartupCommand)
 	management.GET("/sessions", workerHandler.ListSessions)
 	management.GET("/sessions/:session_id", workerHandler.GetSession)
+	management.POST("/sessions/:session_id/renew", workerHandler.RenewSessionLease)
 	management.DELETE("/sessions/:session_id", workerHandler.DeleteSession)
 	if workerHandler.proxyRoutes != nil {
 		management.POST("/proxy-routes", workerHandler.proxyRoutes.Create)

@@ -6,7 +6,7 @@ use crate::proto::registryv1::{CapabilityDeclaration, ConnectHello, TerminalSess
 use super::{
     validate_terminal_max_active_sessions, RunnerError, ECHO_CAPABILITY_NAME,
     PYTHON_EXEC_CAPABILITY_DECLARED, TERMINAL_EXEC_CAPABILITY_DECLARED,
-    TERMINAL_RESOURCE_CAPABILITY_DECLARED,
+    TERMINAL_LEASE_RENEW_CAPABILITY_DECLARED, TERMINAL_RESOURCE_CAPABILITY_DECLARED,
 };
 
 pub(crate) fn build_hello(
@@ -58,6 +58,10 @@ pub(crate) fn build_hello(
             },
             CapabilityDeclaration {
                 name: TERMINAL_EXEC_CAPABILITY_DECLARED.to_owned(),
+                max_inflight: cfg.terminal_exec_max_inflight,
+            },
+            CapabilityDeclaration {
+                name: TERMINAL_LEASE_RENEW_CAPABILITY_DECLARED.to_owned(),
                 max_inflight: cfg.terminal_exec_max_inflight,
             },
             CapabilityDeclaration {
@@ -128,11 +132,12 @@ mod tests {
         cfg.terminal_max_active_sessions = 12;
         let hello = build_hello(&cfg, 7).expect("build hello");
         assert_eq!(hello.node_name, "worker-boxlite-worker-1");
-        assert_eq!(hello.capabilities.len(), 4);
+        assert_eq!(hello.capabilities.len(), 5);
         assert_eq!(hello.capabilities[0].name, "echo");
         assert_eq!(hello.capabilities[1].name, "pythonExec");
         assert_eq!(hello.capabilities[2].name, "terminalExec");
-        assert_eq!(hello.capabilities[3].name, "terminalResource");
+        assert_eq!(hello.capabilities[3].name, "terminalLeaseRenew");
+        assert_eq!(hello.capabilities[4].name, "terminalResource");
         let capacity = hello
             .terminal_session_capacity
             .expect("terminal capacity declaration");

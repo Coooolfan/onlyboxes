@@ -113,7 +113,7 @@ func (s *RegistryService) SubmitTask(ctx context.Context, req SubmitTaskRequest)
 	if capability == "" {
 		return SubmitTaskResult{}, status.Error(codes.InvalidArgument, "capability is required")
 	}
-	if capability == taskCapabilityTerminalProxy {
+	if capability == taskCapabilityTerminalProxy || capability == taskCapabilityTerminalLeaseRenew {
 		return SubmitTaskResult{}, status.Error(codes.PermissionDenied, "capability is internal")
 	}
 	ownerID := normalizeTaskOwnerID(req.OwnerID)

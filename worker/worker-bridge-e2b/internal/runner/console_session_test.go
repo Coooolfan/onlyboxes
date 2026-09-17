@@ -314,7 +314,7 @@ func (s *consoleContractService) Connect(stream grpc.BidiStreamingServer[registr
 	for _, declaration := range hello.GetCapabilities() {
 		capabilities[declaration.GetName()] = declaration.GetMaxInflight()
 	}
-	for _, name := range []string{"echo", "pythonExec", "terminalExec", "terminalResource"} {
+	for _, name := range []string{"echo", "pythonExec", "terminalExec", "terminalLeaseRenew", "terminalResource"} {
 		if capabilities[name] != 4 {
 			return status.Errorf(codes.InvalidArgument, "invalid capability %s", name)
 		}

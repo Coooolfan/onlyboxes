@@ -21,13 +21,14 @@ Go 客户端根据 E2B 的公开 OpenAPI 与 envd protobuf 实现。E2B 当前�
 
 ## 能力
 
-worker 在 hello 中声明以下四项能力：
+worker 在 hello 中声明以下五项能力：
 
 | 工具 | 用途 | 沙箱生命周期 |
 | --- | --- | --- |
 | `echo` | 检查 console 与 worker 的调用链路 | 不创建沙箱 |
 | `pythonExec` | 在 Python 模板中执行一次代码 | 每次调用创建并销毁 |
 | `terminalExec` | 创建或复用终端 session 执行命令 | 按 lease 复用 |
+| `terminalLeaseRenew` | 续租已有终端 session（Console 内部使用） | 复用已有 session |
 | `terminalResource` | 校验、读取或导出终端 session 中的文件 | 复用已有 session |
 
 请求和返回值都是 JSON 对象。未知字段会被忽略；缺少必填字段时返回 `invalid_payload`。
@@ -111,6 +112,10 @@ worker 在 hello 中声明以下四项能力：
 
 每个命令由独立的 `/bin/bash -l -c` 进程执行，因此共享文件系统，但不共享 cwd、shell 变量或当前进程环境。
 
+### terminalLeaseRenew
+
+内部能力接收 `{"session_id":"required","lease_ttl_sec":300}`，只延长已有 session 的 lease，不执行命令。续租保持单调，并同步调用 E2B timeout API；返回 `{"session_id":"...","lease_expires_unix_ms":...}`。该能力只由 Console 的 Session 管理接口调度，不接受用户任务直接调用。
+
 ### terminalResource
 
 请求字段：
@@ -152,7 +157,7 @@ worker 在 hello 中声明以下四项能力：
 
 ## 会话与心跳
 
-- hello 声明 `echo`、`pythonExec`、`terminalExec`、`terminalResource`，每项都有独立的 `max_inflight`。
+- hello 声明 `echo`、`pythonExec`、`terminalExec`、`terminalLeaseRenew`、`terminalResource`，每项都有独立的 `max_inflight`。
 - 每次连接和重连的 Hello 都通过 `terminal_session_capacity` 上报配置的 `max_active_sessions` 与 manager 当前 reservation 数，console 无需等待首个 heartbeat 即可获得容量快照。
 - heartbeat 持续报告最新 `active_session_count`。
 - worker 容忍一次 heartbeat ack 超时，连续两次超时后重连。

@@ -96,8 +96,8 @@ func TestBuildHelloCarriesWorkerSecretAndTerminalCapacity(t *testing.T) {
 	for _, capability := range hello.GetCapabilities() {
 		capabilityByName[capability.GetName()] = capability.GetMaxInflight()
 	}
-	if len(capabilityByName) != 4 {
-		t.Fatalf("expected four capabilities, got %#v", hello.GetCapabilities())
+	if len(capabilityByName) != 5 {
+		t.Fatalf("expected five capabilities, got %#v", hello.GetCapabilities())
 	}
 	if capabilityByName[echoCapabilityName] != defaultMaxInflight {
 		t.Fatalf("expected echo max_inflight=%d, got %d", defaultMaxInflight, capabilityByName[echoCapabilityName])
@@ -107,6 +107,9 @@ func TestBuildHelloCarriesWorkerSecretAndTerminalCapacity(t *testing.T) {
 	}
 	if capabilityByName[terminalExecCapabilityDeclared] != defaultMaxInflight {
 		t.Fatalf("expected terminalExec max_inflight=%d, got %d", defaultMaxInflight, capabilityByName[terminalExecCapabilityDeclared])
+	}
+	if capabilityByName[terminalLeaseRenewCapabilityDeclared] != defaultMaxInflight {
+		t.Fatalf("expected terminalLeaseRenew max_inflight=%d, got %d", defaultMaxInflight, capabilityByName[terminalLeaseRenewCapabilityDeclared])
 	}
 	if capabilityByName[terminalResourceCapabilityDeclared] != defaultMaxInflight {
 		t.Fatalf("expected terminalResource max_inflight=%d, got %d", defaultMaxInflight, capabilityByName[terminalResourceCapabilityDeclared])

@@ -16,24 +16,26 @@ import (
 )
 
 const (
-	terminalExecCapabilityName        = "terminalexec"
-	terminalExecCapabilityDeclared    = "terminalExec"
-	terminalExecJanitorInterval       = 5 * time.Second
-	terminalExecCleanupTimeout        = 10 * time.Second
-	terminalExecNoSessionMessage      = "session not found"
-	terminalExecBusyMessage           = "session is busy"
-	terminalExecCapacityMessage       = "terminal session capacity exceeded"
-	terminalExecNotReadyMessage       = "terminal executor is unavailable"
-	defaultTerminalLeaseMinSec        = 60
-	defaultTerminalLeaseMaxSec        = 1800
-	defaultTerminalLeaseSec           = 300
-	defaultTerminalOutputLimitBytes   = 1024 * 1024
-	defaultTerminalSessionMaxInflight = 128
-	terminalSessionWorkerMetadataKey  = "onlyboxes.worker"
-	terminalSessionWorkerMetadata     = "worker-bridge-e2b"
-	terminalSessionMetadataKey        = "onlyboxes.session_id_hash"
-	terminalSessionSchemaKey          = "onlyboxes.schema_version"
-	terminalSessionSchemaVersion      = "1"
+	terminalExecCapabilityName           = "terminalexec"
+	terminalExecCapabilityDeclared       = "terminalExec"
+	terminalLeaseRenewCapabilityName     = "terminalleaserenew"
+	terminalLeaseRenewCapabilityDeclared = "terminalLeaseRenew"
+	terminalExecJanitorInterval          = 5 * time.Second
+	terminalExecCleanupTimeout           = 10 * time.Second
+	terminalExecNoSessionMessage         = "session not found"
+	terminalExecBusyMessage              = "session is busy"
+	terminalExecCapacityMessage          = "terminal session capacity exceeded"
+	terminalExecNotReadyMessage          = "terminal executor is unavailable"
+	defaultTerminalLeaseMinSec           = 60
+	defaultTerminalLeaseMaxSec           = 1800
+	defaultTerminalLeaseSec              = 300
+	defaultTerminalOutputLimitBytes      = 1024 * 1024
+	defaultTerminalSessionMaxInflight    = 128
+	terminalSessionWorkerMetadataKey     = "onlyboxes.worker"
+	terminalSessionWorkerMetadata        = "worker-bridge-e2b"
+	terminalSessionMetadataKey           = "onlyboxes.session_id_hash"
+	terminalSessionSchemaKey             = "onlyboxes.schema_version"
+	terminalSessionSchemaVersion         = "1"
 )
 
 const (
@@ -65,6 +67,16 @@ type terminalExecRunResult struct {
 	ExitCode           int    `json:"exit_code"`
 	StdoutTruncated    bool   `json:"stdout_truncated"`
 	StderrTruncated    bool   `json:"stderr_truncated"`
+	LeaseExpiresUnixMS int64  `json:"lease_expires_unix_ms"`
+}
+
+type terminalLeaseRenewPayload struct {
+	SessionID   string `json:"session_id"`
+	LeaseTTLSec int    `json:"lease_ttl_sec"`
+}
+
+type terminalLeaseRenewResult struct {
+	SessionID          string `json:"session_id"`
 	LeaseExpiresUnixMS int64  `json:"lease_expires_unix_ms"`
 }
 
@@ -310,6 +322,52 @@ func (m *terminalSessionManager) Execute(ctx context.Context, req terminalExecRe
 		StderrTruncated:    result.StderrTruncated,
 		LeaseExpiresUnixMS: leaseExpires.UnixMilli(),
 	}, nil
+}
+
+func (m *terminalSessionManager) RenewLease(ctx context.Context, req terminalLeaseRenewPayload) (terminalLeaseRenewResult, error) {
+	if m == nil || m.backend == nil {
+		return terminalLeaseRenewResult{}, newTerminalExecError("execution_failed", terminalExecNotReadyMessage)
+	}
+	sessionID := strings.TrimSpace(req.SessionID)
+	if sessionID == "" {
+		return terminalLeaseRenewResult{}, newTerminalExecError(terminalExecCodeInvalidPayload, "session_id is required")
+	}
+	leaseDuration, err := m.resolveLeaseDuration(&req.LeaseTTLSec)
+	if err != nil {
+		return terminalLeaseRenewResult{}, err
+	}
+	now := time.Now()
+	leaseTarget := now.Add(leaseDuration)
+
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return terminalLeaseRenewResult{}, newTerminalExecError("execution_failed", terminalExecNotReadyMessage)
+	}
+	session, ok := m.sessions[sessionID]
+	if !ok || session == nil || session.destroying || session.sandbox == nil || !session.confirmedLeaseExpiresAt.After(now) {
+		m.mu.Unlock()
+		return terminalLeaseRenewResult{}, newTerminalExecError(terminalExecCodeSessionNotFound, terminalExecNoSessionMessage)
+	}
+	session.inflight++
+	if session.desiredLeaseExpiresAt.Before(leaseTarget) {
+		session.desiredLeaseExpiresAt = leaseTarget
+	}
+	m.mu.Unlock()
+
+	if err := m.syncSandboxTimeout(ctx, session); err != nil {
+		if errors.Is(err, e2b.ErrSandboxNotFound) {
+			m.releaseAndDestroySession(sessionID)
+			return terminalLeaseRenewResult{}, newTerminalExecError(terminalExecCodeSessionNotFound, terminalExecNoSessionMessage)
+		}
+		m.releaseSession(sessionID)
+		return terminalLeaseRenewResult{}, fmt.Errorf("extend E2B sandbox timeout: %w", err)
+	}
+	expiresAt, ok := m.releaseSession(sessionID)
+	if !ok {
+		return terminalLeaseRenewResult{}, newTerminalExecError(terminalExecCodeSessionNotFound, terminalExecNoSessionMessage)
+	}
+	return terminalLeaseRenewResult{SessionID: sessionID, LeaseExpiresUnixMS: expiresAt.UnixMilli()}, nil
 }
 
 func (m *terminalSessionManager) resolveLeaseDuration(value *int) (time.Duration, error) {

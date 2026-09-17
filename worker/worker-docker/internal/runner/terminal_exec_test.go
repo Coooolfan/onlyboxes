@@ -77,6 +77,30 @@ func TestBuildCommandResultTerminalExecSuccess(t *testing.T) {
 	}
 }
 
+func TestBuildCommandResultTerminalLeaseRenewSuccess(t *testing.T) {
+	originalRunTerminalLeaseRenew := runTerminalLeaseRenew
+	t.Cleanup(func() { runTerminalLeaseRenew = originalRunTerminalLeaseRenew })
+	runTerminalLeaseRenew = func(_ context.Context, req terminalLeaseRenewPayload) (terminalLeaseRenewResult, error) {
+		if req.SessionID != "sess-1" || req.LeaseTTLSec != 300 {
+			t.Fatalf("unexpected renewal request: %#v", req)
+		}
+		return terminalLeaseRenewResult{SessionID: req.SessionID, LeaseExpiresUnixMS: 123456789}, nil
+	}
+
+	req := buildCommandResult(&registryv1.CommandDispatch{
+		CommandId: "cmd-renew-1", Capability: "terminalLeaseRenew",
+		PayloadJson: []byte(`{"session_id":"sess-1","lease_ttl_sec":300}`),
+	})
+	result := req.GetCommandResult()
+	if result == nil || result.GetError() != nil {
+		t.Fatalf("unexpected renewal result: %#v", result)
+	}
+	decoded := terminalLeaseRenewResult{}
+	if err := json.Unmarshal(result.GetPayloadJson(), &decoded); err != nil || decoded.SessionID != "sess-1" || decoded.LeaseExpiresUnixMS != 123456789 {
+		t.Fatalf("unexpected renewal payload: %#v err=%v", decoded, err)
+	}
+}
+
 func TestBuildCommandResultTerminalExecSessionErrors(t *testing.T) {
 	originalRunTerminalExec := runTerminalExec
 	t.Cleanup(func() {
@@ -682,6 +706,35 @@ func TestTerminalExecDockerCreateArgsWithProxyNetwork(t *testing.T) {
 	got := terminalExecDockerCreateArgsWithNetwork("container-a", "python:slim", "256m", "1.0", 128, terminalProxyDockerNetwork)
 	if network := argValue(got, "--network"); network != terminalProxyDockerNetwork {
 		t.Fatalf("expected proxy network %q, got %q in %#v", terminalProxyDockerNetwork, network, got)
+	}
+}
+
+func TestTerminalSessionManagerRenewLeaseIsMonotonic(t *testing.T) {
+	manager := newTerminalSessionManager(terminalSessionManagerConfig{
+		LeaseMinSec: 1, LeaseMaxSec: 600, LeaseDefaultSec: 60, OutputLimitBytes: 1024, PreserveOnClose: true,
+	})
+	defer manager.Close()
+	oldExpiry := time.Now().Add(10 * time.Second)
+	manager.mu.Lock()
+	session := readyTerminalSession("session-renew", "container-renew", oldExpiry, 0)
+	manager.sessions[session.sessionID] = session
+	manager.scheduleSessionLeaseTimerLocked(session)
+	manager.mu.Unlock()
+
+	result, err := manager.RenewLease(context.Background(), terminalLeaseRenewPayload{SessionID: "session-renew", LeaseTTLSec: 120})
+	if err != nil {
+		t.Fatalf("renew lease: %v", err)
+	}
+	if result.SessionID != "session-renew" || result.LeaseExpiresUnixMS <= oldExpiry.UnixMilli() {
+		t.Fatalf("unexpected renewal result: %#v", result)
+	}
+	firstExpiry := result.LeaseExpiresUnixMS
+	result, err = manager.RenewLease(context.Background(), terminalLeaseRenewPayload{SessionID: "session-renew", LeaseTTLSec: 1})
+	if err != nil {
+		t.Fatalf("renew with shorter lease: %v", err)
+	}
+	if result.LeaseExpiresUnixMS < firstExpiry {
+		t.Fatalf("renewal shortened lease: first=%d second=%d", firstExpiry, result.LeaseExpiresUnixMS)
 	}
 }
 

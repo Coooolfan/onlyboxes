@@ -264,6 +264,12 @@ func commandDispatchSummaryForLog(capability string, payload []byte) string {
 			decoded.CreateIfMissing,
 			leaseTTLSec,
 		)
+	case terminalLeaseRenewCapabilityName:
+		decoded := terminalLeaseRenewPayload{}
+		if err := json.Unmarshal(payload, &decoded); err != nil || strings.TrimSpace(decoded.SessionID) == "" || decoded.LeaseTTLSec <= 0 {
+			return parseFailed
+		}
+		return fmt.Sprintf("session_id_present=true lease_ttl_sec=%d", decoded.LeaseTTLSec)
 	case terminalResourceCapabilityName:
 		decoded := terminalResourcePayload{}
 		if err := json.Unmarshal(payload, &decoded); err != nil {

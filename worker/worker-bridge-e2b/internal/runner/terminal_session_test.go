@@ -1560,6 +1560,40 @@ type outcome struct {
 	err    error
 }
 
+func TestTerminalSessionManagerRenewLeaseSyncsE2BTimeout(t *testing.T) {
+	backend := &fakeE2BBackend{}
+	manager := newTerminalSessionManager(terminalSessionManagerConfig{
+		Backend: backend, Template: "template", LeaseMinSec: 1, LeaseMaxSec: 600,
+		LeaseDefaultSec: 60, OutputLimitBytes: 1024, PreserveOnClose: true,
+	})
+	defer manager.Close()
+	oldExpiry := time.Now().Add(10 * time.Second)
+	session := &terminalSession{
+		sessionID: "session-renew", sandbox: &e2b.Sandbox{ID: "sandbox-renew"},
+		desiredLeaseExpiresAt: oldExpiry, confirmedLeaseExpiresAt: oldExpiry,
+		remoteTimeoutExpiresAt: oldExpiry, ready: make(chan struct{}), capacityReserved: true,
+	}
+	close(session.ready)
+	manager.mu.Lock()
+	manager.sessions[session.sessionID] = session
+	manager.activeSessionReservations = 1
+	manager.mu.Unlock()
+
+	result, err := manager.RenewLease(context.Background(), terminalLeaseRenewPayload{SessionID: session.sessionID, LeaseTTLSec: 120})
+	if err != nil {
+		t.Fatalf("renew lease: %v", err)
+	}
+	if result.LeaseExpiresUnixMS <= oldExpiry.UnixMilli() {
+		t.Fatalf("lease was not extended: %#v", result)
+	}
+	backend.mu.Lock()
+	timeoutCalls := append([]int(nil), backend.timeouts...)
+	backend.mu.Unlock()
+	if len(timeoutCalls) != 1 || timeoutCalls[0] < 119 {
+		t.Fatalf("unexpected E2B timeout updates: %#v", timeoutCalls)
+	}
+}
+
 func terminalErrorCode(err error) string {
 	var terminalErr *terminalExecError
 	if errors.As(err, &terminalErr) {

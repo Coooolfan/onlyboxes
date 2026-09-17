@@ -756,12 +756,12 @@ Worker 类型：
 
 ## 7. Terminal Session API（管理鉴权，按角色作用域）
 
-这些端点需要管理鉴权（Cookie、Console API Key 或 Dashboard JIT）。它们列出、查询并删除已确认的 terminal session。尚未完成首次 `terminalExec` 的 session 不可见。
+这些端点需要管理鉴权（Cookie、Console API Key 或 Dashboard JIT）。它们列出、查询、续租并删除已确认的 terminal session。尚未完成首次 `terminalExec` 的 session 不可见。
 
 作用域：
 
 - 非管理员：只能看到自己的 session；`account_id` 指向其他账号时返回 `404`
-- 管理员：默认全站；`account_id` 用于过滤列表。查询/删除单条必须带 `account_id`，因为 `session_id` 只在账号内唯一
+- 管理员：默认全站；`account_id` 用于过滤列表。查询、续租或删除单条必须带 `account_id`，因为 `session_id` 只在账号内唯一
 
 `status` 取值：
 
@@ -822,7 +822,34 @@ Worker 类型：
 - `404` session 不存在（含跨账号访问）
 - `503` session registry 不可用
 
-### 7.3 删除 Session
+### 7.3 续租 Session
+
+`POST /api/v1/sessions/:session_id/renew?account_id=acc_xxx`
+
+Console 请求持有该 session 的 Worker 延长 lease，并持久化 Worker 确认的绝对到期时间。续租只会延长 lease：较短的 TTL 不会缩短当前到期时间。续租不会延长公开预览 route 的有效期。
+
+请求体：
+
+```json
+{
+  "lease_ttl_sec": 300
+}
+```
+
+`lease_ttl_sec` 必须为正整数，并位于所属 Worker 配置的 terminal lease 范围内。
+
+成功 `200`：结构与列表中的单项相同，其中 `lease_expires_at` 和 `last_used_at` 已更新。
+
+错误：
+
+- `400` 请求体非法、管理员未提供 `account_id`，或 TTL 超出 Worker 的 lease 范围
+- `401` 控制台凭据缺失或无效
+- `404` session 不存在（含跨账号访问）
+- `502` Worker 拒绝续租或返回了非法结果
+- `503` session registry 或绑定的 Worker 不可用
+- `504` 续租超时
+
+### 7.4 删除 Session
 
 `DELETE /api/v1/sessions/:session_id?account_id=acc_xxx`
 

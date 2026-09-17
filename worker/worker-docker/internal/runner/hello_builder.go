@@ -64,6 +64,10 @@ func buildHello(cfg config.Config) (*registryv1.ConnectHello, error) {
 				MaxInflight: int32(cfg.TerminalExecMaxInflight),
 			},
 			{
+				Name:        terminalLeaseRenewCapabilityDeclared,
+				MaxInflight: int32(cfg.TerminalExecMaxInflight),
+			},
+			{
 				Name:        terminalResourceCapabilityDeclared,
 				MaxInflight: int32(cfg.TerminalResourceMaxInflight),
 			},

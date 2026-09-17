@@ -38,7 +38,7 @@ Version and capacity report:
 - the only version source is the binary embedded build version (`dev` when not injected); it cannot be overridden at runtime.
 
 Capability behavior:
-- `worker-boxlite` hardcodes capability declarations to `echo`, `pythonExec`, `terminalExec`, and `terminalResource`.
+- `worker-boxlite` hardcodes capability declarations to `echo`, `pythonExec`, `terminalExec`, `terminalLeaseRenew`, and `terminalResource`.
 - each capability declaration includes `max_inflight` (default `4`, configurable per capability via environment variables).
 - startup logs include execution config summaries for `pythonExec` and `terminalExec` (image/lease/output-limit).
 - command dispatch logs are summary-only and do not include raw command/code/path/message content.
@@ -74,6 +74,7 @@ Capability behavior:
   - lease expiry, explicit destruction, unsafe command timeout, and invalid Box state still remove the Box; one-shot `pythonExec` Boxes remain per-call resources.
 - `terminalExec` result uses JSON payload:
   - `{"session_id":"...","created":true,"stdout":"...","stderr":"...","exit_code":0,"stdout_truncated":false,"stderr_truncated":false,"lease_expires_unix_ms":...}`
+- `terminalLeaseRenew` is an internal Console capability. It accepts `{"session_id":"required","lease_ttl_sec":300}`, extends an existing lease monotonically, and returns `{"session_id":"...","lease_expires_unix_ms":...}` without executing a command.
 - output truncation:
   - `stdout` and `stderr` are individually truncated by `WORKER_TERMINAL_OUTPUT_LIMIT_BYTES`.
   - truncation flags are exposed via `stdout_truncated` and `stderr_truncated`.

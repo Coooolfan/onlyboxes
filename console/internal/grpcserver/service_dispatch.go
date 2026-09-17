@@ -339,7 +339,7 @@ func (s *RegistryService) dispatchCommandAttempt(
 			return dispatchAttemptResult{}, status.Error(codes.Unavailable, "worker session closed before command result")
 		}
 		if outcome.err == nil && terminalSessionID != "" {
-			if capability == taskCapabilityTerminalExec {
+			if capability == taskCapabilityTerminalExec || capability == taskCapabilityTerminalLeaseRenew {
 				if err := commitTerminalRoute(outcome.payloadJSON); err != nil {
 					return dispatchAttemptResult{}, status.Errorf(codes.Internal, "persist terminal session route: %v", err)
 				}
@@ -655,6 +655,12 @@ func terminalSessionIDFromPayload(capability string, payload []byte) string {
 	switch capability {
 	case taskCapabilityTerminalExec:
 		var decoded terminalExecScopedPayload
+		if err := json.Unmarshal(payload, &decoded); err != nil {
+			return ""
+		}
+		return strings.TrimSpace(decoded.SessionID)
+	case taskCapabilityTerminalLeaseRenew:
+		var decoded terminalLeaseRenewPayload
 		if err := json.Unmarshal(payload, &decoded); err != nil {
 			return ""
 		}

@@ -17,21 +17,23 @@ import (
 )
 
 const (
-	terminalExecCapabilityName     = "terminalexec"
-	terminalExecCapabilityDeclared = "terminalExec"
-	terminalExecContainerPrefix    = "onlyboxes-terminal-v1-"
-	terminalExecCapabilityLabel    = "onlyboxes.capability=terminalExec"
-	terminalExecSessionLabelKey    = "onlyboxes.session_id_hash"
-	terminalExecSchemaLabelKey     = "onlyboxes.schema_version"
-	terminalExecSchemaVersion      = "1"
-	terminalExecIdleCommand        = "while true; do sleep 3600; done"
-	terminalExecCleanupTimeout     = 3 * time.Second
-	terminalExecInspectTimeout     = 2 * time.Second
-	terminalExecJanitorInterval    = 5 * time.Second
-	terminalExecNoSessionMessage   = "session not found"
-	terminalExecBusyMessage        = "session is busy"
-	terminalExecCapacityMessage    = "terminal session capacity exceeded"
-	terminalExecNotReadyMessage    = "terminal executor is unavailable"
+	terminalExecCapabilityName           = "terminalexec"
+	terminalExecCapabilityDeclared       = "terminalExec"
+	terminalLeaseRenewCapabilityName     = "terminalleaserenew"
+	terminalLeaseRenewCapabilityDeclared = "terminalLeaseRenew"
+	terminalExecContainerPrefix          = "onlyboxes-terminal-v1-"
+	terminalExecCapabilityLabel          = "onlyboxes.capability=terminalExec"
+	terminalExecSessionLabelKey          = "onlyboxes.session_id_hash"
+	terminalExecSchemaLabelKey           = "onlyboxes.schema_version"
+	terminalExecSchemaVersion            = "1"
+	terminalExecIdleCommand              = "while true; do sleep 3600; done"
+	terminalExecCleanupTimeout           = 3 * time.Second
+	terminalExecInspectTimeout           = 2 * time.Second
+	terminalExecJanitorInterval          = 5 * time.Second
+	terminalExecNoSessionMessage         = "session not found"
+	terminalExecBusyMessage              = "session is busy"
+	terminalExecCapacityMessage          = "terminal session capacity exceeded"
+	terminalExecNotReadyMessage          = "terminal executor is unavailable"
 
 	// defaultTerminalSessionMaxInflight keeps one command per session, matching
 	// the behaviour before per-session concurrency became configurable.
@@ -67,6 +69,16 @@ type terminalExecRunResult struct {
 	ExitCode           int    `json:"exit_code"`
 	StdoutTruncated    bool   `json:"stdout_truncated"`
 	StderrTruncated    bool   `json:"stderr_truncated"`
+	LeaseExpiresUnixMS int64  `json:"lease_expires_unix_ms"`
+}
+
+type terminalLeaseRenewPayload struct {
+	SessionID   string `json:"session_id"`
+	LeaseTTLSec int    `json:"lease_ttl_sec"`
+}
+
+type terminalLeaseRenewResult struct {
+	SessionID          string `json:"session_id"`
 	LeaseExpiresUnixMS int64  `json:"lease_expires_unix_ms"`
 }
 
@@ -351,6 +363,40 @@ func (m *terminalSessionManager) Execute(ctx context.Context, req terminalExecRe
 		StdoutTruncated:    stdoutTruncated,
 		StderrTruncated:    stderrTruncated,
 		LeaseExpiresUnixMS: leaseExpiresAt.UnixMilli(),
+	}, nil
+}
+
+func (m *terminalSessionManager) RenewLease(_ context.Context, req terminalLeaseRenewPayload) (terminalLeaseRenewResult, error) {
+	if m == nil {
+		return terminalLeaseRenewResult{}, newTerminalExecError("execution_failed", terminalExecNotReadyMessage)
+	}
+	sessionID := strings.TrimSpace(req.SessionID)
+	if sessionID == "" {
+		return terminalLeaseRenewResult{}, newTerminalExecError(terminalExecCodeInvalidPayload, "session_id is required")
+	}
+	leaseDuration, err := m.resolveLeaseDuration(&req.LeaseTTLSec)
+	if err != nil {
+		return terminalLeaseRenewResult{}, err
+	}
+	now := time.Now()
+	leaseTarget := now.Add(leaseDuration)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return terminalLeaseRenewResult{}, newTerminalExecError("execution_failed", terminalExecNotReadyMessage)
+	}
+	session, ok := m.sessions[sessionID]
+	if !ok || session == nil || session.destroying || !session.leaseExpiresAt.After(now) {
+		return terminalLeaseRenewResult{}, newTerminalExecError(terminalExecCodeSessionNotFound, terminalExecNoSessionMessage)
+	}
+	if session.leaseExpiresAt.Before(leaseTarget) {
+		session.leaseExpiresAt = leaseTarget
+		m.scheduleSessionLeaseTimerLocked(session)
+	}
+	return terminalLeaseRenewResult{
+		SessionID:          sessionID,
+		LeaseExpiresUnixMS: session.leaseExpiresAt.UnixMilli(),
 	}, nil
 }
 

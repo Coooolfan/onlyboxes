@@ -744,6 +744,7 @@ mod tests {
                 ("echo".to_owned(), 4),
                 ("pythonExec".to_owned(), 4),
                 ("terminalExec".to_owned(), 4),
+                ("terminalLeaseRenew".to_owned(), 4),
                 ("terminalResource".to_owned(), 4),
             ])
         );

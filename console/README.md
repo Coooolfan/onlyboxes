@@ -41,6 +41,10 @@ The console service hosts:
   - route creation and resolution enforce the terminal session's exact lease. Expired terminal session routes and their public preview routes are also pruned independently every minute, even when there is no proxy traffic.
   - `GET /internal/v1/proxy/resolve` is Nginx-only and protected by `CONSOLE_PROXY_INTERNAL_AUTH_TOKEN`. Docker/Boxlite return a Worker URL plus a 15-second Route Token; E2B is resolved through its internal Worker capability and returns the current sandbox origin plus traffic token.
   - proxy traffic is anonymous and never carries Dashboard credentials; anyone holding the preview URL can access it.
+- terminal session management APIs (management cookie/API key/JIT auth):
+  - `GET /api/v1/sessions` lists confirmed sessions (admin: all accounts by default; non-admin: own account).
+  - `POST /api/v1/sessions/:session_id/renew` extends the bound Worker's lease and persists its confirmed expiry. Admins must select the owner with `account_id`; non-admins can renew only their own sessions.
+  - renewal uses the internal `terminalLeaseRenew` capability, is monotonic, and does not extend public preview route expiry.
 - command APIs (execution, bearer token required):
   - `POST /api/v1/commands/echo` for blocking echo command execution.
   - `POST /api/v1/commands/terminal` for blocking terminal command execution over `terminalExec` capability.

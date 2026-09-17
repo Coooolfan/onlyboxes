@@ -43,6 +43,7 @@ func buildHello(cfg config.Config) (*registryv1.ConnectHello, error) {
 		{Name: echoCapabilityName, MaxInflight: int32(cfg.EchoMaxInflight)},
 		{Name: pythonExecCapabilityDeclared, MaxInflight: int32(cfg.PythonExecMaxInflight)},
 		{Name: terminalExecCapabilityDeclared, MaxInflight: int32(cfg.TerminalExecMaxInflight)},
+		{Name: terminalLeaseRenewCapabilityDeclared, MaxInflight: int32(cfg.TerminalExecMaxInflight)},
 		{Name: terminalResourceCapabilityDeclared, MaxInflight: int32(cfg.TerminalResourceMaxInflight)},
 	}
 	if cfg.ProxyEnabled {

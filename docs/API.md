@@ -754,12 +754,12 @@ Errors:
 
 ## 7. Terminal Session APIs (Management Auth, Role-Scoped)
 
-These endpoints require management authentication (cookie, Console API key, or Dashboard JIT). They list, inspect, and delete confirmed terminal sessions. Sessions that have not finished their first `terminalExec` are not visible.
+These endpoints require management authentication (cookie, Console API key, or Dashboard JIT). They list, inspect, renew, and delete confirmed terminal sessions. Sessions that have not finished their first `terminalExec` are not visible.
 
 Scope:
 
 - non-admin: only the caller's sessions; `account_id` for another account returns `404`
-- admin: all sessions by default; `account_id` filters the list. Get and delete require `account_id` because `session_id` is unique per account, not globally
+- admin: all sessions by default; `account_id` filters the list. Get, renew, and delete require `account_id` because `session_id` is unique per account, not globally
 
 `status` values:
 
@@ -820,7 +820,34 @@ Errors:
 - `404` session not found (including cross-account)
 - `503` session registry unavailable
 
-### 7.3 Delete Session
+### 7.3 Renew Session Lease
+
+`POST /api/v1/sessions/:session_id/renew?account_id=acc_xxx`
+
+The Console asks the Worker that owns the session to extend its lease, then persists the absolute expiry confirmed by that Worker. Renewal is monotonic: a shorter TTL does not reduce the current expiry. It does not renew any public preview route.
+
+Request body:
+
+```json
+{
+  "lease_ttl_sec": 300
+}
+```
+
+`lease_ttl_sec` must be positive and must fall within the owning Worker's configured terminal lease bounds.
+
+Success `200`: same object as a list item, with the updated `lease_expires_at` and `last_used_at`.
+
+Errors:
+
+- `400` invalid body, admin omitted `account_id`, or TTL is outside the Worker's lease bounds
+- `401` missing or invalid dashboard credential
+- `404` session not found (including cross-account)
+- `502` Worker rejected the renewal or returned an invalid result
+- `503` session registry or bound Worker unavailable
+- `504` renewal timed out
+
+### 7.4 Delete Session
 
 `DELETE /api/v1/sessions/:session_id?account_id=acc_xxx`
 

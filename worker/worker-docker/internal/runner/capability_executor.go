@@ -43,11 +43,48 @@ func buildCommandResultWithContext(baseCtx context.Context, dispatch *registryv1
 		return buildPythonExecCommandResult(baseCtx, commandID, dispatch)
 	case terminalExecCapabilityName:
 		return buildTerminalExecCommandResult(baseCtx, commandID, dispatch)
+	case terminalLeaseRenewCapabilityName:
+		return buildTerminalLeaseRenewCommandResult(baseCtx, commandID, dispatch)
 	case terminalResourceCapabilityName:
 		return buildTerminalResourceCommandResult(baseCtx, commandID, dispatch)
 	default:
 		return commandErrorResult(commandID, "unsupported_capability", fmt.Sprintf("capability %q is not supported", dispatch.GetCapability()))
 	}
+}
+
+func buildTerminalLeaseRenewCommandResult(baseCtx context.Context, commandID string, dispatch *registryv1.CommandDispatch) *registryv1.ConnectRequest {
+	payload := append([]byte(nil), dispatch.GetPayloadJson()...)
+	decoded := terminalLeaseRenewPayload{}
+	if len(payload) == 0 || json.Unmarshal(payload, &decoded) != nil || strings.TrimSpace(decoded.SessionID) == "" || decoded.LeaseTTLSec <= 0 {
+		return commandErrorResult(commandID, terminalExecCodeInvalidPayload, "payload_json is not valid terminalLeaseRenew payload")
+	}
+	commandCtx := baseCtx
+	if commandCtx == nil {
+		commandCtx = context.Background()
+	}
+	cancel := func() {}
+	if deadlineUnixMS := dispatch.GetDeadlineUnixMs(); deadlineUnixMS > 0 {
+		commandCtx, cancel = context.WithDeadline(commandCtx, time.UnixMilli(deadlineUnixMS))
+	}
+	defer cancel()
+	result, err := runTerminalLeaseRenew(commandCtx, decoded)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			return commandErrorResult(commandID, "deadline_exceeded", "command deadline exceeded")
+		}
+		var terminalErr *terminalExecError
+		if errors.As(err, &terminalErr) {
+			return commandErrorResult(commandID, terminalErr.Code(), terminalErr.Error())
+		}
+		return commandErrorResult(commandID, "execution_failed", fmt.Sprintf("terminalLeaseRenew failed: %v", err))
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		return commandErrorResult(commandID, "encode_failed", "failed to encode terminalLeaseRenew payload")
+	}
+	return &registryv1.ConnectRequest{Payload: &registryv1.ConnectRequest_CommandResult{CommandResult: &registryv1.CommandResult{
+		CommandId: commandID, PayloadJson: encoded, CompletedUnixMs: time.Now().UnixMilli(),
+	}}}
 }
 
 func buildEchoCommandResult(commandID string, dispatch *registryv1.CommandDispatch) *registryv1.ConnectRequest {
@@ -302,6 +339,10 @@ func commandErrorResult(commandID string, code string, message string) *registry
 
 func runTerminalExecUnavailable(context.Context, terminalExecRequest) (terminalExecRunResult, error) {
 	return terminalExecRunResult{}, newTerminalExecError("execution_failed", terminalExecNotReadyMessage)
+}
+
+func runTerminalLeaseRenewUnavailable(context.Context, terminalLeaseRenewPayload) (terminalLeaseRenewResult, error) {
+	return terminalLeaseRenewResult{}, newTerminalExecError("execution_failed", terminalExecNotReadyMessage)
 }
 
 func runTerminalResourceUnavailable(context.Context, terminalResourceRequest) (terminalResourceRunResult, error) {
