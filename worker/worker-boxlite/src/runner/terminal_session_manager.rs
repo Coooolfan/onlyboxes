@@ -125,6 +125,18 @@ pub(crate) struct TerminalExecRunResult {
     pub lease_expires_unix_ms: i64,
 }
 
+#[derive(Debug)]
+pub(crate) struct TerminalLeaseRenewRequest {
+    pub session_id: String,
+    pub lease_ttl_sec: i32,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub(crate) struct TerminalLeaseRenewResult {
+    pub session_id: String,
+    pub lease_expires_unix_ms: i64,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct TerminalResourceRequest {
     pub session_id: String,
@@ -590,6 +602,50 @@ impl TerminalSessionManager {
                 Err(TerminalOperationError::ExecutionFailed(message))
             }
         }
+    }
+
+    pub(crate) async fn renew_lease(
+        &self,
+        req: TerminalLeaseRenewRequest,
+    ) -> Result<TerminalLeaseRenewResult, TerminalOperationError> {
+        let session_id = req.session_id.trim().to_owned();
+        if session_id.is_empty() {
+            return Err(TerminalExecError {
+                code: TERMINAL_EXEC_CODE_INVALID_PAYLOAD.to_owned(),
+                message: "session_id is required".to_owned(),
+            }
+            .into());
+        }
+        let lease_duration = self.resolve_lease_duration(Some(req.lease_ttl_sec))?;
+        let now = SystemTime::now();
+        let lease_target = add_duration(now, lease_duration);
+        let mut sessions = self.sessions.lock().await;
+        if self.closed.load(Ordering::SeqCst) {
+            return Err(TerminalOperationError::ExecutionFailed(
+                "terminal session manager is closed".to_owned(),
+            ));
+        }
+        let Some(session) = sessions.get_mut(&session_id) else {
+            return Err(TerminalExecError {
+                code: TERMINAL_EXEC_CODE_SESSION_NOT_FOUND.to_owned(),
+                message: TERMINAL_EXEC_NO_SESSION_MESSAGE.to_owned(),
+            }
+            .into());
+        };
+        if session.destroying || session.lease_expires_at <= now {
+            return Err(TerminalExecError {
+                code: TERMINAL_EXEC_CODE_SESSION_NOT_FOUND.to_owned(),
+                message: TERMINAL_EXEC_NO_SESSION_MESSAGE.to_owned(),
+            }
+            .into());
+        }
+        if session.lease_expires_at < lease_target {
+            session.lease_expires_at = lease_target;
+        }
+        Ok(TerminalLeaseRenewResult {
+            session_id,
+            lease_expires_unix_ms: to_unix_millis(session.lease_expires_at),
+        })
     }
 
     pub(crate) async fn resolve_proxy_target(
@@ -2532,6 +2588,39 @@ mod tests {
         assert_eq!(second.stdout, "persisted\n");
 
         manager.close().await;
+    }
+
+    #[tokio::test]
+    async fn lease_renewal_is_monotonic() {
+        let backend = StatefulShellBackend::new();
+        let manager = manager_with_backend(backend, 1024);
+        let created = manager
+            .execute(TerminalExecRequest {
+                command: "seed".to_owned(),
+                session_id: String::new(),
+                create_if_missing: false,
+                lease_ttl_sec: Some(60),
+                deadline_unix_ms: 0,
+            })
+            .await
+            .expect("create session");
+        let renewed = manager
+            .renew_lease(TerminalLeaseRenewRequest {
+                session_id: created.session_id.clone(),
+                lease_ttl_sec: 120,
+            })
+            .await
+            .expect("renew lease");
+        assert!(renewed.lease_expires_unix_ms > created.lease_expires_unix_ms);
+        let shorter = manager
+            .renew_lease(TerminalLeaseRenewRequest {
+                session_id: created.session_id,
+                lease_ttl_sec: 60,
+            })
+            .await
+            .expect("renew with shorter lease");
+        assert!(shorter.lease_expires_unix_ms >= renewed.lease_expires_unix_ms);
+        manager.close_preserving().await;
     }
 
     #[tokio::test]

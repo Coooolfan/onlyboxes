@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -137,6 +138,14 @@ func TestAdminSessionHTTPListsAllAndRequiresAccountIDForItem(t *testing.T) {
 	if missingAccountRec.Code != http.StatusBadRequest {
 		t.Fatalf("admin get without account_id expected 400, got %d body=%s", missingAccountRec.Code, missingAccountRec.Body.String())
 	}
+	missingRenewAccount := httptest.NewRequest(http.MethodPost, "/api/v1/sessions/sess-other/renew", strings.NewReader(`{"lease_ttl_sec":300}`))
+	missingRenewAccount.Header.Set("Content-Type", "application/json")
+	missingRenewAccount.AddCookie(cookie)
+	missingRenewAccountRec := httptest.NewRecorder()
+	router.ServeHTTP(missingRenewAccountRec, missingRenewAccount)
+	if missingRenewAccountRec.Code != http.StatusBadRequest {
+		t.Fatalf("admin renew without account_id expected 400, got %d body=%s", missingRenewAccountRec.Code, missingRenewAccountRec.Body.String())
+	}
 
 	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/sessions/sess-other?account_id=acc-other", nil)
 	getReq.AddCookie(cookie)
@@ -229,6 +238,14 @@ func TestMemberSessionHTTPIsAccountScoped(t *testing.T) {
 	router.ServeHTTP(foreignGetRec, foreignGet)
 	if foreignGetRec.Code != http.StatusNotFound {
 		t.Fatalf("member get other session expected 404, got %d body=%s", foreignGetRec.Code, foreignGetRec.Body.String())
+	}
+	foreignRenew := httptest.NewRequest(http.MethodPost, "/api/v1/sessions/sess-other/renew?account_id=acc-other", strings.NewReader(`{"lease_ttl_sec":300}`))
+	foreignRenew.Header.Set("Content-Type", "application/json")
+	foreignRenew.AddCookie(cookie)
+	foreignRenewRec := httptest.NewRecorder()
+	router.ServeHTTP(foreignRenewRec, foreignRenew)
+	if foreignRenewRec.Code != http.StatusNotFound {
+		t.Fatalf("member renew other session expected 404, got %d body=%s", foreignRenewRec.Code, foreignRenewRec.Body.String())
 	}
 
 	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/v1/sessions/sess-owned", nil)

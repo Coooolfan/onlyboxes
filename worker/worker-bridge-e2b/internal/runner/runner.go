@@ -32,6 +32,7 @@ var runPythonExec = func(context.Context, string) (pythonExecRunResult, error) {
 	return pythonExecRunResult{}, errors.New("E2B python executor is unavailable")
 }
 var runTerminalExec = runTerminalExecUnavailable
+var runTerminalLeaseRenew = runTerminalLeaseRenewUnavailable
 var runTerminalResource = runTerminalResourceUnavailable
 var runTerminalProxy = runTerminalProxyUnavailable
 var activeSessionCountFn = func() int32 { return 0 }
@@ -90,6 +91,8 @@ func Run(ctx context.Context, cfg config.Config) error {
 	runPythonExec = pythonRunner.Execute
 	originalRunTerminalExec := runTerminalExec
 	runTerminalExec = terminalManager.Execute
+	originalRunTerminalLeaseRenew := runTerminalLeaseRenew
+	runTerminalLeaseRenew = terminalManager.RenewLease
 	originalRunTerminalResource := runTerminalResource
 	runTerminalResource = terminalManager.ResolveResource
 	originalRunTerminalProxy := runTerminalProxy
@@ -101,6 +104,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 	defer func() {
 		runPythonExec = originalRunPythonExec
 		runTerminalExec = originalRunTerminalExec
+		runTerminalLeaseRenew = originalRunTerminalLeaseRenew
 		runTerminalResource = originalRunTerminalResource
 		runTerminalProxy = originalRunTerminalProxy
 		activeSessionCountFn = originalActiveSessionCountFn

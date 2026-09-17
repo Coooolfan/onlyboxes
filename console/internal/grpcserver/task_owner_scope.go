@@ -16,6 +16,7 @@ const (
 	taskOwnerScopeSeparator             = ":"
 	taskRequestScopeSeparator           = "\x00"
 	taskCapabilityTerminalExec          = "terminalexec"
+	taskCapabilityTerminalLeaseRenew    = "terminalleaserenew"
 	taskCapabilityTerminalResource      = "terminalresource"
 	taskCapabilityTerminalProxy         = "terminalproxy"
 	taskOwnerScopeInvalidPayloadCode    = "invalid_payload"
@@ -42,6 +43,11 @@ type terminalResourceScopedPayload struct {
 	Action    string            `json:"action,omitempty"`
 	SignedURL string            `json:"signed_url,omitempty"`
 	Headers   map[string]string `json:"headers,omitempty"`
+}
+
+type terminalLeaseRenewPayload struct {
+	SessionID   string `json:"session_id"`
+	LeaseTTLSec int    `json:"lease_ttl_sec"`
 }
 
 func normalizeTaskOwnerID(ownerID string) string {

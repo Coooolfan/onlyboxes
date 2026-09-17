@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -10,6 +12,10 @@ import (
 )
 
 const defaultSessionPageSize = 20
+
+type renewSessionLeaseRequest struct {
+	LeaseTTLSec int `json:"lease_ttl_sec"`
+}
 
 type sessionItem struct {
 	AccountID      string    `json:"account_id"`
@@ -129,6 +135,60 @@ func (h *WorkerHandler) DeleteSession(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+func (h *WorkerHandler) RenewSessionLease(c *gin.Context) {
+	ownerID, ok := h.resolveConsoleSessionOwner(c, true)
+	if !ok {
+		return
+	}
+	if h.sessions == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "session registry is unavailable"})
+		return
+	}
+	sessionID := strings.TrimSpace(c.Param("session_id"))
+	if sessionID == "" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
+		return
+	}
+	req := renewSessionLeaseRequest{}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+	if req.LeaseTTLSec <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "lease_ttl_sec must be positive"})
+		return
+	}
+
+	view, err := h.sessions.RenewTerminalSessionLease(
+		c.Request.Context(),
+		ownerID,
+		sessionID,
+		req.LeaseTTLSec,
+		h.nowFn(),
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, grpcserver.ErrTerminalLeaseInvalid):
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		case errors.Is(err, grpcserver.ErrTerminalSessionNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
+		case errors.Is(err, grpcserver.ErrTerminalSessionUnavailable), errors.Is(err, context.Canceled):
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "session is unavailable"})
+		case errors.Is(err, context.DeadlineExceeded):
+			c.JSON(http.StatusGatewayTimeout, gin.H{"error": "session lease renewal timed out"})
+		default:
+			var commandErr *grpcserver.CommandExecutionError
+			if errors.As(err, &commandErr) && commandErr.Code == "invalid_payload" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": commandErr.Error()})
+				return
+			}
+			c.JSON(http.StatusBadGateway, gin.H{"error": "failed to renew session lease"})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, sessionItemFromView(view))
 }
 
 func (h *WorkerHandler) resolveConsoleSessionOwner(c *gin.Context, requireAdminAccountID bool) (string, bool) {

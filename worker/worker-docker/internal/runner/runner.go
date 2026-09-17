@@ -43,6 +43,7 @@ var waitReconnect = waitReconnectDelay
 var applyJitter = jitterDuration
 var runPythonExec = newPythonExecRunner("", "", "", 0).Execute
 var runTerminalExec = runTerminalExecUnavailable
+var runTerminalLeaseRenew = runTerminalLeaseRenewUnavailable
 var runTerminalResource = runTerminalResourceUnavailable
 var runDockerCommand = runDockerCommandCLI
 var pythonExecContainerNameFn = newPythonExecContainerName
@@ -96,6 +97,8 @@ func Run(ctx context.Context, cfg config.Config) error {
 	runPythonExec = pythonRunner.Execute
 	originalRunTerminalExec := runTerminalExec
 	runTerminalExec = terminalManager.Execute
+	originalRunTerminalLeaseRenew := runTerminalLeaseRenew
+	runTerminalLeaseRenew = terminalManager.RenewLease
 	originalRunTerminalResource := runTerminalResource
 	runTerminalResource = terminalManager.ResolveResource
 	originalActiveSessionCountFn := activeSessionCountFn
@@ -105,6 +108,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 	defer func() {
 		runPythonExec = originalRunPythonExec
 		runTerminalExec = originalRunTerminalExec
+		runTerminalLeaseRenew = originalRunTerminalLeaseRenew
 		runTerminalResource = originalRunTerminalResource
 		activeSessionCountFn = originalActiveSessionCountFn
 		recoverTerminalSessionsFn = originalRecoverTerminalSessionsFn

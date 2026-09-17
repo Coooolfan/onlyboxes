@@ -12,11 +12,13 @@ import (
 func TestAllCapabilityDispatchersEncodeResults(t *testing.T) {
 	originalPython := runPythonExec
 	originalTerminal := runTerminalExec
+	originalRenew := runTerminalLeaseRenew
 	originalResource := runTerminalResource
 	originalProxy := runTerminalProxy
 	t.Cleanup(func() {
 		runPythonExec = originalPython
 		runTerminalExec = originalTerminal
+		runTerminalLeaseRenew = originalRenew
 		runTerminalResource = originalResource
 		runTerminalProxy = originalProxy
 	})
@@ -35,6 +37,12 @@ func TestAllCapabilityDispatchersEncodeResults(t *testing.T) {
 			Stdout:             "/workspace\n",
 			LeaseExpiresUnixMS: 1234,
 		}, nil
+	}
+	runTerminalLeaseRenew = func(_ context.Context, req terminalLeaseRenewPayload) (terminalLeaseRenewResult, error) {
+		if req.SessionID != "session-1" || req.LeaseTTLSec != 300 {
+			t.Fatalf("unexpected renewal request: %#v", req)
+		}
+		return terminalLeaseRenewResult{SessionID: req.SessionID, LeaseExpiresUnixMS: 5678}, nil
 	}
 	runTerminalResource = func(_ context.Context, req terminalResourceRequest) (terminalResourceRunResult, error) {
 		if req.SessionID != "session-1" || req.FilePath != "/tmp/a.txt" || req.Action != "read" {
@@ -90,6 +98,17 @@ func TestAllCapabilityDispatchersEncodeResults(t *testing.T) {
 				var result terminalExecRunResult
 				if json.Unmarshal(payload, &result) != nil || result.SessionID != "session-1" || result.Stdout != "/workspace\n" {
 					t.Fatalf("unexpected terminal result %s", payload)
+				}
+			},
+		},
+		{
+			name:       "terminalLeaseRenew",
+			capability: "terminalLeaseRenew",
+			payload:    `{"session_id":"session-1","lease_ttl_sec":300}`,
+			assert: func(t *testing.T, payload []byte) {
+				var result terminalLeaseRenewResult
+				if json.Unmarshal(payload, &result) != nil || result.SessionID != "session-1" || result.LeaseExpiresUnixMS != 5678 {
+					t.Fatalf("unexpected renewal result %s", payload)
 				}
 			},
 		},

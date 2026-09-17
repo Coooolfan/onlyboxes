@@ -11,11 +11,12 @@ use crate::proto::registryv1::{
 
 use super::terminal_session_manager::{
     shared_terminal_session_manager, TerminalExecRequest, TerminalExecRunResult,
-    TerminalOperationError, TerminalResourceRequest, TerminalResourceRunResult,
+    TerminalLeaseRenewRequest, TerminalLeaseRenewResult, TerminalOperationError,
+    TerminalResourceRequest, TerminalResourceRunResult,
 };
 use super::{
     ECHO_CAPABILITY_NAME, PYTHON_EXEC_CAPABILITY_NAME, TERMINAL_EXEC_CAPABILITY_NAME,
-    TERMINAL_RESOURCE_CAPABILITY_NAME,
+    TERMINAL_LEASE_RENEW_CAPABILITY_NAME, TERMINAL_RESOURCE_CAPABILITY_NAME,
 };
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -56,6 +57,12 @@ struct TerminalResourcePayload {
     signed_url: String,
     #[serde(default)]
     headers: HashMap<String, String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TerminalLeaseRenewPayload {
+    session_id: String,
+    lease_ttl_sec: i32,
 }
 
 static DEFAULT_CAPABILITY_RUNTIME: DefaultCapabilityRuntime = DefaultCapabilityRuntime;
@@ -114,6 +121,16 @@ where
             )
             .await
         }
+        TERMINAL_LEASE_RENEW_CAPABILITY_NAME => {
+            build_terminal_lease_renew_result(
+                cfg,
+                &command_id,
+                &dispatch.payload_json,
+                dispatch.deadline_unix_ms,
+                runtime,
+            )
+            .await
+        }
         TERMINAL_RESOURCE_CAPABILITY_NAME => {
             build_terminal_resource_result(
                 cfg,
@@ -128,6 +145,72 @@ where
             &command_id,
             "unsupported_capability",
             &format!("capability {:?} is not supported", dispatch.capability),
+        ),
+    }
+}
+
+async fn build_terminal_lease_renew_result<R>(
+    cfg: &Config,
+    command_id: &str,
+    payload: &[u8],
+    _deadline_unix_ms: i64,
+    runtime: &R,
+) -> ConnectRequest
+where
+    R: CapabilityRuntime + Sync,
+{
+    let decoded = match serde_json::from_slice::<TerminalLeaseRenewPayload>(payload) {
+        Ok(decoded) if !decoded.session_id.trim().is_empty() && decoded.lease_ttl_sec > 0 => {
+            decoded
+        }
+        _ => {
+            return command_error_result(
+                command_id,
+                "invalid_payload",
+                "payload_json is not valid terminalLeaseRenew payload",
+            )
+        }
+    };
+    let result = match runtime
+        .run_terminal_lease_renew(
+            cfg,
+            TerminalLeaseRenewRequest {
+                session_id: decoded.session_id,
+                lease_ttl_sec: decoded.lease_ttl_sec,
+            },
+        )
+        .await
+    {
+        Ok(result) => result,
+        Err(TerminalOperationError::DeadlineExceeded) => {
+            return command_error_result(
+                command_id,
+                "deadline_exceeded",
+                "command deadline exceeded",
+            )
+        }
+        Err(TerminalOperationError::Terminal(err)) => {
+            return command_error_result(command_id, err.code(), &err.to_string())
+        }
+        Err(TerminalOperationError::ExecutionFailed(message)) => {
+            return command_error_result(
+                command_id,
+                "execution_failed",
+                &format!("terminalLeaseRenew failed: {message}"),
+            )
+        }
+    };
+    match serde_json::to_vec(&result) {
+        Ok(encoded) => connect_request_from_result(CommandResult {
+            command_id: command_id.to_owned(),
+            error: None,
+            payload_json: encoded,
+            completed_unix_ms: now_unix_ms(),
+        }),
+        Err(_) => command_error_result(
+            command_id,
+            "encode_failed",
+            "failed to encode terminalLeaseRenew payload",
         ),
     }
 }
@@ -478,6 +561,18 @@ pub(crate) fn command_dispatch_summary_for_log(capability: &str, payload: &[u8])
                 lease_ttl
             )
         }
+        TERMINAL_LEASE_RENEW_CAPABILITY_NAME => {
+            let Ok(decoded) = serde_json::from_slice::<TerminalLeaseRenewPayload>(payload) else {
+                return parse_failed;
+            };
+            if decoded.session_id.trim().is_empty() || decoded.lease_ttl_sec <= 0 {
+                return parse_failed;
+            }
+            format!(
+                "session_id_present=true lease_ttl_sec={}",
+                decoded.lease_ttl_sec
+            )
+        }
         TERMINAL_RESOURCE_CAPABILITY_NAME => {
             let Ok(decoded) = serde_json::from_slice::<TerminalResourcePayload>(payload) else {
                 return parse_failed;
@@ -528,6 +623,14 @@ trait CapabilityRuntime {
         cfg: &Config,
         req: TerminalExecRequest,
     ) -> Result<TerminalExecRunResult, TerminalOperationError>;
+
+    async fn run_terminal_lease_renew(
+        &self,
+        cfg: &Config,
+        req: TerminalLeaseRenewRequest,
+    ) -> Result<TerminalLeaseRenewResult, TerminalOperationError> {
+        shared_terminal_session_manager(cfg).renew_lease(req).await
+    }
 
     async fn run_terminal_resource(
         &self,
@@ -611,6 +714,17 @@ mod tests {
                 exit_code: 0,
                 stdout_truncated: false,
                 stderr_truncated: false,
+                lease_expires_unix_ms: 123456789,
+            })
+        }
+
+        async fn run_terminal_lease_renew(
+            &self,
+            _cfg: &Config,
+            req: TerminalLeaseRenewRequest,
+        ) -> Result<TerminalLeaseRenewResult, TerminalOperationError> {
+            Ok(TerminalLeaseRenewResult {
+                session_id: req.session_id,
                 lease_expires_unix_ms: 123456789,
             })
         }
@@ -935,6 +1049,28 @@ mod tests {
         let decoded: TerminalExecRunResult = serde_json::from_slice(&result.payload_json).unwrap();
         assert_eq!(decoded.session_id, "sess-1");
         assert_eq!(decoded.stdout, "hello\n");
+    }
+
+    #[tokio::test]
+    async fn build_command_result_encodes_terminal_lease_renew_result() {
+        let request = build_command_result_with_runtime(
+            &test_config(),
+            CommandDispatch {
+                command_id: "cmd-renew-1".to_owned(),
+                capability: "terminalLeaseRenew".to_owned(),
+                payload_json: br#"{"session_id":"sess-1","lease_ttl_sec":300}"#.to_vec(),
+                deadline_unix_ms: 0,
+            },
+            &FakeCapabilityRuntime,
+        )
+        .await;
+
+        let result = unwrap_command_result(request);
+        assert!(result.error.is_none());
+        let decoded: TerminalLeaseRenewResult =
+            serde_json::from_slice(&result.payload_json).unwrap();
+        assert_eq!(decoded.session_id, "sess-1");
+        assert_eq!(decoded.lease_expires_unix_ms, 123456789);
     }
 
     #[tokio::test]
