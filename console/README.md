@@ -35,7 +35,7 @@ The console service hosts:
     - declared `max_inflight` values are preserved; omitted or non-positive values default to `1`
 - public preview route APIs (management cookie/API key/JIT auth):
   - `POST /api/v1/proxy-routes` creates an anonymous preview URL for an owned terminal session and port.
-  - `GET /api/v1/proxy-routes` lists only the current account's active routes.
+  - `GET /api/v1/proxy-routes` lists active routes with pagination (admin: all accounts, optional `account_id`; non-admin: own account).
   - `DELETE /api/v1/proxy-routes/:route_key` deletes only the current account's route; cross-account access returns `404`.
   - routes default to 24 hours, are capped at 7 days, and are restored from SQLite after Console restart. Route keys use lowercase Base32 and default to 26 characters, preserving 128 bits of randomness; shorter configured lengths preserve only the corresponding prefix and therefore provide less resistance to URL guessing (for example, 8 characters carry 40 bits).
   - route creation and resolution enforce the terminal session's exact lease. Expired terminal session routes and their public preview routes are also pruned independently every minute, even when there is no proxy traffic.

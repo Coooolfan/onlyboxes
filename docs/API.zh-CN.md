@@ -536,6 +536,7 @@ Worker 类型：
 ```json
 {
   "route_key": "ceirceirceirceirceirceirce",
+  "account_id": "acc_xxx",
   "session_id": "sess_xxx",
   "port": 8080,
   "url": "https://ceirceirceirceirceirceirce.public-preview.example.com",
@@ -558,16 +559,45 @@ Worker 类型：
 - `429` 当前账号或 Session 达到 route 上限。
 - `503` Session 所在 Worker 没有可用代理入口。
 
-`GET /api/v1/proxy-routes`
+`GET /api/v1/proxy-routes?page=1&page_size=20&account_id=acc_xxx`
 
-成功 `200` 返回当前账号的 route：
+作用域：
+
+- 非管理员只能查询自己的 route；`account_id` 指向其他账号时返回 `404`。
+- 管理员默认查询全站 route，可用 `account_id` 筛选单个账号。
+
+查询参数：
+
+- `page`：正整数，默认 `1`。
+- `page_size`：正整数，默认 `20`，最大 `100`。
+- `account_id`：可选账号筛选，权限规则如上。
+
+成功 `200`：
 
 ```json
 {
-  "items": [],
-  "total": 0
+  "items": [
+    {
+      "route_key": "ceirceirceirceirceirceirce",
+      "account_id": "acc_xxx",
+      "session_id": "sess_xxx",
+      "port": 8080,
+      "url": "https://ceirceirceirceirceirceirce.public-preview.example.com",
+      "created_at": "2026-02-21T00:00:00Z",
+      "expires_at": "2026-02-22T00:00:00Z"
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "page_size": 20
 }
 ```
+
+错误：
+
+- `400` `page` 或 `page_size` 非法。
+- `401` 管理凭据缺失或无效。
+- `404` 非管理员查询了其他账号的 route。
 
 `DELETE /api/v1/proxy-routes/:route_key`
 
