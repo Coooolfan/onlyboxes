@@ -200,6 +200,33 @@ func TestValidateTerminalMaxActiveSessionsRejectsProtocolOverflow(t *testing.T) 
 	}
 }
 
+func TestResolveDockerNetworksPreservesDefaults(t *testing.T) {
+	tests := []struct {
+		name         string
+		configured   string
+		proxyEnabled bool
+		terminal     string
+		python       string
+	}{
+		{name: "unconfigured proxy disabled"},
+		{name: "unconfigured proxy enabled", proxyEnabled: true, terminal: terminalProxyDockerNetwork},
+		{name: "configured proxy disabled", configured: "custom-network", terminal: "custom-network", python: "custom-network"},
+		{name: "configured proxy enabled", configured: " custom-network ", proxyEnabled: true, terminal: "custom-network", python: "custom-network"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			terminal, python := resolveDockerNetworks(config.Config{
+				DockerNetwork: tc.configured,
+				ProxyEnabled:  tc.proxyEnabled,
+			})
+			if terminal != tc.terminal || python != tc.python {
+				t.Fatalf("unexpected networks: terminal=%q python=%q", terminal, python)
+			}
+		})
+	}
+}
+
 func TestBuildHelloRejectsNegativeActiveSessionCount(t *testing.T) {
 	originalActiveSessionCountFn := activeSessionCountFn
 	activeSessionCountFn = func() int32 { return -1 }
@@ -615,6 +642,21 @@ func TestRunPythonExecInDockerWithImageUsesConfiguredImage(t *testing.T) {
 	}
 	if !reflect.DeepEqual(gotCalls, wantCalls) {
 		t.Fatalf("unexpected docker call sequence:\nwant=%#v\ngot=%#v", wantCalls, gotCalls)
+	}
+}
+
+func TestPythonExecDockerCreateArgsWithNetwork(t *testing.T) {
+	got := pythonExecDockerCreateArgsWithNetwork(
+		"container-network",
+		"python:3.12-alpine",
+		"512m",
+		"0.5",
+		256,
+		"custom-network",
+		"print(1)",
+	)
+	if network := argValue(got, "--network"); network != "custom-network" {
+		t.Fatalf("expected configured network, got %q in %#v", network, got)
 	}
 }
 

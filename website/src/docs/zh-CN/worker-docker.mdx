@@ -92,6 +92,31 @@ region = "cn"
 
 默认终端镜像是通用执行镜像，包含 Python 3、Node.js 24、npm、Corepack、常用 shell/文件工具、轻量文档处理库，以及基于 Lightpanda 的 `agent-browser`。LobeHub 专用 sandbox 工具链请使用 `coolfan1024/onlyboxes-runtime:lobehub`。
 
+### Docker 网络
+
+| 变量 | 必填 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `WORKER_DOCKER_NETWORK` | 否 | | terminalExec 与 pythonExec 容器使用的隔离 bridge |
+
+配置后，Worker 会在连接 Console 前检查该网络：
+
+- 网络不存在时，使用 `bridge` driver 创建网络，并设置 `com.docker.network.bridge.enable_icc=false`；创建完成后再次检查。
+- 网络已存在时，检查 driver 必须为 `bridge`，且 `com.docker.network.bridge.enable_icc` 必须明确为 `false`。
+- Docker inspect/create 执行失败、创建后仍找不到网络、driver 不匹配或 ICC 未关闭时，Worker 会直接启动失败，不会注册到 Console，也不会回退到 Docker 默认网络。
+
+校验通过后，terminal 容器的创建、IP 读取、Session 恢复以及 pythonExec 容器创建都会使用该网络。需要指定 subnet 或 gateway 时，应先由管理员创建网络：
+
+```bash
+docker network create \
+  --driver bridge \
+  --subnet 172.28.0.0/16 \
+  --gateway 172.28.0.1 \
+  --opt com.docker.network.bridge.enable_icc=false \
+  onlyboxes-sandbox-custom
+```
+
+未配置时保持原有行为：关闭公开预览时，terminalExec 与 pythonExec 都使用 Docker 默认网络；开启公开预览时，仅 terminalExec 使用自动管理的 `onlyboxes-sandbox`，pythonExec 仍使用 Docker 默认网络。修改网络配置前应结束该 Worker 上的现存 terminal sessions，否则旧容器无法从新网络恢复。
+
 ### 执行资源
 
 | 变量 | 必填 | 默认值 | 说明 |

@@ -25,7 +25,7 @@ func TestSandboxProxyLinuxDockerIntegration(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
-	if err := ensureTerminalProxyNetwork(ctx); err != nil {
+	if err := ensureSandboxDockerNetwork(ctx, terminalProxyDockerNetwork); err != nil {
 		t.Fatalf("ensure proxy network: %v", err)
 	}
 

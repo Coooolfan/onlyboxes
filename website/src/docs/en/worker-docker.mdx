@@ -92,6 +92,31 @@ See the [annotated configuration template](https://github.com/Coooolfan/onlyboxe
 
 The default terminal image is a general execution image with Python 3, Node.js 24, npm, Corepack, common shell/file utilities, lightweight document helpers, and `agent-browser` with Lightpanda. Use `coolfan1024/onlyboxes-runtime:lobehub` for LobeHub-specific sandbox tooling.
 
+### Docker network
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `WORKER_DOCKER_NETWORK` | No | | Isolated bridge used by terminalExec and pythonExec containers |
+
+When configured, the Worker checks the network before connecting to Console:
+
+- If the network does not exist, the Worker creates it with the `bridge` driver and `com.docker.network.bridge.enable_icc=false`, then verifies it again.
+- If the network already exists, its driver must be `bridge` and `com.docker.network.bridge.enable_icc` must explicitly be `false`.
+- If Docker inspect/create fails, the network is still missing after creation, the driver does not match, or ICC is enabled, Worker startup fails. It does not register with Console or fall back to Docker's default network.
+
+After validation succeeds, terminal container creation, IP inspection, session recovery, and pythonExec container creation all use this network. To select a specific subnet or gateway, pre-create the network as an administrator:
+
+```bash
+docker network create \
+  --driver bridge \
+  --subnet 172.28.0.0/16 \
+  --gateway 172.28.0.1 \
+  --opt com.docker.network.bridge.enable_icc=false \
+  onlyboxes-sandbox-custom
+```
+
+When unset, existing behavior is preserved: with public preview disabled, terminalExec and pythonExec use Docker's default network; with public preview enabled, only terminalExec joins the automatically managed `onlyboxes-sandbox` bridge while pythonExec stays on Docker's default network. End existing terminal sessions on this Worker before changing the network, because containers attached to the old network cannot be recovered through the new one.
+
 ### Execution resources
 
 | Variable | Required | Default | Description |

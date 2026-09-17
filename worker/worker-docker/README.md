@@ -105,7 +105,7 @@ Capability behavior:
   - reuses `WORKER_SECRET` to derive the per-Worker HMAC verification key; no additional signing key is configured or downloaded.
   - validates the 15-second Console Route Token, confirms the local Session/lease, and proxies HTTP, SSE, and WebSocket to the cached container IP and signed port.
   - preserves application Authorization/Cookie and strips Onlyboxes internal headers before the Sandbox.
-  - creates or validates the `onlyboxes-sandbox` bridge with inter-container communication disabled; Docker firewall management must remain enabled, and container IP is inspected once after startup.
+  - creates or validates the `onlyboxes-sandbox` bridge with inter-container communication disabled when `WORKER_DOCKER_NETWORK` is unset; an explicitly configured network replaces it for both terminalExec and pythonExec containers.
   - proxy traffic does not renew lease or count as a terminal command.
   - the listener must be firewalled so only Nginx can connect.
 
@@ -123,6 +123,7 @@ Defaults:
 - terminal max active sessions: unlimited (`0`)
 - capability max_inflight: `4` per capability
 - public preview proxy: disabled; listener `:8091` when enabled
+- sandbox Docker network: unset; `WORKER_DOCKER_NETWORK` explicitly assigns both terminalExec and pythonExec containers to a validated isolated bridge
 - log level: `info`
 - log format: `json`
 - log add source: `false`

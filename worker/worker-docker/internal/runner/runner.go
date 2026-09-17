@@ -41,7 +41,7 @@ const (
 
 var waitReconnect = waitReconnectDelay
 var applyJitter = jitterDuration
-var runPythonExec = newPythonExecRunner("", "", "", 0).Execute
+var runPythonExec = newPythonExecRunner("", "", "", 0, "").Execute
 var runTerminalExec = runTerminalExecUnavailable
 var runTerminalLeaseRenew = runTerminalLeaseRenewUnavailable
 var runTerminalResource = runTerminalResourceUnavailable
@@ -62,16 +62,13 @@ func Run(ctx context.Context, cfg config.Config) error {
 	if err := validateProxyConfig(cfg); err != nil {
 		return err
 	}
-	if cfg.ProxyEnabled {
-		if err := ensureTerminalProxyNetwork(ctx); err != nil {
-			return fmt.Errorf("initialize sandbox proxy network: %w", err)
+	terminalDockerNetwork, pythonDockerNetwork := resolveDockerNetworks(cfg)
+	if terminalDockerNetwork != "" {
+		if err := ensureSandboxDockerNetwork(ctx, terminalDockerNetwork); err != nil {
+			return fmt.Errorf("initialize sandbox docker network: %w", err)
 		}
 	}
 
-	dockerNetwork := ""
-	if cfg.ProxyEnabled {
-		dockerNetwork = terminalProxyDockerNetwork
-	}
 	terminalManager := newTerminalSessionManager(terminalSessionManagerConfig{
 		LeaseMinSec:        cfg.TerminalLeaseMinSec,
 		LeaseMaxSec:        cfg.TerminalLeaseMaxSec,
@@ -82,7 +79,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 		MemoryLimit:        cfg.TerminalExecMemoryLimit,
 		CPULimit:           cfg.TerminalExecCPULimit,
 		PidsLimit:          cfg.TerminalExecPidsLimit,
-		DockerNetwork:      dockerNetwork,
+		DockerNetwork:      terminalDockerNetwork,
 		SessionMaxInflight: cfg.TerminalSessionMaxInflight,
 		MaxActiveSessions:  cfg.TerminalMaxActiveSessions,
 		PreserveOnClose:    true,
@@ -92,6 +89,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 		cfg.PythonExecMemoryLimit,
 		cfg.PythonExecCPULimit,
 		cfg.PythonExecPidsLimit,
+		pythonDockerNetwork,
 	)
 	originalRunPythonExec := runPythonExec
 	runPythonExec = pythonRunner.Execute
@@ -210,6 +208,17 @@ func Run(ctx context.Context, cfg config.Config) error {
 		}
 		reconnectDelay = nextReconnectDelay(reconnectDelay)
 	}
+}
+
+func resolveDockerNetworks(cfg config.Config) (terminal string, python string) {
+	configured := strings.TrimSpace(cfg.DockerNetwork)
+	if configured != "" {
+		return configured, configured
+	}
+	if cfg.ProxyEnabled {
+		return terminalProxyDockerNetwork, ""
+	}
+	return "", ""
 }
 
 func validateTerminalMaxActiveSessions(maxActiveSessions int) error {

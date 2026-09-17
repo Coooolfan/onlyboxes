@@ -32,7 +32,13 @@ Public preview proxy configuration:
 - `WORKER_PROXY_LISTEN_ADDR`: local IP listener (default `:8091`); port `0` and hostnames are rejected, and a specific bind IP must match the advertise IP.
 - `WORKER_PROXY_ADVERTISE_ADDR`: routable unicast IP and the same port reported to Console, for example `10.0.2.15:8091`; required when enabled.
 
-Enabling the proxy creates or validates the shared `onlyboxes-sandbox` Docker bridge with inter-container communication disabled. Terminal containers join this bridge, and Worker caches each container IP after startup. The Docker daemon must manage its iptables/nftables firewall rules; deployments with Docker firewalling disabled are unsupported. Nginx must be the only network source allowed to reach the proxy listener.
+Sandbox Docker network configuration:
+
+- `WORKER_DOCKER_NETWORK`: optional bridge used by both `terminalExec` and `pythonExec` containers. The Worker creates a missing network with inter-container communication disabled, or validates that an existing network uses the `bridge` driver with `com.docker.network.bridge.enable_icc=false`. Pre-create the network when a specific subnet or gateway is required.
+
+When `WORKER_DOCKER_NETWORK` is unset, existing behavior is preserved: containers use Docker's default network unless public preview is enabled, in which case only terminal containers join the automatically managed `onlyboxes-sandbox` bridge. When it is set, terminal container creation, IP inspection, session recovery, and Python execution all use the configured network.
+
+The Docker daemon must manage its iptables/nftables firewall rules; deployments with Docker firewalling disabled are unsupported. Nginx must be the only network source allowed to reach the proxy listener.
 
 See `config.example.toml` in the worker root for a full annotated template.
 
@@ -44,6 +50,7 @@ secret = "..."
 console_grpc_target = "console.internal:50051"
 heartbeat_interval_sec = 5
 terminal_exec_docker_image = "coolfan1024/onlyboxes-runtime:default"
+docker_network = "onlyboxes-sandbox-custom"
 terminal_max_active_sessions = 0
 log_level = "info"
 

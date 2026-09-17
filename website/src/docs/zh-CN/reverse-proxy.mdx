@@ -71,9 +71,11 @@ CIDR 和端口白名单必须只包含 Nginx 实际可达的 Worker 入口。其
 WORKER_PROXY_ENABLED=true
 WORKER_PROXY_LISTEN_ADDR=:8091
 WORKER_PROXY_ADVERTISE_ADDR=10.20.1.15:8091
+# 可选：让 terminalExec 与 pythonExec 使用预创建的隔离 bridge
+# WORKER_DOCKER_NETWORK=onlyboxes-sandbox-custom
 ```
 
-listen 与 advertise 端口必须相同，advertise IP 必须可由 Nginx 直接访问并匹配 Console 白名单。Worker 启动时创建或验证 `onlyboxes-sandbox` bridge，并要求 `com.docker.network.bridge.enable_icc=false`。Docker daemon 必须启用自己的 iptables/nftables 防火墙管理；禁止使用会绕过 bridge 隔离的 `iptables=false` 或等价配置。代理 listener 启动失败时 Worker 不会向 Console 注册。
+listen 与 advertise 端口必须相同，advertise IP 必须可由 Nginx 直接访问并匹配 Console 白名单。未配置 `WORKER_DOCKER_NETWORK` 时，Worker 启动时创建或验证 `onlyboxes-sandbox` bridge；配置后则使用指定网络，同时让 terminalExec 与 pythonExec 容器加入该网络。网络必须使用 `bridge` driver，并设置 `com.docker.network.bridge.enable_icc=false`；需要指定 subnet 或 gateway 时应提前创建。Docker daemon 必须启用自己的 iptables/nftables 防火墙管理；禁止使用会绕过 bridge 隔离的 `iptables=false` 或等价配置。代理 listener 启动失败时 Worker 不会向 Console 注册。
 
 #### Boxlite worker
 

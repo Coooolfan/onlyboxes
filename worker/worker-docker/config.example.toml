@@ -32,6 +32,10 @@ terminal_exec_docker_image = "coolfan1024/onlyboxes-runtime:default"
 terminal_exec_memory_mib = 256
 terminal_exec_cpus = "1.0"
 terminal_exec_max_processes = 128
+# Optional isolated bridge shared by terminalExec and pythonExec containers.
+# When omitted, existing network behavior is preserved. Pre-create the network
+# when a specific subnet or gateway is required.
+# docker_network = "onlyboxes-sandbox-custom"
 terminal_lease_min_sec = 60
 terminal_lease_max_sec = 1800
 terminal_lease_default_sec = 60

@@ -13,11 +13,12 @@ const (
 	dockerNetworkSetupTimeout  = 10 * time.Second
 )
 
-func ensureTerminalProxyNetwork(ctx context.Context) error {
+func ensureSandboxDockerNetwork(ctx context.Context, network string) error {
 	setupCtx, cancel := context.WithTimeout(ctx, dockerNetworkSetupTimeout)
 	defer cancel()
 
-	if exists, err := inspectTerminalProxyNetwork(setupCtx); err != nil {
+	network = strings.TrimSpace(network)
+	if exists, err := inspectSandboxDockerNetwork(setupCtx, network); err != nil {
 		return err
 	} else if exists {
 		return nil
@@ -27,50 +28,50 @@ func ensureTerminalProxyNetwork(ctx context.Context) error {
 		"network", "create",
 		"--driver", "bridge",
 		"--opt", "com.docker.network.bridge.enable_icc=false",
-		terminalProxyDockerNetwork,
+		network,
 	)
 	if result.Err != nil {
-		return fmt.Errorf("create proxy docker network: %w", result.Err)
+		return fmt.Errorf("create sandbox docker network: %w", result.Err)
 	}
 	if result.ExitCode != 0 {
 		// Another worker process may have created the shared network concurrently.
-		if exists, inspectErr := inspectTerminalProxyNetwork(setupCtx); inspectErr == nil && exists {
+		if exists, inspectErr := inspectSandboxDockerNetwork(setupCtx, network); inspectErr == nil && exists {
 			return nil
 		}
-		return errors.New(dockerCommandFailureMessage("create proxy docker network exit code", result.ExitCode, result.Stderr))
+		return errors.New(dockerCommandFailureMessage("create sandbox docker network exit code", result.ExitCode, result.Stderr))
 	}
-	exists, err := inspectTerminalProxyNetwork(setupCtx)
+	exists, err := inspectSandboxDockerNetwork(setupCtx, network)
 	if err != nil {
 		return err
 	}
 	if !exists {
-		return errors.New("proxy docker network was not found after creation")
+		return errors.New("sandbox docker network was not found after creation")
 	}
 	return nil
 }
 
-func inspectTerminalProxyNetwork(ctx context.Context) (bool, error) {
+func inspectSandboxDockerNetwork(ctx context.Context, network string) (bool, error) {
 	result := runDockerCommand(ctx,
 		"network", "inspect",
 		"--format", `{{.Driver}}|{{index .Options "com.docker.network.bridge.enable_icc"}}`,
-		terminalProxyDockerNetwork,
+		strings.TrimSpace(network),
 	)
 	if result.Err != nil {
-		return false, fmt.Errorf("inspect proxy docker network: %w", result.Err)
+		return false, fmt.Errorf("inspect sandbox docker network: %w", result.Err)
 	}
 	if result.ExitCode != 0 {
 		message := strings.ToLower(result.Stderr)
 		if strings.Contains(message, "not found") || strings.Contains(message, "no such network") {
 			return false, nil
 		}
-		return false, errors.New(dockerCommandFailureMessage("inspect proxy docker network exit code", result.ExitCode, result.Stderr))
+		return false, errors.New(dockerCommandFailureMessage("inspect sandbox docker network exit code", result.ExitCode, result.Stderr))
 	}
 	parts := strings.Split(strings.TrimSpace(result.Stdout), "|")
 	if len(parts) != 2 || strings.TrimSpace(parts[0]) != "bridge" {
-		return false, errors.New("proxy docker network must use the bridge driver")
+		return false, errors.New("sandbox docker network must use the bridge driver")
 	}
 	if strings.TrimSpace(strings.ToLower(parts[1])) != "false" {
-		return false, errors.New("proxy docker network must disable inter-container communication")
+		return false, errors.New("sandbox docker network must disable inter-container communication")
 	}
 	return true, nil
 }

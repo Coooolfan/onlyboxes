@@ -32,6 +32,22 @@ func TestLoadSupportsCustomDockerImages(t *testing.T) {
 	}
 }
 
+func TestLoadDockerNetwork(t *testing.T) {
+	t.Setenv("WORKER_DOCKER_NETWORK", "  onlyboxes-sandbox-custom  ")
+
+	if got := Load().DockerNetwork; got != "onlyboxes-sandbox-custom" {
+		t.Fatalf("expected trimmed Docker network, got %q", got)
+	}
+}
+
+func TestLoadDockerNetworkDefaultsToEmpty(t *testing.T) {
+	t.Setenv("WORKER_DOCKER_NETWORK", "")
+
+	if got := Load().DockerNetwork; got != "" {
+		t.Fatalf("expected empty Docker network by default, got %q", got)
+	}
+}
+
 func TestLoadUsesDynamicCallTimeoutDefault(t *testing.T) {
 	t.Setenv("WORKER_HEARTBEAT_INTERVAL_SEC", "5")
 	t.Setenv("WORKER_CALL_TIMEOUT_SEC", "")

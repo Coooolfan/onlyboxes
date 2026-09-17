@@ -71,9 +71,11 @@ The CIDR and port allowlists must contain only Worker ingress endpoints actually
 WORKER_PROXY_ENABLED=true
 WORKER_PROXY_LISTEN_ADDR=:8091
 WORKER_PROXY_ADVERTISE_ADDR=10.20.1.15:8091
+# Optional: use a pre-created isolated bridge for terminalExec and pythonExec
+# WORKER_DOCKER_NETWORK=onlyboxes-sandbox-custom
 ```
 
-The listen and advertise ports must match; the advertise IP must be directly reachable by Nginx and match the Console allowlist. The worker creates or verifies the `onlyboxes-sandbox` bridge on startup and requires `com.docker.network.bridge.enable_icc=false`. The Docker daemon must manage its own iptables/nftables firewall; do not use `iptables=false` or equivalent configurations that bypass bridge isolation. If the proxy listener fails to start, the worker does not register with Console.
+The listen and advertise ports must match; the advertise IP must be directly reachable by Nginx and match the Console allowlist. When `WORKER_DOCKER_NETWORK` is unset, the Worker creates or verifies the `onlyboxes-sandbox` bridge on startup. When configured, it uses the selected network and attaches both terminalExec and pythonExec containers to it. The network must use the `bridge` driver with `com.docker.network.bridge.enable_icc=false`; pre-create it when a specific subnet or gateway is required. The Docker daemon must manage its own iptables/nftables firewall; do not use `iptables=false` or equivalent configurations that bypass bridge isolation. If the proxy listener fails to start, the Worker does not register with Console.
 
 #### Boxlite worker
 

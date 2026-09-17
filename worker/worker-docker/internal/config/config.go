@@ -52,6 +52,7 @@ type Config struct {
 	TerminalExecMemoryLimit     string
 	TerminalExecCPULimit        string
 	TerminalExecPidsLimit       int
+	DockerNetwork               string
 	Labels                      map[string]string
 	TerminalLeaseMinSec         int
 	TerminalLeaseMaxSec         int
@@ -109,6 +110,7 @@ func Load() Config {
 		TerminalExecMemoryLimit:     src.dockerMemoryLimitMiB("WORKER_TERMINAL_EXEC_MEMORY_MIB", defaultTerminalExecMemoryMiB),
 		TerminalExecCPULimit:        src.dockerCPULimit("WORKER_TERMINAL_EXEC_CPUS", defaultTerminalExecCPULimit),
 		TerminalExecPidsLimit:       src.positiveInt("WORKER_TERMINAL_EXEC_MAX_PROCESSES", defaultTerminalExecMaxProcesses),
+		DockerNetwork:               strings.TrimSpace(src.get("WORKER_DOCKER_NETWORK")),
 		Labels:                      parseLabels(labelsCSV),
 		TerminalLeaseMinSec:         terminalLeaseMinSec,
 		TerminalLeaseMaxSec:         terminalLeaseMaxSec,
