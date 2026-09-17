@@ -119,6 +119,8 @@ region = "cn"
 | `WORKER_TERMINAL_OUTPUT_LIMIT_BYTES` | 否 | `1048576` | 每个流的输出上限（字节） |
 | `WORKER_TERMINAL_EXPORT_MAX_BYTES` | 否 | `0`（无限制） | export action 最大文件大小（字节），0 为无限制 |
 
+Worker 会声明仅供 Console 内部使用的 `terminalLeaseRenew` 能力。它接收 `{"session_id":"required","lease_ttl_sec":300}`，以单调方式延长已有租约，并在不执行命令的情况下返回确认后的绝对到期时间。该能力拥有独立的 `max_inflight`，其声明值取自 `WORKER_TERMINAL_EXEC_MAX_INFLIGHT` 配置。
+
 ### 心跳
 
 | 变量 | 必填 | 默认值 | 说明 |

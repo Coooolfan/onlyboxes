@@ -166,7 +166,6 @@ func (h *WorkerHandler) RenewSessionLease(c *gin.Context) {
 		ownerID,
 		sessionID,
 		req.LeaseTTLSec,
-		h.nowFn(),
 	)
 	if err != nil {
 		switch {

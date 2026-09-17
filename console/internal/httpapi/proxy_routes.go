@@ -354,12 +354,9 @@ func (h *ProxyRouteHandler) List(c *gin.Context) {
 	now := h.now()
 	records := h.listRoutes(ownerID, now)
 	total := len(records)
-	start := total
-	if page <= total/pageSize+1 {
-		start = (page - 1) * pageSize
-		if start > total {
-			start = total
-		}
+	start := (page - 1) * pageSize
+	if start > total {
+		start = total
 	}
 	end := start + pageSize
 	if end > total {

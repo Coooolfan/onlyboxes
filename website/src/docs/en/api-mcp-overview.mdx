@@ -670,12 +670,12 @@ This endpoint always returns `410 Gone`. The startup command (including the secr
 
 ### Terminal Session API
 
-These endpoints require management authentication (cookie, Console API key, or Dashboard JIT). They list, inspect, and delete confirmed terminal sessions. Sessions that have not finished their first `terminalExec` are not visible.
+These endpoints require management authentication (cookie, Console API key, or Dashboard JIT). They list, inspect, renew, and delete confirmed terminal sessions. Sessions that have not finished their first `terminalExec` are not visible.
 
 Scope:
 
 - non-admin: only the caller's sessions; `account_id` for another account returns `404`
-- admin: all sessions by default; `account_id` filters the list. Get and delete require `account_id` because `session_id` is unique per account, not globally
+- admin: all sessions by default; `account_id` filters the list. Get, renew, and delete require `account_id` because `session_id` is unique per account, not globally
 
 `status` values:
 
@@ -746,6 +746,35 @@ Success `200`: same object as a list item.
 
 ---
 
+#### Renew Session Lease
+
+`POST /api/v1/sessions/:session_id/renew?account_id=acc_xxx`
+
+Console asks the Worker that owns the session to extend its lease, then persists the absolute expiry confirmed by that Worker. Renewal is monotonic: a shorter TTL does not reduce the current expiry. Renewing a session does not extend any public preview route.
+
+```json
+{
+  "lease_ttl_sec": 300
+}
+```
+
+`lease_ttl_sec` must be positive and within the owning Worker's configured terminal lease bounds.
+
+Success `200`: same object as a list item, with updated `lease_expires_at` and `last_used_at` values.
+
+**Error codes:**
+
+| Status | Description |
+|--------|-------------|
+| `400` | Invalid body, admin omitted `account_id`, or TTL is outside the Worker's lease bounds |
+| `401` | Missing or invalid dashboard credential |
+| `404` | Session not found (including cross-account) |
+| `502` | Worker rejected the renewal or returned an invalid result |
+| `503` | Session registry or bound Worker unavailable |
+| `504` | Renewal timed out |
+
+---
+
 #### Delete Session
 
 `DELETE /api/v1/sessions/:session_id?account_id=acc_xxx`
@@ -781,6 +810,7 @@ Success `201`:
 ```json
 {
   "route_key": "ceirceirceirceirceirceirce",
+  "account_id": "acc_xxx",
   "session_id": "sess_xxx",
   "port": 8080,
   "url": "https://ceirceirceirceirceirceirce.public-preview.example.com",
@@ -803,16 +833,49 @@ Rules and errors:
 - `429` account or session route limit reached.
 - `503` the session's Worker has no available proxy endpoint.
 
-`GET /api/v1/proxy-routes`
+`GET /api/v1/proxy-routes?page=1&page_size=20&account_id=acc_xxx`
 
-Success `200` returns the current account's routes:
+Scope:
+
+- non-admin accounts can list only their own routes; setting `account_id` to another account returns `404`.
+- admins list routes across all accounts by default and can use `account_id` to filter one account.
+
+**Query parameters:**
+
+| Parameter | Type | Default | Constraints |
+|-----------|------|---------|-------------|
+| `page` | int | `1` | Positive integer |
+| `page_size` | int | `20` | Positive integer, max `100` |
+| `account_id` | string | | Optional account filter as described above |
+
+Success `200`:
 
 ```json
 {
-  "items": [],
-  "total": 0
+  "items": [
+    {
+      "route_key": "ceirceirceirceirceirceirce",
+      "account_id": "acc_xxx",
+      "session_id": "sess_xxx",
+      "port": 8080,
+      "url": "https://ceirceirceirceirceirceirce.public-preview.example.com",
+      "created_at": "2026-02-21T00:00:00Z",
+      "expires_at": "2026-02-22T00:00:00Z"
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "page_size": 20
 }
 ```
+
+**Error codes:**
+
+| Status | Description |
+|--------|-------------|
+| `400` | Invalid `page` or `page_size` |
+| `401` | Missing or invalid management credential |
+| `404` | Non-admin requested another account's routes |
 
 `DELETE /api/v1/proxy-routes/:route_key`
 

@@ -119,6 +119,8 @@ For example, with both capability limits set to `10` and the per-session limit s
 | `WORKER_TERMINAL_OUTPUT_LIMIT_BYTES` | No | `1048576` | Output limit per stream (bytes) |
 | `WORKER_TERMINAL_EXPORT_MAX_BYTES` | No | `0` (unlimited) | Maximum file size in bytes for export action; 0 disables the limit |
 
+The Worker advertises `terminalLeaseRenew` as an internal Console-only capability. It accepts `{"session_id":"required","lease_ttl_sec":300}`, extends an existing lease monotonically, and returns the confirmed absolute expiry without executing a command. Its independent `max_inflight` declaration uses the configured `WORKER_TERMINAL_EXEC_MAX_INFLIGHT` value.
+
 ### Heartbeat
 
 | Variable | Required | Default | Description |

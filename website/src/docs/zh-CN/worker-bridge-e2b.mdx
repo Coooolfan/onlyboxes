@@ -106,6 +106,8 @@ region = "cn"
 | `WORKER_TERMINAL_SESSION_MAX_INFLIGHT` | 否 | `128` | 单个 session 允许的并发操作数 |
 | `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS` | 否 | `0`（无限制） | 当前 worker 进程管理的 terminal session 数量上限 |
 
+Worker 会声明仅供 Console 内部使用的 `terminalLeaseRenew` 能力。它接收 `{"session_id":"required","lease_ttl_sec":300}`，以单调方式延长已有租约、同步 E2B sandbox timeout，并在不执行命令的情况下返回确认后的绝对到期时间。该能力拥有独立的 `max_inflight`，其声明值取自 `WORKER_TERMINAL_EXEC_MAX_INFLIGHT` 配置。
+
 `WORKER_TERMINAL_MAX_ACTIVE_SESSIONS` 与单 session 和 capability 并发上限相互独立。`0` 表示不限制；正数会统计创建中、可用、销毁中以及 E2B cleanup 进行中的 session。容量已满时已有 session 仍可使用，新建 session 返回 `429 session_capacity_exceeded`。该限制只作用于当前 worker 进程，不是同一 E2B API Key 下所有 worker 的全局配额；负数或非法值回退为 `0`。
 
 终端命令共享沙箱文件系统，但每次调用都在独立的 `/bin/bash -l -c` 进程中执行，不会在调用之间保留当前目录、shell 变量或进程环境。
