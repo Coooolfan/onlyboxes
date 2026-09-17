@@ -108,6 +108,10 @@ Config env:
 - `WORKER_COMPUTER_USE_MAX_INFLIGHT`
 - `WORKER_READ_IMAGE_MAX_INFLIGHT`
 
+Worker labels always include the detected Go host platform as `goos` and `arch`.
+These system labels override values with the same names in `WORKER_LABELS` or
+the config file.
+
 Startup examples:
 
 ```bash

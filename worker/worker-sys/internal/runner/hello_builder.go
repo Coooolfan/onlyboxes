@@ -2,11 +2,17 @@ package runner
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
 	"github.com/onlyboxes/onlyboxes/worker/worker-sys/internal/buildinfo"
 	"github.com/onlyboxes/onlyboxes/worker/worker-sys/internal/config"
+)
+
+const (
+	goosLabel = "goos"
+	archLabel = "arch"
 )
 
 func buildHello(cfg config.Config) (*registryv1.ConnectHello, error) {
@@ -19,11 +25,18 @@ func buildHello(cfg config.Config) (*registryv1.ConnectHello, error) {
 		nodeName = fmt.Sprintf("worker-sys-%s", suffix)
 	}
 
+	labels := make(map[string]string, len(cfg.Labels)+2)
+	for key, value := range cfg.Labels {
+		labels[key] = value
+	}
+	labels[goosLabel] = runtime.GOOS
+	labels[archLabel] = runtime.GOARCH
+
 	hello := &registryv1.ConnectHello{
 		NodeId:       cfg.WorkerID,
 		NodeName:     nodeName,
 		ExecutorKind: cfg.ExecutorKind,
-		Labels:       cfg.Labels,
+		Labels:       labels,
 		Version:      buildinfo.Version,
 		WorkerSecret: cfg.WorkerSecret,
 		Capabilities: []*registryv1.CapabilityDeclaration{
