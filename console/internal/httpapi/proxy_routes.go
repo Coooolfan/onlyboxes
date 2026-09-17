@@ -34,6 +34,7 @@ const (
 	proxyBaseDomainMaxBytes         = 253 - 1 - proxyRouteKeyMaxLength
 	proxyRouteCreateAttempts        = 8
 	proxyRouteMaxTTL                = 7 * 24 * time.Hour
+	defaultProxyRoutePageSize       = 20
 )
 
 type ProxyRouteResolver interface {
@@ -83,6 +84,7 @@ type createProxyRouteRequest struct {
 
 type proxyRouteResponse struct {
 	RouteKey  string    `json:"route_key"`
+	AccountID string    `json:"account_id"`
 	SessionID string    `json:"session_id"`
 	Port      int       `json:"port"`
 	URL       string    `json:"url"`
@@ -91,8 +93,10 @@ type proxyRouteResponse struct {
 }
 
 type listProxyRoutesResponse struct {
-	Items []proxyRouteResponse `json:"items"`
-	Total int                  `json:"total"`
+	Items    []proxyRouteResponse `json:"items"`
+	Total    int                  `json:"total"`
+	Page     int                  `json:"page"`
+	PageSize int                  `json:"page_size"`
 }
 
 func NewProxyRouteHandler(
@@ -318,18 +322,59 @@ func (h *ProxyRouteHandler) Create(c *gin.Context) {
 }
 
 func (h *ProxyRouteHandler) List(c *gin.Context) {
-	ownerID, ok := proxyRouteOwnerID(c)
-	if !ok {
+	account, ok := requestSessionAccountFromGin(c)
+	ownerID := strings.TrimSpace(account.AccountID)
+	if !ok || ownerID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
 	}
+	requestedOwnerID := strings.TrimSpace(c.Query("account_id"))
+	if account.IsAdmin {
+		ownerID = requestedOwnerID
+	} else if requestedOwnerID != "" && requestedOwnerID != ownerID {
+		c.JSON(http.StatusNotFound, gin.H{"error": "proxy route not found"})
+		return
+	}
+
+	page, ok := parsePositiveIntQuery(c, "page", 1)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "page must be a positive integer"})
+		return
+	}
+	pageSize, ok := parsePositiveIntQuery(c, "page_size", defaultProxyRoutePageSize)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "page_size must be a positive integer"})
+		return
+	}
+	if pageSize > maxPageSize {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "page_size must be <= 100"})
+		return
+	}
+
 	now := h.now()
 	records := h.listRoutes(ownerID, now)
-	items := make([]proxyRouteResponse, 0, len(records))
-	for _, record := range records {
+	total := len(records)
+	start := total
+	if page <= total/pageSize+1 {
+		start = (page - 1) * pageSize
+		if start > total {
+			start = total
+		}
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+	items := make([]proxyRouteResponse, 0, end-start)
+	for _, record := range records[start:end] {
 		items = append(items, h.routeResponse(record))
 	}
-	c.JSON(http.StatusOK, listProxyRoutesResponse{Items: items, Total: len(items)})
+	c.JSON(http.StatusOK, listProxyRoutesResponse{
+		Items:    items,
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+	})
 }
 
 func (h *ProxyRouteHandler) Delete(c *gin.Context) {
@@ -474,11 +519,14 @@ func (h *ProxyRouteHandler) listRoutes(ownerID string, now time.Time) []proxyRou
 
 	records := make([]proxyRouteRecord, 0)
 	for _, record := range h.routes {
-		if record.OwnerID == ownerID {
+		if ownerID == "" || record.OwnerID == ownerID {
 			records = append(records, record)
 		}
 	}
 	sort.Slice(records, func(i, j int) bool {
+		if records[i].CreatedAt.Equal(records[j].CreatedAt) {
+			return records[i].RouteKey < records[j].RouteKey
+		}
 		return records[i].CreatedAt.After(records[j].CreatedAt)
 	})
 	return records
@@ -521,6 +569,7 @@ func (h *ProxyRouteHandler) pruneLocked(now time.Time) int {
 func (h *ProxyRouteHandler) routeResponse(record proxyRouteRecord) proxyRouteResponse {
 	return proxyRouteResponse{
 		RouteKey:  record.RouteKey,
+		AccountID: record.OwnerID,
 		SessionID: record.SessionID,
 		Port:      record.Port,
 		URL:       h.publicScheme + "://" + record.RouteKey + "." + h.baseDomain,

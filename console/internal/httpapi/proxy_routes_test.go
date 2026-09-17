@@ -66,12 +66,15 @@ func TestProxyRouteManagementOwnerIsolation(t *testing.T) {
 	if created.RouteKey == "" || created.SessionID != "session-a" || created.Port != 8080 {
 		t.Fatalf("unexpected create response %#v", created)
 	}
+	if created.AccountID != "owner-a" {
+		t.Fatalf("create response has wrong account ID %q", created.AccountID)
+	}
 	if created.URL != "https://"+created.RouteKey+".public-preview.example.com" {
 		t.Fatalf("unexpected public URL %q", created.URL)
 	}
 
 	ownerAList := listProxyRoutesForTest(t, router, "owner-a")
-	if ownerAList.Total != 1 || len(ownerAList.Items) != 1 {
+	if ownerAList.Total != 1 || len(ownerAList.Items) != 1 || ownerAList.Page != 1 || ownerAList.PageSize != defaultProxyRoutePageSize {
 		t.Fatalf("owner A expected one route, got %#v", ownerAList)
 	}
 	ownerBList := listProxyRoutesForTest(t, router, "owner-b")
@@ -102,6 +105,95 @@ func TestProxyRouteManagementOwnerIsolation(t *testing.T) {
 	router.ServeHTTP(resolveDeletedResponse, resolveDeleted)
 	if resolveDeletedResponse.Code != http.StatusForbidden {
 		t.Fatalf("deleted route resolve expected 403, got %d", resolveDeletedResponse.Code)
+	}
+}
+
+func TestProxyRouteListAdminScopeAndPagination(t *testing.T) {
+	now := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
+	handler := newProxyRouteHandlerForTest(t, &proxyRouteResolverStub{}, now, time.Hour)
+	handler.routes = map[string]proxyRouteRecord{
+		"aaaaaaaaaaaaaaaaaaaaaaaaaa": {
+			RouteKey: "aaaaaaaaaaaaaaaaaaaaaaaaaa", OwnerID: "owner-a", SessionID: "session-a",
+			CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+		},
+		"bbbbbbbbbbbbbbbbbbbbbbbbbb": {
+			RouteKey: "bbbbbbbbbbbbbbbbbbbbbbbbbb", OwnerID: "owner-b", SessionID: "session-b",
+			CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+		},
+		"cccccccccccccccccccccccccc": {
+			RouteKey: "cccccccccccccccccccccccccc", OwnerID: "owner-b", SessionID: "session-c",
+			CreatedAt: now.Add(time.Minute), ExpiresAt: now.Add(time.Hour),
+		},
+		"dddddddddddddddddddddddddd": {
+			RouteKey: "dddddddddddddddddddddddddd", OwnerID: "owner-a", SessionID: "session-expired",
+			CreatedAt: now.Add(2 * time.Minute), ExpiresAt: now.Add(-time.Second),
+		},
+	}
+	router := newProxyRouteTestRouter(handler)
+
+	firstPage := listProxyRoutesRequestForTest(t, router, "/api/v1/proxy-routes?page=1&page_size=2", "admin", true)
+	if firstPage.Total != 3 || firstPage.Page != 1 || firstPage.PageSize != 2 || len(firstPage.Items) != 2 {
+		t.Fatalf("unexpected first admin page: %#v", firstPage)
+	}
+	if firstPage.Items[0].RouteKey != "cccccccccccccccccccccccccc" || firstPage.Items[0].AccountID != "owner-b" || firstPage.Items[1].RouteKey != "aaaaaaaaaaaaaaaaaaaaaaaaaa" {
+		t.Fatalf("unexpected admin route ordering: %#v", firstPage.Items)
+	}
+	secondPage := listProxyRoutesRequestForTest(t, router, "/api/v1/proxy-routes?page=2&page_size=2", "admin", true)
+	if secondPage.Total != 3 || len(secondPage.Items) != 1 || secondPage.Items[0].RouteKey != "bbbbbbbbbbbbbbbbbbbbbbbbbb" {
+		t.Fatalf("unexpected second admin page: %#v", secondPage)
+	}
+	emptyPage := listProxyRoutesRequestForTest(t, router, "/api/v1/proxy-routes?page=3&page_size=2", "admin", true)
+	if emptyPage.Total != 3 || len(emptyPage.Items) != 0 {
+		t.Fatalf("unexpected empty admin page: %#v", emptyPage)
+	}
+	ownerB := listProxyRoutesRequestForTest(t, router, "/api/v1/proxy-routes?account_id=owner-b", "admin", true)
+	if ownerB.Total != 2 || len(ownerB.Items) != 2 {
+		t.Fatalf("unexpected filtered admin routes: %#v", ownerB)
+	}
+	missing := listProxyRoutesRequestForTest(t, router, "/api/v1/proxy-routes?account_id=missing", "admin", true)
+	if missing.Total != 0 || len(missing.Items) != 0 {
+		t.Fatalf("unexpected missing-account routes: %#v", missing)
+	}
+	if _, exists := handler.routes["dddddddddddddddddddddddddd"]; exists {
+		t.Fatal("expired route was not pruned during listing")
+	}
+}
+
+func TestProxyRouteListScopeAndQueryValidation(t *testing.T) {
+	now := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
+	handler := newProxyRouteHandlerForTest(t, &proxyRouteResolverStub{}, now, time.Hour)
+	handler.routes["aaaaaaaaaaaaaaaaaaaaaaaaaa"] = proxyRouteRecord{
+		RouteKey: "aaaaaaaaaaaaaaaaaaaaaaaaaa", OwnerID: "owner-a", SessionID: "session-a",
+		CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}
+	router := newProxyRouteTestRouter(handler)
+
+	own := listProxyRoutesRequestForTest(t, router, "/api/v1/proxy-routes?account_id=owner-a", "owner-a", false)
+	if own.Total != 1 || len(own.Items) != 1 {
+		t.Fatalf("member could not filter to own routes: %#v", own)
+	}
+	crossAccount := httptest.NewRequest(http.MethodGet, "/api/v1/proxy-routes?account_id=owner-b", nil)
+	crossAccount.Header.Set("X-Test-Owner", "owner-a")
+	crossAccountResponse := httptest.NewRecorder()
+	router.ServeHTTP(crossAccountResponse, crossAccount)
+	if crossAccountResponse.Code != http.StatusNotFound {
+		t.Fatalf("cross-account list expected 404, got %d body=%s", crossAccountResponse.Code, crossAccountResponse.Body.String())
+	}
+
+	for _, target := range []string{
+		"/api/v1/proxy-routes?page=0",
+		"/api/v1/proxy-routes?page=invalid",
+		"/api/v1/proxy-routes?page_size=0",
+		"/api/v1/proxy-routes?page_size=invalid",
+		"/api/v1/proxy-routes?page_size=101",
+	} {
+		request := httptest.NewRequest(http.MethodGet, target, nil)
+		request.Header.Set("X-Test-Owner", "owner-a")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("GET %s expected 400, got %d body=%s", target, response.Code, response.Body.String())
+		}
 	}
 }
 
@@ -705,7 +797,11 @@ func newProxyRouteTestRouter(handler *ProxyRouteHandler) *gin.Engine {
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		if ownerID := strings.TrimSpace(c.GetHeader("X-Test-Owner")); ownerID != "" {
-			setRequestSessionAccount(c, SessionAccount{AccountID: ownerID, Username: ownerID})
+			setRequestSessionAccount(c, SessionAccount{
+				AccountID: ownerID,
+				Username:  ownerID,
+				IsAdmin:   c.GetHeader("X-Test-Admin") == "true",
+			})
 		}
 		c.Next()
 	})
@@ -735,8 +831,16 @@ func createProxyRouteForTest(t *testing.T, router http.Handler, ownerID string, 
 
 func listProxyRoutesForTest(t *testing.T, router http.Handler, ownerID string) listProxyRoutesResponse {
 	t.Helper()
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/proxy-routes", nil)
+	return listProxyRoutesRequestForTest(t, router, "/api/v1/proxy-routes", ownerID, false)
+}
+
+func listProxyRoutesRequestForTest(t *testing.T, router http.Handler, target string, ownerID string, isAdmin bool) listProxyRoutesResponse {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodGet, target, nil)
 	request.Header.Set("X-Test-Owner", ownerID)
+	if isAdmin {
+		request.Header.Set("X-Test-Admin", "true")
+	}
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {

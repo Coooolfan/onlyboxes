@@ -534,6 +534,7 @@ Success `201`:
 ```json
 {
   "route_key": "ceirceirceirceirceirceirce",
+  "account_id": "acc_xxx",
   "session_id": "sess_xxx",
   "port": 8080,
   "url": "https://ceirceirceirceirceirceirce.public-preview.example.com",
@@ -556,16 +557,45 @@ Rules and errors:
 - `429` account or session route limit reached.
 - `503` the session's Worker has no available proxy endpoint.
 
-`GET /api/v1/proxy-routes`
+`GET /api/v1/proxy-routes?page=1&page_size=20&account_id=acc_xxx`
 
-Success `200` returns the current account's routes:
+Scope:
+
+- non-admin accounts can list only their own routes; setting `account_id` to another account returns `404`.
+- admins list routes across all accounts by default and can use `account_id` to filter one account.
+
+Query parameters:
+
+- `page`: positive integer, defaults to `1`.
+- `page_size`: positive integer, defaults to `20`, maximum `100`.
+- `account_id`: optional account filter as described above.
+
+Success `200`:
 
 ```json
 {
-  "items": [],
-  "total": 0
+  "items": [
+    {
+      "route_key": "ceirceirceirceirceirceirce",
+      "account_id": "acc_xxx",
+      "session_id": "sess_xxx",
+      "port": 8080,
+      "url": "https://ceirceirceirceirceirceirce.public-preview.example.com",
+      "created_at": "2026-02-21T00:00:00Z",
+      "expires_at": "2026-02-22T00:00:00Z"
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "page_size": 20
 }
 ```
+
+Errors:
+
+- `400` invalid `page` or `page_size`.
+- `401` missing or invalid management credentials.
+- `404` a non-admin account requested another account's routes.
 
 `DELETE /api/v1/proxy-routes/:route_key`
 
