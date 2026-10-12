@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"time"
 
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
 	"github.com/onlyboxes/onlyboxes/console/internal/persistence"
@@ -107,22 +108,47 @@ func (s *RegistryService) Connect(stream grpc.BidiStreamingServer[registryv1.Con
 		return status.Error(codes.Internal, "failed to send connect ack")
 	}
 
+	type receivedFrame struct {
+		request *registryv1.ConnectRequest
+		err     error
+	}
+	frames := make(chan receivedFrame)
+	go func() {
+		for {
+			request, err := stream.Recv()
+			select {
+			case frames <- receivedFrame{request: request, err: err}:
+			case <-session.done:
+				return
+			case <-stream.Context().Done():
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
 	for {
+		var req *registryv1.ConnectRequest
 		select {
+		case <-session.done:
+			return mapStreamError(session.sessionError())
+		case <-stream.Context().Done():
+			return status.FromContextError(stream.Context().Err()).Err()
 		case err := <-writerErrCh:
 			if err == nil {
-				return nil
+				return mapStreamError(session.sessionError())
 			}
 			return mapStreamError(err)
-		default:
-		}
-
-		req, err := stream.Recv()
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return nil
+		case frame := <-frames:
+			if frame.err != nil {
+				if errors.Is(frame.err, io.EOF) {
+					return nil
+				}
+				return mapStreamError(frame.err)
 			}
-			return mapStreamError(err)
+			req = frame.request
 		}
 
 		switch {
@@ -260,6 +286,7 @@ func (s *RegistryService) handleHeartbeat(ctx context.Context, session *activeSe
 		}
 		return status.Error(codes.Internal, "failed to update heartbeat")
 	}
+	session.lastHeartbeatUnixMs.Store(now.UnixMilli())
 	session.setActiveSessionCount(heartbeat.GetActiveSessionCount(), now)
 	logTerminalSessionCapacityInvariant(session.nodeID, session.terminalSessionCapacitySnapshot())
 
@@ -356,7 +383,11 @@ func (s *RegistryService) claimSessionIfAvailable(session *activeSession) bool {
 		select {
 		case <-current.done:
 		default:
-			return false
+			lastHeartbeat := time.UnixMilli(current.lastHeartbeatUnixMs.Load())
+			if s.nowFn().Sub(lastHeartbeat) <= time.Duration(s.offlineTTLSec)*time.Second {
+				return false
+			}
+			current.close(status.Error(codes.FailedPrecondition, "session heartbeat expired"))
 		}
 	}
 	s.sessions[session.nodeID] = session

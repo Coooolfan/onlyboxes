@@ -207,7 +207,7 @@ func TestDeleteProvisionedWorkerDisconnectsSessionAndRevokesCredential(t *testin
 	client, cleanup := newBufClient(t, svc)
 	defer cleanup()
 
-	stream, sessionID, err := connectWorker(client, workerID, workerSecret, "nonce-delete-1", []string{"echo"})
+	stream, _, err := connectWorker(client, workerID, workerSecret, "nonce-delete-1", []string{"echo"})
 	if err != nil {
 		t.Fatalf("connect worker failed: %v", err)
 	}
@@ -219,20 +219,18 @@ func TestDeleteProvisionedWorkerDisconnectsSessionAndRevokesCredential(t *testin
 		t.Fatalf("expected credential to be revoked")
 	}
 
-	if err := stream.Send(&registryv1.ConnectRequest{
-		Payload: &registryv1.ConnectRequest_Heartbeat{
-			Heartbeat: &registryv1.HeartbeatFrame{
-				NodeId:    workerID,
-				SessionId: sessionID,
-			},
-		},
-	}); err != nil {
-		t.Fatalf("send heartbeat after delete failed: %v", err)
+	closed := make(chan error, 1)
+	go func() {
+		_, err := stream.Recv()
+		closed <- err
+	}()
+	select {
+	case err = <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("deleted worker's idle stream was not closed")
 	}
-
-	_, err = stream.Recv()
-	if code := status.Code(err); code != codes.PermissionDenied && code != codes.NotFound {
-		t.Fatalf("expected PermissionDenied or NotFound after delete, got %v", err)
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("expected PermissionDenied after delete, got %v", err)
 	}
 
 	_, _, err = connectWorker(client, workerID, workerSecret, "nonce-delete-2", []string{"echo"})
@@ -589,18 +587,16 @@ func TestConnectReplacesOldSession(t *testing.T) {
 		t.Fatalf("expected session-b, got %s", sessionB)
 	}
 
-	if err := streamA.Send(&registryv1.ConnectRequest{
-		Payload: &registryv1.ConnectRequest_Heartbeat{
-			Heartbeat: &registryv1.HeartbeatFrame{
-				NodeId:    "node-1",
-				SessionId: sessionA,
-			},
-		},
-	}); err != nil {
-		t.Fatalf("send old-session heartbeat failed: %v", err)
+	replaced := make(chan error, 1)
+	go func() {
+		_, err := streamA.Recv()
+		replaced <- err
+	}()
+	select {
+	case err = <-replaced:
+	case <-time.After(5 * time.Second):
+		t.Fatal("replaced idle stream was not closed")
 	}
-
-	_, err = streamA.Recv()
 	if status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("expected FailedPrecondition for old session, got %v", err)
 	}
@@ -668,6 +664,68 @@ func TestConnectRejectsNewSessionWhenConflictPolicyIsReject(t *testing.T) {
 	}
 	if response.GetHeartbeatAck() == nil {
 		t.Fatalf("expected heartbeat_ack, got %#v", response.GetPayload())
+	}
+}
+
+func TestConnectRejectPolicyAllowsReconnectAfterHeartbeatExpiry(t *testing.T) {
+	svc := NewRegistryService(registrytest.NewStore(t), map[string]string{"node-1": "secret-1"}, 5, 15, 60*time.Second)
+	svc.SetWorkerConnectionConflictPolicy(registry.WorkerConnectionConflictPolicyReject)
+	start := time.Now()
+	var elapsed atomic.Int64
+	svc.nowFn = func() time.Time { return start.Add(time.Duration(elapsed.Load()) * time.Second) }
+	client, cleanup := newBufClient(t, svc)
+	defer cleanup()
+
+	streamA, sessionA, err := connectWorker(client, "node-1", "secret-1", "", []string{"echo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sendHeartbeat := func(stream grpc.BidiStreamingClient[registryv1.ConnectRequest, registryv1.ConnectResponse], sessionID string) {
+		t.Helper()
+		if err := stream.Send(&registryv1.ConnectRequest{Payload: &registryv1.ConnectRequest_Heartbeat{
+			Heartbeat: &registryv1.HeartbeatFrame{NodeId: "node-1", SessionId: sessionID},
+		}}); err != nil {
+			t.Fatal(err)
+		}
+		response, err := stream.Recv()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if response.GetHeartbeatAck() == nil {
+			t.Fatalf("expected heartbeat ack, got %v", response)
+		}
+	}
+	elapsed.Store(14)
+	sendHeartbeat(streamA, sessionA)
+	// A recent heartbeat keeps the connection protected even after its
+	// original registration would have expired.
+	elapsed.Store(16)
+	if _, _, err := connectWorker(client, "node-1", "secret-1", "", []string{"echo"}); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("expected live connection to reject duplicate, got %v", err)
+	}
+
+	// Leave A's transport open without heartbeats, as after a network change.
+	elapsed.Store(30)
+	streamB, sessionB, err := connectWorker(client, "node-1", "secret-1", "", []string{"echo"})
+	if err != nil {
+		t.Fatalf("reconnect after heartbeat expiry failed: %v", err)
+	}
+	closed := make(chan error, 1)
+	go func() {
+		_, err := streamA.Recv()
+		closed <- err
+	}()
+	select {
+	case err := <-closed:
+		if status.Code(err) != codes.FailedPrecondition {
+			t.Fatalf("expected expired session error, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("expired idle stream was not closed")
+	}
+	sendHeartbeat(streamB, sessionB)
+	if current := svc.getSession("node-1"); current == nil || current.sessionID != sessionB {
+		t.Fatalf("reconnected session was removed: %v", current)
 	}
 }
 

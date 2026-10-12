@@ -232,7 +232,7 @@ Defaults:
 - HTTP: `:8089`
 - gRPC: `:50051`
 - Heartbeat interval: `5s`
-- Worker connection conflict policy: `REPLACE` (`CONSOLE_WORKER_CONNECTION_CONFLICT_POLICY`); set `REJECT` to keep the existing connection and reject a duplicate connection.
+- Worker connection conflict policy: `REPLACE` (`CONSOLE_WORKER_CONNECTION_CONFLICT_POLICY`); set `REJECT` to keep the existing connection and reject a duplicate connection. Once the existing connection has received no heartbeat for longer than `CONSOLE_OFFLINE_TTL_SEC` (default `15s`), a new connection can take over, allowing reconnection after a network change.
 - SQLite DB path: `./db/onlyboxes-console.db`
 - SQLite busy timeout: `5000ms`
 - Task retention: `30 days`
