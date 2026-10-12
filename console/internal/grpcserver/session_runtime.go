@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
@@ -36,10 +37,11 @@ type terminalSessionCapacitySnapshot struct {
 }
 
 type activeSession struct {
-	nodeID       string
-	sessionID    string
-	executorKind string
-	connectedAt  time.Time
+	nodeID              string
+	sessionID           string
+	executorKind        string
+	connectedAt         time.Time
+	lastHeartbeatUnixMs atomic.Int64
 
 	proxyEndpoint string
 	routeTokenKey []byte
@@ -91,6 +93,7 @@ func newActiveSessionAt(nodeID string, sessionID string, hello *registryv1.Conne
 		recoveryCandidates: make(map[string]int64),
 		recoveryResults:    make(map[string]registryv1.TerminalSessionRecoveryResult_Status),
 	}
+	session.lastHeartbeatUnixMs.Store(observedAt.UnixMilli())
 	_, session.recoveryRequired = session.capabilities[taskCapabilityTerminalExec]
 	session.recoveryComplete = !session.recoveryRequired
 	if capacity := hello.GetTerminalSessionCapacity(); capacity != nil {
