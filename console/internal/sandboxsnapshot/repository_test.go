@@ -245,6 +245,9 @@ func TestRestartPreservesUploadingAndFailedOperations(t *testing.T) {
 	if err != nil || len(ops) != 1 || ops[0].Status != "failed" {
 		t.Fatalf("lost uncertain operation: %+v %v", ops, err)
 	}
+	if string(ops[0].Parameters) != `{"lease_ttl_sec":300}` || ops[0].RequestSHA256 != op.RequestSHA256 {
+		t.Fatalf("lost parameters needed for asynchronous recovery: %s", ops[0].Parameters)
+	}
 	parts, err := r.Parts(ctx, "owner", "session", "snap-a")
 	if err != nil || len(parts) != 1 || parts[0].ETag != "part-etag" {
 		t.Fatalf("lost multipart state: %+v %v", parts, err)
@@ -367,6 +370,9 @@ func TestOperationParameterValidation(t *testing.T) {
 	op, err := r.Begin(context.Background(), a)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if string(op.Parameters) != `{"a":1,"b":2}` {
+		t.Fatalf("operation did not persist canonical request: %s", op.Parameters)
 	}
 	a.Parameters = json.RawMessage("{\n\"a\":1,\"b\":2}")
 	same, err := r.Begin(context.Background(), a)

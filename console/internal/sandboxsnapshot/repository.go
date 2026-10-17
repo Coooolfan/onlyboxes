@@ -73,11 +73,13 @@ func (r *Repository) RegisterRunning(ctx context.Context, owner, id, worker stri
 	return err
 }
 
-const operationColumns = `operation_id,owner_id,session_id,kind,idempotency_key,request_sha256,generation,status,phase,source_worker_id,target_worker_id,error_code,error_message,deadline_unix_ms,created_at_unix_ms,updated_at_unix_ms`
+const operationColumns = `operation_id,owner_id,session_id,kind,idempotency_key,request_sha256,parameters_json,generation,status,phase,source_worker_id,target_worker_id,error_code,error_message,deadline_unix_ms,created_at_unix_ms,updated_at_unix_ms`
 
 func scanOperation(row rowScanner) (Operation, error) {
 	var o Operation
-	err := row.Scan(&o.ID, &o.OwnerID, &o.SessionID, &o.Kind, &o.IdempotencyKey, &o.RequestSHA256, &o.Generation, &o.Status, &o.Phase, &o.SourceWorkerID, &o.TargetWorkerID, &o.ErrorCode, &o.ErrorMessage, &o.DeadlineUnixMS, &o.CreatedAtUnixMS, &o.UpdatedAtUnixMS)
+	var parameters string
+	err := row.Scan(&o.ID, &o.OwnerID, &o.SessionID, &o.Kind, &o.IdempotencyKey, &o.RequestSHA256, &parameters, &o.Generation, &o.Status, &o.Phase, &o.SourceWorkerID, &o.TargetWorkerID, &o.ErrorCode, &o.ErrorMessage, &o.DeadlineUnixMS, &o.CreatedAtUnixMS, &o.UpdatedAtUnixMS)
+	o.Parameters = json.RawMessage(parameters)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -94,7 +96,7 @@ func (r *Repository) Operation(ctx context.Context, owner, session, id string) (
 // equivalent requests join the same operation, even with different retry keys.
 func (r *Repository) Begin(ctx context.Context, request BeginRequest) (Operation, error) {
 	now := r.now().UnixMilli()
-	hash, err := request.validate(now)
+	hash, parameters, err := request.validate(now)
 	if err != nil {
 		return Operation{}, err
 	}
@@ -144,8 +146,8 @@ func (r *Repository) Begin(ctx context.Context, request BeginRequest) (Operation
 			}
 			return ErrConflict
 		}
-		result = Operation{ID: uuid.NewString(), OwnerID: session.OwnerID, SessionID: session.SessionID, Kind: request.Kind, IdempotencyKey: request.IdempotencyKey, RequestSHA256: hash, Generation: generation, Status: "pending", Phase: phase, SourceWorkerID: session.WorkerID, DeadlineUnixMS: request.DeadlineUnixMS, CreatedAtUnixMS: now, UpdatedAtUnixMS: now}
-		_, err = tx.ExecContext(ctx, `INSERT INTO sandbox_persistence_operations (`+operationColumns+`) VALUES (?,?,?,?,?,?,?,?,?,?,'','','',?,?,?)`, result.ID, result.OwnerID, result.SessionID, result.Kind, result.IdempotencyKey, result.RequestSHA256, result.Generation, result.Status, result.Phase, result.SourceWorkerID, result.DeadlineUnixMS, now, now)
+		result = Operation{ID: uuid.NewString(), OwnerID: session.OwnerID, SessionID: session.SessionID, Kind: request.Kind, IdempotencyKey: request.IdempotencyKey, RequestSHA256: hash, Parameters: parameters, Generation: generation, Status: "pending", Phase: phase, SourceWorkerID: session.WorkerID, DeadlineUnixMS: request.DeadlineUnixMS, CreatedAtUnixMS: now, UpdatedAtUnixMS: now}
+		_, err = tx.ExecContext(ctx, `INSERT INTO sandbox_persistence_operations (`+operationColumns+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,'','','',?,?,?)`, result.ID, result.OwnerID, result.SessionID, result.Kind, result.IdempotencyKey, result.RequestSHA256, string(result.Parameters), result.Generation, result.Status, result.Phase, result.SourceWorkerID, result.DeadlineUnixMS, now, now)
 		if err != nil {
 			return err
 		}

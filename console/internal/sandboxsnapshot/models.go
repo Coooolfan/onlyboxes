@@ -88,12 +88,15 @@ type Session struct {
 }
 
 type Operation struct {
-	ID              string
-	OwnerID         string
-	SessionID       string
-	Kind            Kind
-	IdempotencyKey  string
-	RequestSHA256   string
+	ID             string
+	OwnerID        string
+	SessionID      string
+	Kind           Kind
+	IdempotencyKey string
+	RequestSHA256  string
+	// Canonical request parameters are needed to resume asynchronous work after
+	// a Console restart. Never put transfer grants or credentials in this value.
+	Parameters      json.RawMessage
 	Generation      int64
 	Status          string
 	Phase           string
@@ -115,12 +118,12 @@ type BeginRequest struct {
 	DeadlineUnixMS int64
 }
 
-func (r BeginRequest) validate(now int64) (string, error) {
+func (r BeginRequest) validate(now int64) (string, json.RawMessage, error) {
 	if len(r.Parameters) > 16384 {
-		return "", errors.New("operation parameters exceed their limit")
+		return "", nil, errors.New("operation parameters exceed their limit")
 	}
 	if r.OwnerID == "" || r.SessionID == "" || strings.TrimSpace(r.IdempotencyKey) == "" || len(r.IdempotencyKey) > 256 || r.DeadlineUnixMS <= now || (r.Kind != Suspend && r.Kind != Resume) {
-		return "", errors.New("invalid persistence operation request")
+		return "", nil, errors.New("invalid persistence operation request")
 	}
 	// Normalize JSON whitespace/key order so a retry hashes the logical request.
 	// Preserve numeric spellings with UseNumber rather than rounding through float64.
@@ -128,18 +131,18 @@ func (r BeginRequest) validate(now int64) (string, error) {
 	decoder := json.NewDecoder(strings.NewReader(string(r.Parameters)))
 	decoder.UseNumber()
 	if err := decoder.Decode(&value); err != nil {
-		return "", fmt.Errorf("invalid operation parameters: %w", err)
+		return "", nil, fmt.Errorf("invalid operation parameters: %w", err)
 	}
 	canonical, err := json.Marshal(value)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF {
-		return "", errors.New("operation parameters contain multiple JSON values")
+		return "", nil, errors.New("operation parameters contain multiple JSON values")
 	}
 	hash := sha256.Sum256(canonical)
-	return hex.EncodeToString(hash[:]), nil
+	return hex.EncodeToString(hash[:]), canonical, nil
 }
 
 type Manifest struct {
