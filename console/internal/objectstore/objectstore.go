@@ -14,15 +14,17 @@ import (
 )
 
 type Config struct {
-	Endpoint   string
-	Region     string
-	BucketName string
-	AccessKey  string
-	SecretKey  string
+	Endpoint       string
+	Region         string
+	BucketName     string
+	AccessKey      string
+	SecretKey      string
+	ForcePathStyle bool
 }
 
 type Store struct {
 	bucketName string
+	client     *s3.Client
 	presign    *s3.PresignClient
 }
 
@@ -64,10 +66,12 @@ func New(cfg Config) (*Store, error) {
 	}
 	client := s3.NewFromConfig(awsCfg, func(opts *s3.Options) {
 		opts.BaseEndpoint = aws.String(endpoint)
+		opts.UsePathStyle = cfg.ForcePathStyle
 	})
 
 	return &Store{
 		bucketName: bucketName,
+		client:     client,
 		presign:    s3.NewPresignClient(client),
 	}, nil
 }
