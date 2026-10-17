@@ -1,0 +1,408 @@
+{
+  "environment": {
+    "docker": {
+      "Client": {
+        "Version": "29.4.0",
+        "ApiVersion": "1.54",
+        "DefaultAPIVersion": "1.54",
+        "GitCommit": "9d7ad9f",
+        "GoVersion": "go1.26.4",
+        "Os": "darwin",
+        "Arch": "arm64",
+        "BuildTime": "Fri Aug  7 04:38:56 2026",
+        "Context": "orbstack"
+      },
+      "Server": {
+        "Platform": {
+          "Name": "Docker Engine - Community"
+        },
+        "Version": "29.4.0",
+        "ApiVersion": "1.54",
+        "MinAPIVersion": "1.40",
+        "Os": "linux",
+        "Arch": "arm64",
+        "Components": [
+          {
+            "Name": "Engine",
+            "Version": "29.4.0",
+            "Details": {
+              "ApiVersion": "1.54",
+              "Arch": "arm64",
+              "BuildTime": "Tue Apr  7 08:35:43 2026",
+              "Experimental": "true",
+              "GitCommit": "daa0cb7f",
+              "GoVersion": "go1.26.1",
+              "KernelVersion": "7.0.14-orbstack-00380-ga7e0a2dc9535",
+              "MinAPIVersion": "1.40",
+              "Module": "github.com/moby/moby/v2",
+              "ModuleVersion": "v2.0.0+unknown",
+              "Os": "linux"
+            }
+          },
+          {
+            "Name": "containerd",
+            "Version": "v2.2.2",
+            "Details": {
+              "GitCommit": "301b2dac98f15c27117da5c8af12118a041a31d9"
+            }
+          },
+          {
+            "Name": "runc",
+            "Version": "1.5.1",
+            "Details": {
+              "GitCommit": "bb14dabeb7185bb72c8c86735d090dcb20f36587"
+            }
+          },
+          {
+            "Name": "docker-init",
+            "Version": "0.19.0",
+            "Details": {
+              "GitCommit": "de40ad0"
+            }
+          }
+        ],
+        "GitCommit": "daa0cb7f",
+        "GoVersion": "go1.26.1",
+        "KernelVersion": "7.0.14-orbstack-00380-ga7e0a2dc9535",
+        "Experimental": true,
+        "BuildTime": "2026-04-07T08:35:43.000000000+00:00"
+      }
+    },
+    "platform": "macOS-27.0.1-arm64-arm-64bit",
+    "architecture": "arm64",
+    "base_image_id": "sha256:ddb348f1d58d9b7e90ce351ed9785f3a3b0555b98367da96e575853e6fc95e3a",
+    "base_manifest": {
+      "mediaType": "application/vnd.oci.image.manifest.v1+json",
+      "digest": "sha256:d1b24d3bfe667c2d2e0226be52a51919990335781d72dc0acb8edecec0639c2b",
+      "size": 1435,
+      "platform": {
+        "architecture": "arm64",
+        "os": "linux"
+      }
+    },
+    "boxlite": "0.10.0"
+  },
+  "source_manifest": {
+    "deleted_absent": true,
+    "files": {
+      "/etc/onlyboxes-probe": {
+        "gid": 0,
+        "mode": "0o100644",
+        "mtime_ns": 1700000000000000000,
+        "sha256": "39c31949abbaf8b5f9dbcfe5c1b6904b288ecfd83c9b1bf8821c1538cccd90ae",
+        "size": 16,
+        "uid": 0,
+        "xattrs": {}
+      },
+      "/persist": {
+        "gid": 0,
+        "mode": "0o40755",
+        "mtime_ns": 1700000000000000000,
+        "uid": 0,
+        "xattrs": {}
+      },
+      "/persist/added": {
+        "gid": 0,
+        "mode": "0o100644",
+        "mtime_ns": 1700000000000000000,
+        "sha256": "4aea19f7eae671640c88168fe451d7215f578341dfc81d27de48e4039c3a0215",
+        "size": 15,
+        "uid": 0,
+        "xattrs": {}
+      },
+      "/persist/dir-to-file": {
+        "gid": 0,
+        "mode": "0o100644",
+        "mtime_ns": 1700000000000000000,
+        "sha256": "29e4550a05e7f9b0fd5dd2facaa05555ec671c4e65aab86a5bf1b6fd3487767e",
+        "size": 9,
+        "uid": 0,
+        "xattrs": {}
+      },
+      "/persist/fifo": {
+        "gid": 0,
+        "mode": "0o10640",
+        "mtime_ns": 1700000000000000000,
+        "uid": 0,
+        "xattrs": {}
+      },
+      "/persist/file-to-dir": {
+        "gid": 0,
+        "mode": "0o40755",
+        "mtime_ns": 1700000000000000000,
+        "uid": 0,
+        "xattrs": {}
+      },
+      "/persist/file-to-dir/child": {
+        "gid": 0,
+        "mode": "0o100644",
+        "mtime_ns": 1700000000000000000,
+        "sha256": "6f4cd045380bbaf1d72362e9a562d47ce55550352599c59260545babe8575b68",
+        "size": 8,
+        "uid": 0,
+        "xattrs": {}
+      },
+      "/persist/hardlink": {
+        "gid": 0,
+        "mode": "0o100644",
+        "mtime_ns": 1700000000000000000,
+        "sha256": "4aea19f7eae671640c88168fe451d7215f578341dfc81d27de48e4039c3a0215",
+        "size": 15,
+        "uid": 0,
+        "xattrs": {}
+      },
+      "/persist/modify": {
+        "gid": 0,
+        "mode": "0o100644",
+        "mtime_ns": 1700000000000000000,
+        "sha256": "7f8b1dfc466b6249f06cbe55c9174df2578e7754da793fded244ef5cba2a38f1",
+        "size": 8,
+        "uid": 0,
+        "xattrs": {}
+      },
+      "/persist/opaque": {
+        "gid": 0,
+        "mode": "0o40755",
+        "mtime_ns": 1700000000000000000,
+        "uid": 0,
+        "xattrs": {}
+      },
+      "/persist/opaque/new": {
+        "gid": 0,
+        "mode": "0o100644",
+        "mtime_ns": 1700000000000000000,
+        "sha256": "7aa7a5359173d05b63cfd682e3c38487f3cb4f7f1d60659fe59fab1505977d4c",
+        "size": 4,
+        "uid": 0,
+        "xattrs": {}
+      },
+      "/persist/permissions": {
+        "gid": 2345,
+        "mode": "0o106751",
+        "mtime_ns": 1700000000000000000,
+        "sha256": "d99f5c6a7787cafbdb79e10d5eeca9777b43042cb0fcfa6c6be4f567f288913e",
+        "size": 9,
+        "uid": 1234,
+        "xattrs": {
+          "system.posix_acl_access": "0200000001000700ffffffff020004002e16000004000500ffffffff10000500ffffffff20000100ffffffff",
+          "user.onlyboxes": "78617474722d76616c7565"
+        }
+      },
+      "/persist/renamed": {
+        "gid": 0,
+        "mode": "0o100644",
+        "mtime_ns": 1700000000000000000,
+        "sha256": "f34848ca92665c342abd5816c9e3eda0e82180671195362bcd0080544a3bc2ac",
+        "size": 5,
+        "uid": 0,
+        "xattrs": {}
+      },
+      "/persist/sparse": {
+        "gid": 0,
+        "mode": "0o100644",
+        "mtime_ns": 1700000000000000000,
+        "sha256": "82c9a667a2fdb3cbdbe845ce1234fdf09fff9e8fed500ad88c68d4dae0794d8c",
+        "size": 8388611,
+        "uid": 0,
+        "xattrs": {}
+      },
+      "/persist/symlink": {
+        "gid": 0,
+        "mode": "0o120777",
+        "mtime_ns": 1700000000000000000,
+        "target": "added",
+        "uid": 0,
+        "xattrs": {}
+      },
+      "/persist/untouched": {
+        "gid": 0,
+        "mode": "0o100644",
+        "mtime_ns": 1700000000000000000,
+        "sha256": "0967b63182a9178fa55b1b6b6f3db64bb615bc8ed4457d69ceb99faeecbf8ed7",
+        "size": 10,
+        "uid": 0,
+        "xattrs": {}
+      },
+      "/root/onlyboxes-probe": {
+        "gid": 0,
+        "mode": "0o100644",
+        "mtime_ns": 1700000000000000000,
+        "sha256": "39c31949abbaf8b5f9dbcfe5c1b6904b288ecfd83c9b1bf8821c1538cccd90ae",
+        "size": 16,
+        "uid": 0,
+        "xattrs": {}
+      },
+      "/usr/local/share/onlyboxes-probe": {
+        "gid": 0,
+        "mode": "0o100644",
+        "mtime_ns": 1700000000000000000,
+        "sha256": "39c31949abbaf8b5f9dbcfe5c1b6904b288ecfd83c9b1bf8821c1538cccd90ae",
+        "size": 16,
+        "uid": 0,
+        "xattrs": {}
+      }
+    },
+    "hardlinks": [
+      [
+        "/persist/added",
+        "/persist/hardlink"
+      ]
+    ],
+    "opaque_old_absent": true,
+    "sparse_blocks": 8,
+    "tmp_present": true
+  },
+  "cases": {
+    "docker-to-docker-commit": {
+      "equal": false,
+      "source_manifest_sha256": "f12c3023c87f76f822ea56bf8f693fdff6fb241295161ccba377cee280d93a47",
+      "target_manifest_sha256": "564247d5522306df163eaf66ff2f77bea967b0f4b286366666fc3cba998708d0",
+      "differences": {
+        "/persist/permissions#xattrs": {
+          "source": {
+            "system.posix_acl_access": "0200000001000700ffffffff020004002e16000004000500ffffffff10000500ffffffff20000100ffffffff",
+            "user.onlyboxes": "78617474722d76616c7565"
+          },
+          "target": {}
+        },
+        "sparse_blocks": {
+          "source": 8,
+          "target": 16392
+        }
+      }
+    },
+    "source-runtime-parity": {
+      "equal": true,
+      "source_manifest_sha256": "f12c3023c87f76f822ea56bf8f693fdff6fb241295161ccba377cee280d93a47",
+      "target_manifest_sha256": "f12c3023c87f76f822ea56bf8f693fdff6fb241295161ccba377cee280d93a47",
+      "differences": {}
+    },
+    "boxlite-to-boxlite-native": {
+      "equal": false,
+      "source_manifest_sha256": "f12c3023c87f76f822ea56bf8f693fdff6fb241295161ccba377cee280d93a47",
+      "target_manifest_sha256": "25b6e3dfd5705e4061c8209f37880d493cd08957efb67a9582471995a7a11e03",
+      "differences": {
+        "tmp_present": {
+          "source": true,
+          "target": false
+        }
+      }
+    },
+    "docker-to-boxlite-oci": {
+      "equal": false,
+      "source_manifest_sha256": "f12c3023c87f76f822ea56bf8f693fdff6fb241295161ccba377cee280d93a47",
+      "target_manifest_sha256": "27e41be9e025a5f07856e7d388357ed9b878edfbdfbcf3978a5b33b9cf39e0c3",
+      "differences": {
+        "/persist/symlink#mode": {
+          "source": "0o120777",
+          "target": "0o120755"
+        },
+        "/persist/permissions#xattrs": {
+          "source": {
+            "system.posix_acl_access": "0200000001000700ffffffff020004002e16000004000500ffffffff10000500ffffffff20000100ffffffff",
+            "user.onlyboxes": "78617474722d76616c7565"
+          },
+          "target": {}
+        },
+        "/persist/permissions#mode": {
+          "source": "0o106751",
+          "target": "0o104751"
+        },
+        "tmp_present": {
+          "source": true,
+          "target": false
+        }
+      }
+    },
+    "boxlite-to-docker-rootfs": {
+      "equal": false,
+      "source_manifest_sha256": "f12c3023c87f76f822ea56bf8f693fdff6fb241295161ccba377cee280d93a47",
+      "target_manifest_sha256": "f8ba73b827bf93245502ecba80078f330336f1c5f3277306272c3ea2d35f4344",
+      "differences": {
+        "sparse_blocks": {
+          "source": 8,
+          "target": 16392
+        },
+        "tmp_present": {
+          "source": true,
+          "target": false
+        }
+      }
+    },
+    "boxlite-rich-pax": {
+      "error": "storage error: PAX entry error: malformed pax extension"
+    },
+    "boxlite-to-docker-oci-delta": {
+      "equal": false,
+      "source_manifest_sha256": "f12c3023c87f76f822ea56bf8f693fdff6fb241295161ccba377cee280d93a47",
+      "target_manifest_sha256": "f8ba73b827bf93245502ecba80078f330336f1c5f3277306272c3ea2d35f4344",
+      "differences": {
+        "sparse_blocks": {
+          "source": 8,
+          "target": 16392
+        },
+        "tmp_present": {
+          "source": true,
+          "target": false
+        }
+      }
+    },
+    "boxlite-to-boxlite-oci-delta": {
+      "equal": false,
+      "source_manifest_sha256": "f12c3023c87f76f822ea56bf8f693fdff6fb241295161ccba377cee280d93a47",
+      "target_manifest_sha256": "27e41be9e025a5f07856e7d388357ed9b878edfbdfbcf3978a5b33b9cf39e0c3",
+      "differences": {
+        "/persist/symlink#mode": {
+          "source": "0o120777",
+          "target": "0o120755"
+        },
+        "/persist/permissions#xattrs": {
+          "source": {
+            "system.posix_acl_access": "0200000001000700ffffffff020004002e16000004000500ffffffff10000500ffffffff20000100ffffffff",
+            "user.onlyboxes": "78617474722d76616c7565"
+          },
+          "target": {}
+        },
+        "/persist/permissions#mode": {
+          "source": "0o106751",
+          "target": "0o104751"
+        },
+        "tmp_present": {
+          "source": true,
+          "target": false
+        }
+      }
+    },
+    "boxlite-oci-metadata-replay": {
+      "equal": false,
+      "source_manifest_sha256": "f12c3023c87f76f822ea56bf8f693fdff6fb241295161ccba377cee280d93a47",
+      "target_manifest_sha256": "25b6e3dfd5705e4061c8209f37880d493cd08957efb67a9582471995a7a11e03",
+      "differences": {
+        "tmp_present": {
+          "source": true,
+          "target": false
+        }
+      }
+    },
+    "docker-commit-metadata-replay": {
+      "equal": false,
+      "source_manifest_sha256": "f12c3023c87f76f822ea56bf8f693fdff6fb241295161ccba377cee280d93a47",
+      "target_manifest_sha256": "a38f01cee2009dc6ad555140aefb457c71f0acd81fd228741bb9552d4782a454",
+      "differences": {
+        "sparse_blocks": {
+          "source": 8,
+          "target": 16392
+        }
+      }
+    },
+    "docker-to-boxlite-native": {
+      "error": "storage error: Invalid archive: member 'blobs/' is Directory, only files are allowed"
+    },
+    "boxlite-to-docker-native": {
+      "error": "untar manifest \"manifest.json\": json: cannot unmarshal object into Go value of type []struct { Config string; RepoTags []string; Layers []string }"
+    },
+    "boxlite-native-missing-rootfs": {
+      "error": "storage error: Rootfs path does not exist: /private/tmp/onlyboxes-fs-portability-verified/base-oci"
+    }
+  }
+}
