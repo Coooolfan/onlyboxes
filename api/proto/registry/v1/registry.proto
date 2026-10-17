@@ -16,6 +16,63 @@ message TerminalSessionCapacity {
   int32 active_session_count = 2;
 }
 
+// Persistence is opt-in. An absent or disabled declaration cannot receive
+// snapshot controls. Runtime versions refer to the backend, not worker builds.
+message SandboxPersistenceCapabilities {
+  bool enabled = 1;
+  string runtime = 2;
+  string runtime_version = 3;
+  string guest_platform = 4;
+  repeated string read_formats = 5;
+  repeated string write_formats = 6;
+  int32 max_inflight = 7;
+  int64 available_staging_bytes = 8;
+}
+
+message SandboxPersistenceUsage {
+  int32 inflight = 1;
+  int64 available_staging_bytes = 2;
+}
+
+// Controls are separate from command dispatch and ordinary task deadlines.
+// Payloads contain action-specific private metadata, never archive bytes.
+message SandboxPersistenceControl {
+  enum Action {
+    ACTION_UNSPECIFIED = 0;
+    PREPARE_SNAPSHOT = 1;
+    UPLOAD_SNAPSHOT = 2;
+    VERIFY_SNAPSHOT = 3;
+    FINALIZE_SUSPEND = 4;
+    PREPARE_RESTORE = 5;
+    RESTORE = 6;
+    ACTIVATE = 7;
+    CANCEL = 8;
+    INSPECT = 9;
+  }
+  // New for each delivery. Operation/session/generation identify durable work.
+  string request_id = 1;
+  string operation_id = 2;
+  string scoped_session_id = 3;
+  int64 generation = 4;
+  Action action = 5;
+  int64 deadline_unix_ms = 6;
+  bytes payload_json = 7;
+}
+
+message SandboxPersistenceReport {
+  string request_id = 1;
+  string operation_id = 2;
+  string scoped_session_id = 3;
+  int64 generation = 4;
+  SandboxPersistenceControl.Action action = 5;
+  string phase = 6;
+  // Progress reports do not finish a control. Final reports must include an
+  // error or a valid JSON result (including for empty results: {}).
+  bool completed = 7;
+  CommandError error = 8;
+  bytes payload_json = 9;
+}
+
 message ConnectHello {
   string node_id = 1;
   string node_name = 2;
@@ -25,12 +82,14 @@ message ConnectHello {
   repeated CapabilityDeclaration capabilities = 10;
   string worker_secret = 11;
   TerminalSessionCapacity terminal_session_capacity = 12;
+  SandboxPersistenceCapabilities sandbox_persistence = 13;
 }
 
 message HeartbeatFrame {
   string node_id = 1;
   string session_id = 2;
   int32 active_session_count = 3;
+  SandboxPersistenceUsage sandbox_persistence = 4;
 }
 
 message ConnectRequest {
@@ -39,6 +98,7 @@ message ConnectRequest {
     HeartbeatFrame heartbeat = 2;
     CommandResult command_result = 3;
     TerminalSessionRecoveryReport terminal_session_recovery_report = 4;
+    SandboxPersistenceReport sandbox_persistence_report = 5;
   }
 }
 
@@ -100,6 +160,7 @@ message ConnectResponse {
     HeartbeatAck heartbeat_ack = 2;
     CommandDispatch command_dispatch = 4;
     TerminalSessionRecoveryAck terminal_session_recovery_ack = 5;
+    SandboxPersistenceControl sandbox_persistence_control = 6;
   }
 }
 

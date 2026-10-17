@@ -24,6 +24,7 @@ The SQLite migration adds stable sessions, operations, idempotency aliases, snap
 - Restore claims advance generation, including failed attempts. Stale generations cannot replace the current owner or publish a snapshot.
 - Account scope applies to session, operation, snapshot and part lookups.
 - Uploads, failed operations awaiting reconciliation, part ETags and valid snapshot references survive Console database reopen. Ordinary task startup failure recovery does not rewrite these records.
+- Canonical request parameters are stored alongside their SHA-256 so asynchronous recovery retains lease and retention settings without the original HTTP request. Transfer grants and credentials must not be stored as request parameters.
 - `FailAndHold` retains operation ownership when backend state is unknown. `ResolveFailed` requires the coordinator to have confirmed the source is running again, or that a restore target can no longer execute. A timeout by itself is not confirmation.
 - Source cleanup and target activation require separate acknowledgements. `Finish` releases operation ownership only after the corresponding committed lifecycle phase.
 
@@ -55,3 +56,5 @@ go test ./...
 ```
 
 The overall target behavior and planned APIs are documented in [the lifecycle design](../../docs/plan/sandbox-session-persistence-lifecycle.zh-CN.md) and [the storage/API design](../../docs/plan/sandbox-session-persistence-storage-api.zh-CN.md).
+
+The separate [worker protocol and restore placement](sandbox-snapshot-worker-protocol.md) implementation provides bounded controls and connection-scoped capacity reservations. It still requires runtime adapters and lifecycle/route integration before enabling public suspend/resume APIs.

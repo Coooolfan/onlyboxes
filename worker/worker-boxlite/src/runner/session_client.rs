@@ -304,6 +304,7 @@ async fn heartbeat_loop(
         outbound_tx
             .send(ConnectRequest {
                 payload: Some(connect_request::Payload::Heartbeat(HeartbeatFrame {
+                    sandbox_persistence: None,
                     node_id: cfg.worker_id.clone(),
                     session_id: session_id.clone(),
                     active_session_count: shared_active_session_count().await,
@@ -570,6 +571,7 @@ mod tests {
                                 let _ = shared.command_result_tx.send(result);
                             }
                             Some(test_connect_request::Payload::Hello(_))
+                            | Some(test_connect_request::Payload::SandboxPersistenceReport(_))
                             | Some(test_connect_request::Payload::TerminalSessionRecoveryReport(
                                 _,
                             ))

@@ -53,6 +53,8 @@ type activeSession struct {
 	terminalCapacityMu sync.RWMutex
 	terminalCapacity   terminalSessionCapacitySnapshot
 
+	persistence persistenceSession
+
 	recoveryMu         sync.RWMutex
 	recoveryRequired   bool
 	recoveryComplete   bool
@@ -94,6 +96,7 @@ func newActiveSessionAt(nodeID string, sessionID string, hello *registryv1.Conne
 		recoveryResults:    make(map[string]registryv1.TerminalSessionRecoveryResult_Status),
 	}
 	session.lastHeartbeatUnixMs.Store(observedAt.UnixMilli())
+	session.persistence.initialize(hello.GetSandboxPersistence())
 	_, session.recoveryRequired = session.capabilities[taskCapabilityTerminalExec]
 	session.recoveryComplete = !session.recoveryRequired
 	if capacity := hello.GetTerminalSessionCapacity(); capacity != nil {
@@ -436,6 +439,7 @@ func (s *activeSession) close(err error) {
 		}
 		s.closedErr = err
 		close(s.done)
+		s.persistence.close(err)
 
 		pending := func() map[string]*pendingCommand {
 			s.pendingMu.Lock()

@@ -70,6 +70,7 @@ pub(crate) fn build_hello(
             },
         ],
         worker_secret: cfg.worker_secret.clone(),
+        sandbox_persistence: None,
         terminal_session_capacity: Some(TerminalSessionCapacity {
             max_active_sessions: cfg.terminal_max_active_sessions as i32,
             active_session_count,

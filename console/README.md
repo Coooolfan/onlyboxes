@@ -354,3 +354,5 @@ curl -X POST "http://127.0.0.1:8089/mcp?token=<access-token>" \
 ```
 
 Sandbox snapshot storage primitives and publication/ownership contracts: [`docs/sandbox-snapshot-foundation.md`](docs/sandbox-snapshot-foundation.md).
+
+Snapshot worker controls and compatible restore placement: [`docs/sandbox-snapshot-worker-protocol.md`](docs/sandbox-snapshot-worker-protocol.md).

@@ -32,6 +32,22 @@ Sandbox workers send `ConnectHello.terminal_session_capacity` on every connectio
 
 `worker-sys` does not send this declaration. Console treats the snapshot as a scheduling hint; each sandbox worker remains the final capacity authority.
 
+## Sandbox Persistence
+
+The optional `ConnectHello.sandbox_persistence` declares runtime/version, guest
+platform, archive formats and resource limits. Enabled workers must refresh usage
+in `HeartbeatFrame.sandbox_persistence`. Absent declarations do not participate in
+snapshot placement.
+
+`SandboxPersistenceControl` / `SandboxPersistenceReport` carry lifecycle metadata
+over the authenticated stream separately from ordinary commands. Every report
+must echo its delivery request, operation, scoped session, generation and action.
+Archive data flows directly between Worker and object storage. These messages do
+not enable public lifecycle APIs or imply a worker implements snapshot export.
+
+See the [Console protocol contract](../../console/docs/sandbox-snapshot-worker-protocol.md)
+for admission, uncertainty and reconciliation requirements.
+
 ## Compatibility Rules
 - Project is pre-release; protocol refactors are allowed when all in-repo consumers are updated together.
 - Keep protobuf field tags stable within one rollout to avoid generator/caller mismatches.

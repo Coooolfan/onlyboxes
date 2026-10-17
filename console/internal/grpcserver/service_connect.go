@@ -163,6 +163,10 @@ func (s *RegistryService) Connect(stream grpc.BidiStreamingServer[registryv1.Con
 			if err := handleCommandResult(session, req.GetCommandResult()); err != nil {
 				return err
 			}
+		case req.GetSandboxPersistenceReport() != nil:
+			if err := session.persistence.resolve(req.GetSandboxPersistenceReport()); err != nil {
+				return status.Error(codes.InvalidArgument, err.Error())
+			}
 		case req.GetTerminalSessionRecoveryReport() != nil:
 			if !session.recoveryRequired {
 				return status.Error(codes.InvalidArgument, "terminal session recovery is not supported by this worker")
@@ -275,6 +279,9 @@ func (s *RegistryService) handleHeartbeat(ctx context.Context, session *activeSe
 	if heartbeat.GetActiveSessionCount() < 0 {
 		return status.Error(codes.InvalidArgument, "active_session_count must be non-negative")
 	}
+	if err := session.persistence.validateUsage(heartbeat.GetSandboxPersistence()); err != nil {
+		return status.Error(codes.InvalidArgument, err.Error())
+	}
 
 	now := s.nowFn()
 	if err := s.store.TouchWithSession(heartbeat.GetNodeId(), heartbeat.GetSessionId(), now); err != nil {
@@ -288,6 +295,7 @@ func (s *RegistryService) handleHeartbeat(ctx context.Context, session *activeSe
 	}
 	session.lastHeartbeatUnixMs.Store(now.UnixMilli())
 	session.setActiveSessionCount(heartbeat.GetActiveSessionCount(), now)
+	session.persistence.updateUsage(heartbeat.GetSandboxPersistence())
 	logTerminalSessionCapacityInvariant(session.nodeID, session.terminalSessionCapacitySnapshot())
 
 	if err := session.enqueueControl(ctx, newHeartbeatAck(s.heartbeatIntervalSec)); err != nil {
@@ -328,6 +336,9 @@ func validateHello(hello *registryv1.ConnectHello) error {
 		if capacity.GetActiveSessionCount() < 0 {
 			return status.Error(codes.InvalidArgument, "terminal_session_capacity.active_session_count must be non-negative")
 		}
+	}
+	if err := validatePersistenceCapabilities(hello); err != nil {
+		return status.Error(codes.InvalidArgument, err.Error())
 	}
 	return nil
 }
