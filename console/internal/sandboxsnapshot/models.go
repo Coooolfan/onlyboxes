@@ -76,6 +76,7 @@ func (s RestoreSpec) Validate() error {
 type Session struct {
 	OwnerID                string
 	SessionID              string
+	ScopedSessionID        string
 	State                  State
 	Generation             int64
 	Spec                   RestoreSpec
@@ -85,6 +86,16 @@ type Session struct {
 	RetentionExpiresUnixMS int64
 	CreatedAtUnixMS        int64
 	UpdatedAtUnixMS        int64
+}
+
+// ScopeSessionID is the stable worker-facing identity shared with terminal
+// routing. Account IDs cannot contain the ':' separator.
+func ScopeSessionID(owner, session string) string {
+	owner, session = strings.TrimSpace(owner), strings.TrimSpace(session)
+	if owner == "" || session == "" {
+		return session
+	}
+	return "obx:" + owner + ":" + session
 }
 
 type Operation struct {

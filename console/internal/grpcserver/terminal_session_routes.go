@@ -11,6 +11,7 @@ import (
 
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
 	"github.com/onlyboxes/onlyboxes/console/internal/registry"
+	"github.com/onlyboxes/onlyboxes/console/internal/sandboxsnapshot"
 )
 
 type terminalSessionRouteStore interface {
@@ -435,6 +436,19 @@ func (s *RegistryService) beginTerminalSessionRecoveryWithError(nodeID string, n
 		if !ok || route.NodeID != normalizedNodeID {
 			continue
 		}
+		if s.snapshotRepository != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), terminalRouteStoreTimeout)
+			persistent, lookupErr := s.snapshotRepository.SessionByScope(ctx, sessionID)
+			cancel()
+			if lookupErr != nil && !errors.Is(lookupErr, sandboxsnapshot.ErrNotFound) {
+				return nil, lookupErr
+			}
+			if lookupErr == nil && (persistent.State != sandboxsnapshot.Running || persistent.OperationID != "") {
+				// Lifecycle journals, not ordinary reconnect recovery, own frozen
+				// sources and unactivated targets. Never restart one as a terminal.
+				continue
+			}
+		}
 		leaseExpiresUnixMs := route.LeaseExpiresUnixMs
 		if leaseExpiresUnixMs <= 0 && s.terminalRouteTTL > 0 {
 			leaseExpiresUnixMs = route.LastUsedUnixMs + s.terminalRouteTTL.Milliseconds()
@@ -697,7 +711,7 @@ func (s *RegistryService) deleteTerminalSessionRoutesByNode(nodeID string) (int,
 
 func (s *RegistryService) deleteTerminalSessionRouteLocked(sessionID string, route terminalSessionRoute) {
 	delete(s.terminalSessionToNode, sessionID)
-	if s.proxyRouteSessionRevoker != nil {
+	if s.proxyRouteSessionRevoker != nil && !s.preserveSnapshotPreviews(sessionID) {
 		s.proxyRouteSessionRevoker.RevokeSessionRoutes(sessionID)
 	}
 	index := s.terminalNodeToSessionIDIndex[route.NodeID]

@@ -337,46 +337,32 @@ func TestStoreClearSessionReturnsErrorWhenDBClosed(t *testing.T) {
 	}
 }
 
-func TestProxyRoutesUseTerminalSessionForeignKey(t *testing.T) {
+func TestProxyRoutesRejectDanglingTerminalBindings(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
-	rows, err := store.Persistence().SQL.QueryContext(ctx, "PRAGMA foreign_key_list(proxy_routes)")
-	if err != nil {
-		t.Fatalf("list proxy route foreign keys: %v", err)
+	db := store.Persistence().SQL
+	if _, err := db.ExecContext(ctx, `INSERT INTO accounts(account_id,username,username_key,password_hash,hash_algo,is_admin,created_at_unix_ms,updated_at_unix_ms) VALUES ('owner','owner','owner','hash','test',0,1,1)`); err != nil {
+		t.Fatal(err)
 	}
-	defer rows.Close()
-
-	foundCascadeSession := false
-	foundCascadeWorker := false
-	for rows.Next() {
-		var id, seq int
-		var tableName, from, to, onUpdate, onDelete, match string
-		if err := rows.Scan(&id, &seq, &tableName, &from, &to, &onUpdate, &onDelete, &match); err != nil {
-			t.Fatalf("scan proxy route foreign key: %v", err)
-		}
-		if tableName != "terminal_session_routes" || onDelete != "CASCADE" {
-			continue
-		}
-		switch {
-		case from == "scoped_session_id" && to == "scoped_session_id":
-			foundCascadeSession = true
-		case from == "worker_id" && to == "node_id":
-			foundCascadeWorker = true
-		}
+	insert := `INSERT INTO proxy_routes(route_key,owner_id,session_id,scoped_session_id,worker_id,port,created_at_unix_ms,expires_at_unix_ms) VALUES ('preview','owner','session','obx:owner:session','worker',8080,1,10000)`
+	if _, err := db.ExecContext(ctx, insert); err == nil {
+		t.Fatal("accepted preview without terminal route")
 	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("iterate proxy route foreign keys: %v", err)
+	if err := store.UpsertConfirmedTerminalSessionRoute(ctx, TerminalSessionRoute{ScopedSessionID: "obx:owner:session", NodeID: "worker", LeaseExpiresUnixMs: 10000}); err != nil {
+		t.Fatal(err)
 	}
-	if !foundCascadeSession || !foundCascadeWorker {
-		t.Fatalf("proxy routes must cascade on terminal session and worker deletion: session=%v worker=%v", foundCascadeSession, foundCascadeWorker)
+	if _, err := db.ExecContext(ctx, insert); err != nil {
+		t.Fatal(err)
 	}
-
-	var triggerCount int
-	if err := store.Persistence().SQL.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND (name = 'ignore_proxy_routes_without_terminal_session' OR name = 'delete_proxy_routes_after_terminal_session_route')").Scan(&triggerCount); err != nil {
-		t.Fatalf("count legacy proxy route triggers: %v", err)
+	if _, err := db.ExecContext(ctx, `UPDATE proxy_routes SET worker_id='other' WHERE route_key='preview'`); err == nil {
+		t.Fatal("accepted wrong worker binding")
 	}
-	if triggerCount != 0 {
-		t.Fatalf("legacy proxy route triggers remain: %d", triggerCount)
+	if _, err := db.ExecContext(ctx, `DELETE FROM accounts WHERE account_id='owner'`); err != nil {
+		t.Fatal(err)
+	}
+	var remaining int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM proxy_routes`).Scan(&remaining); err != nil || remaining != 0 {
+		t.Fatalf("account deletion retained preview: %d %v", remaining, err)
 	}
 }
 

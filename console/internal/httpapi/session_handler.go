@@ -179,6 +179,14 @@ func (h *WorkerHandler) RenewSessionLease(c *gin.Context) {
 			c.JSON(http.StatusGatewayTimeout, gin.H{"error": "session lease renewal timed out"})
 		default:
 			var commandErr *grpcserver.CommandExecutionError
+			if errors.As(err, &commandErr) && commandErr.Code == "session_state_conflict" {
+				c.JSON(http.StatusConflict, gin.H{"error": commandErr.Message, "code": commandErr.Code})
+				return
+			}
+			if errors.As(err, &commandErr) && commandErr.Code == "session_unavailable" {
+				c.JSON(http.StatusServiceUnavailable, gin.H{"error": commandErr.Message, "code": commandErr.Code})
+				return
+			}
 			if errors.As(err, &commandErr) && commandErr.Code == "invalid_payload" {
 				c.JSON(http.StatusBadRequest, gin.H{"error": commandErr.Error()})
 				return

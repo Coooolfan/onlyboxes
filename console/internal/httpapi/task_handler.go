@@ -174,7 +174,9 @@ func (h *WorkerHandler) writeTaskSubmitError(c *gin.Context, err error) {
 	case errors.Is(err, grpcserver.ErrNoWorkerCapacity):
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": "no online worker capacity for requested capability"})
 	case errors.As(err, &commandErr):
-		if strings.EqualFold(strings.TrimSpace(commandErr.Code), terminalExecSessionUnavailableCode) {
+		if strings.EqualFold(strings.TrimSpace(commandErr.Code), terminalExecSessionStateConflictCode) {
+			c.JSON(http.StatusConflict, gin.H{"error": commandErr.Message, "code": commandErr.Code})
+		} else if strings.EqualFold(strings.TrimSpace(commandErr.Code), terminalExecSessionUnavailableCode) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": commandErr.Error()})
 		} else {
 			c.JSON(http.StatusBadGateway, gin.H{"error": commandErr.Error()})
@@ -198,6 +200,8 @@ func mapTaskTerminalStatusToHTTP(task grpcserver.TaskSnapshot) int {
 		return http.StatusConflict
 	case grpcserver.TaskStatusFailed:
 		switch task.ErrorCode {
+		case terminalExecSessionStateConflictCode:
+			return http.StatusConflict
 		case "no_capacity", terminalExecSessionCapacityCode:
 			return http.StatusTooManyRequests
 		case "no_worker", terminalExecSessionUnavailableCode:

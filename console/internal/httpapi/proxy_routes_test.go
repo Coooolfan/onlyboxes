@@ -371,6 +371,7 @@ func TestProxyRouteRestorePreservesURLAndDelete(t *testing.T) {
 	created := createProxyRouteForTest(t, newProxyRouteTestRouter(first), "owner-a", `{"session_id":"session-a","port":8080}`)
 
 	restoredResolver := &proxyRouteResolverStub{
+		target:        grpcserver.ProxySessionTarget{WorkerID: "worker-1", ScopedSessionID: "obx:owner-a:session-a"},
 		authorization: grpcserver.ProxyAuthorization{Upstream: "http://10.0.0.2:8091", Token: "new-route-token"},
 	}
 	restored := newProxyRouteHandlerWithStoreForTest(t, restoredResolver, store, now.Add(time.Minute), time.Hour)
@@ -400,6 +401,43 @@ func TestProxyRouteRestorePreservesURLAndDelete(t *testing.T) {
 	afterDelete := newProxyRouteHandlerWithStoreForTest(t, restoredResolver, store, now.Add(2*time.Minute), time.Hour)
 	if listed := listProxyRoutesForTest(t, newProxyRouteTestRouter(afterDelete), "owner-a"); listed.Total != 0 {
 		t.Fatalf("deleted route was restored: %#v", listed)
+	}
+}
+
+func TestProxyRouteURLFollowsCurrentSessionOwner(t *testing.T) {
+	now := time.Now()
+	resolver := &proxyRouteResolverStub{
+		target:        grpcserver.ProxySessionTarget{WorkerID: "worker-1", ScopedSessionID: "obx:owner-a:session-a"},
+		authorization: grpcserver.ProxyAuthorization{Upstream: "http://10.0.0.3:8091", Token: "restored-token"},
+	}
+	handler := newProxyRouteHandlerForTest(t, resolver, now, time.Hour)
+	router := newProxyRouteTestRouter(handler)
+	created := createProxyRouteForTest(t, router, "owner-a", `{"session_id":"session-a","port":8080}`)
+	resolve := func() *httptest.ResponseRecorder {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodGet, "/internal/v1/proxy/resolve", nil)
+		request.Header.Set(proxyInternalAuthHeader, "nginx-secret")
+		request.Header.Set(proxyOriginalHostHeader, created.RouteKey+".public-preview.example.com")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		return response
+	}
+	resolver.resolveErr = grpcserver.ErrProxySessionNotFound
+	if response := resolve(); response.Code != http.StatusForbidden {
+		t.Fatalf("suspended session preview remained open: %d", response.Code)
+	}
+	resolver.resolveErr = nil
+	resolver.target.WorkerID = "worker-2"
+	if response := resolve(); response.Code != http.StatusNoContent || resolver.authorizedWorkerID != "worker-2" {
+		t.Fatalf("preview retained source worker: status=%d worker=%s", response.Code, resolver.authorizedWorkerID)
+	}
+	if record, exists := handler.getRoute(created.RouteKey, now); !exists || record.WorkerID != "worker-1" || handler.routeResponse(record).URL != created.URL {
+		t.Fatal("restore required rewriting the cached URL record")
+	}
+	resolver.target.ScopedSessionID = "obx:owner-b:session-a"
+	resolver.authorizedWorkerID = ""
+	if response := resolve(); response.Code != http.StatusForbidden || resolver.authorizedWorkerID != "" {
+		t.Fatal("preview resolution crossed account scope")
 	}
 }
 

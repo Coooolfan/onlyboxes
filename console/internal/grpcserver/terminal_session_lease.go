@@ -36,6 +36,12 @@ func (s *RegistryService) RenewTerminalSessionLease(
 	if leaseTTLSec <= 0 {
 		return TerminalSessionView{}, ErrTerminalLeaseInvalid
 	}
+	s.persistenceDispatchMu.RLock()
+	expectedGeneration, gateErr := s.checkPersistentExecution(ctx, scopeTerminalSessionID(normalizedOwnerID, normalizedSessionID), "")
+	s.persistenceDispatchMu.RUnlock()
+	if gateErr != nil {
+		return TerminalSessionView{}, gateErr
+	}
 
 	view, ok := s.GetTerminalSession(normalizedOwnerID, normalizedSessionID, s.nowFn())
 	if !ok {
@@ -93,6 +99,15 @@ func (s *RegistryService) RenewTerminalSessionLease(
 		return TerminalSessionView{}, errors.New("worker returned invalid terminal lease renewal result")
 	}
 
+	s.persistenceDispatchMu.RLock()
+	defer s.persistenceDispatchMu.RUnlock()
+	generation, gateErr := s.checkPersistentExecution(ctx, scopedSessionID, view.WorkerID)
+	if gateErr != nil {
+		return TerminalSessionView{}, gateErr
+	}
+	if generation != expectedGeneration {
+		return TerminalSessionView{}, sessionStateConflictError()
+	}
 	updated, ok := s.GetTerminalSession(normalizedOwnerID, normalizedSessionID, s.nowFn())
 	if !ok {
 		return TerminalSessionView{}, errors.New("renewed terminal session route is unavailable")

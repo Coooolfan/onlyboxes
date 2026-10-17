@@ -1,6 +1,6 @@
 # Sandbox snapshot worker protocol
 
-Console's internal snapshot control channel uses the authenticated WorkerRegistry `Connect` stream. It is separate from `CommandDispatch`, ordinary capability inflight accounting and terminal command task recovery. This transport and restore placement implementation does not enable public suspend/resume endpoints. Runtime snapshot adapters, durable operation execution, route publication and configuration wiring are still required.
+Console's internal snapshot control channel uses the authenticated WorkerRegistry `Connect` stream. It is separate from `CommandDispatch`, ordinary capability inflight accounting and terminal command task recovery. This transport and restore placement implementation does not enable public suspend/resume endpoints. Runtime snapshot adapters, durable operation execution and configuration wiring are still required.
 
 ## Runtime declaration and placement
 
@@ -25,6 +25,8 @@ Reservations are pinned to the authenticated connection that admitted them. A re
 The durable operation record retains canonical request parameters alongside its hash, so restart recovery can recover retention and lease settings without the original HTTP request. It must not contain transfer grants or storage credentials.
 
 ## Validation
+
+Terminal execution gates and atomic route publication are described in the [storage foundation](sandbox-snapshot-foundation.md#execution-and-preview-gates). Persistent ordinary command payloads include `generation`, and `terminalExec.create_if_missing` is always false. Runtime adapters must reject stale generations and locally freeze execution/preview access during lifecycle ownership; Console gating alone does not stop already-issued route tokens or independent filesystem writers.
 
 Tests cover a real in-process gRPC control/report exchange while heartbeats continue, progress/final separation, scope and generation fencing, local validation, disconnect/cancellation uncertainty, late result handling, runtime compatibility, original-node fallback, reconnect rejection and independent concurrent limits for session slots, operation slots and staging bytes. These tests validate the control plane; they do not demonstrate a runtime snapshot export or a cross-machine restore.
 

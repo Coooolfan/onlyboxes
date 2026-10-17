@@ -200,6 +200,12 @@ func (s *RegistryService) SubmitTask(ctx context.Context, req SubmitTaskRequest)
 	}
 
 	if prepared.immediateResult == nil {
+		s.persistenceDispatchMu.RLock()
+		_, gateErr := s.checkPersistentExecution(ctx, terminalSessionIDFromPayload(dispatchCapability, inputJSON), prepared.targetNodeID)
+		s.persistenceDispatchMu.RUnlock()
+		if gateErr != nil {
+			return SubmitTaskResult{}, gateErr
+		}
 		var availabilityErr error
 		if prepared.targetNodeID != "" {
 			availabilityErr = s.checkTargetCapabilityAvailability(prepared.targetNodeID, dispatchCapability)

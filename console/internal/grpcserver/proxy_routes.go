@@ -281,6 +281,12 @@ func (s *RegistryService) proxyTerminalSessionWorker(scopedSessionID string, now
 		now = s.nowFn()
 	}
 	s.maybePruneTerminalSessionRoutes(now)
+	ctx, cancel := context.WithTimeout(context.Background(), terminalRouteStoreTimeout)
+	_, gateErr := s.checkPersistentExecution(ctx, scopedSessionID, "")
+	cancel()
+	if gateErr != nil {
+		return "", false
+	}
 
 	route, ok := s.terminalSessionRouteSnapshot(scopedSessionID, now)
 	if !ok || route.ReservationID != 0 || route.RecoveryState != terminalSessionRecoveryReady || strings.TrimSpace(route.NodeID) == "" {

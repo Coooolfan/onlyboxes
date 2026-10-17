@@ -36,12 +36,12 @@ type queryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
-const sessionColumns = `owner_id,session_id,state,generation,restore_spec_json,worker_id,latest_snapshot_id,operation_id,retention_expires_unix_ms,created_at_unix_ms,updated_at_unix_ms`
+const sessionColumns = `owner_id,session_id,state,generation,restore_spec_json,worker_id,latest_snapshot_id,operation_id,retention_expires_unix_ms,created_at_unix_ms,updated_at_unix_ms,scoped_session_id`
 
 func scanSession(row rowScanner) (Session, error) {
 	var s Session
 	var spec string
-	err := row.Scan(&s.OwnerID, &s.SessionID, &s.State, &s.Generation, &spec, &s.WorkerID, &s.LatestSnapshotID, &s.OperationID, &s.RetentionExpiresUnixMS, &s.CreatedAtUnixMS, &s.UpdatedAtUnixMS)
+	err := row.Scan(&s.OwnerID, &s.SessionID, &s.State, &s.Generation, &spec, &s.WorkerID, &s.LatestSnapshotID, &s.OperationID, &s.RetentionExpiresUnixMS, &s.CreatedAtUnixMS, &s.UpdatedAtUnixMS, &s.ScopedSessionID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return s, ErrNotFound
 	}
@@ -58,19 +58,8 @@ func (r *Repository) Session(ctx context.Context, owner, id string) (Session, er
 	return sessionIn(ctx, r.db, owner, id)
 }
 
-// RegisterRunning records the already-existing execution instance. No worker
-// command is dispatched by this method, and an existing record is never replaced.
-func (r *Repository) RegisterRunning(ctx context.Context, owner, id, worker string, spec RestoreSpec) error {
-	if owner == "" || id == "" || worker == "" {
-		return errors.New("running snapshot session requires owner, session and worker")
-	}
-	if err := spec.Validate(); err != nil {
-		return err
-	}
-	payload, _ := json.Marshal(spec)
-	now := r.now().UnixMilli()
-	_, err := r.db.ExecContext(ctx, `INSERT INTO sandbox_persistent_sessions (`+sessionColumns+`) VALUES (?,?,'running',1,?,?,'','',0,?,?)`, owner, id, string(payload), worker, now, now)
-	return err
+func (r *Repository) SessionByScope(ctx context.Context, scopedID string) (Session, error) {
+	return scanSession(r.db.QueryRowContext(ctx, `SELECT `+sessionColumns+` FROM sandbox_persistent_sessions WHERE scoped_session_id=?`, scopedID))
 }
 
 const operationColumns = `operation_id,owner_id,session_id,kind,idempotency_key,request_sha256,parameters_json,generation,status,phase,source_worker_id,target_worker_id,error_code,error_message,deadline_unix_ms,created_at_unix_ms,updated_at_unix_ms`
@@ -145,6 +134,17 @@ func (r *Repository) Begin(ctx context.Context, request BeginRequest) (Operation
 				return ErrAlreadyInState
 			}
 			return ErrConflict
+		}
+		if request.Kind == Suspend {
+			var worker string
+			var lease int64
+			err := tx.QueryRowContext(ctx, `SELECT node_id,lease_expires_unix_ms FROM terminal_session_routes WHERE scoped_session_id=?`, session.ScopedSessionID).Scan(&worker, &lease)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+			if err != nil || worker != session.WorkerID || lease <= now {
+				return ErrConflict
+			}
 		}
 		result = Operation{ID: uuid.NewString(), OwnerID: session.OwnerID, SessionID: session.SessionID, Kind: request.Kind, IdempotencyKey: request.IdempotencyKey, RequestSHA256: hash, Parameters: parameters, Generation: generation, Status: "pending", Phase: phase, SourceWorkerID: session.WorkerID, DeadlineUnixMS: request.DeadlineUnixMS, CreatedAtUnixMS: now, UpdatedAtUnixMS: now}
 		_, err = tx.ExecContext(ctx, `INSERT INTO sandbox_persistence_operations (`+operationColumns+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,'','','',?,?,?)`, result.ID, result.OwnerID, result.SessionID, result.Kind, result.IdempotencyKey, result.RequestSHA256, string(result.Parameters), result.Generation, result.Status, result.Phase, result.SourceWorkerID, result.DeadlineUnixMS, now, now)
@@ -422,6 +422,9 @@ func (r *Repository) CommitSuspend(ctx context.Context, op Operation, snapshotID
 		if _, err = tx.ExecContext(ctx, `UPDATE sandbox_persistent_sessions SET state='suspended',worker_id='',latest_snapshot_id=?,retention_expires_unix_ms=?,updated_at_unix_ms=? WHERE owner_id=? AND session_id=?`, snapshotID, expires, now.UnixMilli(), op.OwnerID, op.SessionID); err != nil {
 			return err
 		}
+		if err = removeExecutionRoute(ctx, tx, session.ScopedSessionID, op.SourceWorkerID); err != nil {
+			return err
+		}
 		_, err = tx.ExecContext(ctx, `UPDATE sandbox_persistence_operations SET phase='cleaning',status='running',updated_at_unix_ms=? WHERE operation_id=?`, now.UnixMilli(), op.ID)
 		return err
 	})
@@ -429,13 +432,13 @@ func (r *Repository) CommitSuspend(ctx context.Context, op Operation, snapshotID
 
 // CommitRestore records the selected new owner after backend readiness. A later
 // activation acknowledgement is required before the operation is finished.
-func (r *Repository) CommitRestore(ctx context.Context, op Operation, worker string) error {
+func (r *Repository) CommitRestore(ctx context.Context, op Operation, worker string, leaseExpiresUnixMS int64) error {
 	return r.transaction(ctx, func(tx *sql.Tx) error {
 		session, current, err := currentIn(ctx, tx, op)
 		if err != nil {
 			return err
 		}
-		if current.Kind != Resume || worker == "" || current.TargetWorkerID != worker {
+		if current.Kind != Resume || worker == "" || current.TargetWorkerID != worker || leaseExpiresUnixMS <= r.now().UnixMilli() {
 			return ErrConflict
 		}
 		if session.State == Running && session.WorkerID == worker && current.Phase == "activating" {
@@ -453,6 +456,9 @@ func (r *Repository) CommitRestore(ctx context.Context, op Operation, worker str
 		}
 		now := r.now().UnixMilli()
 		if _, err = tx.ExecContext(ctx, `UPDATE sandbox_persistent_sessions SET state='running',worker_id=?,updated_at_unix_ms=? WHERE owner_id=? AND session_id=?`, worker, now, op.OwnerID, op.SessionID); err != nil {
+			return err
+		}
+		if err = publishExecutionRoute(ctx, tx, session, worker, leaseExpiresUnixMS, now); err != nil {
 			return err
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE sandbox_persistence_operations SET phase='activating',status='running',updated_at_unix_ms=? WHERE operation_id=?`, now, op.ID)
@@ -475,6 +481,13 @@ func (r *Repository) Finish(ctx context.Context, op Operation) error {
 		}
 		if !((current.Kind == Suspend && session.State == Suspended && current.Phase == "cleaning") || (current.Kind == Resume && session.State == Running && current.Phase == "activating")) {
 			return ErrConflict
+		}
+		if current.Kind == Resume {
+			var worker string
+			var lease int64
+			if err = tx.QueryRowContext(ctx, `SELECT node_id,lease_expires_unix_ms FROM terminal_session_routes WHERE scoped_session_id=?`, session.ScopedSessionID).Scan(&worker, &lease); err != nil || worker != session.WorkerID || lease <= r.now().UnixMilli() {
+				return ErrConflict
+			}
 		}
 		now := r.now().UnixMilli()
 		if _, err = tx.ExecContext(ctx, `UPDATE sandbox_persistence_operations SET status='succeeded',phase='completed',updated_at_unix_ms=? WHERE operation_id=?`, now, op.ID); err != nil {
@@ -525,6 +538,11 @@ func (r *Repository) ResolveFailed(ctx context.Context, op Operation, confirmed 
 		worker := ""
 		if confirmed == Running {
 			worker = current.SourceWorkerID
+		}
+		if current.Kind == Resume {
+			if err = removeExecutionRoute(ctx, tx, session.ScopedSessionID, current.TargetWorkerID); err != nil {
+				return err
+			}
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE sandbox_persistent_sessions SET state=?,worker_id=?,operation_id='',updated_at_unix_ms=? WHERE owner_id=? AND session_id=?`, confirmed, worker, r.now().UnixMilli(), op.OwnerID, op.SessionID)
 		if err != nil {

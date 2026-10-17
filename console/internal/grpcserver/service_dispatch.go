@@ -130,6 +130,12 @@ func (s *RegistryService) dispatchCommand(
 	defer cancel()
 
 	terminalSessionID := terminalSessionIDFromPayload(capability, payloadJSON)
+	s.persistenceDispatchMu.RLock()
+	_, gateErr := s.checkPersistentExecution(commandCtx, terminalSessionID, options.targetNodeID)
+	s.persistenceDispatchMu.RUnlock()
+	if gateErr != nil {
+		return commandOutcome{}, gateErr
+	}
 	maxAttempts := 1
 	if capability == taskCapabilityTerminalExec && terminalSessionID != "" {
 		maxAttempts = len(s.listOnlineNodeIDsForCapability(capability, options.ownerID))
@@ -229,6 +235,11 @@ func (s *RegistryService) dispatchCommandAttempt(
 	terminalRouteReservationID uint64,
 	onDispatched func(commandID string) error,
 ) (dispatchAttemptResult, error) {
+	var persistentGeneration int64
+	gateSessionID := terminalSessionID
+	if gateSessionID == "" {
+		gateSessionID = terminalSessionIDFromPayload(capability, payloadJSON)
+	}
 	rollbackTerminalRouteReservation := func() routeReservationReleaseResult {
 		if terminalRouteReservationID == 0 || terminalSessionID == "" {
 			return routeReservationNotOwned
@@ -241,6 +252,14 @@ func (s *RegistryService) dispatchCommandAttempt(
 	}
 	confirmTerminalRouteInMemory := func() {
 		if terminalSessionID != "" {
+			s.persistenceDispatchMu.RLock()
+			defer s.persistenceDispatchMu.RUnlock()
+			gateCtx, cancel := context.WithTimeout(context.Background(), terminalRouteStoreTimeout)
+			defer cancel()
+			generation, err := s.checkPersistentExecution(gateCtx, gateSessionID, session.nodeID)
+			if err != nil || generation != persistentGeneration {
+				return
+			}
 			s.confirmTerminalSessionRoute(
 				terminalSessionID,
 				session.nodeID,
@@ -252,6 +271,19 @@ func (s *RegistryService) dispatchCommandAttempt(
 	commitTerminalRoute := func(resultPayload []byte) error {
 		if terminalSessionID == "" {
 			return nil
+		}
+		s.persistenceDispatchMu.RLock()
+		defer s.persistenceDispatchMu.RUnlock()
+		gateCtx, cancel := context.WithTimeout(context.Background(), terminalRouteStoreTimeout)
+		defer cancel()
+		generation, err := s.checkPersistentExecution(gateCtx, gateSessionID, session.nodeID)
+		if isCommandErrorCode(err, sessionStateConflictCode) || isCommandErrorCode(err, terminalSessionUnavailableCode) || (err == nil && generation != persistentGeneration) {
+			// A command admitted before suspend can finish, but its late result
+			// cannot republish the source route or extend a later generation.
+			return nil
+		}
+		if err != nil {
+			return err
 		}
 		confirmed, err := s.commitConfirmedTerminalSessionRoute(
 			terminalSessionID,
@@ -297,13 +329,23 @@ func (s *RegistryService) dispatchCommandAttempt(
 		dispatch.GetCommandDispatch().DeadlineUnixMs = deadline.UnixMilli()
 	}
 
-	if err := session.enqueueCommand(commandCtx, dispatch); err != nil {
+	persistentGeneration, err = s.enqueueFencedCommand(commandCtx, capability, gateSessionID, session, payloadJSON, func(ctx context.Context, payload []byte) error {
+		dispatch.GetCommandDispatch().PayloadJson = payload
+		return session.enqueueCommand(ctx, dispatch)
+	})
+	if err != nil {
 		rollbackTerminalRouteReservation()
+		if errors.Is(err, ErrNoWorkerCapacity) {
+			return dispatchAttemptResult{}, err
+		}
 		if errors.Is(err, context.DeadlineExceeded) {
 			return dispatchAttemptResult{}, context.DeadlineExceeded
 		}
 		if errors.Is(err, context.Canceled) {
 			return dispatchAttemptResult{}, context.Canceled
+		}
+		if isCommandErrorCode(err, sessionStateConflictCode) || isCommandErrorCode(err, terminalSessionUnavailableCode) {
+			return dispatchAttemptResult{}, err
 		}
 		if mapped := status.FromContextError(err); mapped.Code() != codes.Unknown {
 			return dispatchAttemptResult{}, mapped.Err()
@@ -359,6 +401,9 @@ func (s *RegistryService) dispatchCommandAttempt(
 			} else if err := s.clearTerminalSessionRoute(terminalSessionID, session.nodeID); err != nil {
 				return dispatchAttemptResult{}, status.Errorf(codes.Internal, "delete terminal session route: %v", err)
 			}
+			if persistentGeneration > 0 {
+				outcome.err = terminalSessionUnavailableError()
+			}
 		case isSessionCapacityCommandError(outcome.err):
 			releaseResult := rollbackTerminalRouteReservation()
 			return dispatchAttemptResult{
@@ -397,6 +442,18 @@ func (s *RegistryService) pickSessionForDispatch(
 	}
 	now := s.nowFn()
 	s.maybePruneTerminalSessionRoutes(now)
+	if s.snapshotRepository != nil {
+		generation, err := s.checkPersistentExecution(context.Background(), normalizedTerminalSessionID, "")
+		if err != nil {
+			return nil, 0, err
+		}
+		if generation > 0 {
+			route, exists := s.terminalSessionRouteSnapshot(normalizedTerminalSessionID, now)
+			if !exists || route.ReservationID != 0 {
+				return nil, 0, terminalSessionUnavailableError()
+			}
+		}
+	}
 	if route, exists := s.terminalSessionRouteSnapshot(normalizedTerminalSessionID, now); exists && route.ReservationID == 0 {
 		boundSession := s.getSession(route.NodeID)
 		if route.RecoveryState != terminalSessionRecoveryReady || boundSession == nil || !boundSession.isReady() {
@@ -665,7 +722,7 @@ func terminalSessionIDFromPayload(capability string, payload []byte) string {
 			return ""
 		}
 		return strings.TrimSpace(decoded.SessionID)
-	case taskCapabilityTerminalResource:
+	case taskCapabilityTerminalResource, taskCapabilityTerminalProxy:
 		var decoded terminalResourceScopedPayload
 		if err := json.Unmarshal(payload, &decoded); err != nil {
 			return ""

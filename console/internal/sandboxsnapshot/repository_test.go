@@ -26,7 +26,10 @@ func testRepository(t *testing.T) (*Repository, *persistence.DB, string) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	r := NewRepository(db.SQL)
-	if err = r.RegisterRunning(context.Background(), "owner", "session", "worker-a", testSpec()); err != nil {
+	if _, err = db.SQL.ExecContext(context.Background(), `INSERT INTO terminal_session_routes VALUES ('obx:owner:session','worker-a',?,1,1,1)`, time.Now().Add(time.Hour).UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	if err = r.AdoptRunning(context.Background(), "owner", "session", "worker-a", testSpec()); err != nil {
 		t.Fatal(err)
 	}
 	return r, db, file
@@ -90,7 +93,7 @@ func resume(t *testing.T, r *Repository, key, worker string) Operation {
 	if err := r.SetRestoreTarget(context.Background(), op, worker); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.CommitRestore(context.Background(), op, worker); err != nil {
+	if err := r.CommitRestore(context.Background(), op, worker, time.Now().Add(time.Hour).UnixMilli()); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.Finish(context.Background(), op); err != nil {
@@ -137,16 +140,16 @@ func TestVerifiedSnapshotCommitAndCrossWorkerOwnership(t *testing.T) {
 	if restore.Generation != op.Generation+1 {
 		t.Fatal("generation not advanced")
 	}
-	if err := r.CommitRestore(ctx, restore, "worker-b"); !errors.Is(err, ErrConflict) {
+	if err := r.CommitRestore(ctx, restore, "worker-b", time.Now().Add(time.Hour).UnixMilli()); !errors.Is(err, ErrConflict) {
 		t.Fatalf("unreserved restore: %v", err)
 	}
 	if err := r.SetRestoreTarget(ctx, restore, "worker-b"); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.CommitRestore(ctx, restore, "worker-a"); !errors.Is(err, ErrConflict) {
+	if err := r.CommitRestore(ctx, restore, "worker-a", time.Now().Add(time.Hour).UnixMilli()); !errors.Is(err, ErrConflict) {
 		t.Fatalf("wrong target committed: %v", err)
 	}
-	if err := r.CommitRestore(ctx, restore, "worker-b"); err != nil {
+	if err := r.CommitRestore(ctx, restore, "worker-b", time.Now().Add(time.Hour).UnixMilli()); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.CommitSuspend(ctx, op, "snap-a", time.Hour); !errors.Is(err, ErrConflict) {
@@ -390,7 +393,7 @@ func TestFailedActivationKeepsSnapshotAndRetentionForRetry(t *testing.T) {
 	if err := r.SetRestoreTarget(ctx, op, "worker-b"); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.CommitRestore(ctx, op, "worker-b"); err != nil {
+	if err := r.CommitRestore(ctx, op, "worker-b", time.Now().Add(time.Hour).UnixMilli()); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.FailAndHold(ctx, op, "timeout", "activation uncertain"); err != nil {

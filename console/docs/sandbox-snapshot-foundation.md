@@ -1,15 +1,15 @@
 # Sandbox snapshot storage foundation
 
-`internal/sandboxsnapshot` provides durable metadata and publication primitives for filesystem snapshots. `internal/objectstore.SnapshotStore` supplies a separate S3-compatible snapshot namespace. These packages do not expose suspend/resume HTTP endpoints or dispatch worker lifecycle commands.
+`internal/sandboxsnapshot` provides durable metadata, filesystem snapshot publication and atomic terminal route transitions. `internal/objectstore.SnapshotStore` supplies a separate S3-compatible snapshot namespace. These packages do not expose suspend/resume HTTP endpoints or execute worker lifecycle operations.
 
 ## Publication contract
 
-The lifecycle coordinator must stop filesystem writers before preparing an archive. It registers the running session with a pinned image and restore specification, then claims a durable suspend operation before backend side effects.
+The lifecycle coordinator opts in an existing session with `RegistryService.AdoptSnapshotSession`, supplying its pinned image and restore specification. Adoption requires a matching unexpired execution route and cannot overwrite an existing lifecycle or specification. It claims a durable suspend operation through `RegistryService.BeginSnapshotOperation` before backend side effects. The worker must stop all filesystem writers before preparing an archive.
 
 1. Construct a scoped archive reference with `SnapshotStore.Object`.
 2. Reserve account storage capacity and persist the upload plan. If a multipart upload has already been created but reservation fails, abort it. Creation whose response was lost requires multipart reconciliation; it is not a completed snapshot.
 3. Persist worker-reported part numbers, sizes and ETags. Use `PresignPart` to grant individual uploads without sharing bucket credentials. Persist IDs and plans, never presigned URLs.
-4. `Publisher.Publish` compares the part plan with S3, completes the object conditionally, verifies its full SHA-256 through an `ArchiveVerifier`, and writes the immutable manifest. Only then does it atomically publish the current snapshot and suspended state.
+4. `Publisher.Publish` compares the part plan with S3, completes the object conditionally, verifies its full SHA-256 through an `ArchiveVerifier`, and writes the immutable manifest. Only then does it atomically publish the current snapshot, suspended state and removal of the source execution route. Stable preview records remain until their own expiry or logical session deletion.
 5. Stop/remove the source instance and acknowledge that cleanup with `Repository.Finish`. Publication alone does not authorize deleting the source before its commit, activate a worker, or publish a terminal route.
 
 `ArchiveVerifier` is an explicit integration boundary: worker readback can run through a scoped GET grant so large archives do not flow through Console. `SnapshotStore.VerifySnapshot` implements streaming readback for adapter conformance and integration testing; it performs HEAD and GET and does not trust ETag or user object metadata as a content digest.
@@ -18,7 +18,7 @@ A lost Complete response can be reconciled only against the reserved size and fu
 
 ## Durable operation ownership
 
-The SQLite migration adds stable sessions, operations, idempotency aliases, snapshots and uploaded parts. It does not modify the existing terminal route state machine.
+SQLite records stable sessions, operations, idempotency aliases, snapshots and uploaded parts separately from transient execution routes. The repository publishes lifecycle state and execution route changes in the same transaction.
 
 - Equivalent concurrent requests join one operation. Every admitted idempotency key remains mapped to that operation across later suspend/resume cycles.
 - Restore claims advance generation, including failed attempts. Stale generations cannot replace the current owner or publish a snapshot.
@@ -28,7 +28,19 @@ The SQLite migration adds stable sessions, operations, idempotency aliases, snap
 - `FailAndHold` retains operation ownership when backend state is unknown. `ResolveFailed` requires the coordinator to have confirmed the source is running again, or that a restore target can no longer execute. A timeout by itself is not confirmation.
 - Source cleanup and target activation require separate acknowledgements. `Finish` releases operation ownership only after the corresponding committed lifecycle phase.
 
-For restore, reserve a compatible target before `SetRestoreTarget`; verify its readiness before `CommitRestore`; acknowledge activation before `Finish`. Publishing terminal routes and fencing worker execution remain responsibilities of the lifecycle coordinator and are not performed by the repository.
+For restore, reserve a compatible target before `SetRestoreTarget`; verify its readiness and absolute execution lease before `CommitRestore(ctx, operation, worker, leaseExpiresUnixMS)`. That transaction records the new owner, execution route and preview worker binding. Call `RegistryService.RefreshSnapshotRoute` to refresh the in-memory route while the operation still holds the execution gate, then acknowledge activation before `Finish`. `Finish` refuses an expired or missing execution route. Worker activation itself remains the lifecycle coordinator's responsibility.
+
+`ResolveFailed` removes a committed restore target's route atomically when the coordinator has confirmed that target can no longer execute. The previous valid snapshot and its retention survive failed activation.
+
+## Execution and preview gates
+
+Console consults durable lifecycle ownership before task submission, command dispatch, lease renewal and preview authorization, including when an in-memory source route remains after suspend publication. A lifecycle-owned session returns `session_state_conflict`; a running persistent session without a live route is unavailable. `create_if_missing` is forced to false for persistent commands, and commands carry their current `generation`. Runtime adapters must enforce that generation and their own local lifecycle fences before execution.
+
+`RegistryService.BeginSnapshotOperation` serializes lifecycle admission against persistent command enqueue. A command accepted before suspension can finish, but its captured generation cannot republish the source route or extend a later generation's lease. Database route guards also reject publication for suspended/restoring sessions and incorrect worker ownership. Direct repository admission is a storage primitive; the running lifecycle coordinator must use the RegistryService entry point.
+
+Ordinary terminal reconnect recovery excludes frozen sources and unactivated targets owned by persistence operations. Worker persistence journals must protect those resources and reconcile them through lifecycle controls before this feature is enabled; ordinary orphan cleanup cannot own them.
+
+Public preview URLs remain scoped to the stable account/session. Resolution obtains the current execution target rather than trusting the cached worker ID. Suspend and restore keep previews closed; activation lets the same unexpired URL reach the new worker. Existing preview TTLs remain independent of suspended-data retention. Ordinary non-persistent sessions still remove their previews when their runtime route is removed. Startup route pruning preserves durable operations and persistent preview records.
 
 ## Retention and storage accounting
 
@@ -46,7 +58,7 @@ The existing `CONSOLE_EXPORT_FILE_*` configuration and `exportFile` behavior rem
 
 ## Validation
 
-Database tests cover concurrent admission, durable idempotency, generation ownership, restart recovery, quota reservation, retention, manifest binding and GC exclusion. Publisher tests inject verification/manifest failures and verify the source ownership and previous recovery point remain intact.
+Database tests cover concurrent admission, durable idempotency, generation ownership, restart recovery, quota reservation, retention, manifest binding and GC exclusion. Route tests inject deletion/insertion failures to verify atomic lifecycle/route rollback, stable preview preservation and rebinding, failed activation cleanup and rejection of stale route writes. Migration tests cover existing rows and scope backfill. Publisher tests inject verification/manifest failures and verify the source ownership and previous recovery point remain intact.
 
 Object store tests exercise signed multipart requests against an HTTP S3 protocol fixture, conditional writes, part-plan mismatches, full readback corruption, response-loss retries, abort idempotence and version-pinned deletion. They are not a certification of a production S3-compatible provider. Real bucket capability and cross-machine worker restore tests are required before enabling the lifecycle APIs.
 
@@ -57,4 +69,4 @@ go test ./...
 
 The overall target behavior and planned APIs are documented in [the lifecycle design](../../docs/plan/sandbox-session-persistence-lifecycle.zh-CN.md) and [the storage/API design](../../docs/plan/sandbox-session-persistence-storage-api.zh-CN.md).
 
-The separate [worker protocol and restore placement](sandbox-snapshot-worker-protocol.md) implementation provides bounded controls and connection-scoped capacity reservations. It still requires runtime adapters and lifecycle/route integration before enabling public suspend/resume APIs.
+The separate [worker protocol and restore placement](sandbox-snapshot-worker-protocol.md) implementation provides bounded controls and connection-scoped capacity reservations. Runtime adapters, asynchronous operation execution/reconciliation, configuration, public lifecycle APIs, retention GC and real cross-worker acceptance are still required before the persistence feature is complete.

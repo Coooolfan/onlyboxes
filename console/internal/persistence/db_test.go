@@ -187,6 +187,51 @@ func TestOpenCreatesParentDirectoryWhenMissing(t *testing.T) {
 	}
 }
 
+func TestSnapshotRouteMigrationPreservesStablePreviews(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, Options{Path: filepath.Join(t.TempDir(), "snapshot-migration.db"), HashKey: "test-key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := goose.DownToContext(ctx, db.SQL, ".", 11); err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`INSERT INTO accounts(account_id,username,username_key,password_hash,hash_algo,is_admin,created_at_unix_ms,updated_at_unix_ms) VALUES ('owner','owner','owner','hash','test',0,1,1)`,
+		`INSERT INTO terminal_session_routes VALUES ('obx:owner:session','worker-a',100000,1,1,1)`,
+		`INSERT INTO proxy_routes VALUES ('preview','owner','session','obx:owner:session','worker-a',8080,1,100000)`,
+		`INSERT INTO sandbox_persistent_sessions(owner_id,session_id,state,generation,restore_spec_json,worker_id,created_at_unix_ms,updated_at_unix_ms) VALUES ('owner','session','running',1,'{}','worker-a',1,1)`,
+	} {
+		if _, err := db.SQL.ExecContext(ctx, statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := runMigrations(ctx, db.SQL); err != nil {
+		t.Fatal(err)
+	}
+	var scope, preview string
+	if err := db.SQL.QueryRowContext(ctx, `SELECT scoped_session_id FROM sandbox_persistent_sessions`).Scan(&scope); err != nil || scope != "obx:owner:session" {
+		t.Fatalf("scope backfill: %q %v", scope, err)
+	}
+	if err := db.SQL.QueryRowContext(ctx, `SELECT route_key FROM proxy_routes`).Scan(&preview); err != nil || preview != "preview" {
+		t.Fatalf("migration lost existing preview: %q %v", preview, err)
+	}
+	if _, err := db.SQL.ExecContext(ctx, `DELETE FROM terminal_session_routes`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SQL.QueryRowContext(ctx, `SELECT route_key FROM proxy_routes`).Scan(&preview); err != nil {
+		t.Fatal("transient route deletion lost stable preview", err)
+	}
+	if _, err := db.SQL.ExecContext(ctx, `UPDATE sandbox_persistent_sessions SET state='deleting'`); err != nil {
+		t.Fatal(err)
+	}
+	var remaining int
+	if err := db.SQL.QueryRowContext(ctx, `SELECT COUNT(*) FROM proxy_routes`).Scan(&remaining); err != nil || remaining != 0 {
+		t.Fatalf("logical deletion retained previews: %d %v", remaining, err)
+	}
+}
+
 func TestMultipleWorkerSysMigrationRejectsRollbackWithDuplicateOwner(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, Options{

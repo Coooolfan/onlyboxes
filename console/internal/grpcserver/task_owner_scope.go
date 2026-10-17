@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/onlyboxes/onlyboxes/console/internal/sandboxsnapshot"
+
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -59,16 +61,7 @@ func taskRequestScopeKey(ownerID string, requestID string) string {
 }
 
 func scopeTerminalSessionID(ownerID string, externalSessionID string) string {
-	normalizedOwnerID := normalizeTaskOwnerID(ownerID)
-	normalizedSessionID := strings.TrimSpace(externalSessionID)
-	if normalizedOwnerID == "" || normalizedSessionID == "" {
-		return normalizedSessionID
-	}
-	return strings.Join([]string{
-		taskOwnerScopePrefix,
-		normalizedOwnerID,
-		normalizedSessionID,
-	}, taskOwnerScopeSeparator)
+	return sandboxsnapshot.ScopeSessionID(ownerID, externalSessionID)
 }
 
 func validateExternalTerminalSessionID(sessionID string) error {

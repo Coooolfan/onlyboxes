@@ -12,6 +12,7 @@ import (
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
 	"github.com/onlyboxes/onlyboxes/console/internal/persistence"
 	"github.com/onlyboxes/onlyboxes/console/internal/registry"
+	"github.com/onlyboxes/onlyboxes/console/internal/sandboxsnapshot"
 )
 
 const (
@@ -78,6 +79,9 @@ type RegistryService struct {
 	sessions   map[string]*activeSession
 	roundRobin uint64
 
+	persistenceDispatchMu sync.RWMutex
+	snapshotRepository    *sandboxsnapshot.Repository
+
 	terminalRoutesMu             sync.RWMutex
 	terminalSessionToNode        map[string]terminalSessionRoute
 	terminalNodeToSessionIDIndex map[string]map[string]struct{}
@@ -113,7 +117,12 @@ func NewRegistryService(
 	for workerID, secret := range initialCredentials {
 		credentialCopy[workerID] = secret
 	}
+	var snapshotRepository *sandboxsnapshot.Repository
+	if store != nil && store.Persistence() != nil {
+		snapshotRepository = sandboxsnapshot.NewRepository(store.Persistence().SQL)
+	}
 	return &RegistryService{
+		snapshotRepository:           snapshotRepository,
 		store:                        store,
 		credentials:                  credentialCopy,
 		credentialHashAlgo:           "legacy-plain",

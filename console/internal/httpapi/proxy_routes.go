@@ -413,9 +413,20 @@ func (h *ProxyRouteHandler) Resolve(c *gin.Context) {
 		c.Status(http.StatusForbidden)
 		return
 	}
+	// Public URLs identify stable account-scoped sessions, even after a restore
+	// moves the runtime while this cached record keeps its original worker ID.
+	target, err := h.resolver.ResolveProxySession(record.OwnerID, record.SessionID, h.now())
+	if err != nil || target.ScopedSessionID != record.ScopedSessionID {
+		if err == nil || errors.Is(err, grpcserver.ErrProxySessionNotFound) || errors.Is(err, grpcserver.ErrProxyWorkerUnavailable) {
+			c.Status(http.StatusForbidden)
+		} else {
+			c.Status(http.StatusInternalServerError)
+		}
+		return
+	}
 	authorization, err := h.resolver.AuthorizeProxyRoute(
 		c.Request.Context(),
-		record.WorkerID,
+		target.WorkerID,
 		record.ScopedSessionID,
 		record.Port,
 		record.ExpiresAt,
