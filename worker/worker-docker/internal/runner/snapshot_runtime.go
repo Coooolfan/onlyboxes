@@ -426,7 +426,7 @@ func (r *dockerSnapshotRuntime) Import(ctx context.Context, file *os.File, archi
 		return "", err
 	}
 	var out bytes.Buffer
-	if err := dockerSnapshotCLI(ctx, file, &out, "import", "--platform", r.platform, "--change", "LABEL onlyboxes.snapshot.sha256="+archive.SHA256, "-", tag); err != nil {
+	if err := dockerSnapshotCLI(ctx, file, &out, "import", "--platform", r.platform, "--change", "LABEL onlyboxes.snapshot.sha256="+archive.SHA256, "--change", "LABEL onlyboxes.snapshot.import_tag="+tag, "-", tag); err != nil {
 		return "", err
 	}
 	id := strings.TrimSpace(out.String())

@@ -1,6 +1,8 @@
 package runner
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -12,6 +14,110 @@ import (
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
 	wire "github.com/onlyboxes/onlyboxes/api/sandboxpersistence"
 )
+
+func TestIntegrationSnapshotPurgeCollectsRepeatedAndLateImports(t *testing.T) {
+	if os.Getenv("DOCKER_INTEGRATION") != "1" {
+		t.Skip("set DOCKER_INTEGRATION=1 and DOCKER_SNAPSHOT_HELPER_IMAGE")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	backend, err := newDockerSnapshotRuntime(ctx, os.Getenv("DOCKER_SNAPSHOT_HELPER_IMAGE"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := newTerminalSessionManager(terminalSessionManagerConfig{WorkerID: "worker-a", PersistenceEnabled: true})
+	defer manager.Close()
+	journal := testSnapshotJournal(t)
+	controller, err := newSnapshotController(ctx, manager, journal, backend, snapshotControllerConfig{MaxInflight: 1, TmpQuotaBytes: 1 << 30, CacheTTL: time.Minute, DrainTimeout: time.Second, TransferConcurrency: 1, TransferIdleTimeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer controller.Close(context.Background())
+	var buffer bytes.Buffer
+	writer := tar.NewWriter(&buffer)
+	if err := writer.WriteHeader(&tar.Header{Name: "data", Mode: 0600, Size: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Write([]byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	op := testSnapshotOperation()
+	op.ID, op.SessionID = uuid.NewString(), "obx:owner:late-import-"+uuid.NewString()
+	op.Kind, op.Phase, op.ContainerID, op.LeaseExpiresUnixMS = "target", "prepared", "", 0
+	op.Spec.RuntimeVersion, op.Spec.Platform = backend.version, backend.platform
+	archive := transferTestArchive(buffer.Bytes())
+	op.Archive = &archive
+	file, err := os.CreateTemp(t.TempDir(), "archive")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	if _, err := file.Write(buffer.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+	tag := controller.imageTag(op)
+	var imported []string
+	defer func() {
+		_ = dockerSnapshotCLI(context.Background(), nil, io.Discard, "rm", "-f", terminalSessionResourceName(op.SessionID))
+		_ = dockerSnapshotCLI(context.Background(), nil, io.Discard, "image", "rm", tag)
+		for _, id := range imported {
+			_ = dockerSnapshotCLI(context.Background(), nil, io.Discard, "image", "rm", id)
+		}
+	}()
+	first, err := backend.Import(ctx, file, archive, op.Spec, tag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	imported = append(imported, first)
+	op.ImageID = first
+	if err := journal.Claim(op); err != nil {
+		t.Fatal(err)
+	}
+	// Docker import timestamps have one-second precision on some versions.
+	time.Sleep(1100 * time.Millisecond)
+	second, err := backend.Import(ctx, file, archive, op.Spec, tag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	imported = append(imported, second)
+	if first == second {
+		t.Fatal("test did not produce a distinct ambiguous import")
+	}
+	deletion := "delete-" + uuid.NewString()
+	snapshotControllerCall(t, controller, op.SessionID, deletion, 2, registryv1.SandboxPersistenceControl_CANCEL, wire.Control{PurgeSession: true, Spec: &op.Spec})
+	for _, id := range imported {
+		if err := dockerSnapshotCLI(ctx, nil, io.Discard, "image", "inspect", id); err == nil {
+			t.Fatal("repeated import image survived purge", id)
+		}
+	}
+	late, err := backend.Import(ctx, file, archive, op.Spec, tag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	imported = append(imported, late)
+	state, err := journal.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := make(map[string]time.Time)
+	controller.reconcileDeletedOperation(state.Operations[deletion], time.Now(), next)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if err := dockerSnapshotCLI(ctx, nil, io.Discard, "image", "inspect", late); err != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("late import survived tombstone reconciliation")
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if next[deletion].IsZero() {
+		t.Fatal("deletion sweep was not rate limited")
+	}
+}
 
 func TestIntegrationSnapshotPurgeFencesNativeNameAndSurvivesRestart(t *testing.T) {
 	if os.Getenv("DOCKER_INTEGRATION") != "1" {

@@ -99,4 +99,4 @@ Docker retains a stopped read-only helper container to reserve each deleted nati
 
 `GET /api/v1/persistence/stats` exposes account-scoped pending jobs/workers/snapshots, failures, cumulative retry cycles and the oldest pending time. It remains available with new persistence admission disabled. Cleanup work, worker acknowledgements and failure counters survive Console restart.
 
-Unregistered multipart/object sweeps, late runtime import debris, terminal journal compaction, BoxLite lifecycle integration, independent runtime lease enforcement after Worker process loss and real cross-machine acceptance remain required before persistence is complete.
+Unregistered multipart/object sweeps, terminal journal compaction, BoxLite lifecycle integration, independent runtime lease enforcement after Worker process loss and real cross-machine acceptance remain required before persistence is complete.

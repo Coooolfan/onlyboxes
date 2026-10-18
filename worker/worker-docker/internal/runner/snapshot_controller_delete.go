@@ -147,6 +147,13 @@ func (c *snapshotController) checkPurgeIdentity(ctx context.Context, id, scope s
 	}
 	return nil
 }
+
+type snapshotImportedImage struct {
+	ID       string `json:"Id"`
+	RepoTags []string
+	Config   struct{ Labels map[string]string }
+}
+
 func (c *snapshotController) removeImportTag(ctx context.Context, op snapshotOperation) error {
 	tag := c.imageTag(op)
 	var listed bytesBuffer
@@ -154,21 +161,47 @@ func (c *snapshotController) removeImportTag(ctx context.Context, op snapshotOpe
 		return err
 	}
 	id := strings.TrimSpace(listed.String())
-	if id == "" {
-		return nil
+	if id != "" {
+		var image snapshotImportedImage
+		if err := dockerSnapshotJSON(ctx, &image, "image", "inspect", "--format", "{{json .}}", id); err != nil {
+			return err
+		}
+		if image.ID != id || image.Config.Labels["onlyboxes.snapshot.sha256"] != op.Archive.SHA256 || (id != op.ImageID && image.Config.Labels["onlyboxes.snapshot.import_tag"] != tag) {
+			return errSnapshotJournalConflict
+		}
+		// Remove only the operation's tag. Another container or tag prevents forced
+		// reclamation; it must never be removed merely because its archive matches.
+		if err := dockerSnapshotCLI(ctx, nil, io.Discard, "image", "rm", tag); err != nil {
+			return err
+		}
 	}
-	var metadata struct {
-		ID     string `json:"Id"`
-		Config struct{ Labels map[string]string }
-	}
-	if err := dockerSnapshotJSON(ctx, &metadata, "image", "inspect", "--format", "{{json .}}", tag); err != nil {
+	// Repeated, ambiguously acknowledged imports can leave earlier images
+	// dangling after the same tag moves. Immutable operation labels identify them.
+	var dangling bytesBuffer
+	if err := dockerSnapshotCLI(ctx, nil, &dangling, "image", "ls", "--all", "--no-trunc", "--filter", "dangling=true", "--filter", "label=onlyboxes.snapshot.import_tag="+tag, "--format", "{{.ID}}"); err != nil {
 		return err
 	}
-	if metadata.ID != id || (op.ImageID != "" && id != op.ImageID) || metadata.Config.Labels["onlyboxes.snapshot.sha256"] != op.Archive.SHA256 {
-		return errSnapshotJournalConflict
+	seen := make(map[string]bool)
+	for _, imageID := range strings.Fields(dangling.String()) {
+		if seen[imageID] {
+			continue
+		}
+		seen[imageID] = true
+		var image snapshotImportedImage
+		if err := dockerSnapshotJSON(ctx, &image, "image", "inspect", "--format", "{{json .}}", imageID); err != nil {
+			return err
+		}
+		if image.ID != imageID || image.Config.Labels["onlyboxes.snapshot.sha256"] != op.Archive.SHA256 || image.Config.Labels["onlyboxes.snapshot.import_tag"] != tag {
+			return errSnapshotJournalConflict
+		}
+		if len(image.RepoTags) != 0 {
+			continue
+		}
+		if err := dockerSnapshotCLI(ctx, nil, io.Discard, "image", "rm", imageID); err != nil {
+			return err
+		}
 	}
-	// Untag only this operation. Never force-remove shared or administrator images.
-	return dockerSnapshotCLI(ctx, nil, io.Discard, "image", "rm", tag)
+	return nil
 }
 func (c *snapshotController) detachDeletedScope(scope string) {
 	m := c.manager

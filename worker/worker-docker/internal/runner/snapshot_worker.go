@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"sync/atomic"
@@ -238,6 +239,7 @@ func (c *snapshotController) Capabilities() *registryv1.SandboxPersistenceCapabi
 func (c *snapshotController) maintain(ctx context.Context) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	deletionSweeps := make(map[string]time.Time)
 	for {
 		select {
 		case <-ctx.Done():
@@ -256,6 +258,10 @@ func (c *snapshotController) maintain(ctx context.Context) {
 		}
 		for _, id := range state.Current {
 			op := state.Operations[id]
+			if op.Kind == "delete" && op.Phase == "deleted" {
+				c.reconcileDeletedOperation(op, time.Now(), deletionSweeps)
+				continue
+			}
 			if op.LeaseExpiresUnixMS <= 0 || op.LeaseExpiresUnixMS > time.Now().UnixMilli() {
 				continue
 			}
@@ -281,6 +287,18 @@ func (c *snapshotController) maintain(ctx context.Context) {
 		}
 		_ = c.evictCache()
 	}
+}
+
+// Native imports accepted before cancellation can finish after purge ACK.
+// Keep checking durable tombstones independently of Console cleanup jobs.
+func (c *snapshotController) reconcileDeletedOperation(op snapshotOperation, now time.Time, next map[string]time.Time) {
+	if now.Before(next[op.ID]) {
+		return
+	}
+	next[op.ID] = now.Add(time.Minute)
+	body, _ := json.Marshal(wire.Control{PurgeSession: true, Spec: &op.Spec})
+	run := c.admit("", &registryv1.SandboxPersistenceControl{RequestId: uuid.NewString(), OperationId: op.ID, ScopedSessionId: op.SessionID, Generation: op.Generation, Action: registryv1.SandboxPersistenceControl_CANCEL, DeadlineUnixMs: now.Add(10 * time.Second).UnixMilli(), PayloadJson: body})
+	go run()
 }
 
 func snapshotHeartbeatUsage() *registryv1.SandboxPersistenceUsage {
