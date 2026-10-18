@@ -388,7 +388,7 @@ func (c *SnapshotCoordinator) reconcile(ctx context.Context, op sandboxsnapshot.
 			return errSnapshotInProgress
 		}
 	} else if op.Kind == sandboxsnapshot.Suspend {
-		result, err := c.call(ctx, op, op.SourceWorkerID, registryv1.SandboxPersistenceControl_CANCEL, wire.Control{Rollback: true}, true)
+		result, err := c.call(ctx, op, op.SourceWorkerID, registryv1.SandboxPersistenceControl_CANCEL, wire.Control{Rollback: true, Spec: &session.Spec}, true)
 		if err != nil {
 			return err
 		}
@@ -421,7 +421,7 @@ func (c *SnapshotCoordinator) reconcile(ctx context.Context, op sandboxsnapshot.
 				// Cancel this target before restoring suspended ownership below.
 			}
 		}
-		result, err := c.call(ctx, op, op.TargetWorkerID, registryv1.SandboxPersistenceControl_CANCEL, wire.Control{}, true)
+		result, err := c.call(ctx, op, op.TargetWorkerID, registryv1.SandboxPersistenceControl_CANCEL, wire.Control{Delete: session.State == sandboxsnapshot.Running}, true)
 		if err != nil {
 			return err
 		}

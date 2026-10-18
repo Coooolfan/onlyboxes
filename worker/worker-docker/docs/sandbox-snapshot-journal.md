@@ -1,6 +1,6 @@
 # Snapshot operation ownership and recovery
 
-The Docker Worker has private journal and session-fencing primitives for filesystem persistence. They are integration boundaries for the lifecycle controller; the Worker does not yet advertise snapshot support or execute registry lifecycle controls.
+The Docker Worker has private journal and session-fencing primitives for filesystem persistence. The [internal lifecycle controller](sandbox-snapshot-controller.md) uses these primitives; startup and authenticated stream integration remain required. The Worker does not yet advertise snapshot support or execute registry lifecycle controls.
 
 ## Durable journal
 

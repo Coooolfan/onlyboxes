@@ -148,3 +148,5 @@ Recommended setting:
 Internal filesystem snapshot primitives and their tested boundaries: [Docker snapshot runtime adapter](docs/sandbox-snapshot-runtime.md). Persistence lifecycle controls are not enabled yet.
 
 Durable local operation records, execution generations and reconnect cleanup ownership: [Snapshot operation ownership](docs/sandbox-snapshot-journal.md).
+
+Internal lifecycle message handling, direct archive transfers and local cache behavior: [Snapshot lifecycle controller](docs/sandbox-snapshot-controller.md). Stream/startup integration and periodic maintenance remain required before enabling the feature.

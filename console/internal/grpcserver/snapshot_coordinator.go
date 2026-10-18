@@ -213,7 +213,7 @@ func snapshotFailure(err error) (string, string) {
 	var workerErr *CommandExecutionError
 	if errors.As(err, &workerErr) {
 		switch workerErr.Code {
-		case "session_capacity_exceeded", "snapshot_quota_exceeded", "snapshot_integrity_error", "session_state_conflict", "snapshot_storage_error", "persistence_unavailable":
+		case "no_capacity", "session_capacity_exceeded", "snapshot_quota_exceeded", "snapshot_integrity_error", "session_state_conflict", "snapshot_storage_error", "persistence_unavailable":
 			return workerErr.Code, "worker could not complete the sandbox lifecycle action"
 		}
 	}

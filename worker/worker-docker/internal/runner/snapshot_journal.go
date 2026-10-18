@@ -39,6 +39,10 @@ type snapshotOperation struct {
 	LeaseExpiresUnixMS int64            `json:"lease_expires_unix_ms,omitempty"`
 	StagingBytes       int64            `json:"staging_bytes"`
 	Committed          bool             `json:"snapshot_committed,omitempty"`
+	Verified           bool             `json:"verified,omitempty"`
+	RemoteVerified     bool             `json:"remote_verified,omitempty"`
+	CacheUntilUnixMS   int64            `json:"cache_until_unix_ms,omitempty"`
+	LeaseTTLSec        int              `json:"lease_ttl_sec,omitempty"`
 }
 
 func (o snapshotOperation) active() bool   { return o.Phase == "active" || o.Phase == "rolled_back" }
@@ -46,6 +50,18 @@ func (o snapshotOperation) terminal() bool { return o.Phase == "finalized" || o.
 func (o snapshotOperation) held() bool     { return !o.active() && !o.terminal() }
 
 func (o snapshotOperation) validate() error {
+	if o.Kind == "cancel" {
+		empty, _ := json.Marshal(wire.RestoreSpec{})
+		spec, _ := json.Marshal(o.Spec)
+		if o.Phase == "canceled" && snapshotOperationID.MatchString(o.ID) && validPersistenceScope(o.SessionID) && o.Generation > 0 && bytes.Equal(empty, spec) && o.Archive == nil && o.Artifact == "" && o.ContainerID == "" && o.ImageID == "" && o.StagingBytes == 0 && o.LeaseExpiresUnixMS == 0 && !o.Committed && !o.Verified && !o.RemoteVerified && o.LeaseTTLSec == 0 && o.CacheUntilUnixMS == 0 {
+			return nil
+		}
+		return errSnapshotJournalConflict
+	}
+	if o.RemoteVerified && (o.Kind != "source" || !o.Verified || o.Archive == nil) {
+		return errSnapshotJournalConflict
+	}
+
 	if !snapshotOperationID.MatchString(o.ID) || !validPersistenceScope(o.SessionID) || o.Generation <= 0 || o.Spec.Validate() != nil || o.Spec.Runtime != "docker" || o.StagingBytes < 0 || o.StagingBytes > 1<<60 {
 		return errSnapshotJournalConflict
 	}
@@ -99,6 +115,7 @@ type snapshotJournalState struct {
 	WorkerID   string                       `json:"worker_id"`
 	Current    map[string]string            `json:"current"`
 	Operations map[string]snapshotOperation `json:"operations"`
+	Probes     map[string]string            `json:"probes,omitempty"`
 }
 
 type snapshotJournal struct {
@@ -152,6 +169,11 @@ func openSnapshotJournal(root, worker string) (*snapshotJournal, error) {
 		_ = file.Close()
 		if err != nil || j.state.Version != 1 || j.state.WorkerID != worker || j.state.Operations == nil || j.state.Current == nil {
 			return fail()
+		}
+		for scope, id := range j.state.Probes {
+			if !validPersistenceScope(scope) || !dockerSnapshotDigest.MatchString("sha256:"+id) {
+				return fail()
+			}
 		}
 		for id, op := range j.state.Operations {
 			if id != op.ID || op.validate() != nil {
@@ -272,7 +294,7 @@ func (j *snapshotJournal) Claim(op snapshotOperation) error {
 		}
 		if id := state.Current[op.SessionID]; id != "" {
 			prior := state.Operations[id]
-			if !snapshotSpecEqual(prior.Spec, op.Spec) {
+			if prior.Kind != "cancel" && !snapshotSpecEqual(prior.Spec, op.Spec) {
 				return errSnapshotJournalConflict
 			}
 			if !((prior.active() && op.Kind == "source" && prior.Generation == op.Generation) || (prior.terminal() && op.Kind == "target" && prior.Generation < op.Generation)) {
@@ -287,6 +309,9 @@ func (j *snapshotJournal) Claim(op snapshotOperation) error {
 			}
 		}
 		state.Operations[op.ID] = op
+		if op.Generation > 1 {
+			delete(state.Probes, op.SessionID)
+		}
 		state.Current[op.SessionID] = op.ID
 		return nil
 	})
@@ -340,4 +365,40 @@ func snapshotArtifactName(session, operation string, generation int64) string {
 	identity, _ := json.Marshal([]any{session, operation, generation})
 	hash := sha256.Sum256(identity)
 	return hex.EncodeToString(hash[:]) + ".tar"
+}
+
+func (j *snapshotJournal) CancelUnknown(id, scope string, generation int64) error {
+	if !snapshotOperationID.MatchString(id) || !validPersistenceScope(scope) || generation <= 0 {
+		return errSnapshotJournalConflict
+	}
+	return j.transaction(func(state *snapshotJournalState) error {
+		if _, known := state.Operations[id]; known {
+			return errSnapshotJournalConflict
+		}
+		op := snapshotOperation{ID: id, SessionID: scope, Generation: generation, Kind: "cancel", Phase: "canceled"}
+		state.Operations[id] = op
+		current := state.Operations[state.Current[scope]]
+		if current.ID == "" || current.terminal() && current.Generation < generation {
+			state.Current[scope] = id
+		}
+		return nil
+	})
+}
+
+// Probe binds initial adoption to an immutable instance without freezing it or
+// changing its execution generation. A delayed legacy create cannot replace it.
+func (j *snapshotJournal) Probe(scope, id string) error {
+	if !validPersistenceScope(scope) || !dockerSnapshotDigest.MatchString("sha256:"+id) {
+		return errSnapshotJournalConflict
+	}
+	return j.transaction(func(state *snapshotJournalState) error {
+		if prior := state.Probes[scope]; prior != "" && prior != id {
+			return errSnapshotJournalConflict
+		}
+		if state.Probes == nil {
+			state.Probes = map[string]string{}
+		}
+		state.Probes[scope] = id
+		return nil
+	})
 }

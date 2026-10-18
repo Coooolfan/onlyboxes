@@ -162,6 +162,8 @@ type terminalSessionManager struct {
 	mu                       sync.Mutex
 	sessions                 map[string]*terminalSession
 	persistenceFences        map[string]terminalPersistenceFence
+	persistenceBootstrap     map[string]string
+	persistenceLeaseWriter   func(string, int64, time.Time) error
 	persistenceRecoveryHolds map[string]bool
 	persistenceFailed        bool
 
@@ -404,6 +406,12 @@ func (m *terminalSessionManager) RenewLease(_ context.Context, req terminalLease
 		return terminalLeaseRenewResult{}, newTerminalExecError(terminalExecCodeSessionNotFound, terminalExecNoSessionMessage)
 	}
 	if session.leaseExpiresAt.Before(leaseTarget) {
+		if _, persistent := m.persistenceFences[sessionID]; persistent && m.persistenceLeaseWriter != nil {
+			if err := m.persistenceLeaseWriter(sessionID, req.Generation, leaseTarget); err != nil {
+				m.persistenceFailed = true
+				return terminalLeaseRenewResult{}, newTerminalExecError("persistence_unavailable", "could not persist execution lease")
+			}
+		}
 		session.leaseExpiresAt = leaseTarget
 		m.scheduleSessionLeaseTimerLocked(session)
 	}
@@ -682,6 +690,9 @@ func (m *terminalSessionManager) claimSession(
 	if err := m.persistenceConflictLocked(sessionID, generation); err != nil {
 		return nil, false, err
 	}
+	if m.persistenceBootstrap[sessionID] != "" && m.sessions[sessionID] == nil {
+		return nil, false, newTerminalExecError("session_state_conflict", "inspected source requires its original instance")
+	}
 	if fence, exists := m.persistenceFences[sessionID]; exists && (m.sessions[sessionID] == nil || !m.sessions[sessionID].leaseExpiresAt.After(time.Now()) || !fence.active) {
 		return nil, false, newTerminalExecError("session_state_conflict", "persistent session requires its existing active instance")
 	}
@@ -694,6 +705,14 @@ func (m *terminalSessionManager) claimSession(
 	if ok && existing != nil && !existing.destroying {
 		if existing.inflight >= m.sessionMaxInflight {
 			return nil, false, newTerminalExecError(terminalExecCodeSessionBusy, terminalExecBusyMessage)
+		}
+		if existing.leaseExpiresAt.Before(leaseTarget) {
+			if _, persistent := m.persistenceFences[sessionID]; persistent && m.persistenceLeaseWriter != nil {
+				if err := m.persistenceLeaseWriter(sessionID, generation, leaseTarget); err != nil {
+					m.persistenceFailed = true
+					return nil, false, newTerminalExecError("persistence_unavailable", "could not persist execution lease")
+				}
+			}
 		}
 		existing.inflight++
 		if existing.leaseExpiresAt.Before(leaseTarget) {

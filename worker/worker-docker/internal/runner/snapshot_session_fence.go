@@ -33,7 +33,7 @@ var recoverPersistenceSessionsFn = func(_ context.Context, ordinary []*registryv
 
 func (m *terminalSessionManager) persistenceConflictLocked(sessionID string, generation int64) error {
 	fence, exists := m.persistenceFences[sessionID]
-	if m.persistenceFailed || (exists && (!fence.active || fence.generation != generation)) || (!exists && generation != 0) {
+	if m.persistenceFailed || (exists && (!fence.active || fence.generation != generation)) || (!exists && generation != 0 && !(generation == 1 && m.persistenceBootstrap[sessionID] != "" && m.sessions[sessionID] != nil && m.sessions[sessionID].persistenceContainerID == m.persistenceBootstrap[sessionID])) {
 		return newTerminalExecError("session_state_conflict", "sandbox lifecycle or generation does not allow execution")
 	}
 	return nil
@@ -63,6 +63,10 @@ func (m *terminalSessionManager) InstallSnapshotJournal(journal *snapshotJournal
 			m.persistenceFailed = true
 			return errSnapshotJournalConflict
 		}
+	}
+	m.persistenceBootstrap = make(map[string]string, len(state.Probes))
+	for scope, id := range state.Probes {
+		m.persistenceBootstrap[scope] = id
 	}
 	m.persistenceFences = make(map[string]terminalPersistenceFence, len(state.Current))
 	for session, id := range state.Current {
