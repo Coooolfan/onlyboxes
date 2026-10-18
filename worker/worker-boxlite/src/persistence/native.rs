@@ -38,6 +38,7 @@ type Result<T> = std::result::Result<T, NativeError>;
 
 pub struct NativeInstance {
     pub box_id: String,
+    pub box_name: String,
     pub spec: RestoreSpec,
     pub status: BoxStatus,
     pub pid: Option<u32>,
@@ -66,7 +67,8 @@ impl NativeRuntime {
     }
 
     pub async fn inspect(&self, scope: &str, box_id: &str) -> Result<NativeInstance> {
-        self.inspect_known(scope, box_id, None).await
+        self.inspect_known(scope, box_id, &terminal_name(scope), None)
+            .await
     }
 
     pub async fn inspect_target(
@@ -88,8 +90,13 @@ impl NativeRuntime {
             return Err(NativeError::Conflict);
         }
         let spec = op.restore_spec.as_ref().ok_or(NativeError::Conflict)?;
-        self.inspect_known(&op.scoped_session_id, &op.box_id, Some(spec))
-            .await
+        self.inspect_known(
+            &op.scoped_session_id,
+            &op.box_id,
+            &target_name(&op.scoped_session_id, &op.operation_id, op.generation),
+            Some(spec),
+        )
+        .await
     }
 
     pub async fn inspect_source(
@@ -109,7 +116,7 @@ impl NativeRuntime {
             return Err(NativeError::Conflict);
         }
         let spec = op.restore_spec.as_ref().ok_or(NativeError::Conflict)?;
-        let imported = state.operations.values().any(|prior| {
+        let mut origins = state.operations.values().filter(|prior| {
             prior.kind == Kind::Target
                 && prior.phase == Phase::Active
                 && prior.verified
@@ -119,8 +126,26 @@ impl NativeRuntime {
                 && prior.box_id == op.box_id
                 && prior.restore_spec == op.restore_spec
         });
+        let imported = origins.next();
+        if origins.next().is_some() {
+            return Err(NativeError::Conflict);
+        }
+        let name = imported
+            .map(|prior| {
+                target_name(
+                    &prior.scoped_session_id,
+                    &prior.operation_id,
+                    prior.generation,
+                )
+            })
+            .unwrap_or_else(|| terminal_name(&op.scoped_session_id));
         let inspected = self
-            .inspect_known(&op.scoped_session_id, &op.box_id, imported.then_some(spec))
+            .inspect_known(
+                &op.scoped_session_id,
+                &op.box_id,
+                &name,
+                imported.map(|_| spec),
+            )
             .await?;
         if &inspected.spec != spec {
             return Err(NativeError::Conflict);
@@ -132,6 +157,7 @@ impl NativeRuntime {
         &self,
         scope: &str,
         box_id: &str,
+        name: &str,
         expected: Option<&RestoreSpec>,
     ) -> Result<NativeInstance> {
         if !valid_scope(scope) || !valid_id(box_id) {
@@ -144,8 +170,7 @@ impl NativeRuntime {
             .map_err(|_| NativeError::Unavailable)?
             .ok_or(NativeError::Missing)?;
         let info = native.info().await.map_err(|_| NativeError::Unavailable)?;
-        if info.id.as_str() != box_id || info.name.as_deref() != Some(terminal_name(scope).as_str())
-        {
+        if info.id.as_str() != box_id || info.name.as_deref() != Some(name) {
             return Err(NativeError::Conflict);
         }
         if !matches!(info.status, BoxStatus::Running | BoxStatus::Stopped)
@@ -168,6 +193,7 @@ impl NativeRuntime {
         }
         Ok(NativeInstance {
             box_id: box_id.to_owned(),
+            box_name: name.to_owned(),
             spec,
             status: info.status,
             pid: info.pid,
@@ -293,20 +319,21 @@ fn read_config(home: &Path, id: &str) -> Result<BoxConfig> {
     if version != 10 {
         return Err(NativeError::Unsupported);
     }
-    let data: Option<String> = transaction
+    let data: Option<(Option<String>, String)> = transaction
         .query_row(
-            "SELECT json FROM box_config WHERE id=?1 AND length(CAST(json AS BLOB))<=?2",
+            "SELECT name,json FROM box_config WHERE id=?1 AND length(CAST(json AS BLOB))<=?2",
             rusqlite::params![id, CONFIG_LIMIT as i64],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()
         .map_err(|_| NativeError::Unavailable)?;
-    let data = data.ok_or(NativeError::Unsupported)?;
+    let (stored_name, data) = data.ok_or(NativeError::Unsupported)?;
     let value: serde_json::Value =
         serde_json::from_str(&data).map_err(|_| NativeError::Unsupported)?;
     let config: BoxConfig =
         serde_json::from_value(value.clone()).map_err(|_| NativeError::Unsupported)?;
     if config.id.as_str() != id
+        || config.name != stored_name
         || fs::canonicalize(&config.box_home).map_err(|_| NativeError::Conflict)?
             != home.join("boxes").join(id)
     {
@@ -459,6 +486,15 @@ pub fn terminal_name(scope: &str) -> String {
     )
 }
 
+/// Operation and generation are immutable journal identities. A native import
+/// can be discovered after a lost SDK acknowledgement without using the legacy
+/// stable session name, which may still refer to an older generation.
+pub fn target_name(scope: &str, operation: &str, generation: i64) -> String {
+    let tuple =
+        serde_json::to_vec(&(scope, operation, generation)).expect("string tuple serializes");
+    format!("onlyboxes-restore-v1-{:x}", Sha256::digest(tuple))
+}
+
 pub fn guest_platform() -> Result<&'static str> {
     match std::env::consts::ARCH {
         "aarch64" => Ok("linux/arm64"),
@@ -473,3 +509,6 @@ mod tests;
 
 #[path = "native_export.rs"]
 mod export;
+
+#[path = "native_import.rs"]
+mod import;

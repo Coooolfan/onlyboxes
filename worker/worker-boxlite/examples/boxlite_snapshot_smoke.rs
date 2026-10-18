@@ -14,14 +14,13 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use boxlite::{
-    BoxArchive, BoxCommand, BoxOptions, BoxStatus, BoxliteOptions, BoxliteRuntime, LiteBox,
-    RootfsSpec,
+    BoxCommand, BoxOptions, BoxStatus, BoxliteOptions, BoxliteRuntime, LiteBox, RootfsSpec,
 };
 use sha2::{Digest, Sha256};
 use tokio_stream::StreamExt;
 use worker_boxlite::persistence::{
-    prepare_import_archive, terminal_name, Archive, ArchiveLimits, Journal, Kind, NativeRuntime,
-    Operation, Phase, RestoreSpec,
+    terminal_name, Archive, ArchiveLimits, Journal, Kind, NativeRuntime, Operation, Phase,
+    RestoreSpec,
 };
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
@@ -370,44 +369,8 @@ async fn phase(phase: &str, root: &Path, image: &str) -> Result<()> {
             let started = Instant::now();
             let (spec, descriptor): (RestoreSpec, Archive) =
                 serde_json::from_slice(&std::fs::read(root.join("snapshot.meta.json"))?)?;
-            let staged = root.join("target-import.boxlite");
-            let download_root = root.join("target-download");
-            std::fs::create_dir(&download_root)?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&download_root, std::fs::Permissions::from_mode(0o700))?;
-            }
-            let transfer =
-                worker_boxlite::persistence::Transfer::new(4, std::time::Duration::from_secs(30))?;
-            let downloaded = transfer
-                .download(
-                    &snapshot_store::grant(&endpoint, "GET", descriptor.size_bytes, 0, None),
-                    &descriptor,
-                    download_root.join("snapshot.boxlite"),
-                    tokio_util::sync::CancellationToken::new(),
-                )
-                .await?;
-            let mut input = downloaded.file;
-            let mut output = std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create_new(true)
-                .open(&staged)?;
-            prepare_import_archive(
-                &mut input,
-                &mut output,
-                &spec,
-                "obx:smoke:session",
-                &descriptor,
-                ArchiveLimits {
-                    max_bytes: 256 << 20,
-                    max_expanded_bytes: 64 << 30,
-                },
-            )?;
-            drop(output);
             let journal = Arc::new(Journal::open(root.join("target-journal"), "smoke-target")?);
-            journal.claim(Operation {
+            let initial = Operation {
                 operation_id: "restore-operation".into(),
                 scoped_session_id: "obx:smoke:session".into(),
                 generation: 2,
@@ -425,21 +388,156 @@ async fn phase(phase: &str, root: &Path, image: &str) -> Result<()> {
                 lease_expires_unix_ms: 0,
                 staging_bytes: 65 << 30,
                 snapshot_committed: false,
-                verified: true,
+                verified: false,
                 remote_verified: false,
                 cache_until_unix_ms: 0,
                 lease_ttl_sec: 300,
-            })?;
-            journal.update("restore-operation", |op| {
-                op.phase = Phase::Importing;
-                Ok(())
-            })?;
-            let litebox = runtime
-                .import_box(
-                    BoxArchive::new(&staged),
+            };
+            journal.claim(initial.clone())?;
+            let transfer =
+                worker_boxlite::persistence::Transfer::new(4, std::time::Duration::from_secs(30))?;
+            let artifact = journal.artifact_path("obx:smoke:session", "restore-operation", 2)?;
+            let downloaded = transfer
+                .download(
+                    &snapshot_store::grant(&endpoint, "GET", descriptor.size_bytes, 0, None),
+                    &descriptor,
+                    artifact.clone(),
+                    tokio_util::sync::CancellationToken::new(),
+                )
+                .await?;
+            drop(downloaded);
+            let backend = NativeRuntime::new(runtime.clone(), root.join("target-home"))?;
+            let limits = ArchiveLimits {
+                max_bytes: 256 << 20,
+                max_expanded_bytes: 64 << 30,
+            };
+            let legacy = runtime
+                .create(
+                    BoxOptions {
+                        rootfs: RootfsSpec::Image(spec.image.clone()),
+                        auto_delete: Some(0),
+                        detach: true,
+                        ..BoxOptions::default()
+                    },
                     Some(terminal_name("obx:smoke:session")),
                 )
                 .await?;
+            let budget = Arc::new(Journal::open(
+                root.join("target-budget-journal"),
+                "smoke-target",
+            )?);
+            let mut small = initial.clone();
+            small.staging_bytes = 1;
+            budget.claim(small)?;
+            if !matches!(
+                backend
+                    .import_target(budget, "restore-operation", limits)
+                    .await,
+                Err(worker_boxlite::persistence::NativeError::Budget)
+            ) || runtime.list_info().await?.len() != 1
+            {
+                return Err("target budget rejection changed native state".into());
+            }
+            let imported = backend
+                .import_target(journal.clone(), "restore-operation", limits)
+                .await?;
+            if imported.box_id == legacy.id().as_str() {
+                return Err("target import adopted the legacy stable session name".into());
+            }
+            let replay = backend
+                .import_target(journal.clone(), "restore-operation", limits)
+                .await?;
+            if imported.box_id != replay.box_id || imported.status != BoxStatus::Stopped {
+                return Err("native import retry changed identity or started an instance".into());
+            }
+            // Reconstruct the durable pre-ack state in an independent journal:
+            // the SDK native import exists but its ID acknowledgement was lost.
+            let recovery = Arc::new(Journal::open(
+                root.join("target-recovery-journal"),
+                "smoke-target",
+            )?);
+            recovery.claim(initial.clone())?;
+            recovery.update("restore-operation", |op| {
+                op.phase = Phase::Importing;
+                op.verified = true;
+                Ok(())
+            })?;
+            std::fs::copy(
+                &artifact,
+                recovery.artifact_path("obx:smoke:session", "restore-operation", 2)?,
+            )?;
+            let recovered = backend
+                .import_target(recovery.clone(), "restore-operation", limits)
+                .await?;
+            if recovered.box_id != imported.box_id || runtime.list_info().await?.len() != 2 {
+                return Err("lost import acknowledgement created or selected another instance".into());
+            }
+            println!("PASS: import retries and lost native ID acknowledgement select the same stopped operation instance");
+            let rejected = Arc::new(Journal::open(
+                root.join("target-rejected-journal"),
+                "smoke-target",
+            )?);
+            rejected.claim(initial.clone())?;
+            rejected.update("restore-operation", |op| {
+                op.phase = Phase::Canceling;
+                Ok(())
+            })?;
+            if !matches!(
+                backend
+                    .import_target(rejected.clone(), "restore-operation", limits)
+                    .await,
+                Err(worker_boxlite::persistence::NativeError::Conflict)
+            ) {
+                return Err("canceled target import was accepted".into());
+            }
+            let mut deletion = initial.clone();
+            deletion.kind = Kind::Delete;
+            deletion.phase = Phase::Deleting;
+            deletion.operation_id = "target-delete".into();
+            deletion.generation = 3;
+            deletion.archive = None;
+            deletion.artifact.clear();
+            deletion.staging_bytes = 0;
+            deletion.lease_ttl_sec = 0;
+            rejected.claim(deletion)?;
+            if !matches!(
+                backend
+                    .import_target(rejected, "restore-operation", limits)
+                    .await,
+                Err(worker_boxlite::persistence::NativeError::Conflict)
+            ) {
+                return Err("superseded target import was accepted".into());
+            }
+            let wrong = Arc::new(Journal::open(
+                root.join("target-wrong-generation-journal"),
+                "smoke-target",
+            )?);
+            let mut wrong_op = initial;
+            wrong_op.generation = 3;
+            wrong_op.artifact =
+                worker_boxlite::persistence::artifact_name("obx:smoke:session", "restore-operation", 3);
+            wrong_op.box_id = imported.box_id.clone();
+            wrong.claim(wrong_op)?;
+            wrong.update("restore-operation", |op| {
+                op.phase = Phase::Importing;
+                op.verified = true;
+                Ok(())
+            })?;
+            if !matches!(
+                backend
+                    .import_target(wrong, "restore-operation", limits)
+                    .await,
+                Err(worker_boxlite::persistence::NativeError::Conflict)
+            ) || runtime.list_info().await?.len() != 2
+            {
+                return Err("another generation adopted the existing target ID".into());
+            }
+            println!("PASS: budget, cancellation, supersession and wrong generation cannot adopt or create a target");
+
+            let litebox = runtime
+                .get(&imported.box_id)
+                .await?
+                .ok_or("selected import is missing")?;
             if litebox.info().await?.status != BoxStatus::Stopped {
                 return Err("import implicitly started the target".into());
             }
@@ -457,7 +555,6 @@ async fn phase(phase: &str, root: &Path, image: &str) -> Result<()> {
                 Ok(())
             })?;
             litebox.start().await?;
-            let backend = NativeRuntime::new(runtime.clone(), root.join("target-home"))?;
             let restored = backend
                 .inspect_target(&journal, "restore-operation")
                 .await?;
@@ -507,10 +604,19 @@ async fn phase(phase: &str, root: &Path, image: &str) -> Result<()> {
                     max_expanded_bytes: 64 << 30,
                 },
             )?;
-            println!(
-                "PASS: an imported instance can be suspended again using its recorded ownership"
-            );
+            println!("PASS: an imported instance can be suspended again using its recorded ownership");
             runtime.remove(litebox.id().as_str(), true).await?;
+            if !matches!(
+                backend
+                    .import_target(recovery, "restore-operation", limits)
+                    .await,
+                Err(worker_boxlite::persistence::NativeError::Missing)
+            ) || runtime.list_info().await?.len() != 1
+            {
+                return Err("missing selected native ID was replaced by a new import".into());
+            }
+            runtime.remove(legacy.id().as_str(), true).await?;
+            println!("PASS: missing selected native ID never falls back to another instance");
         }
         Ok(())
     }

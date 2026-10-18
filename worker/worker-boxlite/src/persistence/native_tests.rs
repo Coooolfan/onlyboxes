@@ -75,12 +75,13 @@ impl Fixture {
     }
     fn save(&self) {
         let connection = Connection::open(self.home.join("db/boxlite.db")).unwrap();
-        connection.execute_batch("CREATE TABLE IF NOT EXISTS schema_version(id INTEGER PRIMARY KEY,version INTEGER);INSERT OR REPLACE INTO schema_version VALUES(1,10);CREATE TABLE IF NOT EXISTS box_config(id TEXT PRIMARY KEY,json TEXT);").unwrap();
+        connection.execute_batch("CREATE TABLE IF NOT EXISTS schema_version(id INTEGER PRIMARY KEY,version INTEGER);INSERT OR REPLACE INTO schema_version VALUES(1,10);CREATE TABLE IF NOT EXISTS box_config(id TEXT PRIMARY KEY,name TEXT UNIQUE,json TEXT);").unwrap();
         connection
             .execute(
-                "INSERT OR REPLACE INTO box_config(id,json) VALUES(?1,?2)",
+                "INSERT OR REPLACE INTO box_config(id,name,json) VALUES(?1,?2,?3)",
                 rusqlite::params![
                     self.config.id.as_str(),
+                    self.config.name,
                     serde_json::to_string(&self.config).unwrap()
                 ],
             )
@@ -307,6 +308,85 @@ fn imported_build_pin_requires_the_expected_immutable_image() {
     f.info.image = "image:mutable".into();
     assert!(matches!(
         spec_from_config_with_pin(&f.config, &f.info, Some(&spec)),
+        Err(NativeError::Conflict)
+    ));
+}
+
+#[test]
+fn restore_names_bind_account_operation_and_generation() {
+    let name = target_name("obx:owner:session", "restore-one", 2);
+    assert_eq!(name, target_name("obx:owner:session", "restore-one", 2));
+    for other in [
+        target_name("obx:other:session", "restore-one", 2),
+        target_name("obx:owner:session", "restore-two", 2),
+        target_name("obx:owner:session", "restore-one", 3),
+        terminal_name("obx:owner:session"),
+    ] {
+        assert_ne!(name, other);
+    }
+    assert!(name.len() <= 128);
+    assert!(name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'));
+}
+
+#[test]
+fn unacknowledged_import_disk_must_match_length_hash_and_owned_local_file() {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let f = Fixture::new();
+    let directory = f.config.box_home.join("disks");
+    fs::create_dir(&directory).unwrap();
+    let path = directory.join("disk.qcow2");
+    let bytes = b"standalone-disk-content";
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path)
+        .unwrap();
+    file.write_all(bytes).unwrap();
+    drop(file);
+    let hash = format!("sha256:{:x}", Sha256::digest(bytes));
+    let verify =
+        || import::verify_unselected_disk(&f.home, f.config.id.as_str(), bytes.len() as u64, &hash);
+    assert_eq!(verify(), Ok(()));
+    assert_eq!(
+        import::verify_unselected_disk(
+            &f.home,
+            f.config.id.as_str(),
+            bytes.len() as u64 + 1,
+            &hash
+        ),
+        Err(NativeError::Conflict)
+    );
+    fs::write(&path, b"different--disk-content").unwrap();
+    assert_eq!(verify(), Err(NativeError::Conflict));
+    fs::write(&path, bytes).unwrap();
+    let alias = f.home.join("alias");
+    fs::hard_link(&path, &alias).unwrap();
+    assert_eq!(verify(), Err(NativeError::Conflict));
+    fs::remove_file(&alias).unwrap();
+    fs::remove_file(&path).unwrap();
+    fs::write(&alias, bytes).unwrap();
+    symlink(&alias, &path).unwrap();
+    assert_eq!(verify(), Err(NativeError::Unavailable));
+    fs::remove_file(&path).unwrap();
+    fs::remove_dir(&directory).unwrap();
+    let outside = f.home.join("outside-disks");
+    fs::create_dir(&outside).unwrap();
+    fs::write(outside.join("disk.qcow2"), bytes).unwrap();
+    symlink(&outside, &directory).unwrap();
+    assert_eq!(verify(), Err(NativeError::Unsupported));
+}
+
+#[test]
+fn native_unique_name_index_and_config_name_must_agree() {
+    let f = Fixture::new();
+    let connection = Connection::open(f.home.join("db/boxlite.db")).unwrap();
+    connection
+        .execute("UPDATE box_config SET name=?1", ["other-operation"])
+        .unwrap();
+    assert!(matches!(
+        read_config(&f.home, f.config.id.as_str()),
         Err(NativeError::Conflict)
     ));
 }

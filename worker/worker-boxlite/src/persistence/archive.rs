@@ -63,7 +63,10 @@ struct Scan {
 }
 
 enum Policy<'a> {
-    Export(&'a BoxOptions),
+    Export {
+        options: &'a BoxOptions,
+        name: &'a str,
+    },
     Committed,
 }
 
@@ -78,6 +81,30 @@ pub fn canonicalize_export(
     snapshot: &str,
     limits: ArchiveLimits,
 ) -> Result<Archive> {
+    canonicalize_named_export(
+        input,
+        output,
+        spec,
+        scope,
+        original,
+        &terminal_name(scope),
+        snapshot,
+        limits,
+    )
+}
+
+/// The runtime has verified this exact name against native config and journal.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn canonicalize_named_export(
+    input: &mut File,
+    output: &mut File,
+    spec: &RestoreSpec,
+    scope: &str,
+    original: &BoxOptions,
+    native_name: &str,
+    snapshot: &str,
+    limits: ArchiveLimits,
+) -> Result<Archive> {
     rewrite(
         input,
         output,
@@ -85,7 +112,10 @@ pub fn canonicalize_export(
         scope,
         snapshot,
         limits,
-        Policy::Export(original),
+        Policy::Export {
+            options: original,
+            name: native_name,
+        },
     )
 }
 
@@ -99,8 +129,19 @@ pub fn prepare_import_archive(
     expected: &Archive,
     limits: ArchiveLimits,
 ) -> Result<Archive> {
-    verify_archive(input, spec, scope, expected, limits)?;
-    rewrite(
+    prepare_import_with_identity(input, output, spec, scope, expected, limits).map(|v| v.0)
+}
+
+pub(crate) fn prepare_import_with_identity(
+    input: &mut File,
+    output: &mut File,
+    spec: &RestoreSpec,
+    scope: &str,
+    expected: &Archive,
+    limits: ArchiveLimits,
+) -> Result<(Archive, u64, String)> {
+    let scan = verified_scan(input, spec, scope, expected, limits)?;
+    let archive = rewrite(
         input,
         output,
         spec,
@@ -108,7 +149,12 @@ pub fn prepare_import_archive(
         &expected.snapshot_id,
         limits,
         Policy::Committed,
-    )
+    )?;
+    Ok((
+        archive,
+        scan.disk_size,
+        scan.manifest.container_disk_checksum,
+    ))
 }
 
 pub fn verify_archive(
@@ -118,6 +164,16 @@ pub fn verify_archive(
     expected: &Archive,
     limits: ArchiveLimits,
 ) -> Result<()> {
+    verified_scan(input, spec, scope, expected, limits).map(|_| ())
+}
+
+fn verified_scan(
+    input: &mut File,
+    spec: &RestoreSpec,
+    scope: &str,
+    expected: &Archive,
+    limits: ArchiveLimits,
+) -> Result<Scan> {
     limits.validate()?;
     if !valid_scope(scope) {
         return Err(ArchiveError::Invalid);
@@ -131,7 +187,7 @@ pub fn verify_archive(
     if scan.expanded != expected.expanded_bytes {
         return Err(ArchiveError::Invalid);
     }
-    Ok(())
+    Ok(scan)
 }
 
 fn rewrite(
@@ -154,6 +210,7 @@ fn rewrite(
     }
     file_identity(input, limits.max_bytes)?;
     let mut scan = scan(input, spec, scope, limits, policy)?;
+    scan.manifest.box_name = Some(terminal_name(scope));
     scan.manifest.image = spec.image.clone();
     scan.manifest.box_options =
         serde_json::to_value(options_for_spec(spec).map_err(|_| ArchiveError::Invalid)?)
@@ -296,8 +353,13 @@ fn scan(
         }
     }
     let manifest = manifest.ok_or(ArchiveError::Invalid)?;
+    let canonical_name = terminal_name(scope);
+    let expected_name = match &policy {
+        Policy::Export { name, .. } => *name,
+        Policy::Committed => &canonical_name,
+    };
     if manifest.version != 3
-        || manifest.box_name.as_deref() != Some(terminal_name(scope).as_str())
+        || manifest.box_name.as_deref() != Some(expected_name)
         || !manifest.guest_disk_checksum.is_empty()
         || manifest.container_disk_checksum != disk_hash
         || manifest.exported_at.len() > 128
@@ -318,7 +380,9 @@ fn scan(
     }
     actual.env.sort();
     let expected = match policy {
-        Policy::Export(original) => {
+        Policy::Export {
+            options: original, ..
+        } => {
             let mut original = original.clone();
             original.env.sort();
             let mut permitted = options_for_spec(spec).map_err(|_| ArchiveError::Invalid)?;

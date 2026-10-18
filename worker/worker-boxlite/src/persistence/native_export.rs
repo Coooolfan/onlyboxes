@@ -1,8 +1,6 @@
 use super::*;
-use crate::persistence::archive::describe_archive;
-use crate::persistence::{
-    canonicalize_export, verify_archive, Archive, ArchiveError, ArchiveLimits, Journal,
-};
+use crate::persistence::archive::{canonicalize_named_export, describe_archive};
+use crate::persistence::{verify_archive, Archive, ArchiveError, ArchiveLimits, Journal};
 use std::fs::{File, OpenOptions};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 
@@ -61,7 +59,7 @@ impl NativeRuntime {
         if op.staging_bytes < required {
             return Err(NativeError::Budget);
         }
-        self.stop_source(&journal, operation).await?;
+        let stopped_source = self.stop_source(&journal, operation).await?;
         if path.try_exists().map_err(|_| NativeError::Unavailable)? {
             let scope = op.scoped_session_id.clone();
             let id = operation.to_owned();
@@ -106,12 +104,13 @@ impl NativeRuntime {
                 .mode(0o600)
                 .open(&output_path)
                 .map_err(|_| NativeError::Unavailable)?;
-            canonicalize_export(
+            canonicalize_named_export(
                 &mut input,
                 &mut file,
                 &target_spec,
                 &captured.scoped_session_id,
                 &config.options,
+                &stopped_source.box_name,
                 &id,
                 limits,
             )
@@ -143,7 +142,7 @@ impl NativeRuntime {
     }
 }
 
-async fn blocking<T: Send + 'static>(
+pub(super) async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T> + Send + 'static,
 ) -> Result<T> {
     tokio::task::spawn_blocking(work)
@@ -175,7 +174,7 @@ async fn publish(journal: Arc<Journal>, operation: String, archive: Archive) -> 
     })
     .await
 }
-fn archive_error(error: ArchiveError) -> NativeError {
+pub(super) fn archive_error(error: ArchiveError) -> NativeError {
     match error {
         ArchiveError::Budget => NativeError::Budget,
         ArchiveError::Invalid => NativeError::ArchiveInvalid,
@@ -189,9 +188,9 @@ fn open_archive(path: &Path) -> Result<File> {
         .open(path)
         .map_err(|_| NativeError::Unavailable)
 }
-struct Workspace(PathBuf);
+pub(super) struct Workspace(pub(super) PathBuf);
 impl Workspace {
-    fn new(parent: &Path, identity: &str) -> Result<Self> {
+    pub(super) fn new(parent: &Path, identity: &str) -> Result<Self> {
         let path = parent.join(format!("work-{identity}-{}", uuid::Uuid::new_v4()));
         fs::DirBuilder::new()
             .mode(0o700)

@@ -598,3 +598,74 @@ fn output_byte_budget_and_io_failures_are_distinct() {
     assert!(writer.write_all(b"denied").is_err());
     assert!(writer.io_failed && !writer.exceeded);
 }
+
+#[test]
+fn an_operation_named_native_export_becomes_a_canonical_session_archive() {
+    let mut fixture = Fixture::new();
+    let name = crate::persistence::target_name(SCOPE, "restore-operation", 2);
+    fixture.manifest.box_name = Some(name.clone());
+    let mut raw = fixture.raw();
+    let mut output = fixture.file("canonical-operation");
+    assert!(matches!(
+        canonicalize_export(
+            &mut raw,
+            &mut output,
+            &fixture.spec,
+            SCOPE,
+            &fixture.original,
+            "next-snapshot",
+            limits()
+        ),
+        Err(ArchiveError::Invalid)
+    ));
+    let wrong = crate::persistence::target_name(SCOPE, "restore-operation", 3);
+    assert!(matches!(
+        canonicalize_named_export(
+            &mut raw,
+            &mut output,
+            &fixture.spec,
+            SCOPE,
+            &fixture.original,
+            &wrong,
+            "next-snapshot",
+            limits()
+        ),
+        Err(ArchiveError::Invalid)
+    ));
+    let descriptor = canonicalize_named_export(
+        &mut raw,
+        &mut output,
+        &fixture.spec,
+        SCOPE,
+        &fixture.original,
+        &name,
+        "next-snapshot",
+        limits(),
+    )
+    .unwrap();
+    verify_archive(&mut output, &fixture.spec, SCOPE, &descriptor, limits()).unwrap();
+    let scan = verified_scan(&mut output, &fixture.spec, SCOPE, &descriptor, limits()).unwrap();
+    assert_eq!(scan.manifest.box_name, Some(terminal_name(SCOPE)));
+    assert_eq!(
+        scan.manifest.container_disk_checksum,
+        fixture.manifest.container_disk_checksum
+    );
+}
+
+#[test]
+fn validated_import_identity_is_the_complete_standalone_disk() {
+    let fixture = Fixture::new();
+    let (mut input, descriptor) = fixture.canonical();
+    let mut output = fixture.file("import");
+    let (_, size, hash) = prepare_import_with_identity(
+        &mut input,
+        &mut output,
+        &fixture.spec,
+        SCOPE,
+        &descriptor,
+        limits(),
+    )
+    .unwrap();
+    assert_eq!(size, fixture.disk.len() as u64);
+    assert_eq!(hash, format!("sha256:{:x}", Sha256::digest(&fixture.disk)));
+}

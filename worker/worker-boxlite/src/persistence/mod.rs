@@ -11,7 +11,8 @@ pub use archive::{
 };
 pub use journal::{Journal, JournalState};
 pub use native::{
-    guest_platform, terminal_name, NativeError, NativeInstance, NativeRuntime, RUNTIME_VERSION,
+    guest_platform, target_name, terminal_name, NativeError, NativeInstance, NativeRuntime,
+    RUNTIME_VERSION,
 };
 pub use transfer::{
     CompletedPart, Downloaded, Transfer, TransferError, TransferGrant, UploadPart, VerifiedSource,
