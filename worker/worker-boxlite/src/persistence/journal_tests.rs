@@ -1,0 +1,857 @@
+use super::*;
+use crate::persistence::{Archive, RestoreSpec, ARCHIVE_FORMAT};
+use std::io::{BufRead, BufReader};
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::symlink;
+use std::process::{Command, Stdio};
+use std::sync::{Arc, Barrier};
+
+struct Root(PathBuf);
+impl Root {
+    fn new() -> Self {
+        let path = std::env::temp_dir().join(format!(
+            "onlyboxes-boxlite-journal-{}",
+            uuid::Uuid::new_v4()
+        ));
+        private_directory(&path).unwrap();
+        Self(path)
+    }
+    fn journal(&self) -> PathBuf {
+        self.0.join("journal")
+    }
+    fn open(&self) -> Journal {
+        Journal::open(self.journal(), "worker-a").unwrap()
+    }
+}
+impl Drop for Root {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn source() -> Operation {
+    Operation {
+        operation_id: "suspend-1".into(),
+        scoped_session_id: "obx:owner:session".into(),
+        generation: 1,
+        kind: Kind::Source,
+        phase: Phase::Preparing,
+        restore_spec: Some(RestoreSpec {
+            runtime: "boxlite".into(),
+            runtime_version: "0.10.7".into(),
+            platform: "linux/arm64".into(),
+            format: ARCHIVE_FORMAT.into(),
+            image: format!("image@sha256:{}", "a".repeat(64)),
+            memory_mib: 512,
+            cpus: 1.0,
+            max_processes: 128,
+            user: "root".into(),
+            working_dir: "/workspace".into(),
+            env: BTreeMap::from([("PRIVATE".into(), "private-value".into())]),
+            entrypoint: vec!["sh".into(), "-lc".into()],
+            command: vec!["sleep infinity".into()],
+        }),
+        archive: None,
+        artifact: String::new(),
+        box_id: "source_box_123".into(),
+        tombstone_box_id: String::new(),
+        lease_expires_unix_ms: 10000,
+        staging_bytes: 1 << 20,
+        snapshot_committed: false,
+        verified: false,
+        remote_verified: false,
+        cache_until_unix_ms: 0,
+        lease_ttl_sec: 0,
+    }
+}
+fn archive() -> Archive {
+    Archive {
+        snapshot_id: "suspend-1".into(),
+        size_bytes: 1024,
+        sha256: "b".repeat(64),
+        expanded_bytes: 8192,
+        format: ARCHIVE_FORMAT.into(),
+    }
+}
+fn target(generation: i64) -> Operation {
+    let mut op = source();
+    op.operation_id = format!("resume-{generation}");
+    op.generation = generation;
+    op.kind = Kind::Target;
+    op.phase = Phase::Prepared;
+    op.box_id.clear();
+    op.lease_expires_unix_ms = 0;
+    op.archive = Some(archive());
+    op.lease_ttl_sec = 300;
+    op.artifact = artifact_name(&op.scoped_session_id, &op.operation_id, generation);
+    op
+}
+fn deletion() -> Operation {
+    let mut op = source();
+    op.operation_id = "delete-session".into();
+    op.generation = 2;
+    op.kind = Kind::Delete;
+    op.phase = Phase::Deleting;
+    op.lease_expires_unix_ms = 0;
+    op.staging_bytes = 0;
+    op
+}
+fn freeze(j: &Journal) {
+    j.update("suspend-1", |op| {
+        op.phase = Phase::Frozen;
+        op.archive = Some(archive());
+        op.verified = true;
+        op.artifact = artifact_name(&op.scoped_session_id, &op.operation_id, op.generation);
+        Ok(())
+    })
+    .unwrap();
+}
+fn commit(j: &Journal) {
+    j.update("suspend-1", |op| {
+        op.remote_verified = true;
+        op.snapshot_committed = true;
+        op.phase = Phase::Committed;
+        Ok(())
+    })
+    .unwrap();
+    j.update("suspend-1", |op| {
+        op.phase = Phase::Finalized;
+        Ok(())
+    })
+    .unwrap();
+}
+fn ready(j: &Journal, id: &str) {
+    j.update(id, |op| {
+        op.phase = Phase::Importing;
+        op.verified = true;
+        Ok(())
+    })
+    .unwrap();
+    j.update(id, |op| {
+        op.box_id = "target_box_123".into();
+        op.phase = Phase::Ready;
+        op.lease_expires_unix_ms = 20000;
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn private_files_owner_lock_and_nested_directories() {
+    let root = Root::new();
+    let path = root.journal().join("nested");
+    let j = Journal::open(&path, "worker-a").unwrap();
+    for name in ["journal.json", "owner.json", "journal.lock"] {
+        assert_eq!(
+            fs::metadata(path.join(name)).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+    for dir in [&path, &path.join("artifacts")] {
+        assert_eq!(
+            fs::metadata(dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+    }
+    assert!(matches!(
+        Journal::open(&path, "worker-a"),
+        Err(Error::Unavailable)
+    ));
+    j.close().unwrap();
+    assert!(matches!(
+        Journal::open(&path, "worker-b"),
+        Err(Error::Unavailable)
+    ));
+    let reopened = Journal::open(&path, "worker-a").unwrap();
+    assert_eq!(reopened.snapshot().unwrap().worker_id, "worker-a");
+}
+
+#[test]
+fn reopen_preserves_source_identity_spec_and_commit_proof() {
+    let root = Root::new();
+    let j = root.open();
+    let op = source();
+    j.claim(op.clone()).unwrap();
+    freeze(&j);
+    commit(&j);
+    j.close().unwrap();
+    let j = root.open();
+    let state = j.snapshot().unwrap();
+    let saved = &state.operations[&op.operation_id];
+    assert_eq!(saved.phase, Phase::Finalized);
+    assert!(saved.restore_spec == op.restore_spec);
+    assert_eq!(saved.box_id, op.box_id);
+    assert!(saved.remote_verified && saved.snapshot_committed && saved.verified);
+    assert!(saved.archive == Some(archive()));
+    assert_eq!(
+        j.update(&op.operation_id, |op| {
+            op.phase = Phase::Frozen;
+            Ok(())
+        }),
+        Err(Error::Conflict)
+    );
+    j.claim(target(2)).unwrap();
+    assert_eq!(j.claim(op), Err(Error::Conflict));
+}
+
+#[test]
+fn commits_require_verified_archive_and_remote_readback() {
+    let root = Root::new();
+    let j = root.open();
+    j.claim(source()).unwrap();
+    assert_eq!(
+        j.update("suspend-1", |op| {
+            op.phase = Phase::Frozen;
+            op.archive = Some(archive());
+            op.artifact = artifact_name(&op.scoped_session_id, &op.operation_id, 1);
+            Ok(())
+        }),
+        Err(Error::Conflict)
+    );
+    freeze(&j);
+    assert_eq!(
+        j.update("suspend-1", |op| {
+            op.phase = Phase::Committed;
+            op.snapshot_committed = true;
+            Ok(())
+        }),
+        Err(Error::Conflict)
+    );
+    assert_eq!(
+        j.snapshot().unwrap().operations["suspend-1"].phase,
+        Phase::Frozen
+    );
+    commit(&j);
+}
+
+#[test]
+fn update_cannot_change_chosen_identity_spec_archive_or_lease() {
+    let root = Root::new();
+    let j = root.open();
+    let op = target(2);
+    let id = op.operation_id.clone();
+    j.claim(op).unwrap();
+    ready(&j, &id);
+    let mutations: Vec<fn(&mut Operation)> = vec![
+        |op| op.generation += 1,
+        |op| op.scoped_session_id = "obx:owner:other".into(),
+        |op| op.operation_id = "other".into(),
+        |op| op.box_id = "replacement".into(),
+        |op| op.restore_spec.as_mut().unwrap().image = format!("other@sha256:{}", "c".repeat(64)),
+        |op| op.archive.as_mut().unwrap().sha256 = "d".repeat(64),
+        |op| op.lease_expires_unix_ms -= 1,
+        |op| op.staging_bytes += 1,
+        |op| op.lease_ttl_sec += 1,
+        |op| op.artifact = "../outside".into(),
+    ];
+    for mutation in mutations {
+        assert_eq!(
+            j.update(&id, |op| {
+                mutation(op);
+                Ok(())
+            }),
+            Err(Error::Conflict)
+        );
+    }
+    j.update(&id, |op| {
+        op.lease_expires_unix_ms += 100;
+        op.phase = Phase::Active;
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(
+        j.update(&id, |op| {
+            op.phase = Phase::Ready;
+            Ok(())
+        }),
+        Err(Error::Conflict)
+    );
+}
+
+#[test]
+fn verification_flags_cannot_be_forgotten() {
+    let root = Root::new();
+    let j = root.open();
+    j.claim(source()).unwrap();
+    freeze(&j);
+    j.update("suspend-1", |op| {
+        op.remote_verified = true;
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(
+        j.update("suspend-1", |op| {
+            op.remote_verified = false;
+            Ok(())
+        }),
+        Err(Error::Conflict)
+    );
+    assert_eq!(
+        j.update("suspend-1", |op| {
+            op.verified = false;
+            Ok(())
+        }),
+        Err(Error::Conflict)
+    );
+}
+
+#[test]
+fn identical_claim_replays_without_rewinding_progress() {
+    let root = Root::new();
+    let j = root.open();
+    let op = source();
+    j.claim(op.clone()).unwrap();
+    freeze(&j);
+    j.claim(op.clone()).unwrap();
+    assert_eq!(
+        j.snapshot().unwrap().operations["suspend-1"].phase,
+        Phase::Frozen
+    );
+    let mut different = op;
+    different.box_id = "different-box".into();
+    assert_eq!(j.claim(different), Err(Error::Conflict));
+}
+
+#[test]
+fn target_replay_cannot_substitute_another_archive() {
+    let root = Root::new();
+    let j = root.open();
+    let mut op = target(2);
+    j.claim(op.clone()).unwrap();
+    ready(&j, &op.operation_id);
+    j.claim(op.clone()).unwrap();
+    op.archive.as_mut().unwrap().sha256 = "c".repeat(64);
+    assert_eq!(j.claim(op), Err(Error::Conflict));
+}
+
+#[test]
+fn generation_and_phase_fences_survive_cancellation() {
+    let root = Root::new();
+    let j = root.open();
+    let op = target(2);
+    let id = op.operation_id.clone();
+    j.claim(op).unwrap();
+    ready(&j, &id);
+    assert_eq!(j.claim(target(3)), Err(Error::Conflict));
+    j.update(&id, |op| {
+        op.phase = Phase::Canceling;
+        Ok(())
+    })
+    .unwrap();
+    j.update(&id, |op| {
+        op.phase = Phase::Canceled;
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(
+        j.update(&id, |op| {
+            op.phase = Phase::Importing;
+            Ok(())
+        }),
+        Err(Error::Conflict)
+    );
+    j.close().unwrap();
+    let j = root.open();
+    assert_eq!(j.claim(target(2)), Ok(())); // A replay reports the canceled record.
+    assert_eq!(j.snapshot().unwrap().operations[&id].phase, Phase::Canceled);
+    j.claim(target(3)).unwrap();
+    assert_eq!(j.claim(target(2)), Err(Error::Conflict));
+}
+
+#[test]
+fn deletion_is_permanent_and_has_an_immutable_native_fence() {
+    let root = Root::new();
+    let j = root.open();
+    j.claim(source()).unwrap();
+    j.claim(deletion()).unwrap();
+    assert_eq!(
+        j.update("delete-session", |op| {
+            op.phase = Phase::Deleted;
+            Ok(())
+        }),
+        Err(Error::Conflict)
+    );
+    j.update("delete-session", |op| {
+        op.tombstone_box_id = "tombstone_123".into();
+        op.phase = Phase::Deleted;
+        Ok(())
+    })
+    .unwrap();
+    j.close().unwrap();
+    let j = root.open();
+    assert_eq!(j.claim(target(3)), Err(Error::Conflict));
+    assert_eq!(
+        j.cancel_unknown("late-cancel", "obx:owner:session", 3),
+        Err(Error::Conflict)
+    );
+    assert_eq!(j.claim(target(4)), Err(Error::Conflict));
+    assert_eq!(
+        j.update("suspend-1", |op| {
+            op.phase = Phase::RollingBack;
+            Ok(())
+        }),
+        Err(Error::Conflict)
+    );
+    assert_eq!(
+        j.update("delete-session", |op| {
+            op.tombstone_box_id = "replacement".into();
+            Ok(())
+        }),
+        Err(Error::Conflict)
+    );
+}
+
+#[test]
+fn adoption_and_rollback_keep_the_same_box() {
+    let root = Root::new();
+    let j = root.open();
+    let mut adopted = source();
+    adopted.operation_id = "adopt".into();
+    adopted.kind = Kind::Adopt;
+    adopted.phase = Phase::Active;
+    adopted.staging_bytes = 0;
+    j.claim(adopted).unwrap();
+    let mut wrong = source();
+    wrong.box_id = "wrong-box".into();
+    assert_eq!(j.claim(wrong), Err(Error::Conflict));
+    j.claim(source()).unwrap();
+    j.update("suspend-1", |op| {
+        op.phase = Phase::RollingBack;
+        Ok(())
+    })
+    .unwrap();
+    j.update("suspend-1", |op| {
+        op.phase = Phase::RolledBack;
+        Ok(())
+    })
+    .unwrap();
+    let mut next = source();
+    next.operation_id = "suspend-2".into();
+    j.claim(next).unwrap();
+}
+
+#[test]
+fn unknown_cancellation_preserves_active_owner_and_cancels_future_replay() {
+    let root = Root::new();
+    let j = root.open();
+    let op = target(2);
+    let id = op.operation_id.clone();
+    j.claim(op).unwrap();
+    ready(&j, &id);
+    j.update(&id, |op| {
+        op.phase = Phase::Active;
+        Ok(())
+    })
+    .unwrap();
+    j.cancel_unknown("lost-resume", "obx:owner:session", 3)
+        .unwrap();
+    let state = j.snapshot().unwrap();
+    assert_eq!(state.current["obx:owner:session"], id);
+    assert_eq!(state.operations["lost-resume"].phase, Phase::Canceled);
+    let mut replay = target(3);
+    replay.operation_id = "lost-resume".into();
+    replay.artifact = artifact_name(&replay.scoped_session_id, &replay.operation_id, 3);
+    assert_eq!(j.claim(replay), Err(Error::Conflict));
+}
+
+#[test]
+fn unknown_cancellation_fences_an_unclaimed_worker_after_restart() {
+    let root = Root::new();
+    let j = root.open();
+    j.cancel_unknown("resume-2", "obx:owner:session", 2)
+        .unwrap();
+    j.close().unwrap();
+    let j = root.open();
+    assert_eq!(j.claim(target(2)), Err(Error::Conflict));
+    j.claim(target(3)).unwrap();
+}
+
+#[test]
+fn bootstrap_probe_pins_native_identity_across_restart() {
+    let root = Root::new();
+    let j = root.open();
+    j.probe("obx:owner:session", "source_box_123").unwrap();
+    j.close().unwrap();
+    let j = root.open();
+    assert_eq!(
+        j.probe("obx:owner:session", "other-box"),
+        Err(Error::Conflict)
+    );
+    let mut wrong = source();
+    wrong.box_id = "other-box".into();
+    assert_eq!(j.claim(wrong), Err(Error::Conflict));
+    j.claim(source()).unwrap();
+    freeze(&j);
+    commit(&j);
+    j.claim(target(2)).unwrap();
+    assert!(j.snapshot().unwrap().probes.is_empty());
+}
+
+#[test]
+fn concurrent_target_claims_choose_one_owner() {
+    let root = Root::new();
+    let j = Arc::new(root.open());
+    let barrier = Arc::new(Barrier::new(8));
+    let threads: Vec<_> = (0..8)
+        .map(|i| {
+            let j = j.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                let mut op = target(2);
+                op.operation_id = format!("candidate-{i}");
+                op.artifact = artifact_name(&op.scoped_session_id, &op.operation_id, 2);
+                barrier.wait();
+                j.claim(op)
+            })
+        })
+        .collect();
+    assert_eq!(
+        threads
+            .into_iter()
+            .map(|thread| thread.join().unwrap())
+            .filter(Result::is_ok)
+            .count(),
+        1
+    );
+    assert_eq!(j.snapshot().unwrap().operations.len(), 1);
+}
+
+#[test]
+fn snapshots_are_copies_and_operation_ids_are_global() {
+    let root = Root::new();
+    let j = root.open();
+    j.claim(source()).unwrap();
+    let mut copy = j.snapshot().unwrap();
+    copy.operations.get_mut("suspend-1").unwrap().generation = 99;
+    assert_eq!(j.snapshot().unwrap().operations["suspend-1"].generation, 1);
+    let mut collision = source();
+    collision.scoped_session_id = "obx:other:session".into();
+    assert_eq!(j.claim(collision), Err(Error::Conflict));
+}
+
+#[test]
+fn write_failure_poisoning_does_not_acknowledge_an_unstored_generation() {
+    let root = Root::new();
+    let mut j = root.open();
+    j.persist = |_, _| Err(Error::Unavailable);
+    assert_eq!(j.claim(source()), Err(Error::Unavailable));
+    assert!(matches!(j.snapshot(), Err(Error::Unavailable)));
+    assert_eq!(
+        j.cancel_unknown("cancel", "obx:owner:other", 1),
+        Err(Error::Unavailable)
+    );
+    j.close().unwrap();
+    assert!(root.open().snapshot().unwrap().operations.is_empty());
+}
+
+#[test]
+fn lost_commit_acknowledgement_recovers_the_new_generation_after_reopen() {
+    let root = Root::new();
+    let mut j = root.open();
+    j.persist = |root, state| {
+        persist_state(root, state)?;
+        Err(Error::Unavailable)
+    };
+    assert_eq!(j.claim(source()), Err(Error::Unavailable));
+    assert!(matches!(j.snapshot(), Err(Error::Unavailable)));
+    j.close().unwrap();
+    let state = root.open().snapshot().unwrap();
+    assert_eq!(state.current["obx:owner:session"], "suspend-1");
+}
+
+#[test]
+fn rejected_mutation_leaves_the_journal_usable() {
+    let root = Root::new();
+    let j = root.open();
+    j.claim(source()).unwrap();
+    assert_eq!(
+        j.update("suspend-1", |op| {
+            op.box_id = "mutated".into();
+            Err(Error::Conflict)
+        }),
+        Err(Error::Conflict)
+    );
+    freeze(&j);
+    assert_eq!(
+        j.snapshot().unwrap().operations["suspend-1"].box_id,
+        "source_box_123"
+    );
+}
+
+#[test]
+fn missing_journal_and_unregistered_files_never_initialize_fresh_history() {
+    let root = Root::new();
+    let j = root.open();
+    j.claim(source()).unwrap();
+    j.close().unwrap();
+    fs::remove_file(root.journal().join("journal.json")).unwrap();
+    assert!(matches!(
+        Journal::open(root.journal(), "worker-a"),
+        Err(Error::Unavailable)
+    ));
+    let other = root.0.join("orphaned");
+    private_directory(&other).unwrap();
+    fs::write(other.join("orphan.boxlite"), b"private-data").unwrap();
+    assert!(matches!(
+        Journal::open(other, "worker-a"),
+        Err(Error::Unavailable)
+    ));
+}
+
+#[test]
+fn corrupt_oversized_and_unknown_private_records_fail_closed() {
+    for case in [
+        "truncated",
+        "unknown-field",
+        "missing-current",
+        "oversized",
+        "owner",
+    ] {
+        let root = Root::new();
+        let j = root.open();
+        j.claim(source()).unwrap();
+        j.close().unwrap();
+        let path = root.journal().join("journal.json");
+        match case {
+            "truncated" => fs::write(&path, b"{").unwrap(),
+            "oversized" => OpenOptions::new()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_len(MAX_JOURNAL_BYTES as u64 + 1)
+                .unwrap(),
+            "owner" => fs::write(
+                root.journal().join("owner.json"),
+                br#"{"version":1,"worker_id":"other"}"#,
+            )
+            .unwrap(),
+            _ => {
+                let mut value: serde_json::Value =
+                    serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+                if case == "unknown-field" {
+                    value["operations"]["suspend-1"]["download"] =
+                        serde_json::json!({"url":"https://private.invalid?grant=secret"});
+                } else {
+                    value["current"] = serde_json::json!({});
+                }
+                fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+            }
+        }
+        assert!(
+            matches!(
+                Journal::open(root.journal(), "worker-a"),
+                Err(Error::Unavailable)
+            ),
+            "case {case}"
+        );
+    }
+}
+
+#[test]
+fn insecure_permissions_symlinks_hardlinks_and_fifos_are_rejected() {
+    for name in ["journal.json", "owner.json", "journal.lock", "artifacts"] {
+        let root = Root::new();
+        let j = root.open();
+        j.close().unwrap();
+        let path = root.journal().join(name);
+        let outside = root.0.join("outside");
+        fs::write(&outside, b"unchanged").unwrap();
+        if name == "artifacts" {
+            fs::remove_dir(&path).unwrap();
+        } else {
+            fs::remove_file(&path).unwrap();
+        }
+        symlink(&outside, &path).unwrap();
+        assert!(matches!(
+            Journal::open(root.journal(), "worker-a"),
+            Err(Error::Unavailable)
+        ));
+        assert_eq!(fs::read(&outside).unwrap(), b"unchanged");
+    }
+    let root = Root::new();
+    let j = root.open();
+    j.close().unwrap();
+    let path = root.journal().join("journal.json");
+    fs::hard_link(&path, root.0.join("linked")).unwrap();
+    assert!(matches!(
+        Journal::open(root.journal(), "worker-a"),
+        Err(Error::Unavailable)
+    ));
+    fs::remove_file(&path).unwrap();
+    let name = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    // SAFETY: name is a live NUL-terminated path to this test's private fixture.
+    assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+    assert!(matches!(
+        Journal::open(root.journal(), "worker-a"),
+        Err(Error::Unavailable)
+    ));
+    let other = root.0.join("readable");
+    private_directory(&other).unwrap();
+    fs::set_permissions(&other, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(matches!(
+        Journal::open(other, "worker-a"),
+        Err(Error::Unavailable)
+    ));
+}
+
+#[test]
+fn artifact_paths_never_use_scope_as_a_filesystem_path() {
+    let root = Root::new();
+    let j = root.open();
+    let path = j
+        .artifact_path("obx:owner:../../outside", "operation", 7)
+        .unwrap();
+    assert_eq!(
+        path.parent().unwrap(),
+        fs::canonicalize(root.journal()).unwrap().join("artifacts")
+    );
+    assert_eq!(path.file_name().unwrap().to_str().unwrap().len(), 72);
+    assert_eq!(
+        j.artifact_path("obx:owner:session", "../escape", 1),
+        Err(Error::Conflict)
+    );
+    assert_eq!(
+        j.artifact_path("wrong-scope", "operation", 1),
+        Err(Error::Conflict)
+    );
+}
+
+#[test]
+fn private_spec_validation_rejects_invalid_runtime_format_resources_and_digest() {
+    let original = source();
+    let mutations: Vec<fn(&mut RestoreSpec)> = vec![
+        |s| s.runtime = "docker".into(),
+        |s| s.platform = "darwin/arm64".into(),
+        |s| s.image = "image:latest".into(),
+        |s| s.format = "docker-rootfs-v1".into(),
+        |s| s.cpus = f64::NAN,
+        |s| s.cpus = 0.5,
+        |s| s.cpus = 256.0,
+        |s| s.memory_mib = 0,
+        |s| s.memory_mib = u32::MAX as i64 + 1,
+        |s| s.max_processes = 0,
+        |s| {
+            s.env.insert("too-big".into(), "x".repeat(33 << 10));
+        },
+    ];
+    for mutate in mutations {
+        let mut spec = original.restore_spec.clone().unwrap();
+        mutate(&mut spec);
+        assert_eq!(spec.validate(), Err(Error::Conflict));
+    }
+    assert_eq!(original.validate(), Ok(()));
+}
+
+#[test]
+fn process_helper() {
+    let Ok(path) = std::env::var("ONLYBOXES_JOURNAL_TEST_ROOT") else {
+        return;
+    };
+    if std::env::var("ONLYBOXES_JOURNAL_TEST_MODE").unwrap() == "blocked" {
+        assert!(matches!(
+            Journal::open(path, "worker-a"),
+            Err(Error::Unavailable)
+        ));
+        return;
+    }
+    let j = Journal::open(path, "worker-a").unwrap();
+    j.claim(source()).unwrap();
+    println!("JOURNAL_READY");
+    std::io::stdout().flush().unwrap();
+    loop {
+        std::thread::park();
+    }
+}
+
+fn helper(path: &Path, mode: &str) -> Command {
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .args([
+            "--exact",
+            "persistence::journal::tests::process_helper",
+            "--nocapture",
+        ])
+        .env("ONLYBOXES_JOURNAL_TEST_ROOT", path)
+        .env("ONLYBOXES_JOURNAL_TEST_MODE", mode);
+    command
+}
+
+#[test]
+fn cross_process_lock_and_sigkill_recovery() {
+    let root = Root::new();
+    let j = root.open();
+    assert!(helper(&root.journal(), "blocked")
+        .status()
+        .unwrap()
+        .success());
+    j.close().unwrap();
+    let mut child = helper(&root.journal(), "hold")
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let output = child.stdout.take().unwrap();
+    let mut ready = false;
+    for line in BufReader::new(output).lines() {
+        if line.unwrap().contains("JOURNAL_READY") {
+            ready = true;
+            break;
+        }
+    }
+    assert!(ready);
+    assert!(matches!(
+        Journal::open(root.journal(), "worker-a"),
+        Err(Error::Unavailable)
+    ));
+    child.kill().unwrap();
+    assert!(!child.wait().unwrap().success());
+    let j = root.open();
+    assert_eq!(
+        j.snapshot().unwrap().operations["suspend-1"].box_id,
+        "source_box_123"
+    );
+    freeze(&j);
+}
+
+#[test]
+fn loading_cannot_rewind_generation_or_bypass_a_prior_deletion() {
+    for deletion_history in [false, true] {
+        let root = Root::new();
+        let j = root.open();
+        j.claim(source()).unwrap();
+        let next = if deletion_history {
+            deletion()
+        } else {
+            freeze(&j);
+            commit(&j);
+            target(2)
+        };
+        j.claim(next).unwrap();
+        j.close().unwrap();
+        let path = root.journal().join("journal.json");
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        value["current"]["obx:owner:session"] = serde_json::json!("suspend-1");
+        fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(matches!(
+            Journal::open(root.journal(), "worker-a"),
+            Err(Error::Unavailable)
+        ));
+    }
+}
+
+#[test]
+fn target_cannot_begin_import_before_local_verification() {
+    let root = Root::new();
+    let j = root.open();
+    let op = target(2);
+    let id = op.operation_id.clone();
+    j.claim(op).unwrap();
+    assert_eq!(
+        j.update(&id, |op| {
+            op.phase = Phase::Importing;
+            Ok(())
+        }),
+        Err(Error::Conflict)
+    );
+    ready(&j, &id);
+}

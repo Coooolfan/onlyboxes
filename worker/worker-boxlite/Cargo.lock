@@ -4259,6 +4259,7 @@ dependencies = [
  "base64 0.22.1",
  "boxlite",
  "hmac",
+ "libc",
  "prost",
  "protoc-bin-vendored",
  "rand 0.8.5",

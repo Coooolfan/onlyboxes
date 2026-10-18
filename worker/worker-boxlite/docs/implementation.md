@@ -13,6 +13,7 @@
 | [`runner/session_client.rs`](../src/runner/session_client.rs) | gRPC 连接、恢复握手、heartbeat、命令收发和重连 |
 | [`runner/hello_builder.rs`](../src/runner/hello_builder.rs) | 构建 capability、版本、标签和 terminal capacity 声明 |
 | [`runner/capability_executor.rs`](../src/runner/capability_executor.rs) | 参数解析、并发准入、错误映射和 capability 调度 |
+| [`persistence`](../src/persistence/mod.rs) | 私有恢复规格、归档描述与可跨进程恢复的生命周期 journal；尚未接入 Worker 运行路径 |
 | [`boxlite_runtime.rs`](../src/boxlite_runtime.rs) | BoxLite runtime、Box 创建、命令执行、复制和清理封装 |
 | [`runner/terminal_session_manager.rs`](../src/runner/terminal_session_manager.rs) | Terminal session、lease、并发、容量、恢复和资源访问状态机 |
 | [`runner/sandbox_proxy.rs`](../src/runner/sandbox_proxy.rs) | Route Token 校验与 HTTP/SSE/WebSocket 到 guest 端口的代理 |
