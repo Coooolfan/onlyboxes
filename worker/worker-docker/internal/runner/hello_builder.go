@@ -73,5 +73,8 @@ func buildHello(cfg config.Config) (*registryv1.ConnectHello, error) {
 			},
 		},
 	}
+	if snapshots := workerSnapshots.Load(); snapshots != nil {
+		hello.SandboxPersistence = snapshots.Capabilities()
+	}
 	return hello, nil
 }

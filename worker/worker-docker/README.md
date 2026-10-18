@@ -16,6 +16,8 @@ Configuration sources:
 - environment variables and `config.toml` (see [`docs/config-file.md`](docs/config-file.md)).
 - priority is environment variable > `config.toml` > default.
 
+Snapshot lifecycle support is opt-in through `WORKER_PERSISTENCE_ENABLED=true`; see [configuration](docs/config-file.md#snapshot-lifecycle-configuration) and [controller/recovery behavior](docs/sandbox-snapshot-controller.md). The local journal directory must survive Worker restarts and container recreation.
+
 Required identity:
 - `WORKER_ID`
 - `WORKER_SECRET`
@@ -69,10 +71,10 @@ Capability behavior:
   - a session that has not finished creating its container makes concurrent callers wait; if creation fails they all receive the same error.
 - `terminalExec` cleanup behavior:
   - command timeout/cancel marks the session for destruction and stops it accepting new commands; the container is removed once in-flight commands drain, so one command's timeout does not kill its siblings.
-  - lease expiry is a hard boundary: a per-session deadline timer removes the session even when commands are in flight, cancels active proxy requests, and force-removes the container; the janitor remains a cleanup fallback.
+  - lease expiry is a hard boundary: a per-session deadline timer stops admission even when commands are in flight and cancels active proxy requests; the janitor remains a cleanup fallback. Ordinary containers are removed. Journal-owned persistent containers are stopped with their writable rootfs retained for lifecycle reconciliation.
   - terminal containers use deterministic `onlyboxes-terminal-v1-<sha256(session_id)>` names plus schema/session-hash labels and are preserved when the worker exits.
-  - after reconnect, the worker reconciles Console candidates before accepting commands, restarts stopped containers, restores the exact lease, and removes local Onlyboxes terminal orphans that Console no longer recognizes. Transient Docker recovery checks are retried twice before the affected session is abandoned so one unavailable container does not block Worker startup.
-  - lease expiry, explicit destruction, unsafe command timeout, and invalid resource identity still remove the container; one-shot `pythonExec` containers remain per-call resources.
+  - after reconnect, the worker reconciles Console candidates before accepting commands, restarts stopped containers, restores the exact lease, and removes terminal orphans labeled with its own Worker identity that Console no longer recognizes. Journal-owned persistent resources follow lifecycle recovery and remain protected. Transient Docker recovery checks are retried twice before the affected session is abandoned so one unavailable container does not block Worker startup.
+  - ordinary lease expiry, explicit destruction, unsafe command timeout, and invalid resource identity remove the ordinary container; persistent resources require explicit lifecycle cleanup acknowledgement. One-shot `pythonExec` containers remain per-call resources.
 - `terminalExec` result uses JSON payload:
   - `{"session_id":"...","created":true,"stdout":"...","stderr":"...","exit_code":0,"stdout_truncated":false,"stderr_truncated":false,"lease_expires_unix_ms":...}`
 - `terminalLeaseRenew` is an internal Console capability. It accepts `{"session_id":"required","lease_ttl_sec":300}`, extends an existing lease monotonically, resets the per-session deadline timer, and returns `{"session_id":"...","lease_expires_unix_ms":...}` without executing a command.

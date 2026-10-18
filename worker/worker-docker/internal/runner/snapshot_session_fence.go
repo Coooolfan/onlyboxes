@@ -33,7 +33,7 @@ var recoverPersistenceSessionsFn = func(_ context.Context, ordinary []*registryv
 
 func (m *terminalSessionManager) persistenceConflictLocked(sessionID string, generation int64) error {
 	fence, exists := m.persistenceFences[sessionID]
-	if m.persistenceFailed || (exists && (!fence.active || fence.generation != generation)) || (!exists && generation != 0 && !(generation == 1 && m.persistenceBootstrap[sessionID] != "" && m.sessions[sessionID] != nil && m.sessions[sessionID].persistenceContainerID == m.persistenceBootstrap[sessionID])) {
+	if m.persistenceFailed || (exists && m.persistenceDisconnected) || (exists && (!fence.active || fence.generation != generation)) || (!exists && generation != 0 && !(generation == 1 && m.persistenceBootstrap[sessionID] != "" && m.sessions[sessionID] != nil && m.sessions[sessionID].persistenceContainerID == m.persistenceBootstrap[sessionID])) {
 		return newTerminalExecError("session_state_conflict", "sandbox lifecycle or generation does not allow execution")
 	}
 	return nil
@@ -156,7 +156,7 @@ func (m *terminalSessionManager) HoldSource(sessionID, operationID string, gener
 		return errSnapshotJournalConflict
 	}
 	session := m.sessions[sessionID]
-	if session == nil || session.destroying || !session.leaseExpiresAt.After(time.Now()) {
+	if session == nil || session.destroying || (!session.leaseExpiresAt.After(time.Now()) && !(known && prior.held && prior.operationID == operationID)) {
 		return errSnapshotJournalConflict
 	}
 	m.setPersistenceFenceLocked(sessionID, terminalPersistenceFence{operationID: operationID, generation: generation, containerID: session.persistenceContainerID, held: true, capacity: true})

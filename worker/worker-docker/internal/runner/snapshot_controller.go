@@ -34,10 +34,12 @@ type snapshotActiveAction struct {
 	operation  string
 	generation int64
 	cancel     context.CancelFunc
+	connection string
 }
 
 type snapshotController struct {
 	ctx         context.Context
+	workerID    string
 	manager     *terminalSessionManager
 	journal     *snapshotJournal
 	runtime     *dockerSnapshotRuntime
@@ -47,6 +49,8 @@ type snapshotController struct {
 	admissionMu sync.Mutex
 	actions     map[string]snapshotActiveAction
 	pins        map[string]int
+	connection  string
+	recovering  bool
 	closed      bool
 	wg          sync.WaitGroup
 }
@@ -63,13 +67,18 @@ func newSnapshotController(ctx context.Context, m *terminalSessionManager, j *sn
 	if err := m.InstallSnapshotJournal(j); err != nil {
 		return nil, err
 	}
+	state, err := j.Snapshot()
+	if err != nil {
+		return nil, err
+	}
+	c.workerID = state.WorkerID
 	m.mu.Lock()
 	m.persistenceLeaseWriter = c.extendLease
 	m.mu.Unlock()
 	return c, nil
 }
 
-func (c *snapshotController) Handle(control *registryv1.SandboxPersistenceControl) *registryv1.SandboxPersistenceReport {
+func (c *snapshotController) admit(connection string, control *registryv1.SandboxPersistenceControl) func() *registryv1.SandboxPersistenceReport {
 	report := &registryv1.SandboxPersistenceReport{RequestId: control.GetRequestId(), OperationId: control.GetOperationId(), ScopedSessionId: control.GetScopedSessionId(), Generation: control.GetGeneration(), Action: control.GetAction(), Completed: true}
 	finish := func(result wire.Result, err error) *registryv1.SandboxPersistenceReport {
 		if errors.Is(err, errSnapshotTransferRetry) {
@@ -104,42 +113,71 @@ func (c *snapshotController) Handle(control *registryv1.SandboxPersistenceContro
 		}
 		return report
 	}
+	reply := func(result wire.Result, err error) func() *registryv1.SandboxPersistenceReport {
+		return func() *registryv1.SandboxPersistenceReport { return finish(result, err) }
+	}
 	if control == nil || !snapshotOperationID.MatchString(control.GetRequestId()) || !snapshotOperationID.MatchString(control.GetOperationId()) || !validPersistenceScope(control.GetScopedSessionId()) || control.GetGeneration() <= 0 || control.GetDeadlineUnixMs() <= time.Now().UnixMilli() || len(control.GetPayloadJson()) > 64<<10 {
-		return finish(wire.Result{}, errSnapshotJournalConflict)
+		return reply(wire.Result{}, errSnapshotJournalConflict)
 	}
 	var payload wire.Control
 	decoder := json.NewDecoder(bytes.NewReader(control.PayloadJson))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&payload) != nil {
-		return finish(wire.Result{}, errSnapshotJournalConflict)
+		return reply(wire.Result{}, errSnapshotJournalConflict)
 	}
 	var extra any
 	if decoder.Decode(&extra) != io.EOF {
-		return finish(wire.Result{}, errSnapshotJournalConflict)
+		return reply(wire.Result{}, errSnapshotJournalConflict)
 	}
 	ctx, cancel := context.WithDeadline(c.ctx, time.UnixMilli(control.DeadlineUnixMs))
-	defer cancel()
 	c.mu.Lock()
-	if c.closed {
+	if connection != "" && c.connection != connection {
 		c.mu.Unlock()
-		return finish(wire.Result{}, errSnapshotJournalUnavailable)
+		cancel()
+		return reply(wire.Result{}, errSnapshotJournalConflict)
+	}
+	if c.recovering {
+		cancel()
+		c.mu.Unlock()
+		return reply(wire.Result{State: "busy"}, nil)
+	}
+	if c.closed {
+		cancel()
+		c.mu.Unlock()
+		return reply(wire.Result{}, errSnapshotJournalUnavailable)
 	}
 	if action, busy := c.actions[control.ScopedSessionId]; busy {
 		if control.Action == registryv1.SandboxPersistenceControl_CANCEL && action.operation == control.OperationId && action.generation == control.Generation {
 			action.cancel()
 		}
 		c.mu.Unlock()
-		return finish(wire.Result{State: "busy"}, nil)
+		cancel()
+		return reply(wire.Result{State: "busy"}, nil)
 	}
-	c.actions[control.ScopedSessionId] = snapshotActiveAction{control.OperationId, control.Generation, cancel}
+	if len(c.actions) >= c.config.MaxInflight+8 {
+		c.mu.Unlock()
+		cancel()
+		return reply(wire.Result{State: "busy"}, nil)
+	}
+	c.actions[control.ScopedSessionId] = snapshotActiveAction{operation: control.OperationId, generation: control.Generation, cancel: cancel, connection: connection}
 	c.wg.Add(1)
 	c.mu.Unlock()
-	defer func() { c.mu.Lock(); delete(c.actions, control.ScopedSessionId); c.mu.Unlock(); c.wg.Done() }()
-	result, err := c.execute(ctx, control, payload)
-	return finish(result, err)
+	return func() *registryv1.SandboxPersistenceReport {
+		defer cancel()
+		defer func() { c.mu.Lock(); delete(c.actions, control.ScopedSessionId); c.mu.Unlock(); c.wg.Done() }()
+		result, err := c.execute(ctx, control, payload)
+		return finish(result, err)
+	}
+}
+
+func (c *snapshotController) Handle(control *registryv1.SandboxPersistenceControl) *registryv1.SandboxPersistenceReport {
+	return c.admit("", control)()
 }
 
 func (c *snapshotController) execute(ctx context.Context, control *registryv1.SandboxPersistenceControl, p wire.Control) (wire.Result, error) {
+	if ctx.Err() != nil {
+		return wire.Result{}, errSnapshotTransferRetry
+	}
 	state, err := c.journal.Snapshot()
 	if err != nil {
 		return wire.Result{}, err

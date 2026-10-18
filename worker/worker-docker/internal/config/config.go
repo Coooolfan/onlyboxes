@@ -34,6 +34,7 @@ const (
 )
 
 type Config struct {
+	Snapshot                    SnapshotConfig
 	ConfigFile                  string
 	ConsoleGRPCTarget           string
 	ConsoleTLS                  bool
@@ -92,6 +93,7 @@ func Load() Config {
 	labelsCSV := src.get("WORKER_LABELS")
 
 	return Config{
+		Snapshot:                    src.snapshot(),
 		ConfigFile:                  src.Path(),
 		ConsoleGRPCTarget:           src.stringValue("WORKER_CONSOLE_GRPC_TARGET", defaultConsoleTarget),
 		ConsoleTLS:                  src.get("WORKER_CONSOLE_INSECURE") != "true",

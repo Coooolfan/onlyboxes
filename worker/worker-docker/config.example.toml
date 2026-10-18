@@ -60,6 +60,22 @@ python_exec_max_inflight = 4
 terminal_exec_max_inflight = 4
 terminal_resource_max_inflight = 4
 
+# Internal snapshot lifecycle support (opt-in; Console public APIs are separate).
+# The private directory contains the operation journal as well as archive cache.
+# Keep it on durable local storage across Worker/container restarts. Never share
+# it between Worker identities, and never delete it while resources are owned.
+persistence_enabled = false
+# snapshot_tmp_dir = "/var/lib/onlyboxes/snapshots"
+# Preload a trusted GNU tar image pinned by digest on this Docker daemon.
+# snapshot_docker_helper_image = "repository@sha256:<digest>"
+snapshot_max_inflight = 1
+snapshot_tmp_quota_bytes = 107374182400
+snapshot_cache_max_bytes = 10737418240
+snapshot_cache_ttl_sec = 86400
+snapshot_transfer_max_concurrency = 4
+snapshot_transfer_idle_timeout_sec = 60
+snapshot_drain_timeout_sec = 60
+
 # Logging.
 log_level = "info"
 log_format = "json"

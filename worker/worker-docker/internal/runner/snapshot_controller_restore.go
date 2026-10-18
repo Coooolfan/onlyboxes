@@ -98,6 +98,7 @@ func (c *snapshotController) restore(ctx context.Context, op snapshotOperation, 
 			if err != nil {
 				return wire.Result{}, err
 			}
+			args = append([]string{"create", "--label", "onlyboxes.persistence=true", "--label", "onlyboxes.worker_id=" + c.workerID}, args[1:]...)
 			if err := dockerSnapshotCLI(ctx, nil, io.Discard, args...); err != nil {
 				return wire.Result{}, err
 			}

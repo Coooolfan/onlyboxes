@@ -137,16 +137,18 @@ type terminalSession struct {
 }
 
 type terminalSessionManagerConfig struct {
-	LeaseMinSec      int
-	LeaseMaxSec      int
-	LeaseDefaultSec  int
-	OutputLimitBytes int
-	ExportMaxBytes   int
-	DockerImage      string
-	MemoryLimit      string
-	CPULimit         string
-	PidsLimit        int
-	DockerNetwork    string
+	PersistenceEnabled bool
+	WorkerID           string
+	LeaseMinSec        int
+	LeaseMaxSec        int
+	LeaseDefaultSec    int
+	OutputLimitBytes   int
+	ExportMaxBytes     int
+	DockerImage        string
+	MemoryLimit        string
+	CPULimit           string
+	PidsLimit          int
+	DockerNetwork      string
 	// SessionMaxInflight caps concurrent commands per session. Defaults to 1,
 	// which preserves the original strictly serial behaviour.
 	SessionMaxInflight int
@@ -159,6 +161,8 @@ type terminalSessionManagerConfig struct {
 }
 
 type terminalSessionManager struct {
+	persistenceEnabled       bool
+	workerID                 string
 	mu                       sync.Mutex
 	sessions                 map[string]*terminalSession
 	persistenceFences        map[string]terminalPersistenceFence
@@ -166,6 +170,7 @@ type terminalSessionManager struct {
 	persistenceLeaseWriter   func(string, int64, time.Time) error
 	persistenceRecoveryHolds map[string]bool
 	persistenceFailed        bool
+	persistenceDisconnected  bool
 
 	leaseMinSec               int
 	leaseMaxSec               int
@@ -259,6 +264,8 @@ func newTerminalSessionManager(cfg terminalSessionManagerConfig) *terminalSessio
 	}
 
 	manager := &terminalSessionManager{
+		persistenceEnabled: cfg.PersistenceEnabled,
+		workerID:           cfg.WorkerID,
 		sessions:           make(map[string]*terminalSession),
 		leaseMinSec:        leaseMinSec,
 		leaseMaxSec:        leaseMaxSec,
@@ -437,14 +444,21 @@ func (m *terminalSessionManager) resolveLeaseDuration(leaseTTLSec *int) (time.Du
 }
 
 func (m *terminalSessionManager) createAndStartContainer(ctx context.Context, containerName string) (string, error) {
-	createResult := runDockerCommand(ctx, terminalExecDockerCreateArgsWithNetwork(
+	args := terminalExecDockerCreateArgsWithNetwork(
 		containerName,
 		m.dockerImage,
 		m.memoryLimit,
 		m.cpuLimit,
 		m.pidsLimit,
 		m.dockerNetwork,
-	)...)
+	)
+	if m.workerID != "" {
+		args = append([]string{"create", "--label", "onlyboxes.worker_id=" + m.workerID}, args[1:]...)
+	}
+	if m.persistenceEnabled {
+		args = append([]string{"create", "--label", "onlyboxes.persistence=true"}, args[1:]...)
+	}
+	createResult := runDockerCommand(ctx, args...)
 	if createResult.Err != nil {
 		return "", fmt.Errorf("docker create failed: %w", createResult.Err)
 	}

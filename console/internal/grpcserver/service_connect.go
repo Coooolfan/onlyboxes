@@ -86,11 +86,11 @@ func (s *RegistryService) Connect(stream grpc.BidiStreamingServer[registryv1.Con
 	if err != nil {
 		return status.Errorf(codes.Internal, "prepare terminal session recovery: %v", err)
 	}
-	recoveryCandidates, persistenceRecovery, err := s.snapshotRecoveryPlan(stream.Context(), session.nodeID, recoveryCandidates)
+	recoveryCandidates, persistenceRecovery, persistentOwner, err := s.snapshotRecoveryPlan(stream.Context(), session.nodeID, recoveryCandidates)
 	if err != nil {
 		return status.Error(codes.Internal, "prepare sandbox lifecycle recovery failed")
 	}
-	persistentOwner := len(persistenceRecovery) > 0
+	persistentOwner = persistentOwner || len(persistenceRecovery) > 0
 	for _, candidate := range recoveryCandidates {
 		persistentOwner = persistentOwner || candidate.GetGeneration() > 0
 	}

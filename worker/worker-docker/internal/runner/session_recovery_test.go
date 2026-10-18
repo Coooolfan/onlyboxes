@@ -211,6 +211,9 @@ func TestTerminalRecoveryIsIdempotentAndCleansOnlyOwnedOrphans(t *testing.T) {
 		case strings.Contains(joined, "label="+terminalExecSessionLabelKey+"="+hash):
 			return dockerCommandResult{ExitCode: 0, Stdout: name + "\n"}
 		case len(args) > 0 && args[0] == "ps":
+			if !strings.Contains(joined, "label=onlyboxes.worker_id=worker-a") {
+				t.Fatal("orphan discovery crossed Worker ownership")
+			}
 			return dockerCommandResult{ExitCode: 0, Stdout: name + "\n" + orphan + "\nforeign-container\n"}
 		case len(args) > 0 && args[0] == "rm":
 			removed[args[len(args)-1]] = true
@@ -221,7 +224,7 @@ func TestTerminalRecoveryIsIdempotentAndCleansOnlyOwnedOrphans(t *testing.T) {
 		}
 	}
 
-	manager := newTerminalSessionManager(terminalSessionManagerConfig{PreserveOnClose: true})
+	manager := newTerminalSessionManager(terminalSessionManagerConfig{WorkerID: "worker-a", PreserveOnClose: true})
 	defer manager.Close()
 	lease := time.Now().Add(time.Minute).Truncate(time.Millisecond)
 	candidate := []*registryv1.TerminalSessionRecoveryCandidate{{SessionId: sessionID, LeaseExpiresUnixMs: lease.UnixMilli()}}

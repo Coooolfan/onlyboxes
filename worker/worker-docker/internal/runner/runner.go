@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -59,6 +61,14 @@ func Run(ctx context.Context, cfg config.Config) error {
 	if err := validateTerminalMaxActiveSessions(cfg.TerminalMaxActiveSessions); err != nil {
 		return err
 	}
+	if err := cfg.Snapshot.Validate(); err != nil {
+		return err
+	}
+	if !cfg.Snapshot.Enabled && cfg.Snapshot.TmpDir != "" {
+		if _, err := os.Lstat(filepath.Join(cfg.Snapshot.TmpDir, "journal.json")); err == nil {
+			return errors.New("snapshot journal exists; persistence must remain enabled for recovery")
+		}
+	}
 	if err := validateProxyConfig(cfg); err != nil {
 		return err
 	}
@@ -70,6 +80,8 @@ func Run(ctx context.Context, cfg config.Config) error {
 	}
 
 	terminalManager := newTerminalSessionManager(terminalSessionManagerConfig{
+		PersistenceEnabled: cfg.Snapshot.Enabled,
+		WorkerID:           cfg.WorkerID,
 		LeaseMinSec:        cfg.TerminalLeaseMinSec,
 		LeaseMaxSec:        cfg.TerminalLeaseMaxSec,
 		LeaseDefaultSec:    cfg.TerminalLeaseDefaultSec,
@@ -84,6 +96,66 @@ func Run(ctx context.Context, cfg config.Config) error {
 		MaxActiveSessions:  cfg.TerminalMaxActiveSessions,
 		PreserveOnClose:    true,
 	})
+	var snapshots *snapshotController
+	var snapshotMaintenanceDone chan struct{}
+	var snapshotJournalFile *snapshotJournal
+	if cfg.Snapshot.Enabled {
+		var err error
+		if _, statErr := os.Lstat(filepath.Join(cfg.Snapshot.TmpDir, "journal.json")); os.IsNotExist(statErr) {
+			var owned bytesBuffer
+			if err := dockerSnapshotCLI(ctx, nil, &owned, "ps", "-a", "--filter", "label=onlyboxes.worker_id="+cfg.WorkerID, "--filter", "label=onlyboxes.persistence=true", "--format", "{{.ID}}"); err != nil {
+				terminalManager.Close()
+				return err
+			}
+			if strings.TrimSpace(owned.String()) != "" {
+				terminalManager.Close()
+				return errors.New("persistent Docker resources exist but their operation journal is missing")
+			}
+		}
+		snapshotJournalFile, err = openSnapshotJournal(cfg.Snapshot.TmpDir, cfg.WorkerID)
+		if err != nil {
+			terminalManager.Close()
+			return err
+		}
+		backend, err := newDockerSnapshotRuntime(ctx, cfg.Snapshot.HelperImage)
+		if err != nil {
+			_ = snapshotJournalFile.Close()
+			terminalManager.Close()
+			return fmt.Errorf("initialize snapshot backend: %w", err)
+		}
+		snapshots, err = newSnapshotController(ctx, terminalManager, snapshotJournalFile, backend, snapshotControllerConfig{MaxInflight: cfg.Snapshot.MaxInflight, TmpQuotaBytes: cfg.Snapshot.TmpQuotaBytes, CacheMaxBytes: cfg.Snapshot.CacheMaxBytes, CacheTTL: cfg.Snapshot.CacheTTL, DrainTimeout: cfg.Snapshot.DrainTimeout, TransferConcurrency: cfg.Snapshot.TransferConcurrency, TransferIdleTimeout: cfg.Snapshot.TransferIdleTimeout})
+		if err != nil {
+			_ = snapshotJournalFile.Close()
+			terminalManager.Close()
+			return err
+		}
+		terminalManager.mu.Lock()
+		terminalManager.persistenceDisconnected = true
+		terminalManager.mu.Unlock()
+	}
+	originalSnapshots := workerSnapshots.Swap(snapshots)
+	originalPersistenceRecovery := recoverPersistenceSessionsFn
+	if snapshots != nil {
+		recoverPersistenceSessionsFn = snapshots.Recover
+	}
+	defer func() {
+		if snapshots != nil {
+			_ = snapshots.Close(context.Background())
+			stop, done := context.WithTimeout(context.Background(), 10*time.Second)
+			if err := snapshots.stopForShutdown(stop); err != nil {
+				logging.Warnf("snapshot backend shutdown could not confirm all retained resources stopped")
+			}
+			done()
+		}
+		workerSnapshots.Store(originalSnapshots)
+		recoverPersistenceSessionsFn = originalPersistenceRecovery
+		if snapshotMaintenanceDone != nil {
+			<-snapshotMaintenanceDone
+		}
+		if snapshotJournalFile != nil {
+			_ = snapshotJournalFile.Close()
+		}
+	}()
 	pythonRunner := newPythonExecRunner(
 		cfg.PythonExecDockerImage,
 		cfg.PythonExecMemoryLimit,
@@ -110,6 +182,9 @@ func Run(ctx context.Context, cfg config.Config) error {
 		runTerminalResource = originalRunTerminalResource
 		activeSessionCountFn = originalActiveSessionCountFn
 		recoverTerminalSessionsFn = originalRecoverTerminalSessionsFn
+		if snapshots != nil {
+			_ = snapshots.Close(context.Background())
+		}
 		terminalManager.Close()
 	}()
 
@@ -134,6 +209,10 @@ func Run(ctx context.Context, cfg config.Config) error {
 
 	runCtx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
+	if snapshots != nil {
+		snapshotMaintenanceDone = make(chan struct{})
+		go func() { defer close(snapshotMaintenanceDone); snapshots.maintain(runCtx) }()
+	}
 	var proxyErrCh chan error
 	proxyWaited := false
 	if cfg.ProxyEnabled {
@@ -197,7 +276,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 		}
 
 		if status.Code(err) == codes.FailedPrecondition {
-			logging.Warnf("registry session replaced for node_id=%s, reconnecting", cfg.WorkerID)
+			logging.Warnf("registry session rejected for node_id=%s: %v", cfg.WorkerID, err)
 			reconnectDelay = initialReconnectDelay
 		} else {
 			logging.Warnf("registry session interrupted: %v", err)

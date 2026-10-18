@@ -57,3 +57,27 @@ log_level = "info"
 [labels]
 region = "cn"
 ```
+
+## Snapshot lifecycle configuration
+
+`WORKER_PERSISTENCE_ENABLED` defaults to `false`. When enabled, snapshot settings fail startup on invalid values. The Worker probes the local Docker daemon and trusted helper before advertising capabilities; it does not download an unpinned helper automatically. Public Console suspend/resume APIs must also be implemented and enabled independently.
+
+| Environment variable | Default / requirement |
+| --- | --- |
+| `WORKER_SNAPSHOT_TMP_DIR` | Required absolute private directory on durable local storage; journal and archive files share this root |
+| `WORKER_SNAPSHOT_DOCKER_HELPER_IMAGE` | Required locally available GNU tar image pinned by digest |
+| `WORKER_SNAPSHOT_MAX_INFLIGHT` | `1`; range `1..64` |
+| `WORKER_SNAPSHOT_TMP_QUOTA_BYTES` | `107374182400` (100 GiB); positive |
+| `WORKER_SNAPSHOT_CACHE_MAX_BYTES` | `10737418240` (10 GiB); `0` disables unused committed-copy caching; cannot exceed tmp quota |
+| `WORKER_SNAPSHOT_CACHE_TTL_SEC` | `86400` |
+| `WORKER_SNAPSHOT_TRANSFER_MAX_CONCURRENCY` | `4`; range `1..16` across the Worker |
+| `WORKER_SNAPSHOT_TRANSFER_IDLE_TIMEOUT_SEC` | `60`; maximum interval without byte progress |
+| `WORKER_SNAPSHOT_DRAIN_TIMEOUT_SEC` | `60`; maximum wait for admitted source commands |
+
+All snapshot duration settings accept `1..2592000` seconds. Each key maps to a flat TOML key without `WORKER_`, or to `[snapshot]` fields with the `snapshot_` prefix removed. `persistence_enabled` remains a top-level key.
+
+The directory uses mode `0700`, files use `0600`, and a process lock binds the journal to one Worker identity. Keep this directory across binary upgrades, process restarts and container recreation; mount durable storage when the Worker itself runs in a container. Deleting the journal is not a cache reset. Startup rejects a missing journal if this Worker still owns persistence-labeled Docker resources, and rejects disabling persistence when the configured directory contains a journal. Console also rejects a Worker without persistence support while durable ownership remains, including expired routes.
+
+Terminal containers carry a Worker identity label. Automatic orphan discovery is restricted to that identity, allowing isolated Workers to share one daemon without cleaning each other's resources. Unlabeled legacy orphans require explicit operator cleanup.
+
+See [snapshot lifecycle controller](sandbox-snapshot-controller.md) for recovery, cache and validation boundaries.

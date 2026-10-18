@@ -9,9 +9,10 @@ import (
 // resources in one database snapshot. Separate reads could omit a target as it
 // moves from activating to running and expose it to worker orphan cleanup.
 type WorkerRecoveryPlan struct {
-	PersistentScopes map[string]bool
-	Running          []RecoveryRunning
-	Held             []RecoveryHeld
+	RequiresPersistence bool
+	PersistentScopes    map[string]bool
+	Running             []RecoveryRunning
+	Held                []RecoveryHeld
 }
 
 type RecoveryRunning struct {
@@ -50,6 +51,9 @@ func (r *Repository) WorkerRecovery(ctx context.Context, worker string) (WorkerR
 				return err
 			}
 			plan.PersistentScopes[scope] = true
+			if owner == worker || source == worker || target == worker {
+				plan.RequiresPersistence = true
+			}
 			if op == "" {
 				if state == string(Running) && owner == worker && routeWorker == worker && lease > r.now().UnixMilli() {
 					plan.Running = append(plan.Running, RecoveryRunning{scope, generation, lease})

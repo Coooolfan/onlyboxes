@@ -1,6 +1,10 @@
 # Docker snapshot lifecycle controller and transfers
 
-`internal/runner/snapshot_controller*.go` joins the runtime adapter, operation journal, local session fences and archive transport behind an internal `Handle` entry point for `SandboxPersistenceControl` messages. It supports source preparation/upload/verification/finalization and target reservation/restore/activation/cancellation/inspection. Worker startup, authenticated stream dispatch, reconnect reconciliation and periodic maintenance are not wired to this controller yet. Workers do not advertise persistence capability.
+`internal/runner/snapshot_controller*.go` joins the runtime adapter, operation journal, local session fences and archive transport behind an internal `Handle` entry point for `SandboxPersistenceControl` messages. It supports source preparation/upload/verification/finalization and target reservation/restore/activation/cancellation/inspection. Worker startup binds the controller to the authenticated registry stream when `WORKER_PERSISTENCE_ENABLED=true`. Hello advertises the probed backend version/platform/formats and available staging capacity; heartbeat reports held operation reservations. Persistence remains disabled by default. Configuration is described in [config-file.md](config-file.md).
+
+Control admission happens synchronously on the receive loop before asynchronous native/HTTP work, preserving cancellation order without blocking heartbeats. Connection epochs reject late frames from a replaced stream. Disconnect closes persistent execution/proxy admission and cancels that connection's transfers; the durable journal retains ownership for reconnect. Before ordinary orphan cleanup, recovery validates Console generation/ownership against the journal and native identity, retains held sources/targets, and restores acknowledged active ownership with Console's exact live lease. Unknown generations cannot create an empty replacement.
+
+A one-second maintenance loop cancels expired unactivated targets, stops expired active backends while retaining their rootfs, and evicts eligible cache copies. It pauses lifecycle admission while connection recovery runs. Shutdown waits for accepted controls, stops journal-owned running backends, including unfinished source preparation, while retaining paused sources, and releases the private journal lock after cleanup. This process-local maintenance does not survive Worker `SIGKILL` or host failure; independent backend lease enforcement remains required.
 
 ## Source lifecycle
 
@@ -28,7 +32,7 @@ Activation requires the same operation, generation and live lease. Ordinary dela
 
 Private partial downloads survive transient failures. A resumed reply must describe exactly the requested remainder; a server that ignores Range restarts from byte zero. Only a complete file with matching size and full SHA-256 is synced and atomically published for import. Verification and import use a fixed open descriptor. Grant URLs and signed headers are never part of journal records.
 
-Cache eviction considers only verified shared-snapshot copies. Current held operations and pinned files are protected. Unused copies can be removed for TTL, cache budget or staging pressure. Uncommitted source archives are excluded from cache eviction. Periodic eviction, obsolete-artifact/image GC and terminal journal compaction still need lifecycle maintenance wiring.
+Cache eviction considers only verified shared-snapshot copies. Current held operations and pinned files are protected. Unused copies can be removed for TTL, cache budget or staging pressure. Uncommitted source archives are excluded from cache eviction. Periodic TTL/budget eviction runs in lifecycle maintenance. Obsolete-artifact/image GC and terminal journal compaction remain separate lifecycle cleanup work.
 
 ## Validation and remaining integration
 
@@ -43,4 +47,6 @@ DOCKER_SNAPSHOT_HELPER_IMAGE='repository@sha256:<pinned-digest>' \
 go test -race ./internal/runner -run '^TestIntegrationSnapshotController' -count=1 -v
 ```
 
-The HTTP fixture exercises real archive PUT/GET but is not a certified S3 provider. The test uses one Docker daemon and direct handler calls; it does not prove registry-stream wiring, Console HTTP APIs, source/target process-crash recovery, lease/watchdog maintenance or cross-machine scheduling. These integrations, BoxLite support and retention/deletion acceptance remain required before persistence is complete or enabled.
+Additional tests exercise a real gRPC stream during a blocked HTTP upload: heartbeats remain live, disconnect cancels the request, reconnect accepts controls and frozen ownership survives. A native Worker `Run` test verifies startup capability advertisement, lifecycle dispatch, durable cancellation acknowledgement and journal lock release on shutdown. Native journal-reopen tests retain paused sources, roll back the same instance, recover running ownership, reject stale lease expiry and stop expired backends without deleting the sole writable rootfs. Ready-but-unactivated targets are also checked for lease cleanup.
+
+The HTTP fixture exercises real archive PUT/GET but is not a certified S3 provider. Native tests use one Docker daemon. They do not prove Console public HTTP APIs, independent lease enforcement after Worker `SIGKILL`, full process-crash acceptance or cross-machine scheduling. Those integrations, BoxLite support and retention/deletion acceptance remain required before persistence is complete.

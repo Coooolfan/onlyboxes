@@ -90,3 +90,18 @@ func TestWorkerRecoveryNeverOmitsTargetDuringActivationFinish(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestExpiredPersistentOwnershipStillRequiresPersistence(t *testing.T) {
+	r, db, _ := testRepository(t)
+	if _, err := db.SQL.ExecContext(context.Background(), `DELETE FROM terminal_session_routes`); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := r.WorkerRecovery(context.Background(), "worker-a")
+	if err != nil || !plan.RequiresPersistence || len(plan.Running) != 0 || len(plan.Held) != 0 {
+		t.Fatalf("expired ownership allowed ordinary destructive recovery: %+v %v", plan, err)
+	}
+	plan, err = r.WorkerRecovery(context.Background(), "unrelated")
+	if err != nil || plan.RequiresPersistence {
+		t.Fatalf("unrelated worker required persistence: %+v %v", plan, err)
+	}
+}

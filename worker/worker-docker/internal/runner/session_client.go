@@ -59,8 +59,21 @@ func runSession(ctx context.Context, cfg config.Config) error {
 		return fmt.Errorf("connect_ack.session_id is required")
 	}
 
+	snapshots := workerSnapshots.Load()
+	if snapshots != nil {
+		defer snapshots.endConnection(sessionID)
+		recoveryCtx, stop := context.WithTimeout(ctx, cfg.CallTimeout)
+		err := snapshots.beginConnection(recoveryCtx, sessionID)
+		stop()
+		if err != nil {
+			return err
+		}
+	}
 	heartbeatInterval := durationFromServer(ack.GetHeartbeatIntervalSec(), cfg.HeartbeatInterval)
-	if err := recoverPersistenceSessionsFn(ctx, ack.GetTerminalSessionRecoveryCandidates(), ack.GetSandboxPersistenceRecoveryCandidates()); err != nil {
+	persistenceRecoveryCtx, stopPersistenceRecovery := context.WithTimeout(ctx, cfg.CallTimeout)
+	persistenceRecoveryErr := recoverPersistenceSessionsFn(persistenceRecoveryCtx, ack.GetTerminalSessionRecoveryCandidates(), ack.GetSandboxPersistenceRecoveryCandidates())
+	stopPersistenceRecovery()
+	if persistenceRecoveryErr != nil {
 		return errors.New("sandbox lifecycle recovery is unavailable")
 	}
 	recoveryResults, err := recoverTerminalSessionsWithTimeout(ctx, cfg.CallTimeout, ack.GetTerminalSessionRecoveryCandidates())
@@ -81,10 +94,13 @@ func runSession(ctx context.Context, cfg config.Config) error {
 	if recoveryResp.GetTerminalSessionRecoveryAck() == nil {
 		return fmt.Errorf("unexpected response while waiting for terminal session recovery ack")
 	}
+	if snapshots != nil {
+		snapshots.recoveredConnection(sessionID)
+	}
 	logTerminalRecoverySummary(recoveryResults)
 	logging.Infof("worker connected: node_id=%s node_name=%s session_id=%s", hello.GetNodeId(), hello.GetNodeName(), sessionID)
 
-	sessionCtx, cancel := context.WithCancel(ctx)
+	sessionCtx, cancel := context.WithCancel(context.WithValue(ctx, snapshotConnectionContextKey{}, sessionID))
 	defer cancel()
 
 	outbound := make(chan *registryv1.ConnectRequest, 64)
@@ -189,6 +205,21 @@ func receiverLoop(
 				return
 			case heartbeatAckCh <- resp.GetHeartbeatAck():
 			}
+		case resp.GetSandboxPersistenceControl() != nil:
+			control := proto.Clone(resp.GetSandboxPersistenceControl()).(*registryv1.SandboxPersistenceControl)
+			var work func() *registryv1.SandboxPersistenceReport
+			if controller := workerSnapshots.Load(); controller != nil {
+				connection, _ := ctx.Value(snapshotConnectionContextKey{}).(string)
+				work = controller.admit(connection, control)
+			} else {
+				work = func() *registryv1.SandboxPersistenceReport {
+					return &registryv1.SandboxPersistenceReport{RequestId: control.RequestId, OperationId: control.OperationId, ScopedSessionId: control.ScopedSessionId, Generation: control.Generation, Action: control.Action, Completed: true, Error: &registryv1.CommandError{Code: "persistence_unavailable", Message: "worker snapshot persistence is disabled"}}
+				}
+			}
+			go func() {
+				report := work()
+				_ = enqueueRequest(ctx, outbound, &registryv1.ConnectRequest{Payload: &registryv1.ConnectRequest_SandboxPersistenceReport{SandboxPersistenceReport: report}})
+			}()
 		case resp.GetCommandDispatch() != nil:
 			dispatch := resp.GetCommandDispatch()
 			capability := strings.TrimSpace(strings.ToLower(dispatch.GetCapability()))
@@ -336,6 +367,7 @@ func heartbeatLoop(
 					NodeId:             cfg.WorkerID,
 					SessionId:          sessionID,
 					ActiveSessionCount: activeSessionCountFn(),
+					SandboxPersistence: snapshotHeartbeatUsage(),
 				},
 			},
 		}); err != nil {

@@ -291,12 +291,11 @@ func (m *terminalSessionManager) cleanupOrphanContainers(ctx context.Context, ex
 	if failed {
 		return 0, 0
 	}
-	listed := runDockerCommand(ctx,
-		"ps", "-a",
-		"--filter", "label="+terminalExecSessionLabelKey,
-		"--filter", "label="+terminalExecSchemaLabelKey+"="+terminalExecSchemaVersion,
-		"--format", "{{.Names}}",
-	)
+	args := []string{"ps", "-a", "--filter", "label=" + terminalExecSessionLabelKey, "--filter", "label=" + terminalExecSchemaLabelKey + "=" + terminalExecSchemaVersion, "--format", "{{.Names}}"}
+	if m.workerID != "" {
+		args = append(args, "--filter", "label=onlyboxes.worker_id="+m.workerID)
+	}
+	listed := runDockerCommand(ctx, args...)
 	if listed.Err != nil || listed.ExitCode != 0 {
 		logging.Warnf("terminal recovery orphan discovery failed")
 		return 0, 0
