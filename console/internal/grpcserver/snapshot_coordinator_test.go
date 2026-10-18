@@ -291,6 +291,9 @@ func (a *coordinatorActor) apply(c *registryv1.SandboxPersistenceControl, p wire
 			return wire.Result{State: "busy"}, ""
 		}
 		result.State = "canceled"
+		if p.PurgeSession {
+			result.State = "deleted"
+		}
 		if p.Rollback {
 			result.State = "running"
 		}

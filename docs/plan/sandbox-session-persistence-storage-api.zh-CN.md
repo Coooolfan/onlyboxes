@@ -2,7 +2,7 @@
 
 ## 状态与范围
 
-本文补充[持久化与跨 Worker 唤醒时序](sandbox-session-persistence-lifecycle.zh-CN.md)，定义共享存储的职责、首期部署目标以及需要新增或调整的 API、配置和内部协议。本文描述首期完整设计，不表示所有验收项均已完成。已接入的接口与配置以[统一 API](../API.zh-CN.md#75-挂起--唤醒-session)、[Console 配置](../../console/docs/config-file.md#sandbox-persistence)及 [Docker 生命周期说明](../../worker/worker-docker/docs/sandbox-snapshot-controller.md)为准；BoxLite 接入、物理清理、独立 lease 强制执行与跨机器验收仍需完成。
+本文补充[持久化与跨 Worker 唤醒时序](sandbox-session-persistence-lifecycle.zh-CN.md)，定义共享存储的职责、首期部署目标以及需要新增或调整的 API、配置和内部协议。本文描述首期完整设计，不表示所有验收项均已完成。已接入的接口与配置以[统一 API](../API.zh-CN.md#75-挂起--唤醒-session)、[Console 配置](../../console/docs/config-file.md#sandbox-persistence)及 [Docker 生命周期说明](../../worker/worker-docker/docs/sandbox-snapshot-controller.md)为准；BoxLite 接入、未登记孤儿资源扫描、独立 lease 强制执行与跨机器验收仍需完成。
 
 首期仅支持 Docker → Docker、BoxLite → BoxLite，恢复为新启动的执行实例。共享存储保存约定的文件系统归档；Console 数据库保存会话、快照引用和所有权。共享对象存储不承担会话调度、分布式锁或运行中沙箱的文件读写。
 
@@ -22,7 +22,7 @@
 | 对象可见性 | 完成 PUT/Complete 后，同一对象的 HEAD/GET 立即可读到完整内容 | 防止元数据已提交、目标却读不到归档 |
 | 完整性 | 支持可验证的上传 checksum，或允许完成后完整 GET 回读 | 提交前验证数据确实已写入；恢复后再次验证 |
 | 有限授权 | SigV4 预签名 UploadPart / GET，含所需签名请求头与有效期 | Worker 直传，不分发 bucket 长期凭据 |
-| 不可覆盖 | Console 对描述对象执行条件写入；归档由唯一 upload ID 完成 | 已提交 snapshot 的字节不可被后续重试覆盖 |
+| 不可覆盖 | Console 对描述对象执行条件写入；归档由唯一 upload ID 完成；GC 对无引用对象使用 If-Match 条件替换 | 已提交 snapshot 的字节不可被后续重试覆盖 |
 | 持久与可用 | 已确认提交的数据在 Worker 退出后仍保留；存储故障域独立于源 Worker | 满足跨 Worker 恢复，而非本机缓存复用 |
 
 必须对实际使用的 S3 兼容服务验证这些语义，不能仅凭“支持 S3”认定全部兼容。Amazon S3 的强读后写一致性可作为这里的语义参考；对象存储不能替代数据库多记录事务。[S3 一致性模型](https://docs.aws.amazon.com/AmazonS3/latest/userguide/Welcome.html#ConsistencyModel)
@@ -301,7 +301,7 @@ GC 先根据数据库确认对象没有有效会话引用、没有进行中的�
 
 ### 现有实现可复用的部分
 
-[`console/internal/objectstore`](../../console/internal/objectstore/objectstore.go) 中的 `Store` 提供用户文件 PUT/GET 预签名，使用 `CONSOLE_EXPORT_FILE_*` 配置服务于 `exportFile`。`SnapshotStore` 另行提供 multipart、HEAD/GET 校验、不可变描述对象、定向删除和启动能力探测；周期 GC 与持久化删除任务执行仍待接入。
+[`console/internal/objectstore`](../../console/internal/objectstore/objectstore.go) 中的 `Store` 提供用户文件 PUT/GET 预签名，使用 `CONSOLE_EXPORT_FILE_*` 配置服务于 `exportFile`。`SnapshotStore` 提供 multipart、HEAD/GET 校验、不可变描述对象、按版本删除与启动能力探测；持久化删除任务及已登记无引用快照 GC 已接入，未登记孤儿对象/上传扫描仍需完成。
 
 可以复用 AWS SDK 依赖、客户端构建和签名基础，新增 snapshot store 接口；不要把 `exportFile` 用户文件导出的保留期、凭据或返回 URL 直接当作 session snapshot 契约。建议 snapshot 使用独立 bucket，至少使用独立 prefix 和生命周期规则。`exportFile` 现有配置与行为保持独立。
 

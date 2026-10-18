@@ -19,6 +19,7 @@ The console service hosts:
   - `POST /api/v1/workers` for creating provisioned worker credentials and returning startup command.
   - `DELETE /api/v1/workers/:node_id` for deleting a provisioned worker and revoking its credential (online worker is disconnected immediately).
   - `GET /api/v1/workers/:node_id/startup-command` always returns `410 Gone`.
+  - `GET /api/v1/persistence/stats` exposes account-scoped durable cleanup backlog, failures and retry counts.
   - `POST /api/v1/sessions/:session_id/suspend` and `/resume` accept asynchronous persistent lifecycle operations when enabled; poll `GET /api/v1/sessions/:session_id/operations/:operation_id`. See [persistence configuration and current boundaries](docs/config-file.md#sandbox-persistence).
   - `GET /api/v1/sessions` lists running and durable lifecycle sessions (admin: all accounts, optional `account_id`; non-admin: own account).
   - `GET /api/v1/sessions/:session_id` returns one confirmed terminal session (`account_id` required for admin).

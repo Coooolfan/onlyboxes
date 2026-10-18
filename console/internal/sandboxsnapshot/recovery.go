@@ -70,7 +70,27 @@ func (r *Repository) WorkerRecovery(ctx context.Context, worker string) (WorkerR
 				plan.Held = append(plan.Held, RecoveryHeld{ScopedSessionID: scope, OperationID: op, Generation: generation, RouteCommitted: state == string(Running)})
 			}
 		}
-		return rows.Err()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		pending, err := tx.QueryContext(ctx, `SELECT d.owner_id,d.session_id,d.generation,s.scoped_session_id FROM sandbox_session_deletion_workers w JOIN sandbox_session_deletions d USING(owner_id,session_id) JOIN sandbox_persistent_sessions s USING(owner_id,session_id) WHERE w.worker_id=? AND w.done=0 AND s.state='deleting'`, worker)
+		if err != nil {
+			return err
+		}
+		defer pending.Close()
+		for pending.Next() {
+			var job DeletionJob
+			var scope string
+			if err := pending.Scan(&job.OwnerID, &job.SessionID, &job.Generation, &scope); err != nil {
+				return err
+			}
+			plan.RequiresPersistence = true
+			plan.Held = append(plan.Held, RecoveryHeld{ScopedSessionID: scope, OperationID: job.ID(), Generation: job.FenceGeneration()})
+		}
+		return pending.Err()
 	})
 	return plan, err
 }

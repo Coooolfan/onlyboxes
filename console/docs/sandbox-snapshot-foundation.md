@@ -69,7 +69,7 @@ go test ./...
 
 The overall target behavior and planned APIs are documented in [the lifecycle design](../../docs/plan/sandbox-session-persistence-lifecycle.zh-CN.md) and [the storage/API design](../../docs/plan/sandbox-session-persistence-storage-api.zh-CN.md).
 
-The separate [worker protocol and restore placement](sandbox-snapshot-worker-protocol.md) implementation provides bounded controls and connection-scoped capacity reservations. BoxLite lifecycle integration, physical deletion/retention GC, independent runtime lease enforcement and real cross-machine acceptance are still required before the persistence feature is complete.
+The separate [worker protocol and restore placement](sandbox-snapshot-worker-protocol.md) implementation provides bounded controls and connection-scoped capacity reservations. BoxLite lifecycle integration, unregistered storage/runtime orphan GC, independent runtime lease enforcement and real cross-machine acceptance are still required before the persistence feature is complete.
 
 
 ## Asynchronous lifecycle executor
@@ -94,4 +94,6 @@ Suspend/resume require management cookie, API key or Dashboard JIT authenticatio
 
 `DELETE` atomically creates a durable cleanup job, marks the stable session deleting, advances its generation, cancels dispatchable lifecycle work and removes its execution/preview routes. GET/list/operation polling hide deleted sessions, including stale route-cache entries. Old operation completions and idempotency retries cannot republish a deleted session. Snapshot references stay retained until native cleanup is confirmed.
 
-The deletion queue persists across Console restart. Its physical native/object cleanup executor, retention expiry, multipart/orphan GC and backlog observability remain required; recording the job does not mean the underlying bytes have already been reclaimed.
+`SnapshotCleaner` processes the durable deletion queue and retention policy independently of new-operation admission. Required current owners must confirm purge before shared references are cleared; historical cache holders are tracked separately. Failed storage deletion retains quota state and version identities for retry. Deleted and old unreferenced snapshots are tombstoned transactionally before storage work; active restore/upload references prevent collection.
+
+Archive/manifest keys are atomically replaced with small deletion markers. These markers retain the old version IDs before version deletion, so a lost reply or restart cannot discard the identities needed for physical cleanup. Conditional writes cannot recreate those keys after deletion. The account-scoped cleanup stats endpoint exposes durable backlog/failure/retry counters. Unregistered storage orphans, late runtime import debris and journal compaction remain separate cleanup work.

@@ -104,6 +104,7 @@ type Control struct {
 	LeaseTTLSec       int            `json:"lease_ttl_sec,omitempty"`
 	DrainTimeoutSec   int            `json:"drain_timeout_sec,omitempty"`
 	Rollback          bool           `json:"rollback,omitempty"`
+	PurgeSession      bool           `json:"purge_session,omitempty"`
 	Delete            bool           `json:"delete,omitempty"`
 	SnapshotCommitted bool           `json:"snapshot_committed,omitempty"`
 }

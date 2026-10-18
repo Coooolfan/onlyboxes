@@ -137,6 +137,15 @@ func TestSnapshotHTTPStableViewsNullRuntimeBindingAndLogicalDelete(t *testing.T)
 	if response := f.request(http.MethodGet, snapshotHTTPPath+"/operations/"+f.operation.ID+snapshotHTTPAccount, "", ""); response.Code != 404 {
 		t.Fatal("deleted session operation was exposed")
 	}
+
+	statsResponse := f.request(http.MethodGet, "/api/v1/persistence/stats"+snapshotHTTPAccount, "", "")
+	if statsResponse.Code != 200 || !strings.Contains(statsResponse.Body.String(), `"pending_sessions":1`) || !strings.Contains(statsResponse.Body.String(), `"pending_workers":1`) || !strings.Contains(statsResponse.Body.String(), `"pending_snapshots":1`) {
+		t.Fatal("cleanup backlog was not visible", statsResponse.Code, statsResponse.Body.String())
+	}
+	otherStats := f.request(http.MethodGet, "/api/v1/persistence/stats?account_id=another-account", "", "")
+	if otherStats.Code != 200 || !strings.Contains(otherStats.Body.String(), `"pending_sessions":0`) {
+		t.Fatal("cleanup stats crossed account scope", otherStats.Body.String())
+	}
 	var state, latest, job string
 	if err := f.store.Persistence().SQL.QueryRow(`SELECT s.state,s.latest_snapshot_id,d.status FROM sandbox_persistent_sessions s JOIN sandbox_session_deletions d USING(owner_id,session_id)`).Scan(&state, &latest, &job); err != nil {
 		t.Fatal(err)

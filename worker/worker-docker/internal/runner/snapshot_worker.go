@@ -148,7 +148,7 @@ func (c *snapshotController) Recover(ctx context.Context, ordinary []*registryv1
 			if op.SessionID != hint.ScopedSessionId || op.Generation != hint.Generation {
 				return errSnapshotJournalConflict
 			}
-			if op.ContainerID == "" || op.terminal() {
+			if op.ContainerID == "" || op.terminal() || op.Kind == "delete" {
 				continue
 			}
 			var ids bytesBuffer

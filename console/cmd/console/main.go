@@ -126,8 +126,9 @@ func main() {
 		fatal("failed to inspect sandbox persistence ownership")
 	}
 	if requiresSnapshotStore && !cfg.Snapshot.Configured() {
-		fatal("snapshot store configuration is required while durable snapshots or cleanup work remain")
+		fatal("snapshot store configuration is required while durable snapshots or accepted operations remain")
 	}
+	var snapshotCleanupObjects grpcserver.SnapshotCleanupObjects
 	if cfg.Snapshot.Enabled || cfg.Snapshot.Configured() {
 		snapshotObjects, err := objectstore.NewSnapshotStore(objectstore.SnapshotConfig{
 			Config: objectstore.Config{
@@ -146,6 +147,7 @@ func main() {
 		if err != nil {
 			fatal("failed to initialize snapshot object store", "error", err)
 		}
+		snapshotCleanupObjects = snapshotObjects
 		if err := snapshotRepository.ValidateStore(runCtx, snapshotObjects.ID()); err != nil {
 			fatal("snapshot storage namespace is incompatible with retained records", "error", err)
 		}
@@ -184,8 +186,24 @@ func main() {
 				slog.Error("sandbox lifecycle coordinator shutdown timed out")
 			}
 		}()
+
 		httpHandler.SetSnapshotCoordinator(coordinator, cfg.Snapshot.Enabled)
 	}
+	cleaner, err := grpcserver.NewSnapshotCleaner(registryService, snapshotCleanupObjects, grpcserver.SnapshotCleanerConfig{Interval: cfg.Snapshot.GCInterval, Grace: cfg.Snapshot.GCGrace, RetryInterval: 2 * time.Second, CallTimeout: 30 * time.Second, MaxJobs: 4})
+	if err != nil {
+		fatal("failed to initialize snapshot cleanup", "error", err)
+	}
+	if err := cleaner.Start(runCtx); err != nil {
+		fatal("failed to start snapshot cleanup", "error", err)
+	}
+	defer func() {
+		cancelRun()
+		stop, done := context.WithTimeout(context.Background(), 5*time.Second)
+		defer done()
+		if err := cleaner.Stop(stop); err != nil {
+			slog.Error("snapshot cleanup shutdown timed out")
+		}
+	}()
 	var proxyRouteHandler *httpapi.ProxyRouteHandler
 	if cfg.ProxyEnabled {
 		if len(cfg.ProxyAllowedDirectDomains) == 0 {

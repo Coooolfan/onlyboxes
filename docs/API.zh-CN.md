@@ -771,7 +771,7 @@ Worker 类型：
 
 会话响应还包含 `lifecycle_state`（`running/snapshotting/suspended/restoring`）、可空的 `current_operation_id` 和 `persistence`。持久化对象包含 `enabled`、可选 `runtime/platform`、可空的 `retention_expires_at` 和 `latest_snapshot`（`snapshot_id/created_at/size_bytes/sha256`）。成功提交快照后 `enabled=true`；不返回私有环境、镜像启动配置、对象键或签名 URL。挂起和恢复中的稳定会话仍出现在列表中，`worker_id/status/lease_expires_at` 为 null。
 
-删除会立即移除执行及公开预览路由。持久化会话被逻辑隐藏，保留持久化清理任务和快照引用；原生资源物理清理、保留期回收与孤儿 GC 处理尚待接入，`204` 不表示字节已经物理擦除。普通非持久化沙箱仍沿用现有 lease 清理行为。
+删除会立即移除执行及公开预览路由。持久化会话被逻辑隐藏，保留持久化清理任务和快照引用；清理器在当前原生实例确认删除后，回收共享归档和描述数据版本；历史缓存节点离线时继续保留清理任务。保留期回收与数据库中无引用快照 GC 会独立运行，`204` 不表示字节已经物理擦除。Docker 名称及对象键保留小型删除控制标记，防止迟到请求重新创建资源。普通非持久化沙箱仍沿用现有 lease 清理行为。
 
 ### 7.1 查询 Session 列表
 
@@ -920,6 +920,18 @@ Content-Type: application/json
 状态为 `pending/running/succeeded/failed/canceled`；`phase` 表示排空、上传、校验、调度、启动、激活或核对等阶段。目前字节进度不可用，以已完成字节 0、总量 null 表示；阶段完成本身不代表会话已激活。失败操作包含 `error.code`、脱敏 `message` 和 `retryable`。无兼容 Worker 使用 `no_worker`，容量错误复用现有错误码；超出目标 Worker lease 配置范围的请求可能异步失败为 `invalid_payload`。
 
 错误：`400` 管理员未提供账号、`401` 鉴权失败、`404` 操作不存在或跨账号、`503` session registry 不可用。不返回私有恢复或存储元数据。
+
+### 7.7 查询持久化清理积压
+
+`GET /api/v1/persistence/stats?account_id=acc_xxx`
+
+管理鉴权与 Session 列表相同：管理员可查询全局或按账号过滤，非管理员只能查询自身账号。关闭新的挂起/唤醒准入不影响查询。
+
+```json
+{"pending_sessions":1,"pending_workers":1,"pending_snapshots":1,"failed_sessions":1,"failed_snapshots":0,"retry_attempts":3,"oldest_pending_at":"2026-10-18T00:00:00Z"}
+```
+
+积压、失败及重试计数来自持久化记录；`retry_attempts` 为未完成清理周期的累计重试次数，时间在没有积压时为 null。离线缓存节点、未确认的原生删除和存储失败均会保留待处理任务；不返回私有存储地址或错误内容。错误为 `401`、跨账号 `404`、读取失败 `500` 或 registry 不可用 `503`。
 
 ## 8. Sandbox 元数据 API（Bearer Token 鉴权）
 

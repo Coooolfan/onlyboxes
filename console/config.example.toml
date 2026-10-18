@@ -83,7 +83,7 @@ snapshot_account_quota_bytes = 107374182400
 persistence_retention_ttl_sec = 604800
 persistence_max_retention_ttl_sec = 2592000
 persistence_operation_timeout_sec = 1800
-# GC policy parameters; physical cleanup processing is not wired yet.
+# Expired suspended sessions and unreferenced database snapshots are collected.
 snapshot_gc_interval_sec = 300
 snapshot_gc_grace_sec = 86400
 

@@ -278,3 +278,23 @@ func snapshotPublicError(code string) (int, string, bool) {
 		return http.StatusBadGateway, "sandbox snapshot storage or lifecycle action failed", true
 	}
 }
+
+func (h *WorkerHandler) SnapshotCleanupStats(c *gin.Context) {
+	owner, ok := h.resolveConsoleSessionOwner(c, false)
+	if !ok {
+		return
+	}
+	if h.sessions == nil {
+		h.snapshotError(c, grpcserver.ErrPersistenceUnavailable)
+		return
+	}
+	stats, err := h.sessions.SnapshotCleanupStats(c.Request.Context(), owner)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read snapshot cleanup backlog"})
+		return
+	}
+	c.JSON(http.StatusOK, struct {
+		sandboxsnapshot.CleanupStats
+		OldestPendingAt *time.Time `json:"oldest_pending_at"`
+	}{CleanupStats: stats, OldestPendingAt: optionalTime(unixMilliTime(stats.OldestPendingUnixMS))})
+}

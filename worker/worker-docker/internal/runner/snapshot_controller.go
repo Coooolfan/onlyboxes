@@ -147,7 +147,7 @@ func (c *snapshotController) admit(connection string, control *registryv1.Sandbo
 		return reply(wire.Result{}, errSnapshotJournalUnavailable)
 	}
 	if action, busy := c.actions[control.ScopedSessionId]; busy {
-		if control.Action == registryv1.SandboxPersistenceControl_CANCEL && action.operation == control.OperationId && action.generation == control.Generation {
+		if control.Action == registryv1.SandboxPersistenceControl_CANCEL && ((action.operation == control.OperationId && action.generation == control.Generation) || (payload.PurgeSession && control.Generation > action.generation)) {
 			action.cancel()
 		}
 		c.mu.Unlock()
@@ -303,6 +303,9 @@ func (c *snapshotController) execute(ctx context.Context, control *registryv1.Sa
 		}
 		return c.result(op.ID)
 	case registryv1.SandboxPersistenceControl_CANCEL:
+		if p.PurgeSession {
+			return c.purgeSession(ctx, control, p, state)
+		}
 		if !known {
 			if p.Rollback {
 				recovered, err := c.recoverSourceRollback(ctx, control, p.Spec)

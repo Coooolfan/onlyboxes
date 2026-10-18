@@ -19,7 +19,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	wire "github.com/onlyboxes/onlyboxes/api/sandboxpersistence"
 )
 
@@ -53,9 +52,10 @@ type dockerSnapshotContainer struct {
 	Image string
 	Name  string
 	State struct {
-		Status string
-		Paused bool
-		Pid    int
+		Status  string
+		Running bool
+		Paused  bool
+		Pid     int
 	}
 	Config struct {
 		Env        []string
@@ -291,7 +291,7 @@ func (r *dockerSnapshotRuntime) Export(ctx context.Context, instance dockerSnaps
 	if probe.Validate() != nil || !instance.Paused || instance.PID <= 0 || !dockerSnapshotDigest.MatchString("sha256:"+instance.ID) || instance.Spec.Validate() != nil || instance.Spec.Runtime != "docker" || instance.Spec.RuntimeVersion != r.version || instance.Spec.Platform != r.platform || maxBytes <= 0 || maxExpandedBytes <= 0 || maxBytes > 1<<60 || maxExpandedBytes > 1<<60 {
 		return wire.Archive{}, "", errSnapshotRuntimeUnsupported
 	}
-	file, err := os.CreateTemp(directory, "snapshot-*.tar")
+	file, err := os.CreateTemp(directory, snapshotExportTempPrefix(snapshotID)+"*.tar")
 	if err != nil {
 		return wire.Archive{}, "", err
 	}
@@ -303,7 +303,10 @@ func (r *dockerSnapshotRuntime) Export(ctx context.Context, instance dockerSnaps
 			_ = os.Remove(fileName)
 		}
 	}()
-	helperName := "onlyboxes-snapshot-export-" + uuid.NewString()
+	helperName := snapshotExportHelperName(instance.ID, snapshotID)
+	if err := removeSnapshotExportHelper(ctx, instance.ID, snapshotID); err != nil {
+		return wire.Archive{}, "", err
+	}
 	defer func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -311,7 +314,7 @@ func (r *dockerSnapshotRuntime) Export(ctx context.Context, instance dockerSnaps
 	}()
 	hash := sha256.New()
 	bounded := &snapshotBoundedWriter{writer: io.MultiWriter(file, hash), remaining: maxBytes}
-	args := []string{"run", "--name", helperName, "--rm", "--privileged", "--user", "0:0", "--pid=container:" + instance.ID, "--network", "none", "--read-only", "--entrypoint", "tar", r.helperImage, "--format=pax", "--pax-option=delete=atime,delete=ctime", "--numeric-owner", "--xattrs", "--xattrs-include=*", "--acls", "--sparse", "--one-file-system", "-C", "/proc/1/root", "--exclude=./proc", "--exclude=./sys", "--exclude=./dev", "--exclude=./tmp/*", "--exclude=./run/*", "--exclude=./etc/hostname", "--exclude=./etc/hosts", "--exclude=./etc/resolv.conf", "-cpf", "-", "."}
+	args := []string{"run", "--name", helperName, "--rm", "--label", "onlyboxes.snapshot.export_source=" + instance.ID, "--label", "onlyboxes.snapshot.export_operation=" + snapshotID, "--privileged", "--user", "0:0", "--pid=container:" + instance.ID, "--network", "none", "--read-only", "--entrypoint", "tar", r.helperImage, "--format=pax", "--pax-option=delete=atime,delete=ctime", "--numeric-owner", "--xattrs", "--xattrs-include=*", "--acls", "--sparse", "--one-file-system", "-C", "/proc/1/root", "--exclude=./proc", "--exclude=./sys", "--exclude=./dev", "--exclude=./tmp/*", "--exclude=./run/*", "--exclude=./etc/hostname", "--exclude=./etc/hosts", "--exclude=./etc/resolv.conf", "-cpf", "-", "."}
 	err = dockerSnapshotCLI(ctx, nil, bounded, args...)
 	if bounded.exceeded {
 		err = errSnapshotArchiveQuota
@@ -527,6 +530,37 @@ func (r *dockerSnapshotRuntime) Remove(ctx context.Context, id string) error {
 	}
 	if found != id {
 		return errSnapshotRuntimeUnsupported
+	}
+	return dockerSnapshotCLI(ctx, nil, io.Discard, "rm", "-f", id)
+}
+
+func snapshotExportTempPrefix(operation string) string {
+	hash := sha256.Sum256([]byte(operation))
+	return "snapshot-" + hex.EncodeToString(hash[:]) + "-"
+}
+func snapshotExportHelperName(source, operation string) string {
+	hash := sha256.Sum256([]byte(source + "\x00" + operation))
+	return "onlyboxes-snapshot-export-" + hex.EncodeToString(hash[:])
+}
+func removeSnapshotExportHelper(ctx context.Context, source, operation string) error {
+	name := snapshotExportHelperName(source, operation)
+	var listed bytes.Buffer
+	if err := dockerSnapshotCLI(ctx, nil, &listed, "ps", "-a", "--no-trunc", "--filter", "name=^/"+name+"$", "--format", "{{.ID}}"); err != nil {
+		return err
+	}
+	id := strings.TrimSpace(listed.String())
+	if id == "" {
+		return nil
+	}
+	if !dockerSnapshotDigest.MatchString("sha256:" + id) {
+		return errSnapshotJournalConflict
+	}
+	var native dockerSnapshotContainer
+	if err := dockerSnapshotJSON(ctx, &native, "inspect", "--format", "{{json .}}", id); err != nil {
+		return err
+	}
+	if native.Config.Labels["onlyboxes.snapshot.export_source"] != source || native.Config.Labels["onlyboxes.snapshot.export_operation"] != operation {
+		return errSnapshotJournalConflict
 	}
 	return dockerSnapshotCLI(ctx, nil, io.Discard, "rm", "-f", id)
 }

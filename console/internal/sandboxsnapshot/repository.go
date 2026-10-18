@@ -592,12 +592,12 @@ func (r *Repository) TombstoneSnapshot(ctx context.Context, owner, session, id s
 		if current.Status == "deleting" || current.Status == "deleted" {
 			return nil
 		}
-		changed, err := tx.ExecContext(ctx, `UPDATE sandbox_snapshots SET status='deleting',updated_at_unix_ms=? WHERE owner_id=? AND session_id=? AND snapshot_id=? AND status IN ('uploading','verified','ready') AND updated_at_unix_ms<? AND NOT EXISTS (SELECT 1 FROM sandbox_persistent_sessions s WHERE s.latest_snapshot_id=sandbox_snapshots.snapshot_id OR (s.owner_id=sandbox_snapshots.owner_id AND s.session_id=sandbox_snapshots.session_id AND s.operation_id!=''))`, r.now().UnixMilli(), owner, session, id, olderThan.UnixMilli())
+		changed, err := tx.ExecContext(ctx, `UPDATE sandbox_snapshots SET status='deleting',updated_at_unix_ms=? WHERE owner_id=? AND session_id=? AND snapshot_id=? AND status IN ('uploading','verified','ready') AND (updated_at_unix_ms<? OR `+snapshotDeletingSessionSQL+`) AND `+snapshotUnreferencedSQL, r.now().UnixMilli(), owner, session, id, olderThan.UnixMilli())
 		return requireChanged(changed, err)
 	})
 }
 func (r *Repository) MarkSnapshotDeleted(ctx context.Context, owner, session, id string) error {
-	changed, err := r.db.ExecContext(ctx, `UPDATE sandbox_snapshots SET status='deleted',updated_at_unix_ms=? WHERE owner_id=? AND session_id=? AND snapshot_id=? AND status='deleting'`, r.now().UnixMilli(), owner, session, id)
+	changed, err := r.db.ExecContext(ctx, `UPDATE sandbox_snapshots SET status='deleted',last_cleanup_error='',updated_at_unix_ms=? WHERE owner_id=? AND session_id=? AND snapshot_id=? AND status='deleting'`, r.now().UnixMilli(), owner, session, id)
 	err = requireChanged(changed, err)
 	if errors.Is(err, ErrConflict) {
 		current, lookupErr := r.Snapshot(ctx, owner, session, id)

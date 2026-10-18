@@ -128,6 +128,16 @@ func (s *SnapshotStore) Probe(ctx context.Context) (result error) {
 	if err := probe.VerifySnapshot(ctx, object); err != nil {
 		return errors.New("snapshot store probe immediate HEAD/GET verification failed")
 	}
+
+	invalidMatch, matchErr := probe.store.client.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(cfg.BucketName), Key: aws.String(object.Key), Body: bytes.NewReader([]byte("probe-if-match-rejection")), IfMatch: aws.String(`"onlyboxes-probe-must-not-match"`)})
+	if !isSnapshotPrecondition(matchErr) {
+		if matchErr == nil && invalidMatch != nil && aws.ToString(invalidMatch.VersionId) != "" && aws.ToString(invalidMatch.VersionId) != object.VersionID {
+			extra := object
+			extra.VersionID = aws.ToString(invalidMatch.VersionId)
+			extraArchives = append(extraArchives, extra)
+		}
+		return errors.New("snapshot store probe conditional replacement was not enforced")
+	}
 	grant, err := probe.PresignSnapshotDownload(ctx, object, object.Size-17)
 	if err != nil {
 		return errors.New("snapshot store probe signed range request failed")
@@ -207,6 +217,20 @@ func (s *SnapshotStore) Probe(ctx context.Context) (result error) {
 	if err := probe.AbortSnapshotUpload(ctx, abortUpload); err != nil {
 		return errors.New("snapshot store probe multipart abort failed")
 	}
+
+	if err := probe.PurgeSnapshot(ctx, object, manifestVersion); err != nil {
+		return errors.New("snapshot store probe cleanup replacement or version deletion failed")
+	}
+	archiveMarker, err := clientS3.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(cfg.BucketName), Key: aws.String(object.Key)})
+	if err != nil {
+		return errors.New("snapshot store probe archive deletion marker was not readable")
+	}
+	manifestMarker, err := clientS3.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(cfg.BucketName), Key: aws.String(path.Join(path.Dir(object.Key), "manifest.json"))})
+	if err != nil {
+		return errors.New("snapshot store probe descriptor deletion marker was not readable")
+	}
+	object.VersionID = aws.ToString(archiveMarker.VersionId)
+	manifestVersion = aws.ToString(manifestMarker.VersionId)
 	if err := probe.DeleteSnapshot(ctx, object, manifestVersion); err != nil {
 		return errors.New("snapshot store probe object deletion failed")
 	}

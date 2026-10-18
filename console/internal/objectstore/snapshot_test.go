@@ -32,12 +32,13 @@ type snapshotS3 struct {
 	uploadKeys             map[string]string
 	nextID                 int
 	corrupt                bool
+	markers                map[string]bool
 	deletes                map[string]string
 }
 
 func newSnapshotS3(t *testing.T) (*snapshotS3, *SnapshotStore) {
 	t.Helper()
-	fake := &snapshotS3{objects: map[string][]byte{}, uploads: map[string]map[int][]byte{}, uploadKeys: map[string]string{}, deletes: map[string]string{}}
+	fake := &snapshotS3{objects: map[string][]byte{}, uploads: map[string]map[int][]byte{}, uploadKeys: map[string]string{}, deletes: map[string]string{}, markers: map[string]bool{}}
 	server := httptest.NewServer(http.HandlerFunc(fake.serve))
 	t.Cleanup(server.Close)
 	store, err := NewSnapshotStore(SnapshotConfig{Config: Config{Endpoint: server.URL, Region: "test", BucketName: "snapshots", AccessKey: "ak", SecretKey: "sk", ForcePathStyle: true}, Prefix: "sessions", MaxBytes: 10 << 30, PartSize: MinSnapshotPartSize, PresignTTL: 15 * time.Minute})
@@ -162,11 +163,18 @@ func (s *snapshotS3) serve(w http.ResponseWriter, r *http.Request) {
 		delete(s.uploads, uploadID)
 		w.WriteHeader(http.StatusNoContent)
 	case r.Method == http.MethodPut:
-		if r.Header.Get("If-None-Match") != "*" {
+		if match := r.Header.Get("If-Match"); match != "" {
+			body, ok := s.objects[key]
+			if !ok || match != etag(body) {
+				s3Error(w, 412, "PreconditionFailed")
+				return
+			}
+		}
+		if r.Header.Get("If-None-Match") != "*" && r.Header.Get("If-Match") == "" {
 			s3Error(w, 400, "MissingCondition")
 			return
 		}
-		if _, exists := s.objects[key]; exists {
+		if _, exists := s.objects[key]; exists && r.Header.Get("If-None-Match") == "*" {
 			s3Error(w, 412, "PreconditionFailed")
 			return
 		}
@@ -176,6 +184,7 @@ func (s *snapshotS3) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.objects[key] = body
+		s.markers[key] = r.Header.Get("X-Amz-Meta-Onlyboxes-Deleted") == "v1"
 		w.Header().Set("x-amz-version-id", "manifest-v1")
 	case r.Method == http.MethodHead || r.Method == http.MethodGet:
 		if r.Method == http.MethodGet && strings.HasSuffix(key, "/archive") {
@@ -199,7 +208,10 @@ func (s *snapshotS3) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("x-amz-version-id", version)
-		w.Header().Set("ETag", `"not-a-content-digest"`)
+		w.Header().Set("ETag", etag(body))
+		if s.markers[key] {
+			w.Header().Set("X-Amz-Meta-Onlyboxes-Deleted", "v1")
+		}
 		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 		if r.Method == http.MethodHead {
 			return

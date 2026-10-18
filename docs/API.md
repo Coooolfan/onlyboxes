@@ -769,7 +769,7 @@ Scope:
 
 Session responses also include `lifecycle_state` (`running`, `snapshotting`, `suspended`, or `restoring`), `current_operation_id` (nullable), and `persistence`. The persistence object contains `enabled`, optional `runtime`/`platform`, nullable `retention_expires_at`, and nullable `latest_snapshot` (`snapshot_id`, `created_at`, `size_bytes`, `sha256`). `enabled` becomes true after a snapshot is committed. Private environment, image configuration, object keys and signed URLs are not returned. Suspended/restoring sessions remain listed with null `worker_id`, `status` and `lease_expires_at`.
 
-Deleting a session immediately removes execution and public preview routes. Persistent sessions are logically hidden and retain a durable cleanup job plus snapshot references. Physical persistent resource cleanup and retention/orphan GC processing remain pending; `204` does not confirm physical erasure. Ordinary Worker sandboxes retain their existing lease cleanup behavior.
+Deleting a session immediately removes execution and public preview routes. Persistent sessions are logically hidden and retain a durable cleanup job plus snapshot references. The cleaner reclaims shared archive/manifest data versions after current native owners confirm deletion; offline historical cache holders retain pending work. Retention expiry and unreferenced-snapshot GC run independently. `204` does not confirm physical erasure. Small Docker-name and object-key deletion markers remain as control metadata to prevent late requests from recreating resources. Ordinary Worker sandboxes retain their existing lease cleanup behavior.
 
 ### 7.1 List Sessions
 
@@ -918,6 +918,18 @@ Success `200` (also the `202` submission body):
 Status is `pending`, `running`, `succeeded`, `failed`, or `canceled`; phase describes lifecycle work such as draining, uploading, verifying, scheduling, starting, activating, or reconciliation. Transfer byte progress is currently unavailable and represented by zero completed bytes and a null total; phase completion does not itself mean the session is activated. A failed operation includes `error.code`, sanitized `message`, and `retryable`. No compatible Worker produces `no_worker`; capacity failures retain their existing codes. Lease values outside selected Worker limits can fail asynchronously with `invalid_payload`.
 
 Errors: `400` admin omitted `account_id`, `401` authentication failure, `404` absent/cross-account operation, `503` session registry unavailable. This endpoint returns no private restore or storage metadata.
+
+### 7.7 Get Persistence Cleanup Backlog
+
+`GET /api/v1/persistence/stats?account_id=acc_xxx`
+
+Management authentication and account filtering match List Sessions: admins query globally or select an account; non-admins query only their own account. Disabling new persistence admission does not hide these statistics.
+
+```json
+{"pending_sessions":1,"pending_workers":1,"pending_snapshots":1,"failed_sessions":1,"failed_snapshots":0,"retry_attempts":3,"oldest_pending_at":"2026-10-18T00:00:00Z"}
+```
+
+Backlog, failures and retries come from durable records. `retry_attempts` counts unsuccessful cleanup-cycle retries, and the oldest pending time is null with no backlog. Offline cache holders, unconfirmed native removal and storage errors retain pending work. No private URLs or provider error bodies are exposed. Errors: `401`, cross-account `404`, metadata read failure `500`, registry unavailable `503`.
 
 ## 8. Sandbox Metadata API (Bearer Token)
 

@@ -134,3 +134,25 @@ func (s *RegistryService) DeleteManagedSession(ctx context.Context, owner, id st
 	}
 	return s.DeleteTerminalSession(owner, id, now)
 }
+
+func (s *RegistryService) ExpireSnapshotSession(ctx context.Context, owner, id string) error {
+	s.persistenceDispatchMu.Lock()
+	defer s.persistenceDispatchMu.Unlock()
+	if err := s.snapshotRepository.DeleteExpiredSession(ctx, owner, id); err != nil {
+		return err
+	}
+	scope := sandboxsnapshot.ScopeSessionID(owner, id)
+	s.terminalRoutesMu.Lock()
+	defer s.terminalRoutesMu.Unlock()
+	if route, ok := s.terminalSessionToNode[scope]; ok {
+		s.deleteTerminalSessionRouteLocked(scope, route)
+	}
+	return nil
+}
+
+func (s *RegistryService) SnapshotCleanupStats(ctx context.Context, owner string) (sandboxsnapshot.CleanupStats, error) {
+	if s.snapshotRepository == nil {
+		return sandboxsnapshot.CleanupStats{}, ErrPersistenceUnavailable
+	}
+	return s.snapshotRepository.CleanupStats(ctx, owner)
+}

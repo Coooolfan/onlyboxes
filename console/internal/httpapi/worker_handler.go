@@ -185,6 +185,7 @@ func NewRouter(workerHandler *WorkerHandler, consoleAuth *ConsoleAuth, mcpAuth *
 	management.POST("/workers", workerHandler.CreateWorker)
 	management.DELETE("/workers/:node_id", workerHandler.DeleteWorker)
 	management.GET("/workers/:node_id/startup-command", workerHandler.GetWorkerStartupCommand)
+	management.GET("/persistence/stats", workerHandler.SnapshotCleanupStats)
 	management.GET("/sessions", workerHandler.ListSessions)
 	management.GET("/sessions/:session_id", workerHandler.GetSession)
 	management.POST("/sessions/:session_id/renew", workerHandler.RenewSessionLease)

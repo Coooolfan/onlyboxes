@@ -34,6 +34,7 @@ type snapshotOperation struct {
 	Spec               wire.RestoreSpec `json:"restore_spec"`
 	Archive            *wire.Archive    `json:"archive,omitempty"`
 	Artifact           string           `json:"artifact,omitempty"`
+	TombstoneID        string           `json:"tombstone_id,omitempty"`
 	ContainerID        string           `json:"container_id,omitempty"`
 	ImageID            string           `json:"image_id,omitempty"`
 	LeaseExpiresUnixMS int64            `json:"lease_expires_unix_ms,omitempty"`
@@ -45,17 +46,25 @@ type snapshotOperation struct {
 	LeaseTTLSec        int              `json:"lease_ttl_sec,omitempty"`
 }
 
-func (o snapshotOperation) active() bool   { return o.Phase == "active" || o.Phase == "rolled_back" }
-func (o snapshotOperation) terminal() bool { return o.Phase == "finalized" || o.Phase == "canceled" }
-func (o snapshotOperation) held() bool     { return !o.active() && !o.terminal() }
+func (o snapshotOperation) active() bool { return o.Phase == "active" || o.Phase == "rolled_back" }
+func (o snapshotOperation) terminal() bool {
+	return o.Phase == "finalized" || o.Phase == "canceled" || o.Phase == "deleted"
+}
+func (o snapshotOperation) held() bool { return !o.active() && !o.terminal() }
 
 func (o snapshotOperation) validate() error {
 	if o.Kind == "cancel" {
 		empty, _ := json.Marshal(wire.RestoreSpec{})
 		spec, _ := json.Marshal(o.Spec)
-		if o.Phase == "canceled" && snapshotOperationID.MatchString(o.ID) && validPersistenceScope(o.SessionID) && o.Generation > 0 && bytes.Equal(empty, spec) && o.Archive == nil && o.Artifact == "" && o.ContainerID == "" && o.ImageID == "" && o.StagingBytes == 0 && o.LeaseExpiresUnixMS == 0 && !o.Committed && !o.Verified && !o.RemoteVerified && o.LeaseTTLSec == 0 && o.CacheUntilUnixMS == 0 {
+		if o.Phase == "canceled" && snapshotOperationID.MatchString(o.ID) && validPersistenceScope(o.SessionID) && o.Generation > 0 && bytes.Equal(empty, spec) && o.Archive == nil && o.Artifact == "" && o.ContainerID == "" && o.TombstoneID == "" && o.ImageID == "" && o.StagingBytes == 0 && o.LeaseExpiresUnixMS == 0 && !o.Committed && !o.Verified && !o.RemoteVerified && o.LeaseTTLSec == 0 && o.CacheUntilUnixMS == 0 {
 			return nil
 		}
+		return errSnapshotJournalConflict
+	}
+	if o.TombstoneID != "" && (o.Kind != "delete" || !dockerSnapshotDigest.MatchString("sha256:"+o.TombstoneID)) {
+		return errSnapshotJournalConflict
+	}
+	if o.Kind == "delete" && (o.Generation <= 1 || o.Archive != nil || o.Artifact != "" || o.ImageID != "" || o.StagingBytes != 0 || o.LeaseExpiresUnixMS != 0 || o.Verified || o.RemoteVerified || o.Committed || (o.Phase == "deleted" && o.TombstoneID == "")) {
 		return errSnapshotJournalConflict
 	}
 	if o.RemoteVerified && (o.Kind != "source" || !o.Verified || o.Archive == nil) {
@@ -65,10 +74,10 @@ func (o snapshotOperation) validate() error {
 	if !snapshotOperationID.MatchString(o.ID) || !validPersistenceScope(o.SessionID) || o.Generation <= 0 || o.Spec.Validate() != nil || o.Spec.Runtime != "docker" || o.StagingBytes < 0 || o.StagingBytes > 1<<60 {
 		return errSnapshotJournalConflict
 	}
-	if o.Kind != "source" && o.Kind != "target" && o.Kind != "adopt" {
+	if o.Kind != "source" && o.Kind != "target" && o.Kind != "adopt" && o.Kind != "delete" {
 		return errSnapshotJournalConflict
 	}
-	allowed := map[string]bool{"preparing": true, "frozen": true, "committed": true, "finalized": true, "rolling_back": true, "rolled_back": true, "prepared": true, "importing": true, "ready": true, "active": true, "canceling": true, "canceled": true}
+	allowed := map[string]bool{"preparing": true, "frozen": true, "committed": true, "finalized": true, "rolling_back": true, "rolled_back": true, "prepared": true, "importing": true, "ready": true, "active": true, "canceling": true, "canceled": true, "deleting": true, "deleted": true}
 	if !allowed[o.Phase] || (o.Archive != nil && (o.Archive.Validate() != nil || o.Archive.Format != o.Spec.Format)) || (o.ContainerID != "" && !dockerSnapshotDigest.MatchString("sha256:"+o.ContainerID)) || (o.ImageID != "" && !dockerSnapshotDigest.MatchString(o.ImageID)) {
 		return errSnapshotJournalConflict
 	}
@@ -83,6 +92,7 @@ func (o snapshotOperation) validate() error {
 		"source": {"preparing": true, "frozen": true, "committed": true, "finalized": true, "rolling_back": true, "rolled_back": true},
 		"target": {"prepared": true, "importing": true, "ready": true, "active": true, "canceling": true, "canceled": true},
 		"adopt":  {"active": true},
+		"delete": {"deleting": true, "deleted": true},
 	}
 	if !phases[o.Kind][o.Phase] {
 		return errSnapshotJournalConflict
@@ -282,7 +292,7 @@ func (j *snapshotJournal) Claim(op snapshotOperation) error {
 	if op.validate() != nil {
 		return errSnapshotJournalConflict
 	}
-	if (op.Kind == "source" && op.Phase != "preparing") || (op.Kind == "target" && op.Phase != "prepared") || (op.Kind == "adopt" && op.Phase != "active") {
+	if (op.Kind == "source" && op.Phase != "preparing") || (op.Kind == "target" && op.Phase != "prepared") || (op.Kind == "adopt" && op.Phase != "active") || (op.Kind == "delete" && op.Phase != "deleting") {
 		return errSnapshotJournalConflict
 	}
 	return j.transaction(func(state *snapshotJournalState) error {
@@ -294,10 +304,10 @@ func (j *snapshotJournal) Claim(op snapshotOperation) error {
 		}
 		if id := state.Current[op.SessionID]; id != "" {
 			prior := state.Operations[id]
-			if prior.Kind != "cancel" && !snapshotSpecEqual(prior.Spec, op.Spec) {
+			if (prior.Kind == "delete" && op.Kind != "delete") || (prior.Kind != "cancel" && !snapshotSpecEqual(prior.Spec, op.Spec)) {
 				return errSnapshotJournalConflict
 			}
-			if !((prior.active() && op.Kind == "source" && prior.Generation == op.Generation) || (prior.terminal() && op.Kind == "target" && prior.Generation < op.Generation)) {
+			if !((op.Kind == "delete" && prior.Generation < op.Generation) || (prior.active() && op.Kind == "source" && prior.Generation == op.Generation) || (prior.terminal() && op.Kind == "target" && prior.Generation < op.Generation)) {
 				return errSnapshotJournalConflict
 			}
 		}
@@ -337,7 +347,7 @@ func (j *snapshotJournal) Update(id string, change func(*snapshotOperation) erro
 		if err := change(&next); err != nil {
 			return err
 		}
-		if next.validate() != nil || next.ID != prior.ID || next.SessionID != prior.SessionID || next.Generation != prior.Generation || next.Kind != prior.Kind || next.StagingBytes != prior.StagingBytes || !snapshotSpecEqual(next.Spec, prior.Spec) || (prior.ContainerID != "" && next.ContainerID != prior.ContainerID) || (prior.ImageID != "" && next.ImageID != prior.ImageID) || (prior.Artifact != "" && next.Artifact != prior.Artifact) || (prior.Committed && !next.Committed) || (prior.Archive != nil && (next.Archive == nil || *next.Archive != *prior.Archive)) {
+		if next.validate() != nil || next.ID != prior.ID || next.SessionID != prior.SessionID || next.Generation != prior.Generation || next.Kind != prior.Kind || next.StagingBytes != prior.StagingBytes || !snapshotSpecEqual(next.Spec, prior.Spec) || (prior.TombstoneID != "" && next.TombstoneID != prior.TombstoneID) || (prior.ContainerID != "" && next.ContainerID != prior.ContainerID) || (prior.ImageID != "" && next.ImageID != prior.ImageID) || (prior.Artifact != "" && next.Artifact != prior.Artifact) || (prior.Committed && !next.Committed) || (prior.Archive != nil && (next.Archive == nil || *next.Archive != *prior.Archive)) {
 			return errSnapshotJournalConflict
 		}
 		if !snapshotPhaseTransition(prior.Kind, prior.Phase, next.Phase) {
@@ -351,6 +361,9 @@ func (j *snapshotJournal) Update(id string, change func(*snapshotOperation) erro
 func snapshotPhaseTransition(kind, from, to string) bool {
 	if from == to {
 		return true
+	}
+	if kind == "delete" {
+		return from == "deleting" && to == "deleted"
 	}
 	if kind == "source" {
 		return (from == "preparing" && (to == "frozen" || to == "rolling_back")) || (from == "frozen" && (to == "committed" || to == "rolling_back")) || (from == "committed" && to == "finalized") || (from == "rolling_back" && to == "rolled_back")
