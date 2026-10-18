@@ -1,6 +1,6 @@
 # Sandbox snapshot storage foundation
 
-`internal/sandboxsnapshot` provides durable metadata, filesystem snapshot publication and atomic terminal route transitions. `internal/objectstore.SnapshotStore` supplies a separate S3-compatible snapshot namespace. The internal `grpcserver.SnapshotCoordinator` executes and reconciles lifecycle controls using these primitives. Public suspend/resume endpoints, configuration wiring and runtime adapters are not enabled.
+`internal/sandboxsnapshot` provides durable metadata, filesystem snapshot publication and atomic terminal route transitions. `internal/objectstore.SnapshotStore` supplies a separate S3-compatible snapshot namespace. The internal `grpcserver.SnapshotCoordinator` executes and reconciles lifecycle controls using these primitives. Management suspend/resume and operation polling endpoints are wired to the coordinator behind `CONSOLE_PERSISTENCE_ENABLED` (default false). Startup validates the separate S3 namespace and probes its required capabilities before enabling admission. See [configuration](config-file.md#sandbox-persistence). The Docker Worker supplies a native adapter; BoxLite integration remains pending.
 
 ## Publication contract
 
@@ -60,7 +60,7 @@ The existing `CONSOLE_EXPORT_FILE_*` configuration and `exportFile` behavior rem
 
 Database tests cover concurrent admission, durable idempotency, generation ownership, restart recovery, quota reservation, retention, manifest binding and GC exclusion. Route tests inject deletion/insertion failures to verify atomic lifecycle/route rollback, stable preview preservation and rebinding, failed activation cleanup and rejection of stale route writes. Migration tests cover existing rows and scope backfill. Publisher tests inject verification/manifest failures and verify the source ownership and previous recovery point remain intact.
 
-Object store tests exercise signed multipart requests against an HTTP S3 protocol fixture, conditional writes, part-plan mismatches, full readback corruption, response-loss retries, abort idempotence and version-pinned deletion. They are not a certification of a production S3-compatible provider. Real bucket capability and cross-machine worker restore tests are required before enabling the lifecycle APIs.
+Object store tests exercise signed multipart requests against an HTTP S3 protocol fixture, conditional writes, part-plan mismatches, full readback corruption, response-loss retries, abort idempotence and version-pinned deletion. They are not a certification of a production S3-compatible provider. The startup probe checks the configured endpoint from Console before enabling admission; deployment acceptance must additionally cover real Worker access, failure behavior and cross-machine restores.
 
 ```bash
 go test -race ./internal/objectstore ./internal/sandboxsnapshot ./internal/persistence ./internal/registry
@@ -69,7 +69,7 @@ go test ./...
 
 The overall target behavior and planned APIs are documented in [the lifecycle design](../../docs/plan/sandbox-session-persistence-lifecycle.zh-CN.md) and [the storage/API design](../../docs/plan/sandbox-session-persistence-storage-api.zh-CN.md).
 
-The separate [worker protocol and restore placement](sandbox-snapshot-worker-protocol.md) implementation provides bounded controls and connection-scoped capacity reservations. Runtime adapters, configuration, public lifecycle APIs, retention GC and real cross-worker acceptance are still required before the persistence feature is complete.
+The separate [worker protocol and restore placement](sandbox-snapshot-worker-protocol.md) implementation provides bounded controls and connection-scoped capacity reservations. BoxLite lifecycle integration, physical deletion/retention GC, independent runtime lease enforcement and real cross-machine acceptance are still required before the persistence feature is complete.
 
 
 ## Asynchronous lifecycle executor
@@ -85,3 +85,13 @@ Worker-reported errors, timeouts and disconnects keep operation ownership until 
 `api/sandboxpersistence` defines shared private JSON payloads. Restore specifications require a pinned image, exact backend version/platform/format, CPU and memory limits, and a positive process limit. CPU limits retain fractional values. Manifests bind expanded storage to the reserved upload plan; restore placement budgets both archive and expanded workspace.
 
 Protocol-actor tests use real HTTP archive PUT/GET, the real SQLite repository and registry dispatch. They cover multipart publication and remote readback, request cancellation, first-session adoption, corruption rollback, source cleanup ordering, no compatible worker, unconfirmed cancellation, missing target journals, coordinator/connection replacement, and lost activation acknowledgements. These actors do not execute Docker or BoxLite. Real runtime export/import and cross-machine acceptance remain required.
+
+## Management views and logical deletion
+
+Session list/get responses combine ordinary running routes with durable lifecycle records. Suspended and restoring sessions remain visible without a live route; their worker/status/lease fields are null. Private restore specifications and object-store references are excluded from public projections. Successful lease renewal returns the same lifecycle-aware session view.
+
+Suspend/resume require management cookie, API key or Dashboard JIT authentication plus an `Idempotency-Key`. They accept strict, bounded JSON requests, return `202` with a management operation polling URL, and preserve operation identities across retries and restarts. An already stable target can return `200`. Execution tokens do not authorize these endpoints. Admin item requests select an account explicitly; account isolation also applies to operation lookups. Operation errors expose allowlisted codes and sanitized messages, with unavailable transfer progress represented by zero completed bytes and a null total.
+
+`DELETE` atomically creates a durable cleanup job, marks the stable session deleting, advances its generation, cancels dispatchable lifecycle work and removes its execution/preview routes. GET/list/operation polling hide deleted sessions, including stale route-cache entries. Old operation completions and idempotency retries cannot republish a deleted session. Snapshot references stay retained until native cleanup is confirmed.
+
+The deletion queue persists across Console restart. Its physical native/object cleanup executor, retention expiry, multipart/orphan GC and backlog observability remain required; recording the job does not mean the underlying bytes have already been reclaimed.

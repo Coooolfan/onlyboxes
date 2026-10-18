@@ -62,6 +62,31 @@ export_file_download_presign_ttl_sec = 3600
 # ALL | SIGNED_URL | OBJECTKEY
 export_return_schema = "ALL"
 
+# Sandbox persistence (opt-in, independent from exportFile storage).
+# Keep storage settings when disabling admission while durable records remain.
+persistence_enabled = false
+snapshot_store_endpoint = ""
+snapshot_store_region = ""
+snapshot_store_bucket_name = ""
+snapshot_store_prefix = "session-snapshots"
+snapshot_store_ak = ""
+snapshot_store_sk = ""
+snapshot_store_force_path_style = false
+# Only readback is supported; server checksum verification is not certified.
+snapshot_store_integrity_mode = "readback"
+snapshot_presign_ttl_sec = 900
+snapshot_multipart_part_size_bytes = 67108864
+snapshot_multipart_concurrency = 4
+snapshot_max_bytes = 10737418240
+snapshot_max_expanded_bytes = 53687091200
+snapshot_account_quota_bytes = 107374182400
+persistence_retention_ttl_sec = 604800
+persistence_max_retention_ttl_sec = 2592000
+persistence_operation_timeout_sec = 1800
+# GC policy parameters; physical cleanup processing is not wired yet.
+snapshot_gc_interval_sec = 300
+snapshot_gc_grace_sec = 86400
+
 # MCP.
 mcp_token_query_param = "token"
 # Case-sensitive prefix for routing readImage/exportFile to worker-sys.

@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/onlyboxes/onlyboxes/console/internal/grpcserver"
+	"github.com/onlyboxes/onlyboxes/console/internal/sandboxsnapshot"
 )
 
 const defaultSessionPageSize = 20
@@ -18,13 +19,16 @@ type renewSessionLeaseRequest struct {
 }
 
 type sessionItem struct {
-	AccountID      string    `json:"account_id"`
-	SessionID      string    `json:"session_id"`
-	WorkerID       string    `json:"worker_id"`
-	Status         string    `json:"status"`
-	LeaseExpiresAt time.Time `json:"lease_expires_at"`
-	LastUsedAt     time.Time `json:"last_used_at"`
-	CreatedAt      time.Time `json:"created_at"`
+	AccountID          string                `json:"account_id"`
+	SessionID          string                `json:"session_id"`
+	WorkerID           string                `json:"worker_id"`
+	Status             string                `json:"status"`
+	LeaseExpiresAt     time.Time             `json:"lease_expires_at"`
+	LastUsedAt         time.Time             `json:"last_used_at"`
+	CreatedAt          time.Time             `json:"created_at"`
+	LifecycleState     sandboxsnapshot.State `json:"lifecycle_state"`
+	Persistence        sessionPersistence    `json:"persistence"`
+	CurrentOperationID *string               `json:"current_operation_id"`
 }
 
 type listSessionsResponse struct {
@@ -66,9 +70,16 @@ func (h *WorkerHandler) ListSessions(c *gin.Context) {
 		return
 	}
 
-	views := h.sessions.ListTerminalSessions(ownerID, h.nowFn())
+	views, err := h.sessions.ListManagedSessions(c.Request.Context(), ownerID, h.nowFn())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read sessions"})
+		return
+	}
 	total := len(views)
-	start := (page - 1) * pageSize
+	start := total
+	if page-1 <= total/pageSize {
+		start = (page - 1) * pageSize
+	}
 	if start > total {
 		start = total
 	}
@@ -79,7 +90,7 @@ func (h *WorkerHandler) ListSessions(c *gin.Context) {
 
 	items := make([]sessionItem, 0, end-start)
 	for _, view := range views[start:end] {
-		items = append(items, sessionItemFromView(view))
+		items = append(items, managedSessionItem(view))
 	}
 	c.JSON(http.StatusOK, listSessionsResponse{
 		Items:    items,
@@ -103,12 +114,16 @@ func (h *WorkerHandler) GetSession(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
 		return
 	}
-	view, found := h.sessions.GetTerminalSession(ownerID, sessionID, h.nowFn())
-	if !found {
+	view, err := h.sessions.GetManagedSession(c.Request.Context(), ownerID, sessionID, h.nowFn())
+	if errors.Is(err, sandboxsnapshot.ErrNotFound) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
 		return
 	}
-	c.JSON(http.StatusOK, sessionItemFromView(view))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read session"})
+		return
+	}
+	c.JSON(http.StatusOK, managedSessionItem(view))
 }
 
 func (h *WorkerHandler) DeleteSession(c *gin.Context) {
@@ -125,7 +140,7 @@ func (h *WorkerHandler) DeleteSession(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
 		return
 	}
-	deleted, err := h.sessions.DeleteTerminalSession(ownerID, sessionID, h.nowFn())
+	deleted, err := h.sessions.DeleteManagedSession(c.Request.Context(), ownerID, sessionID, h.nowFn())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete session"})
 		return
@@ -161,7 +176,7 @@ func (h *WorkerHandler) RenewSessionLease(c *gin.Context) {
 		return
 	}
 
-	view, err := h.sessions.RenewTerminalSessionLease(
+	_, err := h.sessions.RenewTerminalSessionLease(
 		c.Request.Context(),
 		ownerID,
 		sessionID,
@@ -180,7 +195,7 @@ func (h *WorkerHandler) RenewSessionLease(c *gin.Context) {
 		default:
 			var commandErr *grpcserver.CommandExecutionError
 			if errors.As(err, &commandErr) && commandErr.Code == "session_state_conflict" {
-				c.JSON(http.StatusConflict, gin.H{"error": commandErr.Message, "code": commandErr.Code})
+				h.snapshotError(c, commandErr)
 				return
 			}
 			if errors.As(err, &commandErr) && commandErr.Code == "session_unavailable" {
@@ -195,7 +210,12 @@ func (h *WorkerHandler) RenewSessionLease(c *gin.Context) {
 		}
 		return
 	}
-	c.JSON(http.StatusOK, sessionItemFromView(view))
+	view, err := h.sessions.GetManagedSession(c.Request.Context(), ownerID, sessionID, h.nowFn())
+	if err != nil {
+		h.snapshotError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, managedSessionItem(view))
 }
 
 func (h *WorkerHandler) resolveConsoleSessionOwner(c *gin.Context, requireAdminAccountID bool) (string, bool) {
@@ -221,6 +241,7 @@ func (h *WorkerHandler) resolveConsoleSessionOwner(c *gin.Context, requireAdminA
 
 func sessionItemFromView(view grpcserver.TerminalSessionView) sessionItem {
 	return sessionItem{
+		LifecycleState: sandboxsnapshot.Running,
 		AccountID:      view.AccountID,
 		SessionID:      view.SessionID,
 		WorkerID:       view.WorkerID,

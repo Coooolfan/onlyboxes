@@ -767,7 +767,9 @@ Scope:
 - `unavailable`: the bound worker is disconnected; the session keeps its worker and lease
 - `reconciling`: the bound worker is reconnecting and checking the session resource
 
-Deleting a session removes Console's route and any public preview routes for that session immediately. The worker sandbox is reclaimed when its lease expires.
+Session responses also include `lifecycle_state` (`running`, `snapshotting`, `suspended`, or `restoring`), `current_operation_id` (nullable), and `persistence`. The persistence object contains `enabled`, optional `runtime`/`platform`, nullable `retention_expires_at`, and nullable `latest_snapshot` (`snapshot_id`, `created_at`, `size_bytes`, `sha256`). `enabled` becomes true after a snapshot is committed. Private environment, image configuration, object keys and signed URLs are not returned. Suspended/restoring sessions remain listed with null `worker_id`, `status` and `lease_expires_at`.
+
+Deleting a session immediately removes execution and public preview routes. Persistent sessions are logically hidden and retain a durable cleanup job plus snapshot references. Physical persistent resource cleanup and retention/orphan GC processing remain pending; `204` does not confirm physical erasure. Ordinary Worker sandboxes retain their existing lease cleanup behavior.
 
 ### 7.1 List Sessions
 
@@ -791,7 +793,10 @@ Success `200`:
       "status": "ready",
       "lease_expires_at": "2026-02-21T00:01:00Z",
       "last_used_at": "2026-02-21T00:00:30Z",
-      "created_at": "2026-02-21T00:00:00Z"
+      "created_at": "2026-02-21T00:00:00Z",
+      "lifecycle_state": "running",
+      "current_operation_id": null,
+      "persistence": {"enabled":false,"retention_expires_at":null,"latest_snapshot":null}
     }
   ],
   "total": 1,
@@ -843,6 +848,7 @@ Errors:
 - `400` invalid body, admin omitted `account_id`, or TTL is outside the Worker's lease bounds
 - `401` missing or invalid dashboard credential
 - `404` session not found (including cross-account)
+- `409` lifecycle does not allow renewal; explicitly resume a suspended session
 - `502` Worker rejected the renewal or returned an invalid result
 - `503` session registry or bound Worker unavailable
 - `504` renewal timed out
@@ -857,6 +863,61 @@ Errors:
 - `404` session not found (including cross-account)
 - `500` failed to delete
 - `503` session registry unavailable
+
+### 7.5 Suspend / Resume Session
+
+`POST /api/v1/sessions/:session_id/suspend?account_id=acc_xxx`
+
+```http
+Idempotency-Key: suspend-request-123
+Content-Type: application/json
+
+{"retention_ttl_sec":604800}
+```
+
+`POST /api/v1/sessions/:session_id/resume?account_id=acc_xxx`
+
+```http
+Idempotency-Key: resume-request-456
+Content-Type: application/json
+
+{"lease_ttl_sec":300}
+```
+
+These endpoints use management authentication and account selection exactly like Get Session; execution tokens do not authorize them. Both require `Idempotency-Key` (1–256 bytes). The JSON body is an object of at most 4096 bytes; unknown fields are rejected. Suspend retention is optional, defaults to Console configuration, and must be a positive integer within the configured maximum when supplied. Resume lease is required, positive, at most `2147483647`, and subject to the selected Worker's configured bounds. The caller cannot select an image, runtime, worker, external archive URL or historical snapshot.
+
+Admission requires `CONSOLE_PERSISTENCE_ENABLED=true`, configured S3 storage, and compatible Workers with persistence enabled. Currently Docker has a lifecycle adapter; BoxLite integration remains pending. Resume uses the latest committed snapshot and creates a fresh same-runtime instance. The original compatible Worker is preferred, including verified local archive cache use; unavailable candidates never cause a blank replacement.
+
+Success `202 Accepted` includes a `Location` header pointing to the account-scoped operation URL and the operation object below. HTTP disconnection does not cancel an accepted operation. A session already in the requested stable state can return `200` with the session object.
+
+Same account/session/kind/key and parameters reuse the durable operation. Reusing the key with different parameters returns `409`. Equivalent concurrent requests join an operation; an opposite operation in progress returns `409`. A failed operation remains pollable and does not consume a valid snapshot. Retry the same key to inspect the same result, or use a new key for a new attempt after reconciliation has released ownership.
+
+Synchronous errors include `400` invalid parameters, `401` management authentication required, `404` absent/cross-account session, `409 session_state_conflict`, `413 snapshot_quota_exceeded`, `429 no_capacity` / `session_capacity_exceeded`, `502 snapshot_storage_error` / `snapshot_integrity_error`, `503 persistence_unavailable` / `no_worker`, and `504 timeout`. Conflict responses include current lifecycle/operation fields when readable. Failures found after acceptance use the operation's `error`, while polling itself returns `200`.
+
+### 7.6 Get Persistence Operation
+
+`GET /api/v1/sessions/:session_id/operations/:operation_id?account_id=acc_xxx`
+
+Management authentication and owner isolation match Get Session. Existing operations remain readable when new persistence admission is disabled. Deleted sessions and their operations return `404`.
+
+Success `200` (also the `202` submission body):
+
+```json
+{
+  "operation_id": "op_xxx",
+  "session_id": "sess_xxx",
+  "kind": "resume",
+  "status": "pending",
+  "phase": "scheduling",
+  "generation": 4,
+  "progress": {"bytes_completed":0,"bytes_total":null},
+  "error": null
+}
+```
+
+Status is `pending`, `running`, `succeeded`, `failed`, or `canceled`; phase describes lifecycle work such as draining, uploading, verifying, scheduling, starting, activating, or reconciliation. Transfer byte progress is currently unavailable and represented by zero completed bytes and a null total; phase completion does not itself mean the session is activated. A failed operation includes `error.code`, sanitized `message`, and `retryable`. No compatible Worker produces `no_worker`; capacity failures retain their existing codes. Lease values outside selected Worker limits can fail asynchronously with `invalid_payload`.
+
+Errors: `400` admin omitted `account_id`, `401` authentication failure, `404` absent/cross-account operation, `503` session registry unavailable. This endpoint returns no private restore or storage metadata.
 
 ## 8. Sandbox Metadata API (Bearer Token)
 

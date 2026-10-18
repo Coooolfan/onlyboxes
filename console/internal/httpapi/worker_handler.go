@@ -32,6 +32,8 @@ type WorkerHandler struct {
 	exportDownloadTTL          time.Duration
 	exportReturnSchema         string
 	proxyRoutes                *ProxyRouteHandler
+	snapshotCoordinator        snapshotBeginner
+	persistenceEnabled         bool
 	sessions                   *grpcserver.RegistryService
 	nowFn                      func() time.Time
 	computerUseSessionIDPrefix string
@@ -186,6 +188,9 @@ func NewRouter(workerHandler *WorkerHandler, consoleAuth *ConsoleAuth, mcpAuth *
 	management.GET("/sessions", workerHandler.ListSessions)
 	management.GET("/sessions/:session_id", workerHandler.GetSession)
 	management.POST("/sessions/:session_id/renew", workerHandler.RenewSessionLease)
+	management.POST("/sessions/:session_id/suspend", workerHandler.SuspendSession)
+	management.POST("/sessions/:session_id/resume", workerHandler.ResumeSession)
+	management.GET("/sessions/:session_id/operations/:operation_id", workerHandler.GetSnapshotOperation)
 	management.DELETE("/sessions/:session_id", workerHandler.DeleteSession)
 	if workerHandler.proxyRoutes != nil {
 		management.POST("/proxy-routes", workerHandler.proxyRoutes.Create)

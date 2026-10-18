@@ -60,3 +60,37 @@ log_level = "info"
 [mcp_tool.python_exec]
 description = "Execute python code in a sandbox."
 ```
+
+## Sandbox persistence
+
+`CONSOLE_PERSISTENCE_ENABLED` defaults to `false`. When enabled, Console starts the asynchronous lifecycle coordinator and accepts management-authenticated suspend/resume requests. Workers independently opt in and advertise exact runtime/version/platform/format support. The Docker Worker has an adapter; BoxLite lifecycle integration remains pending.
+
+Snapshot settings are strict: invalid booleans, limits or duration values fail startup. Environment values override TOML values. Flat keys remove `CONSOLE_` and use lowercase; grouped tables such as `[snapshot.store] endpoint = "..."` and `[persistence] enabled = true` are equivalent.
+
+| Environment variable | Default / requirement |
+| --- | --- |
+| `CONSOLE_SNAPSHOT_STORE_ENDPOINT` | Required HTTP(S) endpoint reachable by Console and Workers; no embedded credentials, query or fragment |
+| `CONSOLE_SNAPSHOT_STORE_REGION` | Required signing region |
+| `CONSOLE_SNAPSHOT_STORE_BUCKET_NAME` | Required pre-created bucket |
+| `CONSOLE_SNAPSHOT_STORE_PREFIX` | `session-snapshots`; clean relative prefix, isolated from exportFile |
+| `CONSOLE_SNAPSHOT_STORE_AK` / `CONSOLE_SNAPSHOT_STORE_SK` | Required Console-only credentials |
+| `CONSOLE_SNAPSHOT_STORE_FORCE_PATH_STYLE` | `false` |
+| `CONSOLE_SNAPSHOT_STORE_INTEGRITY_MODE` | `readback`; other modes are rejected |
+| `CONSOLE_SNAPSHOT_PRESIGN_TTL_SEC` | `900`; at most seven days |
+| `CONSOLE_SNAPSHOT_MULTIPART_PART_SIZE_BYTES` | `67108864`; 5 MiB through 5 GiB; at most 10,000 parts per archive |
+| `CONSOLE_SNAPSHOT_MULTIPART_CONCURRENCY` | `4`; range `1..16` per upload |
+| `CONSOLE_SNAPSHOT_MAX_BYTES` | `10737418240` (10 GiB) |
+| `CONSOLE_SNAPSHOT_MAX_EXPANDED_BYTES` | `53687091200` (50 GiB) |
+| `CONSOLE_SNAPSHOT_ACCOUNT_QUOTA_BYTES` | `107374182400` (100 GiB); includes retained generations and uploads |
+| `CONSOLE_PERSISTENCE_RETENTION_TTL_SEC` | `604800` (7 days) |
+| `CONSOLE_PERSISTENCE_MAX_RETENTION_TTL_SEC` | `2592000` (30 days); cannot be smaller than default retention |
+| `CONSOLE_PERSISTENCE_OPERATION_TIMEOUT_SEC` | `1800`; range `1..86400` |
+| `CONSOLE_SNAPSHOT_GC_INTERVAL_SEC` / `CONSOLE_SNAPSHOT_GC_GRACE_SEC` | `300` / `86400`; retained policy settings, cleanup processing remains pending |
+
+Enabling admission runs a startup capability probe under a unique `<prefix>/probes/<random-id>` namespace with a 90-second deadline. It uploads two parts (5 MiB plus 17 bytes), completes and fully reads back the archive, checks signed Range GET, conditional manifest and multipart writes, object/multipart listing, abort, and deletion. Probe errors omit URLs and provider response bodies. Probe objects and uploads are cleaned with a separate bounded cleanup context. This verifies the configured credentials and endpoint from Console; deployment acceptance must also verify reachability and performance from each Worker and storage durability independent of the source machine.
+
+Disabling admission preserves existing records and leaves operation reconciliation running. Keep the original store configuration while snapshots, accepted operations or pending deletion jobs remain; missing configuration fails startup rather than abandoning that work. Retained object references bind the endpoint/region/bucket/prefix namespace, so switching to a different namespace fails startup until an explicit data/reference migration is performed. Credential rotation within the same namespace is supported.
+
+The coordinator uses eight concurrent jobs, a two-second recovery scan, 30-second reconciliation calls and a 60-second source drain budget. HTTP request cancellation does not cancel accepted operations. Signed transfer grants remain ephemeral; normal archive data flows directly between Worker and storage. Runtime execution leases and suspended data retention are separate budgets.
+
+Logical deletion immediately hides the session and revokes routes, while a SQLite cleanup job retains native ownership and snapshot references. Physical native/object deletion, retention expiry and periodic orphan GC are not processed yet. Independent runtime lease enforcement after Worker process loss and real cross-machine acceptance also remain required before persistence is complete.

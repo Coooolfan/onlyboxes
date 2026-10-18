@@ -213,7 +213,7 @@ func snapshotFailure(err error) (string, string) {
 	var workerErr *CommandExecutionError
 	if errors.As(err, &workerErr) {
 		switch workerErr.Code {
-		case "no_capacity", "session_capacity_exceeded", "snapshot_quota_exceeded", "snapshot_integrity_error", "session_state_conflict", "snapshot_storage_error", "persistence_unavailable":
+		case "invalid_payload", "no_capacity", "session_capacity_exceeded", "snapshot_quota_exceeded", "snapshot_integrity_error", "session_state_conflict", "snapshot_storage_error", "persistence_unavailable":
 			return workerErr.Code, "worker could not complete the sandbox lifecycle action"
 		}
 	}
@@ -239,42 +239,20 @@ func (c *SnapshotCoordinator) Begin(ctx context.Context, owner, id string, kind 
 		}
 		p.RetentionTTLSec = int64(retention / time.Second)
 	} else {
-		if leaseTTLSec <= 0 {
+		if leaseTTLSec <= 0 || leaseTTLSec > (1<<31-1) {
 			return sandboxsnapshot.Session{}, nil, ErrSnapshotParameters
 		}
 		p.LeaseTTLSec = leaseTTLSec
 	}
 	session, err := c.repository.Session(ctx, owner, id)
 	if errors.Is(err, sandboxsnapshot.ErrNotFound) && kind == sandboxsnapshot.Suspend {
-		view, ok := c.service.GetTerminalSession(owner, id, time.Now())
-		if !ok {
-			return session, nil, sandboxsnapshot.ErrNotFound
-		}
-		node := c.service.getSession(view.WorkerID)
-		if !c.service.persistenceSessionOnline(node) {
-			return session, nil, ErrPersistenceUnavailable
-		}
-		node.persistence.mu.Lock()
-		caps := node.persistence.capabilities
-		enabled := caps.GetEnabled()
-		node.persistence.mu.Unlock()
-		if !enabled {
-			return session, nil, ErrPersistenceUnavailable
-		}
-		opID, err := c.service.newCommandIDFn()
-		if err != nil {
-			return session, nil, err
-		}
-		describe := sandboxsnapshot.Operation{ID: opID, OwnerID: owner, SessionID: id, Generation: 1, DeadlineUnixMS: time.Now().Add(c.config.ReconcileTimeout).UnixMilli()}
-		result, err := c.call(ctx, describe, view.WorkerID, registryv1.SandboxPersistenceControl_INSPECT, wire.Control{}, false)
-		if err != nil {
-			return session, nil, err
-		}
-		if result.State != "running" || result.Spec == nil || result.Spec.Validate() != nil || caps.GetRuntime() != result.Spec.Runtime || caps.GetRuntimeVersion() != result.Spec.RuntimeVersion || caps.GetGuestPlatform() != result.Spec.Platform || !persistenceFormatSupported(caps.GetWriteFormats(), result.Spec.Format) {
-			return session, nil, ErrPersistenceUnavailable
-		}
-		if err = c.service.AdoptSnapshotSession(ctx, owner, id, view.WorkerID, *result.Spec); err != nil {
-			return session, nil, err
+		if adoptErr := c.adoptForSuspend(ctx, owner, id); adoptErr != nil {
+			// Another request may have adopted and claimed the same session while
+			// inspection was in flight. Trust that durable record and let Begin apply
+			// its account-scoped idempotency/conflict rules; never adopt a replacement.
+			if _, lookupErr := c.repository.Session(ctx, owner, id); lookupErr != nil {
+				return session, nil, adoptErr
+			}
 		}
 	} else if err != nil {
 		return session, nil, err
@@ -296,6 +274,40 @@ func (c *SnapshotCoordinator) Begin(ctx context.Context, owner, id string, kind 
 		c.launch(op)
 	}
 	return session, &op, nil
+}
+
+func (c *SnapshotCoordinator) adoptForSuspend(ctx context.Context, owner, id string) error {
+	view, ok := c.service.GetTerminalSession(owner, id, time.Now())
+	if !ok {
+		return sandboxsnapshot.ErrNotFound
+	}
+	node := c.service.getSession(view.WorkerID)
+	if !c.service.persistenceSessionOnline(node) {
+		return ErrPersistenceUnavailable
+	}
+	node.persistence.mu.Lock()
+	caps := node.persistence.capabilities
+	enabled := caps.GetEnabled()
+	node.persistence.mu.Unlock()
+	if !enabled {
+		return ErrPersistenceUnavailable
+	}
+	opID, err := c.service.newCommandIDFn()
+	if err != nil {
+		return err
+	}
+	describe := sandboxsnapshot.Operation{ID: opID, OwnerID: owner, SessionID: id, Generation: 1, DeadlineUnixMS: time.Now().Add(c.config.ReconcileTimeout).UnixMilli()}
+	result, err := c.call(ctx, describe, view.WorkerID, registryv1.SandboxPersistenceControl_INSPECT, wire.Control{}, false)
+	if err != nil {
+		return err
+	}
+	if result.State != "running" || result.Spec == nil || result.Spec.Validate() != nil || caps.GetRuntime() != result.Spec.Runtime || caps.GetRuntimeVersion() != result.Spec.RuntimeVersion || caps.GetGuestPlatform() != result.Spec.Platform || !persistenceFormatSupported(caps.GetWriteFormats(), result.Spec.Format) {
+		return ErrPersistenceUnavailable
+	}
+	if err = c.service.AdoptSnapshotSession(ctx, owner, id, view.WorkerID, *result.Spec); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (c *SnapshotCoordinator) call(ctx context.Context, op sandboxsnapshot.Operation, worker string, action registryv1.SandboxPersistenceControl_Action, payload wire.Control, cleanup bool) (wire.Result, error) {

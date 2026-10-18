@@ -44,6 +44,7 @@ const (
 )
 
 type Config struct {
+	Snapshot                   SnapshotConfig
 	ConfigFile                 string
 	HTTPAddr                   string
 	GRPCAddr                   string
@@ -125,6 +126,7 @@ func Load() Config {
 	proxyRouteMaxPerSession := src.positiveInt("CONSOLE_PROXY_ROUTE_MAX_PER_SESSION", defaultProxyRouteMaxPerSession)
 
 	return Config{
+		Snapshot:                   src.snapshot(),
 		ConfigFile:                 src.Path(),
 		HTTPAddr:                   src.stringValue("CONSOLE_HTTP_ADDR", defaultHTTPAddr),
 		GRPCAddr:                   src.stringValue("CONSOLE_GRPC_ADDR", defaultGRPCAddr),

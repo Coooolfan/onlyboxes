@@ -91,6 +91,13 @@ func (r *Repository) Begin(ctx context.Context, request BeginRequest) (Operation
 	}
 	var result Operation
 	err = r.transaction(ctx, func(tx *sql.Tx) error {
+		session, err := sessionIn(ctx, tx, request.OwnerID, request.SessionID)
+		if err != nil {
+			return err
+		}
+		if session.State == Deleting {
+			return ErrNotFound
+		}
 		prior, err := scanOperation(tx.QueryRowContext(ctx, `SELECT `+operationColumns+` FROM sandbox_persistence_operations WHERE operation_id=(SELECT operation_id FROM sandbox_persistence_requests WHERE owner_id=? AND session_id=? AND kind=? AND idempotency_key=?)`, request.OwnerID, request.SessionID, request.Kind, request.IdempotencyKey))
 		if err == nil {
 			if prior.RequestSHA256 != hash {
@@ -100,10 +107,6 @@ func (r *Repository) Begin(ctx context.Context, request BeginRequest) (Operation
 			return nil
 		}
 		if !errors.Is(err, ErrNotFound) {
-			return err
-		}
-		session, err := sessionIn(ctx, tx, request.OwnerID, request.SessionID)
-		if err != nil {
 			return err
 		}
 		if session.OperationID != "" {

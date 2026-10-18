@@ -2,7 +2,7 @@
 
 ## 状态与范围
 
-本文补充[持久化与跨 Worker 唤醒时序](sandbox-session-persistence-lifecycle.zh-CN.md)，定义共享存储的职责、首期部署目标以及需要新增或调整的 API、配置和内部协议。本文全部新增项均为**待实现的设计**；当前已实现的能力会单独说明。
+本文补充[持久化与跨 Worker 唤醒时序](sandbox-session-persistence-lifecycle.zh-CN.md)，定义共享存储的职责、首期部署目标以及需要新增或调整的 API、配置和内部协议。本文描述首期完整设计，不表示所有验收项均已完成。已接入的接口与配置以[统一 API](../API.zh-CN.md#75-挂起--唤醒-session)、[Console 配置](../../console/docs/config-file.md#sandbox-persistence)及 [Docker 生命周期说明](../../worker/worker-docker/docs/sandbox-snapshot-controller.md)为准；BoxLite 接入、物理清理、独立 lease 强制执行与跨机器验收仍需完成。
 
 首期仅支持 Docker → Docker、BoxLite → BoxLite，恢复为新启动的执行实例。共享存储保存约定的文件系统归档；Console 数据库保存会话、快照引用和所有权。共享对象存储不承担会话调度、分布式锁或运行中沙箱的文件读写。
 
@@ -301,7 +301,7 @@ GC 先根据数据库确认对象没有有效会话引用、没有进行中的�
 
 ### 现有实现可复用的部分
 
-[`console/internal/objectstore`](../../console/internal/objectstore/objectstore.go) 当前只有单对象 PUT/GET 预签名；使用 `CONSOLE_EXPORT_FILE_*` 配置服务于 `exportFile`。它没有 HEAD、multipart、完整校验、删除或 GC 功能。
+[`console/internal/objectstore`](../../console/internal/objectstore/objectstore.go) 中的 `Store` 提供用户文件 PUT/GET 预签名，使用 `CONSOLE_EXPORT_FILE_*` 配置服务于 `exportFile`。`SnapshotStore` 另行提供 multipart、HEAD/GET 校验、不可变描述对象、定向删除和启动能力探测；周期 GC 与持久化删除任务执行仍待接入。
 
 可以复用 AWS SDK 依赖、客户端构建和签名基础，新增 snapshot store 接口；不要把 `exportFile` 用户文件导出的保留期、凭据或返回 URL 直接当作 session snapshot 契约。建议 snapshot 使用独立 bucket，至少使用独立 prefix 和生命周期规则。`exportFile` 现有配置与行为保持独立。
 

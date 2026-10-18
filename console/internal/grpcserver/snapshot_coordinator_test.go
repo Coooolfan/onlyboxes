@@ -680,3 +680,74 @@ func TestSnapshotCoordinatorExpiredPublishedLeaseCancelsActiveTarget(t *testing.
 		t.Fatalf("expired target remained executable: boots=%d state=%s", target.boots, target.states[wake.ID])
 	}
 }
+
+func TestSnapshotCoordinatorConcurrentFirstAdoptionJoinsDurableOperation(t *testing.T) {
+	for _, lateState := range []string{"running", "busy"} {
+		t.Run(lateState, func(t *testing.T) {
+			svc, source, _, _ := setupSnapshotRouteTest(t)
+			if _, err := svc.store.Persistence().SQL.ExecContext(context.Background(), `DELETE FROM sandbox_persistent_sessions`); err != nil {
+				t.Fatal(err)
+			}
+			coordinator := startCoordinatorTest(t, svc, newCoordinatorObjects(t), coordinatorTestConfig())
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			type answer struct {
+				op  *sandboxsnapshot.Operation
+				err error
+			}
+			first := make(chan answer, 1)
+			second := make(chan answer, 1)
+			begin := func(key string, result chan<- answer) {
+				_, op, err := coordinator.Begin(ctx, "owner", "session", sandboxsnapshot.Suspend, key, 0, 0)
+				result <- answer{op, err}
+			}
+			go begin("first-key", first)
+			readInspect := func() *registryv1.SandboxPersistenceControl {
+				t.Helper()
+				select {
+				case message := <-source.controlOutbound:
+					control := message.GetSandboxPersistenceControl()
+					if control == nil || control.Action != registryv1.SandboxPersistenceControl_INSPECT {
+						t.Fatal("unexpected first-adoption control", message)
+					}
+					return control
+				case <-ctx.Done():
+					t.Fatal("first-adoption inspect did not arrive")
+					return nil
+				}
+			}
+			firstInspect := readInspect()
+			go begin("second-key", second)
+			secondInspect := readInspect()
+			reply := func(control *registryv1.SandboxPersistenceControl, state string) {
+				t.Helper()
+				spec := snapshotTestSpec()
+				body, _ := json.Marshal(wire.Result{State: state, Spec: &spec, InstanceID: "existing-source", LeaseExpiresUnixMS: time.Now().Add(time.Hour).UnixMilli()})
+				if err := source.persistence.resolve(&registryv1.SandboxPersistenceReport{RequestId: control.RequestId, OperationId: control.OperationId, ScopedSessionId: control.ScopedSessionId, Generation: control.Generation, Action: control.Action, Completed: true, PayloadJson: body}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			reply(firstInspect, "running")
+			var accepted answer
+			select {
+			case accepted = <-first:
+			case <-ctx.Done():
+				t.Fatal("first request was not accepted")
+			}
+			if accepted.err != nil || accepted.op == nil {
+				t.Fatal("first adoption failed", accepted.err)
+			}
+			// The second inspection finishes only after the first request has moved
+			// the durable session into snapshotting. It must join that operation.
+			reply(secondInspect, lateState)
+			select {
+			case joined := <-second:
+				if joined.err != nil || joined.op == nil || joined.op.ID != accepted.op.ID {
+					t.Fatal("concurrent first suspend did not join durable ownership", joined.err)
+				}
+			case <-ctx.Done():
+				t.Fatal("second adoption did not settle")
+			}
+		})
+	}
+}

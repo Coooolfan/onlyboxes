@@ -18,12 +18,16 @@ import (
 	"github.com/onlyboxes/onlyboxes/console/internal/objectstore"
 	"github.com/onlyboxes/onlyboxes/console/internal/persistence"
 	"github.com/onlyboxes/onlyboxes/console/internal/registry"
+	"github.com/onlyboxes/onlyboxes/console/internal/sandboxsnapshot"
 	"google.golang.org/grpc"
 )
 
 func main() {
 	cfg := config.Load()
 	slog.SetDefault(newLogger(cfg))
+	if err := cfg.ValidateSnapshot(); err != nil {
+		fatal("invalid sandbox persistence configuration", "error", err)
+	}
 	if cfg.ConfigFile != "" {
 		slog.Info("config file loaded", "path", cfg.ConfigFile)
 	}
@@ -114,6 +118,74 @@ func main() {
 	)
 	httpHandler.SetComputerUseSessionIDPrefix(cfg.ComputerUseSessionIDPrefix)
 	httpHandler.SetTerminalSessionRegistry(registryService)
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	defer cancelRun()
+	snapshotRepository := sandboxsnapshot.NewRepository(db.SQL)
+	requiresSnapshotStore, err := snapshotRepository.RequiresStore(context.Background())
+	if err != nil {
+		fatal("failed to inspect sandbox persistence ownership")
+	}
+	if requiresSnapshotStore && !cfg.Snapshot.Configured() {
+		fatal("snapshot store configuration is required while durable snapshots or cleanup work remain")
+	}
+	if cfg.Snapshot.Enabled || cfg.Snapshot.Configured() {
+		snapshotObjects, err := objectstore.NewSnapshotStore(objectstore.SnapshotConfig{
+			Config: objectstore.Config{
+				Endpoint:       cfg.Snapshot.Endpoint,
+				Region:         cfg.Snapshot.Region,
+				BucketName:     cfg.Snapshot.BucketName,
+				AccessKey:      cfg.Snapshot.AccessKey,
+				SecretKey:      cfg.Snapshot.SecretKey,
+				ForcePathStyle: cfg.Snapshot.ForcePathStyle,
+			},
+			Prefix:     cfg.Snapshot.Prefix,
+			MaxBytes:   cfg.Snapshot.MaxBytes,
+			PartSize:   cfg.Snapshot.PartSize,
+			PresignTTL: cfg.Snapshot.PresignTTL,
+		})
+		if err != nil {
+			fatal("failed to initialize snapshot object store", "error", err)
+		}
+		if err := snapshotRepository.ValidateStore(runCtx, snapshotObjects.ID()); err != nil {
+			fatal("snapshot storage namespace is incompatible with retained records", "error", err)
+		}
+		if cfg.Snapshot.Enabled {
+			probeCtx, stopProbe := context.WithTimeout(runCtx, 90*time.Second)
+			err := snapshotObjects.Probe(probeCtx)
+			stopProbe()
+			if err != nil {
+				fatal("snapshot object store capability probe failed", "error", err)
+			}
+		}
+		coordinator, err := grpcserver.NewSnapshotCoordinator(registryService, snapshotObjects, grpcserver.SnapshotCoordinatorConfig{
+			MaxBytes:                cfg.Snapshot.MaxBytes,
+			MaxExpandedBytes:        cfg.Snapshot.MaxExpandedBytes,
+			AccountQuotaBytes:       cfg.Snapshot.AccountQuotaBytes,
+			OperationTimeout:        cfg.Snapshot.OperationTimeout,
+			RetentionTTL:            cfg.Snapshot.RetentionTTL,
+			MaxRetentionTTL:         cfg.Snapshot.MaxRetentionTTL,
+			RetryInterval:           2 * time.Second,
+			ReconcileTimeout:        30 * time.Second,
+			DrainTimeout:            60 * time.Second,
+			MultipartConcurrency:    cfg.Snapshot.MultipartConcurrency,
+			MaxConcurrentOperations: 8,
+		})
+		if err != nil {
+			fatal("failed to initialize sandbox lifecycle coordinator", "error", err)
+		}
+		if err := coordinator.Start(runCtx); err != nil {
+			fatal("failed to recover sandbox lifecycle operations", "error", err)
+		}
+		defer func() {
+			cancelRun()
+			stop, done := context.WithTimeout(context.Background(), 5*time.Second)
+			defer done()
+			if err := coordinator.Stop(stop); err != nil {
+				slog.Error("sandbox lifecycle coordinator shutdown timed out")
+			}
+		}()
+		httpHandler.SetSnapshotCoordinator(coordinator, cfg.Snapshot.Enabled)
+	}
 	var proxyRouteHandler *httpapi.ProxyRouteHandler
 	if cfg.ProxyEnabled {
 		if len(cfg.ProxyAllowedDirectDomains) == 0 {
@@ -193,8 +265,6 @@ func main() {
 		Addr:    cfg.HTTPAddr,
 		Handler: router,
 	}
-	runCtx, cancelRun := context.WithCancel(context.Background())
-	defer cancelRun()
 	go startOfflinePruner(runCtx, store, cfg.OfflineTTL)
 	go startTaskPruner(runCtx, registryService)
 	go startTerminalSessionRoutePruner(runCtx, registryService)

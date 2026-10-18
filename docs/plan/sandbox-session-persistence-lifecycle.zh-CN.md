@@ -2,11 +2,11 @@
 
 ## 范围
 
-本文定义第一阶段的目标流程：一个正在 Worker A 上运行的沙箱会话，生成文件系统快照并停止运行，随后在另一台机器的 Worker B 上启动。A 与 B 使用相同 runtime，OS/CPU 架构、归档格式及版本满足恢复兼容条件。本文是待实现的设计，不代表当前项目已经支持跨 Worker 唤醒。
+本文定义第一阶段的目标流程：一个正在 Worker A 上运行的沙箱会话，生成文件系统快照并停止运行，随后在另一台机器的 Worker B 上启动。A 与 B 使用相同 runtime，OS/CPU 架构、归档格式及版本满足恢复兼容条件。本文为首期完整设计；当前实现与剩余验收边界见 [Console 配置](../../console/docs/config-file.md#sandbox-persistence)及 [Docker 生命周期说明](../../worker/worker-docker/docs/sandbox-snapshot-controller.md)，不能据此认定跨机器验收已完成。
 
 持久化范围为约定的根文件系统数据及恢复规格。唤醒保留原 `session_id`，创建新的执行实例；进程、内存、打开的文件句柄和网络连接不恢复。临时挂载及 volume 的保留策略单独定义。当前可行性和已知限制见[持久化就绪评估](../experiments/filesystem-portability/PERSISTENCE_READINESS.zh-CN.md)。
 
-共享对象存储的必需 S3 能力、传输/校验时序、性能预算及 API/配置变更，见[对象存储与接口设计](sandbox-session-persistence-storage-api.zh-CN.md)。其中新增项均为待实现设计。
+共享对象存储的必需 S3 能力、传输/校验时序、性能预算及 API/配置变更，见[对象存储与接口设计](sandbox-session-persistence-storage-api.zh-CN.md)。接口当前行为以[统一 API](../API.zh-CN.md#75-挂起--唤醒-session)为准。
 
 ## 参与方与稳定数据
 
@@ -178,7 +178,7 @@ sequenceDiagram
 - 已提交且未被当前操作使用的缓存可按 TTL、LRU 与磁盘预算淘汰；删除缓存不删除共享快照。未提交的唯一源数据受挂起协议保护，不能作为普通缓存回收。
 - 首期只缓存归档，不保留已停止容器/Box 作为直接重启入口。直接重启旧实例需要额外证明磁盘未偏离当前快照，并完成所有权核对，作为后续优化单独验收。
 
-因此，同节点优化的是“归档从哪里读取”，不会改变共享持久化的提交标准或对外 API。它属于待实现的恢复路径，已有本地冷 home 实验不等于完成了这条缓存命中分支的系统验收。
+因此，同节点优化的是“归档从哪里读取”，不会改变共享持久化的提交标准或对外 API。Docker 适配器已有缓存路径和本机容器测试；BoxLite 接入与真实跨机器验收仍需完成，本地实验不能替代系统验收。
 
 ## 失败与重试
 

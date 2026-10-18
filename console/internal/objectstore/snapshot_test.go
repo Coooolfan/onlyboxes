@@ -22,15 +22,17 @@ import (
 // signatures, version-pinned reads/deletes and data integrity. It is not a claim
 // of conformance for a particular production S3-compatible implementation.
 type snapshotS3 struct {
-	mu               sync.Mutex
-	rejectArchiveGet bool
-	archiveGets      int
-	objects          map[string][]byte
-	uploads          map[string]map[int][]byte
-	uploadKeys       map[string]string
-	nextID           int
-	corrupt          bool
-	deletes          map[string]string
+	mu                     sync.Mutex
+	rejectArchiveGet       bool
+	ignoreArchiveCondition bool
+	rejectListing          bool
+	archiveGets            int
+	objects                map[string][]byte
+	uploads                map[string]map[int][]byte
+	uploadKeys             map[string]string
+	nextID                 int
+	corrupt                bool
+	deletes                map[string]string
 }
 
 func newSnapshotS3(t *testing.T) (*snapshotS3, *SnapshotStore) {
@@ -59,7 +61,7 @@ func (s *snapshotS3) serve(w http.ResponseWriter, r *http.Request) {
 	key := r.URL.Path
 	q := r.URL.Query()
 	uploadID := q.Get("uploadId")
-	if !strings.HasPrefix(key, "/snapshots/sessions/") {
+	if !strings.HasPrefix(key, "/snapshots/sessions/") && key != "/snapshots" && key != "/snapshots/" {
 		s3Error(w, 400, "InvalidKey")
 		return
 	}
@@ -69,6 +71,28 @@ func (s *snapshotS3) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/xml")
 	switch {
+	case r.Method == http.MethodGet && q.Get("list-type") == "2":
+		if s.rejectListing {
+			s3Error(w, 403, "AccessDenied")
+			return
+		}
+		fmt.Fprint(w, "<ListBucketResult><IsTruncated>false</IsTruncated>")
+		for key := range s.objects {
+			name := strings.TrimPrefix(key, "/snapshots/")
+			if strings.HasPrefix(name, q.Get("prefix")) {
+				fmt.Fprintf(w, "<Contents><Key>%s</Key></Contents>", name)
+			}
+		}
+		fmt.Fprint(w, "</ListBucketResult>")
+	case r.Method == http.MethodGet && q.Has("uploads"):
+		fmt.Fprint(w, "<ListMultipartUploadsResult><IsTruncated>false</IsTruncated>")
+		for id := range s.uploads {
+			name := strings.TrimPrefix(s.uploadKeys[id], "/snapshots/")
+			if strings.HasPrefix(name, q.Get("prefix")) {
+				fmt.Fprintf(w, "<Upload><Key>%s</Key><UploadId>%s</UploadId></Upload>", name, id)
+			}
+		}
+		fmt.Fprint(w, "</ListMultipartUploadsResult>")
 	case r.Method == http.MethodPost && q.Has("uploads"):
 		s.nextID++
 		id := fmt.Sprintf("upload-%d", s.nextID)
@@ -118,7 +142,7 @@ func (s *snapshotS3) serve(w http.ResponseWriter, r *http.Request) {
 			s3Error(w, 400, "MissingCondition")
 			return
 		}
-		if _, exists := s.objects[key]; exists {
+		if _, exists := s.objects[key]; exists && !s.ignoreArchiveCondition {
 			s3Error(w, 412, "PreconditionFailed")
 			return
 		}

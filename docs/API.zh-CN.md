@@ -769,7 +769,9 @@ Worker 类型：
 - `unavailable`：绑定的 Worker 已断开；session 仍保留原 Worker 与 lease
 - `reconciling`：绑定的 Worker 正在重连并核对 session 资源
 
-删除 session 会立即移除 Console 路由，以及该 session 的公开预览路由。Worker 上的沙箱在 lease 到期后回收。
+会话响应还包含 `lifecycle_state`（`running/snapshotting/suspended/restoring`）、可空的 `current_operation_id` 和 `persistence`。持久化对象包含 `enabled`、可选 `runtime/platform`、可空的 `retention_expires_at` 和 `latest_snapshot`（`snapshot_id/created_at/size_bytes/sha256`）。成功提交快照后 `enabled=true`；不返回私有环境、镜像启动配置、对象键或签名 URL。挂起和恢复中的稳定会话仍出现在列表中，`worker_id/status/lease_expires_at` 为 null。
+
+删除会立即移除执行及公开预览路由。持久化会话被逻辑隐藏，保留持久化清理任务和快照引用；原生资源物理清理、保留期回收与孤儿 GC 处理尚待接入，`204` 不表示字节已经物理擦除。普通非持久化沙箱仍沿用现有 lease 清理行为。
 
 ### 7.1 查询 Session 列表
 
@@ -793,7 +795,10 @@ Worker 类型：
       "status": "ready",
       "lease_expires_at": "2026-02-21T00:01:00Z",
       "last_used_at": "2026-02-21T00:00:30Z",
-      "created_at": "2026-02-21T00:00:00Z"
+      "created_at": "2026-02-21T00:00:00Z",
+      "lifecycle_state": "running",
+      "current_operation_id": null,
+      "persistence": {"enabled":false,"retention_expires_at":null,"latest_snapshot":null}
     }
   ],
   "total": 1,
@@ -845,6 +850,7 @@ Console 请求持有该 session 的 Worker 延长 lease，并持久化 Worker �
 - `400` 请求体非法、管理员未提供 `account_id`，或 TTL 超出 Worker 的 lease 范围
 - `401` 控制台凭据缺失或无效
 - `404` session 不存在（含跨账号访问）
+- `409` 生命周期不允许续租；挂起会话需显式 resume
 - `502` Worker 拒绝续租或返回了非法结果
 - `503` session registry 或绑定的 Worker 不可用
 - `504` 续租超时
@@ -859,6 +865,61 @@ Console 请求持有该 session 的 Worker 延长 lease，并持久化 Worker �
 - `404` session 不存在（含跨账号访问）
 - `500` 删除失败
 - `503` session registry 不可用
+
+### 7.5 挂起 / 唤醒 Session
+
+`POST /api/v1/sessions/:session_id/suspend?account_id=acc_xxx`
+
+```http
+Idempotency-Key: suspend-request-123
+Content-Type: application/json
+
+{"retention_ttl_sec":604800}
+```
+
+`POST /api/v1/sessions/:session_id/resume?account_id=acc_xxx`
+
+```http
+Idempotency-Key: resume-request-456
+Content-Type: application/json
+
+{"lease_ttl_sec":300}
+```
+
+鉴权、账号选择与查询单个 Session 相同；执行 token 不能调用。两个接口均要求 `Idempotency-Key`（1–256 字节）。JSON 请求体最多 4096 字节，必须为对象，拒绝未知字段。挂起保留期可省略并使用 Console 默认值，显式提供时必须为正整数且不超过配置上限。唤醒 lease 必填，必须为正整数、不超过 `2147483647`，并满足目标 Worker 的配置范围。调用方不能指定镜像、runtime、Worker、外部归档地址或历史快照。
+
+需启用 `CONSOLE_PERSISTENCE_ENABLED=true`、配置 S3 存储，并有启用持久化的兼容 Worker。目前 Docker 已有生命周期适配器，BoxLite 接入尚待完成。唤醒使用最新已提交快照创建新的同 runtime 实例；优先选择兼容的原 Worker，并可复用完整校验通过的本地归档缓存。没有候选时不创建空白沙箱。
+
+成功接受返回 `202 Accepted`，`Location` 指向账号作用域下的操作查询地址，响应体为下节的操作对象。HTTP 断开不会取消已接受操作。会话已处于请求的稳定状态时可返回 `200` 会话对象。
+
+同账号、session、操作种类、幂等键和相同参数复用持久化操作；同键不同参数返回 `409`。等价并发请求合并，相反方向操作尚未结束时返回 `409`。失败操作仍可查询，有效快照不会被失败恢复消耗。相同幂等键查询同一次结果；核对释放所有权后，使用新键发起新尝试。
+
+同步错误包括：`400` 参数错误、`401` 管理鉴权失败、`404` 不存在或跨账号、`409 session_state_conflict`、`413 snapshot_quota_exceeded`、`429 no_capacity/session_capacity_exceeded`、`502 snapshot_storage_error/snapshot_integrity_error`、`503 persistence_unavailable/no_worker`、`504 timeout`。可读取当前会话时，冲突响应附带生命周期与操作 ID。接受后发现的错误写入操作的 `error`，查询本身仍返回 `200`。
+
+### 7.6 查询持久化操作
+
+`GET /api/v1/sessions/:session_id/operations/:operation_id?account_id=acc_xxx`
+
+管理鉴权及账号隔离与查询单个 Session 相同。关闭新操作准入后，已有操作仍可查询；已逻辑删除的会话及其操作返回 `404`。
+
+成功 `200`（同提交请求的 `202` 响应体）：
+
+```json
+{
+  "operation_id": "op_xxx",
+  "session_id": "sess_xxx",
+  "kind": "resume",
+  "status": "pending",
+  "phase": "scheduling",
+  "generation": 4,
+  "progress": {"bytes_completed":0,"bytes_total":null},
+  "error": null
+}
+```
+
+状态为 `pending/running/succeeded/failed/canceled`；`phase` 表示排空、上传、校验、调度、启动、激活或核对等阶段。目前字节进度不可用，以已完成字节 0、总量 null 表示；阶段完成本身不代表会话已激活。失败操作包含 `error.code`、脱敏 `message` 和 `retryable`。无兼容 Worker 使用 `no_worker`，容量错误复用现有错误码；超出目标 Worker lease 配置范围的请求可能异步失败为 `invalid_payload`。
+
+错误：`400` 管理员未提供账号、`401` 鉴权失败、`404` 操作不存在或跨账号、`503` session registry 不可用。不返回私有恢复或存储元数据。
 
 ## 8. Sandbox 元数据 API（Bearer Token 鉴权）
 
