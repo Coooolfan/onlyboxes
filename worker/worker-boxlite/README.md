@@ -15,7 +15,7 @@ Security warning (high risk):
 
 Build and runtime prerequisites:
 - supported host matrix follows current Boxlite support: `linux/amd64`, `linux/arm64`, `darwin/arm64`.
-- the crate depends on crates.io `boxlite 0.10.0` with `gvproxy` enabled.
+- the crate depends on exactly pinned crates.io `boxlite 0.10.7` with `gvproxy` enabled.
 - `protoc >= 3.12` must be on `PATH`: the `boxlite-shared` build script invokes `protoc` directly and does not honour the `PROTOC` environment variable, so the vendored `protoc-bin-vendored` used for this crate's own protobuf codegen does not satisfy it.
 - a local clone of Boxlite is optional and only useful for upstream source reading or local debugging; it is not required to build `worker-boxlite`.
 - terminal images must contain `/bin/sh` and `python`.
@@ -188,6 +188,7 @@ Manual smoke checklist:
 - send `terminalResource` against a missing file, a directory, and an oversized file and verify `file_not_found`, `path_is_directory`, and `file_too_large`
 
 Backend smoke test:
+- `cargo run --locked --example boxlite_snapshot_smoke` verifies native archive restore in a separate process with an empty home after removing the source home. See [archive acceptance and boundaries](docs/sandbox-snapshot-runtime.md).
 - `cargo run --example boxlite_smoke` exercises the boxlite API directly, without `console` or gRPC: runtime init, box create/start, exec, exit codes and stderr, filesystem state across executions, concurrent execution on a single box, `kill()` isolation between executions, `copy_out`, removal, and shutdown.
 - environment overrides: `BOXLITE_SMOKE_IMAGE` (default `alpine:latest`), `BOXLITE_SMOKE_HOME` (default a fresh temp dir), `BOXLITE_SMOKE_CONCURRENCY` (default `4`), `BOXLITE_SMOKE_KEEP_HOME`.
 - point `BOXLITE_SMOKE_HOME` at an existing boxlite home to exercise on-disk database migrations after a dependency upgrade.

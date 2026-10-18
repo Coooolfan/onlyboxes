@@ -53,7 +53,10 @@ async fn http_get_via_tunnel(litebox: &LiteBox, port: u16, expected_body: &[u8])
         loop {
             match litebox.network().tunnel(target).await {
                 Ok(tunnel) => {
-                    let mut connection = tunnel.connect().expect("connect prepared tunnel");
+                    let Ok(mut connection) = tunnel.connect().await else {
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        continue;
+                    };
                     connection
                         .write_all(
                             b"GET / HTTP/1.1\r\nHost: preview.test\r\nConnection: close\r\n\r\n",

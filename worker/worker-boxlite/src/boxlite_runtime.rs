@@ -315,7 +315,7 @@ pub(crate) async fn copy_out_terminal_file(
 ) -> Result<(), BoxliteCommandError> {
     let runtime = runtime(cfg)?;
     let litebox = get_terminal_session_box(runtime, box_id).await?;
-    let copy_options = CopyOptions::default().non_recursive().include_parent(false);
+    let copy_options = CopyOptions::default().non_recursive();
 
     if let Some(remaining) = remaining_until_deadline(deadline_unix_ms) {
         if remaining.is_zero() {
@@ -462,7 +462,7 @@ pub(crate) async fn open_terminal_proxy_connection(
         .map_err(|err| {
             BoxliteCommandError::ExecutionFailed(format!("open sandbox tunnel: {err}"))
         })?;
-    tunnel.connect().map_err(|err| {
+    tunnel.connect().await.map_err(|err| {
         BoxliteCommandError::ExecutionFailed(format!("connect sandbox tunnel: {err}"))
     })
 }

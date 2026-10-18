@@ -393,7 +393,7 @@ async fn main() {
     // --- 8. copy_out ---
     if persisted {
         let host_dst = home_dir.join("copied-state.txt");
-        let copy_options = CopyOptions::default().non_recursive().include_parent(false);
+        let copy_options = CopyOptions::default().non_recursive();
         match litebox
             .copy_out("/workspace/state.txt", &host_dst, copy_options)
             .await

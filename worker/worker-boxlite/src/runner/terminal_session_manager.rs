@@ -953,28 +953,25 @@ impl TerminalSessionManager {
         for candidate in candidates {
             let session_id = candidate.session_id.trim();
             let lease_expires_at = system_time_from_unix_millis(candidate.lease_expires_unix_ms);
-            let status = if session_id.is_empty()
-                || lease_expires_at.is_none()
-                || lease_expires_at.is_some_and(|lease| lease <= now)
-            {
-                terminal_session_recovery_result::Status::Invalid
-            } else {
-                let lease_expires_at = lease_expires_at.expect("validated lease");
-                match self.recover_one_session(session_id, lease_expires_at).await {
-                    Ok(true) => {
-                        recovered_names.insert(terminal_session_resource_name(session_id));
-                        terminal_session_recovery_result::Status::Recovered
-                    }
-                    Ok(false) => terminal_session_recovery_result::Status::Missing,
-                    Err(err) => {
-                        tracing::warn!(
-                            session_id_hash = %terminal_session_id_hash(session_id),
-                            error = %err,
-                            "terminal Box recovery failed"
-                        );
-                        terminal_session_recovery_result::Status::Invalid
+            let status = match lease_expires_at {
+                Some(lease_expires_at) if !session_id.is_empty() && lease_expires_at > now => {
+                    match self.recover_one_session(session_id, lease_expires_at).await {
+                        Ok(true) => {
+                            recovered_names.insert(terminal_session_resource_name(session_id));
+                            terminal_session_recovery_result::Status::Recovered
+                        }
+                        Ok(false) => terminal_session_recovery_result::Status::Missing,
+                        Err(err) => {
+                            tracing::warn!(
+                                session_id_hash = %terminal_session_id_hash(session_id),
+                                error = %err,
+                                "terminal Box recovery failed"
+                            );
+                            terminal_session_recovery_result::Status::Invalid
+                        }
                     }
                 }
+                _ => terminal_session_recovery_result::Status::Invalid,
             };
             results.push(TerminalSessionRecoveryResult {
                 session_id: candidate.session_id.clone(),

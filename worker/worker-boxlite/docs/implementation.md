@@ -104,6 +104,9 @@ Session lease 到期或 Worker shutdown 会取消现有代理请求。白名单�
 cargo build --release
 cargo test
 cargo run --example boxlite_smoke
+cargo run --example boxlite_snapshot_smoke
 ```
 
 完整运行参数和默认值见[配置参考](config-file.md)，对外能力与运维说明见[项目 README](../README.md)。
+
+原生归档的验收范围与当前持久化边界见[BoxLite 归档与恢复](sandbox-snapshot-runtime.md)。
