@@ -4692,6 +4692,7 @@ mod tests {
 
         let results = manager
             .recover_sessions(&[TerminalSessionRecoveryCandidate {
+                generation: 0,
                 session_id: session_id.to_owned(),
                 lease_expires_unix_ms: lease_unix_ms,
             }])
@@ -4726,6 +4727,7 @@ mod tests {
 
         let repeated = manager
             .recover_sessions(&[TerminalSessionRecoveryCandidate {
+                generation: 0,
                 session_id: session_id.to_owned(),
                 lease_expires_unix_ms: lease_unix_ms,
             }])
@@ -4757,12 +4759,14 @@ mod tests {
         let results = manager
             .recover_sessions(&[
                 TerminalSessionRecoveryCandidate {
+                    generation: 0,
                     session_id: "session-missing".to_owned(),
                     lease_expires_unix_ms: to_unix_millis(
                         SystemTime::now() + Duration::from_secs(60),
                     ),
                 },
                 TerminalSessionRecoveryCandidate {
+                    generation: 0,
                     session_id: "session-expired".to_owned(),
                     lease_expires_unix_ms: to_unix_millis(
                         SystemTime::now() - Duration::from_secs(60),
@@ -4789,6 +4793,7 @@ mod tests {
         let backend = RecoveryBackend::new(session_id, "box-concurrent");
         let manager = manager_with_limit(backend, 1);
         let candidates = vec![TerminalSessionRecoveryCandidate {
+            generation: 0,
             session_id: session_id.to_owned(),
             lease_expires_unix_ms: to_unix_millis(SystemTime::now() + Duration::from_secs(60)),
         }];

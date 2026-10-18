@@ -105,6 +105,7 @@ message ConnectRequest {
 message TerminalSessionRecoveryCandidate {
   string session_id = 1;
   int64 lease_expires_unix_ms = 2;
+  int64 generation = 3; // Zero denotes an ordinary non-persistent session.
 }
 
 message TerminalSessionRecoveryResult {
@@ -125,10 +126,27 @@ message TerminalSessionRecoveryReport {
 
 message TerminalSessionRecoveryAck {}
 
+// Resources owned by unresolved lifecycle operations must survive ordinary
+// terminal recovery/orphan cleanup, even if the local journal is unavailable.
+message SandboxPersistenceRecoveryCandidate {
+  enum Role {
+    ROLE_UNSPECIFIED = 0;
+    SOURCE = 1;
+    TARGET = 2;
+  }
+  string scoped_session_id = 1;
+  string operation_id = 2;
+  int64 generation = 3;
+  Role role = 4;
+  bool snapshot_committed = 5; // SOURCE: shared snapshot publication is committed.
+  bool route_committed = 6; // TARGET: running ownership has been published.
+}
+
 message ConnectAck {
   string session_id = 1;
   int32 heartbeat_interval_sec = 3;
   repeated TerminalSessionRecoveryCandidate terminal_session_recovery_candidates = 4;
+  repeated SandboxPersistenceRecoveryCandidate sandbox_persistence_recovery_candidates = 5;
 }
 
 message HeartbeatAck {

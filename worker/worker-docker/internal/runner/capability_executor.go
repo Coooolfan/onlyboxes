@@ -218,6 +218,7 @@ func buildTerminalExecCommandResult(baseCtx context.Context, commandID string, d
 	defer cancel()
 
 	execResult, err := runTerminalExec(commandCtx, terminalExecRequest{
+		Generation:      decoded.Generation,
 		Command:         decoded.Command,
 		SessionID:       decoded.SessionID,
 		CreateIfMissing: decoded.CreateIfMissing,
@@ -278,11 +279,12 @@ func buildTerminalResourceCommandResult(baseCtx context.Context, commandID strin
 	defer cancel()
 
 	resourceResult, err := runTerminalResource(commandCtx, terminalResourceRequest{
-		SessionID: decoded.SessionID,
-		FilePath:  decoded.FilePath,
-		Action:    decoded.Action,
-		SignedURL: decoded.SignedURL,
-		Headers:   cloneStringMap(decoded.Headers),
+		Generation: decoded.Generation,
+		SessionID:  decoded.SessionID,
+		FilePath:   decoded.FilePath,
+		Action:     decoded.Action,
+		SignedURL:  decoded.SignedURL,
+		Headers:    cloneStringMap(decoded.Headers),
 	})
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {

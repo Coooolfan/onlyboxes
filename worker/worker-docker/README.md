@@ -146,3 +146,5 @@ Recommended setting:
 - `WORKER_CALL_TIMEOUT_SEC >= 2 * WORKER_HEARTBEAT_INTERVAL_SEC`
 
 Internal filesystem snapshot primitives and their tested boundaries: [Docker snapshot runtime adapter](docs/sandbox-snapshot-runtime.md). Persistence lifecycle controls are not enabled yet.
+
+Durable local operation records, execution generations and reconnect cleanup ownership: [Snapshot operation ownership](docs/sandbox-snapshot-journal.md).

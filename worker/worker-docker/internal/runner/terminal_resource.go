@@ -26,19 +26,21 @@ const (
 )
 
 type terminalResourcePayload struct {
-	SessionID string            `json:"session_id"`
-	FilePath  string            `json:"file_path"`
-	Action    string            `json:"action,omitempty"`
-	SignedURL string            `json:"signed_url,omitempty"`
-	Headers   map[string]string `json:"headers,omitempty"`
+	Generation int64             `json:"generation,omitempty"`
+	SessionID  string            `json:"session_id"`
+	FilePath   string            `json:"file_path"`
+	Action     string            `json:"action,omitempty"`
+	SignedURL  string            `json:"signed_url,omitempty"`
+	Headers    map[string]string `json:"headers,omitempty"`
 }
 
 type terminalResourceRequest struct {
-	SessionID string
-	FilePath  string
-	Action    string
-	SignedURL string
-	Headers   map[string]string
+	Generation int64
+	SessionID  string
+	FilePath   string
+	Action     string
+	SignedURL  string
+	Headers    map[string]string
 }
 
 type terminalResourceRunResult struct {
@@ -138,14 +140,14 @@ func (m *terminalSessionManager) ResolveResource(ctx context.Context, req termin
 		return terminalResourceRunResult{}, newTerminalExecError(terminalExecCodeInvalidPayload, "signed_url is required for export")
 	}
 
-	session, _, err := m.claimSession(sessionID, time.Time{}, false)
+	session, _, err := m.claimSession(sessionID, time.Time{}, false, req.Generation)
 	if err != nil {
 		return terminalResourceRunResult{}, err
 	}
 	if err := m.awaitSessionReady(ctx, session, false); err != nil {
 		return terminalResourceRunResult{}, err
 	}
-	containerName := session.containerName
+	containerName := m.sessionExecutionResource(session)
 
 	resourceResult, err := m.resolveResourceInSession(ctx, sessionID, containerName, filePath, action, signedURL, req.Headers)
 	if err != nil {

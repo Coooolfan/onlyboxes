@@ -48,6 +48,7 @@ const (
 )
 
 type terminalExecPayload struct {
+	Generation      int64  `json:"generation,omitempty"`
 	Command         string `json:"command"`
 	SessionID       string `json:"session_id,omitempty"`
 	CreateIfMissing bool   `json:"create_if_missing,omitempty"`
@@ -55,6 +56,7 @@ type terminalExecPayload struct {
 }
 
 type terminalExecRequest struct {
+	Generation      int64
 	Command         string
 	SessionID       string
 	CreateIfMissing bool
@@ -73,6 +75,7 @@ type terminalExecRunResult struct {
 }
 
 type terminalLeaseRenewPayload struct {
+	Generation  int64  `json:"generation,omitempty"`
 	SessionID   string `json:"session_id"`
 	LeaseTTLSec int    `json:"lease_ttl_sec"`
 }
@@ -109,13 +112,15 @@ func newTerminalExecError(code string, message string) *terminalExecError {
 }
 
 type terminalSession struct {
-	sessionID      string
-	containerName  string
-	containerIP    string
-	leaseExpiresAt time.Time
-	leaseTimer     *time.Timer
-	proxyCtx       context.Context
-	proxyCancel    context.CancelFunc
+	persistenceContainerID string
+	persistenceFault       bool
+	sessionID              string
+	containerName          string
+	containerIP            string
+	leaseExpiresAt         time.Time
+	leaseTimer             *time.Timer
+	proxyCtx               context.Context
+	proxyCancel            context.CancelFunc
 
 	// inflight counts commands currently executing against this session and
 	// controls deferred cleanup for non-lease failures.
@@ -154,8 +159,11 @@ type terminalSessionManagerConfig struct {
 }
 
 type terminalSessionManager struct {
-	mu       sync.Mutex
-	sessions map[string]*terminalSession
+	mu                       sync.Mutex
+	sessions                 map[string]*terminalSession
+	persistenceFences        map[string]terminalPersistenceFence
+	persistenceRecoveryHolds map[string]bool
+	persistenceFailed        bool
 
 	leaseMinSec               int
 	leaseMaxSec               int
@@ -188,7 +196,7 @@ func (m *terminalSessionManager) ActiveSessionCount() int32 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	return int32(m.activeSessionReservations)
+	return int32(m.activeSessionCountLocked())
 }
 
 func newTerminalSessionManager(cfg terminalSessionManagerConfig) *terminalSessionManager {
@@ -284,12 +292,14 @@ func (m *terminalSessionManager) Close() {
 		m.createWG.Wait()
 
 		m.mu.Lock()
+		protected := make(map[*terminalSession]bool)
 		sessions := make([]*terminalSession, 0, len(m.sessions))
 		for _, session := range m.sessions {
 			if session == nil {
 				continue
 			}
 			m.stopSessionLeaseTimerLocked(session)
+			protected[session] = m.persistenceHeldLocked(session.sessionID)
 			sessions = append(sessions, session)
 		}
 		m.sessions = make(map[string]*terminalSession)
@@ -297,7 +307,7 @@ func (m *terminalSessionManager) Close() {
 
 		m.cleanupWG.Wait()
 		for _, session := range sessions {
-			if m.preserveOnClose {
+			if m.preserveOnClose || protected[session] {
 				m.releaseCapacityReservation(session)
 				continue
 			}
@@ -323,7 +333,7 @@ func (m *terminalSessionManager) Execute(ctx context.Context, req terminalExecRe
 
 	leaseTarget := time.Now().Add(leaseDuration)
 
-	session, created, err := m.claimSession(strings.TrimSpace(req.SessionID), leaseTarget, req.CreateIfMissing)
+	session, created, err := m.claimSession(strings.TrimSpace(req.SessionID), leaseTarget, req.CreateIfMissing, req.Generation)
 	if err != nil {
 		return terminalExecRunResult{}, err
 	}
@@ -332,7 +342,7 @@ func (m *terminalSessionManager) Execute(ctx context.Context, req terminalExecRe
 		return terminalExecRunResult{}, err
 	}
 
-	execResult := runDockerCommand(ctx, terminalExecDockerExecArgs(session.containerName, command)...)
+	execResult := runDockerCommand(ctx, terminalExecDockerExecArgs(m.sessionExecutionResource(session), command)...)
 	if execResult.Err != nil {
 		if errors.Is(execResult.Err, context.DeadlineExceeded) || errors.Is(execResult.Err, context.Canceled) {
 			m.releaseAndDestroySession(session.sessionID)
@@ -385,6 +395,9 @@ func (m *terminalSessionManager) RenewLease(_ context.Context, req terminalLease
 	defer m.mu.Unlock()
 	if m.closed {
 		return terminalLeaseRenewResult{}, newTerminalExecError("execution_failed", terminalExecNotReadyMessage)
+	}
+	if err := m.persistenceConflictLocked(sessionID, req.Generation); err != nil {
+		return terminalLeaseRenewResult{}, err
 	}
 	session, ok := m.sessions[sessionID]
 	if !ok || session == nil || session.destroying || !session.leaseExpiresAt.After(now) {
@@ -472,7 +485,7 @@ func (m *terminalSessionManager) cleanupExpiredSessions() {
 
 	m.mu.Lock()
 	for sessionID, session := range m.sessions {
-		if session == nil || session.destroying {
+		if session == nil || session.destroying || m.persistenceHeldLocked(sessionID) {
 			continue
 		}
 		if session.leaseExpiresAt.After(now) {
@@ -502,7 +515,7 @@ func (m *terminalSessionManager) expireSessionLease(session *terminalSession) {
 	now := time.Now()
 	m.mu.Lock()
 	current, ok := m.sessions[session.sessionID]
-	if m.closed || !ok || current != session || session.destroying {
+	if m.closed || !ok || current != session || session.destroying || m.persistenceHeldLocked(session.sessionID) {
 		m.mu.Unlock()
 		return
 	}
@@ -524,7 +537,7 @@ func (m *terminalSessionManager) expireSessionLease(session *terminalSession) {
 }
 
 func (m *terminalSessionManager) scheduleSessionLeaseTimerLocked(session *terminalSession) {
-	if m == nil || session == nil || m.closed || session.destroying {
+	if m == nil || session == nil || m.closed || session.destroying || m.persistenceHeldLocked(session.sessionID) {
 		return
 	}
 	if session.leaseTimer != nil {
@@ -568,7 +581,7 @@ func (m *terminalSessionManager) ResolveProxyTarget(ctx context.Context, session
 
 	m.mu.Lock()
 	session, ok := m.sessions[sessionID]
-	if !ok || session == nil || session.destroying {
+	if !ok || session == nil || session.destroying || m.persistenceConflictLocked(sessionID, m.persistenceFences[sessionID].generation) != nil {
 		m.mu.Unlock()
 		return terminalProxyTarget{}, errTerminalProxySessionNotFound
 	}
@@ -587,7 +600,7 @@ func (m *terminalSessionManager) ResolveProxyTarget(ctx context.Context, session
 	var expired *terminalSession
 	m.mu.Lock()
 	current, ok := m.sessions[sessionID]
-	if !ok || current != session || session.destroying || session.initErr != nil {
+	if !ok || current != session || session.destroying || session.initErr != nil || m.persistenceConflictLocked(sessionID, m.persistenceFences[sessionID].generation) != nil {
 		m.mu.Unlock()
 		return terminalProxyTarget{}, errTerminalProxySessionNotFound
 	}
@@ -653,6 +666,7 @@ func (m *terminalSessionManager) claimSession(
 	sessionID string,
 	leaseTarget time.Time,
 	createIfMissing bool,
+	generations ...int64,
 ) (*terminalSession, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -661,6 +675,16 @@ func (m *terminalSessionManager) claimSession(
 		return nil, false, newTerminalExecError("execution_failed", terminalExecNotReadyMessage)
 	}
 
+	generation := int64(0)
+	if len(generations) > 0 {
+		generation = generations[0]
+	}
+	if err := m.persistenceConflictLocked(sessionID, generation); err != nil {
+		return nil, false, err
+	}
+	if fence, exists := m.persistenceFences[sessionID]; exists && (m.sessions[sessionID] == nil || !m.sessions[sessionID].leaseExpiresAt.After(time.Now()) || !fence.active) {
+		return nil, false, newTerminalExecError("session_state_conflict", "persistent session requires its existing active instance")
+	}
 	if sessionID == "" {
 		session, err := m.newSessionLocked(uuid.NewString(), leaseTarget)
 		return session, true, err
@@ -690,7 +714,7 @@ func (m *terminalSessionManager) claimSession(
 }
 
 func (m *terminalSessionManager) newSessionLocked(sessionID string, leaseTarget time.Time) (*terminalSession, error) {
-	if m.maxActiveSessions > 0 && m.activeSessionReservations >= m.maxActiveSessions {
+	if m.maxActiveSessions > 0 && m.activeSessionCountLocked() >= m.maxActiveSessions {
 		return nil, newTerminalExecError(
 			terminalExecCodeSessionCapacityExceeded,
 			terminalExecCapacityMessage,
@@ -762,6 +786,10 @@ func (m *terminalSessionManager) cleanupInactiveCreatedSession(session *terminal
 		return
 	}
 	m.mu.Lock()
+	if m.persistenceHeldLocked(session.sessionID) {
+		m.mu.Unlock()
+		return
+	}
 	current, owned := m.sessions[session.sessionID]
 	owned = owned && current == session
 	if owned {
@@ -813,7 +841,7 @@ func (m *terminalSessionManager) releaseSession(sessionID string) (time.Time, bo
 	}
 	leaseExpiresAt := session.leaseExpiresAt
 	var retired *terminalSession
-	if session.destroying && session.inflight == 0 {
+	if session.destroying && session.inflight == 0 && !m.persistenceHeldLocked(sessionID) {
 		delete(m.sessions, sessionID)
 		m.cleanupWG.Add(1)
 		retired = session
@@ -838,6 +866,14 @@ func (m *terminalSessionManager) releaseAndDestroySession(sessionID string) {
 	m.mu.Lock()
 	session, ok := m.sessions[sessionID]
 	if !ok || session == nil {
+		m.mu.Unlock()
+		return
+	}
+	if m.persistenceHeldLocked(sessionID) {
+		if session.inflight > 0 {
+			session.inflight--
+		}
+		session.persistenceFault = true
 		m.mu.Unlock()
 		return
 	}
@@ -871,10 +907,28 @@ func (m *terminalSessionManager) cleanupSession(session *terminalSession) {
 	if session == nil {
 		return
 	}
-	if session.proxyCancel != nil {
-		session.proxyCancel()
+	m.mu.Lock()
+	proxyCancel := session.proxyCancel
+	resource := session.executionResource()
+	persistentID := session.persistenceContainerID
+	_, persistent := m.persistenceFences[session.sessionID]
+	m.mu.Unlock()
+	if proxyCancel != nil {
+		proxyCancel()
 	}
-	m.forceRemoveContainer(session.containerName)
+	if persistent {
+		// Ordinary expiry/cancellation may stop execution, but it cannot delete
+		// the only persistent rootfs while Console ownership is unresolved.
+		// Lifecycle finalization/deletion removes an explicitly verified ID.
+		if persistentID != "" {
+			ctx, cancel := context.WithTimeout(context.Background(), terminalExecCleanupTimeout)
+			_ = runDockerCommand(ctx, "stop", "--signal", "SIGKILL", "--timeout", "0", persistentID)
+			cancel()
+		}
+		m.releaseCapacityReservation(session)
+		return
+	}
+	m.forceRemoveContainer(resource)
 	m.releaseCapacityReservation(session)
 }
 
@@ -895,6 +949,18 @@ func (m *terminalSessionManager) releaseCapacityReservation(session *terminalSes
 }
 
 func (m *terminalSessionManager) forceRemoveContainer(containerName string) {
+	m.mu.Lock()
+	protected := m.persistenceFailed
+	for id, fence := range m.persistenceFences {
+		if terminalSessionResourceName(id) == containerName || fence.containerID != "" && fence.containerID == containerName {
+			protected = true
+			break
+		}
+	}
+	m.mu.Unlock()
+	if protected {
+		return
+	}
 	containerName = strings.TrimSpace(containerName)
 	if containerName == "" {
 		return
@@ -971,4 +1037,17 @@ func truncateByBytes(value string, maxBytes int) (string, bool) {
 		return value, false
 	}
 	return value[:maxBytes], true
+}
+
+func (s *terminalSession) executionResource() string {
+	if s.persistenceContainerID != "" {
+		return s.persistenceContainerID
+	}
+	return s.containerName
+}
+
+func (m *terminalSessionManager) sessionExecutionResource(s *terminalSession) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return s.executionResource()
 }

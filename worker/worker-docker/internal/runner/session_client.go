@@ -60,6 +60,9 @@ func runSession(ctx context.Context, cfg config.Config) error {
 	}
 
 	heartbeatInterval := durationFromServer(ack.GetHeartbeatIntervalSec(), cfg.HeartbeatInterval)
+	if err := recoverPersistenceSessionsFn(ctx, ack.GetTerminalSessionRecoveryCandidates(), ack.GetSandboxPersistenceRecoveryCandidates()); err != nil {
+		return errors.New("sandbox lifecycle recovery is unavailable")
+	}
 	recoveryResults, err := recoverTerminalSessionsWithTimeout(ctx, cfg.CallTimeout, ack.GetTerminalSessionRecoveryCandidates())
 	if err != nil {
 		return fmt.Errorf("recover terminal sessions: %w", err)

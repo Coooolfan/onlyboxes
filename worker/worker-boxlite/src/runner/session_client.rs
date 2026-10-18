@@ -507,6 +507,7 @@ mod tests {
                         session_id: TEST_SESSION_ID.to_owned(),
                         heartbeat_interval_sec: shared.heartbeat_interval_sec,
                         terminal_session_recovery_candidates: Vec::new(),
+                        sandbox_persistence_recovery_candidates: Vec::new(),
                     })),
                 }))
                 .await

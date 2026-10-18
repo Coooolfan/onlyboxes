@@ -38,3 +38,11 @@ See the [storage foundation](sandbox-snapshot-foundation.md), [lifecycle design]
 
 
 The shared private action payloads are defined in `api/sandboxpersistence`. `PREPARE_SNAPSHOT` returns a frozen archive descriptor; `UPLOAD_SNAPSHOT` acknowledges exact part numbers, sizes and ETags; `VERIFY_SNAPSHOT` confirms complete remote content verification. `FINALIZE_SUSPEND` requires the committed-snapshot flag and returns `finalized` only after cleanup. Restore proceeds through `prepared`, `ready` and `active`; readiness, activation and source rollback include the matching restore specification, instance ID and absolute lease. `CANCEL` returns `canceled` only once the target cannot execute, or `running` after source rollback. `busy` requests a bounded retry without releasing durable ownership. Runtime adapters must maintain these states in an operation/generation journal and reject stale controls, including deliveries that arrive after cancellation.
+
+## Reconnect ownership
+
+`ConnectAck.sandbox_persistence_recovery_candidates` lists unresolved lifecycle resources on this Worker. Each hint carries scoped session ID, operation ID, generation and source/target role. `snapshot_committed` confirms source snapshot publication; `route_committed` confirms target running-route publication. Workers must protect these resources before ordinary terminal recovery/orphan cleanup, including when local operation metadata is missing.
+
+Running persistent sessions appear in ordinary recovery candidates with a positive `generation`; ordinary sessions use zero. Console reads both categories from one SQLite snapshot and replaces stale cached persistent candidates with this plan. In-flight activation cannot leave a target absent from both categories. A reconnecting Worker without persistence capability is rejected when it owns either category of persistent resources.
+
+Recovery hints do not authorize reconstructing a missing target, removing an uncertain source or accepting stale commands. A journal-aware controller must inspect and reconcile the operation before releasing local ownership. The Docker Worker provides [journal/fencing primitives](../../worker/worker-docker/docs/sandbox-snapshot-journal.md); runtime control execution and configuration are not enabled yet.

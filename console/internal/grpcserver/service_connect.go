@@ -86,6 +86,17 @@ func (s *RegistryService) Connect(stream grpc.BidiStreamingServer[registryv1.Con
 	if err != nil {
 		return status.Errorf(codes.Internal, "prepare terminal session recovery: %v", err)
 	}
+	recoveryCandidates, persistenceRecovery, err := s.snapshotRecoveryPlan(stream.Context(), session.nodeID, recoveryCandidates)
+	if err != nil {
+		return status.Error(codes.Internal, "prepare sandbox lifecycle recovery failed")
+	}
+	persistentOwner := len(persistenceRecovery) > 0
+	for _, candidate := range recoveryCandidates {
+		persistentOwner = persistentOwner || candidate.GetGeneration() > 0
+	}
+	if persistentOwner && !hello.GetSandboxPersistence().GetEnabled() {
+		return status.Error(codes.FailedPrecondition, "worker requires sandbox persistence for owned sessions")
+	}
 	session.setRecoveryCandidates(recoveryCandidates)
 	logTerminalSessionCapacityInvariant(session.nodeID, session.terminalSessionCapacitySnapshot())
 	if s.workerConnectionPolicy != registry.WorkerConnectionConflictPolicyReject {
@@ -104,7 +115,9 @@ func (s *RegistryService) Connect(stream grpc.BidiStreamingServer[registryv1.Con
 		writerErrCh <- writerLoop(stream, session)
 	}()
 
-	if err := session.enqueueControl(stream.Context(), newConnectAck(sessionID, s.heartbeatIntervalSec, recoveryCandidates...)); err != nil {
+	connectAck := newConnectAck(sessionID, s.heartbeatIntervalSec, recoveryCandidates...)
+	connectAck.GetConnectAck().SandboxPersistenceRecoveryCandidates = persistenceRecovery
+	if err := session.enqueueControl(stream.Context(), connectAck); err != nil {
 		return status.Error(codes.Internal, "failed to send connect ack")
 	}
 

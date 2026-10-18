@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"time"
 
@@ -52,10 +53,25 @@ func (m *terminalSessionManager) Recover(
 		name := terminalSessionResourceName(sessionID)
 		status := registryv1.TerminalSessionRecoveryResult_INVALID
 		leaseExpiresAt := time.UnixMilli(candidate.GetLeaseExpiresUnixMs())
-		if sessionID != "" && candidate.GetLeaseExpiresUnixMs() > 0 && leaseExpiresAt.After(now) {
+		m.mu.Lock()
+		fence, known := m.persistenceFences[sessionID]
+		protected := m.persistenceHeldLocked(sessionID) || (known && candidate.GetGeneration() != fence.generation) || (!known && candidate.GetGeneration() > 0)
+		m.mu.Unlock()
+		if protected {
+			status = registryv1.TerminalSessionRecoveryResult_INVALID
+		} else if sessionID != "" && candidate.GetLeaseExpiresUnixMs() > 0 && leaseExpiresAt.After(now) {
 			status = m.recoverOne(ctx, sessionID, name, leaseExpiresAt)
 		} else if sessionID != "" {
-			m.forceRemoveContainer(name)
+			resource := name
+			if known {
+				resource = fence.containerID
+			}
+			if resource != "" {
+				m.forceRemoveContainer(resource)
+			}
+		}
+		if known || candidate.GetGeneration() > 0 {
+			expectedNames[name] = struct{}{}
 		}
 		switch status {
 		case registryv1.TerminalSessionRecoveryResult_RECOVERED:
@@ -112,10 +128,11 @@ func (m *terminalSessionManager) recoverOneAttempt(
 	leaseExpiresAt time.Time,
 ) (registryv1.TerminalSessionRecoveryResult_Status, bool) {
 	m.mu.Lock()
-	if m.closed {
+	if m.closed || m.persistenceHeldLocked(sessionID) {
 		m.mu.Unlock()
 		return registryv1.TerminalSessionRecoveryResult_INVALID, false
 	}
+	fence, persistent := m.persistenceFences[sessionID]
 	if existing := m.sessions[sessionID]; existing != nil && !existing.destroying {
 		existing.leaseExpiresAt = leaseExpiresAt
 		m.scheduleSessionLeaseTimerLocked(existing)
@@ -143,8 +160,24 @@ func (m *terminalSessionManager) recoverOneAttempt(
 	if err := json.Unmarshal([]byte(parts[0]), &labels); err != nil ||
 		labels[terminalExecSessionLabelKey] != terminalSessionIDHash(sessionID) ||
 		labels[terminalExecSchemaLabelKey] != terminalExecSchemaVersion {
+		if persistent {
+			return registryv1.TerminalSessionRecoveryResult_INVALID, false
+		}
 		m.forceRemoveContainer(containerName)
 		return registryv1.TerminalSessionRecoveryResult_INVALID, false
+	}
+	if persistent {
+		labelGeneration := labels["onlyboxes.generation"]
+		if labelGeneration != "" && labelGeneration != strconv.FormatInt(fence.generation, 10) || labelGeneration == "" && fence.generation != 1 {
+			return registryv1.TerminalSessionRecoveryResult_INVALID, false
+		}
+		identity := runDockerCommand(ctx, "inspect", "--format", "{{.Id}}", containerName)
+		if identity.Err != nil || identity.ExitCode != 0 {
+			return registryv1.TerminalSessionRecoveryResult_INVALID, true
+		}
+		if fence.containerID == "" || strings.TrimSpace(identity.Stdout) != fence.containerID {
+			return registryv1.TerminalSessionRecoveryResult_INVALID, false
+		}
 	}
 	matching := runDockerCommand(ctx,
 		"ps", "-a",
@@ -157,6 +190,9 @@ func (m *terminalSessionManager) recoverOneAttempt(
 	}
 	matchingNames := nonEmptyLines(matching.Stdout)
 	if len(matchingNames) != 1 || matchingNames[0] != containerName {
+		if persistent {
+			return registryv1.TerminalSessionRecoveryResult_INVALID, false
+		}
 		for _, name := range matchingNames {
 			m.forceRemoveContainer(name)
 		}
@@ -171,6 +207,9 @@ func (m *terminalSessionManager) recoverOneAttempt(
 			return registryv1.TerminalSessionRecoveryResult_INVALID, true
 		}
 	default:
+		if persistent {
+			return registryv1.TerminalSessionRecoveryResult_INVALID, false
+		}
 		m.forceRemoveContainer(containerName)
 		return registryv1.TerminalSessionRecoveryResult_INVALID, false
 	}
@@ -202,14 +241,15 @@ func (m *terminalSessionManager) recoverOneAttempt(
 		return registryv1.TerminalSessionRecoveryResult_RECOVERED, false
 	}
 	session := &terminalSession{
-		sessionID:        sessionID,
-		containerName:    containerName,
-		containerIP:      containerIP,
-		leaseExpiresAt:   leaseExpiresAt,
-		proxyCtx:         proxyCtx,
-		proxyCancel:      proxyCancel,
-		ready:            ready,
-		capacityReserved: true,
+		sessionID:              sessionID,
+		containerName:          containerName,
+		containerIP:            containerIP,
+		leaseExpiresAt:         leaseExpiresAt,
+		proxyCtx:               proxyCtx,
+		proxyCancel:            proxyCancel,
+		ready:                  ready,
+		capacityReserved:       true,
+		persistenceContainerID: m.persistenceFences[sessionID].containerID,
 	}
 	m.sessions[sessionID] = session
 	m.activeSessionReservations++
@@ -245,6 +285,12 @@ func nonEmptyLines(value string) []string {
 }
 
 func (m *terminalSessionManager) cleanupOrphanContainers(ctx context.Context, expectedNames map[string]struct{}) (int, int) {
+	m.mu.Lock()
+	failed := m.persistenceFailed
+	m.mu.Unlock()
+	if failed {
+		return 0, 0
+	}
 	listed := runDockerCommand(ctx,
 		"ps", "-a",
 		"--filter", "label="+terminalExecSessionLabelKey,
@@ -263,6 +309,24 @@ func (m *terminalSessionManager) cleanupOrphanContainers(ctx context.Context, ex
 			continue
 		}
 		discovered++
+		m.mu.Lock()
+		protected := false
+		for session := range m.persistenceFences {
+			if terminalSessionResourceName(session) == name {
+				protected = true
+				break
+			}
+		}
+		for session := range m.persistenceRecoveryHolds {
+			if terminalSessionResourceName(session) == name {
+				protected = true
+				break
+			}
+		}
+		m.mu.Unlock()
+		if protected {
+			continue
+		}
 		if _, expected := expectedNames[name]; expected {
 			continue
 		}

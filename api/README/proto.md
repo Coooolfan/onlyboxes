@@ -51,3 +51,9 @@ for admission, uncertainty and reconciliation requirements.
 ## Compatibility Rules
 - Project is pre-release; protocol refactors are allowed when all in-repo consumers are updated together.
 - Keep protobuf field tags stable within one rollout to avoid generator/caller mismatches.
+
+Persistent reconnect ownership uses `ConnectAck.sandbox_persistence_recovery_candidates`
+for unresolved lifecycle resources and positive `TerminalSessionRecoveryCandidate.generation`
+for ordinary running recovery. Console constructs these categories atomically. Workers
+must protect lifecycle-owned resources before ordinary orphan cleanup and reject
+unsupported lifecycle recovery rather than deleting unrecognized persistent data.
