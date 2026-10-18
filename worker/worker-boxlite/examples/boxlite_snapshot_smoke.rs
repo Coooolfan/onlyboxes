@@ -4,6 +4,9 @@
 //! may select another immutable image containing Python and /bin/sh. All runtime
 //! homes are private temporary directories owned by this invocation.
 
+#[path = "support/snapshot_store.rs"]
+mod snapshot_store;
+
 use std::error::Error;
 use std::path::Path;
 use std::process::Command;
@@ -114,6 +117,27 @@ fn runtime(home: &Path) -> Result<Arc<BoxliteRuntime>> {
 }
 
 async fn phase(phase: &str, root: &Path, image: &str) -> Result<()> {
+    let endpoint = std::env::var("BOXLITE_SNAPSHOT_SMOKE_STORE_URL")?;
+    if phase == "verify" {
+        let (_, descriptor): (RestoreSpec, Archive) =
+            serde_json::from_slice(&std::fs::read(root.join("snapshot.meta.json"))?)?;
+        let transfer =
+            worker_boxlite::persistence::Transfer::new(4, std::time::Duration::from_secs(30))?;
+        transfer
+            .verify_remote(
+                &snapshot_store::grant(&endpoint, "GET", descriptor.size_bytes, 0, None),
+                &descriptor,
+                tokio_util::sync::CancellationToken::new(),
+            )
+            .await?;
+        let journal = Journal::open(root.join("source-journal"), "smoke-worker")?;
+        journal.update("snapshot-source-operation", |op| {
+            op.remote_verified = true;
+            Ok(())
+        })?;
+        println!("PASS: uploaded object read back and fully verified over HTTP");
+        return Ok(());
+    }
     let runtime = runtime(&root.join(format!("{phase}-home")))?;
     let archive = root.join("snapshot.boxlite");
     let result: Result<()> = async {
@@ -305,12 +329,66 @@ async fn phase(phase: &str, root: &Path, image: &str) -> Result<()> {
                 "PASS: published archive recovered without a journal completion acknowledgement"
             );
             std::fs::write(root.join("source-id"), litebox.id().as_str())?;
+            let transfer =
+                worker_boxlite::persistence::Transfer::new(4, std::time::Duration::from_secs(30))?;
+            let source = transfer
+                .source(
+                    std::fs::File::open(&archive)?,
+                    descriptor.clone(),
+                    tokio_util::sync::CancellationToken::new(),
+                )
+                .await?;
+            let mut parts = Vec::new();
+            let mut offset = 0;
+            let mut number = 1;
+            while offset < descriptor.size_bytes {
+                let size = (descriptor.size_bytes - offset).min(8 << 20);
+                parts.push(worker_boxlite::persistence::UploadPart {
+                    part_number: number,
+                    grant: snapshot_store::grant(&endpoint, "PUT", size, offset, Some(number)),
+                });
+                number += 1;
+                offset += size;
+            }
+            let mut receipts = Vec::new();
+            for batch in parts.chunks(16) {
+                receipts.extend(
+                    transfer
+                        .upload(&source, batch, tokio_util::sync::CancellationToken::new())
+                        .await?,
+                );
+            }
+            std::fs::write(
+                root.join("uploaded-parts.json"),
+                serde_json::to_vec(&receipts)?,
+            )?;
+            println!(
+                "PASS: native archive uploaded in {} HTTP parts",
+                receipts.len()
+            );
         } else {
             let started = Instant::now();
             let (spec, descriptor): (RestoreSpec, Archive) =
                 serde_json::from_slice(&std::fs::read(root.join("snapshot.meta.json"))?)?;
             let staged = root.join("target-import.boxlite");
-            let mut input = std::fs::File::open(&archive)?;
+            let download_root = root.join("target-download");
+            std::fs::create_dir(&download_root)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&download_root, std::fs::Permissions::from_mode(0o700))?;
+            }
+            let transfer =
+                worker_boxlite::persistence::Transfer::new(4, std::time::Duration::from_secs(30))?;
+            let downloaded = transfer
+                .download(
+                    &snapshot_store::grant(&endpoint, "GET", descriptor.size_bytes, 0, None),
+                    &descriptor,
+                    download_root.join("snapshot.boxlite"),
+                    tokio_util::sync::CancellationToken::new(),
+                )
+                .await?;
+            let mut input = downloaded.file;
             let mut output = std::fs::OpenOptions::new()
                 .read(true)
                 .write(true)
@@ -467,10 +545,12 @@ async fn main() -> Result<()> {
         "BoxLite 0.10.7 native archive acceptance; root={}",
         root.display()
     );
+    let store = snapshot_store::Store::new(&root.join("object-store")).await?;
     let result = (|| -> Result<()> {
         let executable = std::env::current_exe()?;
         if !Command::new(&executable)
             .arg("source")
+            .env("BOXLITE_SNAPSHOT_SMOKE_STORE_URL", &store.url)
             .arg(&root)
             .arg(&image)
             .status()?
@@ -478,17 +558,34 @@ async fn main() -> Result<()> {
         {
             return Err("source process failed".into());
         }
-        // No source DB, image cache, base disks or box directories remain.
+        let (_, descriptor): (RestoreSpec, Archive) =
+            serde_json::from_slice(&std::fs::read(root.join("snapshot.meta.json"))?)?;
+        let parts: Vec<worker_boxlite::persistence::CompletedPart> =
+            serde_json::from_slice(&std::fs::read(root.join("uploaded-parts.json"))?)?;
+        store.complete(&parts, &descriptor)?;
+        if !Command::new(&executable)
+            .arg("verify")
+            .arg(&root)
+            .arg(&image)
+            .env("BOXLITE_SNAPSHOT_SMOKE_STORE_URL", &store.url)
+            .status()?
+            .success()
+        {
+            return Err("remote verification failed".into());
+        }
+        // The target must use HTTP: remove all source runtime and archive state.
         std::fs::remove_dir_all(root.join("source-home"))?;
         std::fs::remove_dir_all(root.join("source-journal"))?;
         std::fs::remove_dir_all(root.join("recovery-journal"))?;
         std::fs::remove_dir_all(root.join("wrong-spec-journal"))?;
-        let mut archive = std::fs::File::open(root.join("snapshot.boxlite"))?;
+        std::fs::remove_file(root.join("snapshot.boxlite"))?;
+        let mut archive = std::fs::File::open(&store.object)?;
         let mut digest = Sha256::new();
         let bytes = std::io::copy(&mut archive, &mut digest)?;
         println!("archive_bytes={bytes} sha256={:x}", digest.finalize());
         if !Command::new(&executable)
             .arg("target")
+            .env("BOXLITE_SNAPSHOT_SMOKE_STORE_URL", &store.url)
             .arg(&root)
             .arg(&image)
             .status()?

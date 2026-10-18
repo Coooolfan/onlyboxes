@@ -189,7 +189,7 @@ Manual smoke checklist:
 
 Backend smoke test:
 - `cargo test --locked --lib` verifies the private lifecycle journal, generation/identity fences, file permissions, concurrent claims and process-crash recovery. Runtime integration remains pending; see [archive and journal boundaries](docs/sandbox-snapshot-runtime.md).
-- `cargo run --locked --example boxlite_snapshot_smoke` verifies native archive restore in a separate process with an empty home after removing the source home. See [archive acceptance and boundaries](docs/sandbox-snapshot-runtime.md).
+- `cargo run --locked --example boxlite_snapshot_smoke` verifies multipart HTTP upload, full remote readback, download and native archive restore in a separate process with an empty home after removing the source home, journals and local archive. See [archive acceptance and boundaries](docs/sandbox-snapshot-runtime.md).
 - `cargo run --example boxlite_smoke` exercises the boxlite API directly, without `console` or gRPC: runtime init, box create/start, exec, exit codes and stderr, filesystem state across executions, concurrent execution on a single box, `kill()` isolation between executions, `copy_out`, removal, and shutdown.
 - environment overrides: `BOXLITE_SMOKE_IMAGE` (default `alpine:latest`), `BOXLITE_SMOKE_HOME` (default a fresh temp dir), `BOXLITE_SMOKE_CONCURRENCY` (default `4`), `BOXLITE_SMOKE_KEEP_HOME`.
 - point `BOXLITE_SMOKE_HOME` at an existing boxlite home to exercise on-disk database migrations after a dependency upgrade.
