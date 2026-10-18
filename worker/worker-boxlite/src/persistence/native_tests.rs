@@ -290,3 +290,23 @@ fn environment_order_is_preserved_semantically_without_duplicate_keys() {
         vec!["A", "Z"]
     );
 }
+
+#[test]
+fn imported_build_pin_requires_the_expected_immutable_image() {
+    let mut f = Fixture::new();
+    let spec = spec_from_config(&f.config, &f.info).unwrap();
+    f.config.options.rootfs = RootfsSpec::Image(spec.image.clone());
+    f.info.image = spec.image.clone();
+    f.info.resolved_image = None;
+    assert!(matches!(
+        spec_from_config(&f.config, &f.info),
+        Err(NativeError::Unsupported)
+    ));
+    assert!(spec_from_config_with_pin(&f.config, &f.info, Some(&spec)).unwrap() == spec);
+    f.config.options.rootfs = RootfsSpec::Image("image:mutable".into());
+    f.info.image = "image:mutable".into();
+    assert!(matches!(
+        spec_from_config_with_pin(&f.config, &f.info, Some(&spec)),
+        Err(NativeError::Conflict)
+    ));
+}

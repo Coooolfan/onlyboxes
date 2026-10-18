@@ -11,12 +11,15 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use boxlite::{
-    BoxArchive, BoxCommand, BoxOptions, BoxStatus, BoxliteOptions, BoxliteRuntime, ExportOptions,
-    LiteBox, RootfsSpec,
+    BoxArchive, BoxCommand, BoxOptions, BoxStatus, BoxliteOptions, BoxliteRuntime, LiteBox,
+    RootfsSpec,
 };
 use sha2::{Digest, Sha256};
 use tokio_stream::StreamExt;
-use worker_boxlite::persistence::{terminal_name, Journal, Kind, NativeRuntime, Operation, Phase};
+use worker_boxlite::persistence::{
+    prepare_import_archive, terminal_name, Archive, ArchiveLimits, Journal, Kind, NativeRuntime,
+    Operation, Phase, RestoreSpec,
+};
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 const IMAGE: &str =
@@ -37,7 +40,6 @@ with open(p+'/sparse','wb') as f:
 with open('/etc/onlyboxes-base-change','w') as f: f.write('modified')
 os.unlink('/etc/debian_version')
 with open('/dev/shm/onlyboxes-ephemeral','w') as f: f.write('memory-only')
-os.sync()
 print('source fixture ready')
 "#;
 const VERIFY: &str = r#"
@@ -148,7 +150,7 @@ async fn phase(phase: &str, root: &Path, image: &str) -> Result<()> {
             {
                 return Err("inspection accepted another scope".into());
             }
-            let journal = Journal::open(root.join("source-journal"), "smoke-worker")?;
+            let journal = Arc::new(Journal::open(root.join("source-journal"), "smoke-worker")?);
             if backend
                 .stop_source(&journal, "missing-operation")
                 .await
@@ -175,7 +177,7 @@ async fn phase(phase: &str, root: &Path, image: &str) -> Result<()> {
                     .duration_since(std::time::UNIX_EPOCH)?
                     .as_millis() as i64
                     + 300_000,
-                staging_bytes: 1 << 30,
+                staging_bytes: 65 << 30,
                 snapshot_committed: false,
                 verified: false,
                 remote_verified: false,
@@ -199,6 +201,22 @@ async fn phase(phase: &str, root: &Path, image: &str) -> Result<()> {
                 return Err("a mismatched source specification stopped the VM".into());
             }
             wrong_journal.close()?;
+            if backend
+                .export_source(
+                    journal.clone(),
+                    "snapshot-source-operation",
+                    ArchiveLimits {
+                        max_bytes: 1 << 40,
+                        max_expanded_bytes: 1 << 40,
+                    },
+                )
+                .await
+                .err()
+                != Some(worker_boxlite::persistence::NativeError::Budget)
+                || litebox.info().await?.status != BoxStatus::Running
+            {
+                return Err("insufficient staging admission stopped the VM".into());
+            }
             backend
                 .stop_source(&journal, "snapshot-source-operation")
                 .await?;
@@ -211,16 +229,137 @@ async fn phase(phase: &str, root: &Path, image: &str) -> Result<()> {
             if litebox.info().await?.status != BoxStatus::Stopped {
                 return Err("source did not stop all writers".into());
             }
+            if backend
+                .export_source(
+                    journal.clone(),
+                    "snapshot-source-operation",
+                    ArchiveLimits {
+                        max_bytes: 1,
+                        max_expanded_bytes: 64 << 30,
+                    },
+                )
+                .await
+                .err()
+                != Some(worker_boxlite::persistence::NativeError::Budget)
+                || !runtime.exists(litebox.id().as_str()).await?
+                || journal.snapshot()?.operations["snapshot-source-operation"].phase
+                    != Phase::Preparing
+            {
+                return Err("quota rejection discarded the source or published an archive".into());
+            }
             let started = Instant::now();
-            litebox.export(ExportOptions::default(), &archive).await?;
-            println!("export_ms={}", started.elapsed().as_millis());
+            let limits = ArchiveLimits {
+                max_bytes: 256 << 20,
+                max_expanded_bytes: 64 << 30,
+            };
+            let descriptor = backend
+                .export_source(journal.clone(), "snapshot-source-operation", limits)
+                .await?;
+            let repeated = backend
+                .export_source(journal.clone(), "snapshot-source-operation", limits)
+                .await?;
+            if repeated != descriptor {
+                return Err("frozen export replay changed the archive".into());
+            }
+            let artifact =
+                journal.artifact_path("obx:smoke:session", "snapshot-source-operation", 1)?;
+            std::fs::copy(artifact, &archive)?;
+            let state = journal.snapshot()?;
+            let spec = state.operations["snapshot-source-operation"]
+                .restore_spec
+                .as_ref()
+                .ok_or("missing source specification")?;
+            let data = serde_json::to_vec(&(spec, &descriptor))?;
+            std::fs::write(root.join("snapshot.meta.json"), data)?;
+            println!(
+                "export_ms={} expanded_bytes={}",
+                started.elapsed().as_millis(),
+                descriptor.expanded_bytes
+            );
+            let recovery = Arc::new(Journal::open(
+                root.join("recovery-journal"),
+                "smoke-worker",
+            )?);
+            let mut pending = state.operations["snapshot-source-operation"].clone();
+            pending.phase = Phase::Preparing;
+            pending.archive = None;
+            pending.artifact.clear();
+            pending.verified = false;
+            recovery.claim(pending)?;
+            std::fs::copy(
+                &archive,
+                recovery.artifact_path("obx:smoke:session", "snapshot-source-operation", 1)?,
+            )?;
+            let recovered = backend
+                .export_source(recovery.clone(), "snapshot-source-operation", limits)
+                .await?;
+            if recovered != descriptor
+                || recovery.snapshot()?.operations["snapshot-source-operation"].phase
+                    != Phase::Frozen
+            {
+                return Err(
+                    "published archive acknowledgement recovery changed its identity".into(),
+                );
+            }
+            println!(
+                "PASS: published archive recovered without a journal completion acknowledgement"
+            );
             std::fs::write(root.join("source-id"), litebox.id().as_str())?;
         } else {
             let started = Instant::now();
+            let (spec, descriptor): (RestoreSpec, Archive) =
+                serde_json::from_slice(&std::fs::read(root.join("snapshot.meta.json"))?)?;
+            let staged = root.join("target-import.boxlite");
+            let mut input = std::fs::File::open(&archive)?;
+            let mut output = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(&staged)?;
+            prepare_import_archive(
+                &mut input,
+                &mut output,
+                &spec,
+                "obx:smoke:session",
+                &descriptor,
+                ArchiveLimits {
+                    max_bytes: 256 << 20,
+                    max_expanded_bytes: 64 << 30,
+                },
+            )?;
+            drop(output);
+            let journal = Arc::new(Journal::open(root.join("target-journal"), "smoke-target")?);
+            journal.claim(Operation {
+                operation_id: "restore-operation".into(),
+                scoped_session_id: "obx:smoke:session".into(),
+                generation: 2,
+                kind: Kind::Target,
+                phase: Phase::Prepared,
+                restore_spec: Some(spec.clone()),
+                archive: Some(descriptor.clone()),
+                artifact: worker_boxlite::persistence::artifact_name(
+                    "obx:smoke:session",
+                    "restore-operation",
+                    2,
+                ),
+                box_id: String::new(),
+                tombstone_box_id: String::new(),
+                lease_expires_unix_ms: 0,
+                staging_bytes: 65 << 30,
+                snapshot_committed: false,
+                verified: true,
+                remote_verified: false,
+                cache_until_unix_ms: 0,
+                lease_ttl_sec: 300,
+            })?;
+            journal.update("restore-operation", |op| {
+                op.phase = Phase::Importing;
+                Ok(())
+            })?;
             let litebox = runtime
                 .import_box(
-                    BoxArchive::new(&archive),
-                    Some("snapshot-target".to_owned()),
+                    BoxArchive::new(&staged),
+                    Some(terminal_name("obx:smoke:session")),
                 )
                 .await?;
             if litebox.info().await?.status != BoxStatus::Stopped {
@@ -230,8 +369,69 @@ async fn phase(phase: &str, root: &Path, image: &str) -> Result<()> {
                 return Err("import reused the source identity".into());
             }
             println!("import_ms={}", started.elapsed().as_millis());
+            journal.update("restore-operation", |op| {
+                op.box_id = litebox.id().as_str().into();
+                op.lease_expires_unix_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|_| worker_boxlite::persistence::Error::Conflict)?
+                    .as_millis() as i64
+                    + 300_000;
+                Ok(())
+            })?;
             litebox.start().await?;
+            let backend = NativeRuntime::new(runtime.clone(), root.join("target-home"))?;
+            let restored = backend
+                .inspect_target(&journal, "restore-operation")
+                .await?;
+            if restored.spec != spec {
+                return Err("restored native specification changed".into());
+            }
             println!("{}", python(&litebox, VERIFY).await?);
+            journal.update("restore-operation", |op| {
+                op.phase = Phase::Ready;
+                Ok(())
+            })?;
+            journal.update("restore-operation", |op| {
+                op.phase = Phase::Active;
+                Ok(())
+            })?;
+            let mut next = journal.snapshot()?.operations["restore-operation"].clone();
+            next.operation_id = "resuspend-operation".into();
+            next.kind = Kind::Source;
+            next.phase = Phase::Preparing;
+            next.archive = None;
+            next.artifact.clear();
+            next.verified = false;
+            next.lease_ttl_sec = 0;
+            journal.claim(next)?;
+            let second = backend
+                .export_source(
+                    journal.clone(),
+                    "resuspend-operation",
+                    ArchiveLimits {
+                        max_bytes: 256 << 20,
+                        max_expanded_bytes: 64 << 30,
+                    },
+                )
+                .await?;
+            let mut second_file = std::fs::File::open(journal.artifact_path(
+                "obx:smoke:session",
+                "resuspend-operation",
+                2,
+            )?)?;
+            worker_boxlite::persistence::verify_archive(
+                &mut second_file,
+                &spec,
+                "obx:smoke:session",
+                &second,
+                ArchiveLimits {
+                    max_bytes: 256 << 20,
+                    max_expanded_bytes: 64 << 30,
+                },
+            )?;
+            println!(
+                "PASS: an imported instance can be suspended again using its recorded ownership"
+            );
             runtime.remove(litebox.id().as_str(), true).await?;
         }
         Ok(())
@@ -280,6 +480,9 @@ async fn main() -> Result<()> {
         }
         // No source DB, image cache, base disks or box directories remain.
         std::fs::remove_dir_all(root.join("source-home"))?;
+        std::fs::remove_dir_all(root.join("source-journal"))?;
+        std::fs::remove_dir_all(root.join("recovery-journal"))?;
+        std::fs::remove_dir_all(root.join("wrong-spec-journal"))?;
         let mut archive = std::fs::File::open(root.join("snapshot.boxlite"))?;
         let mut digest = Sha256::new();
         let bytes = std::io::copy(&mut archive, &mut digest)?;

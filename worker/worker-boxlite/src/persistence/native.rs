@@ -29,6 +29,10 @@ pub enum NativeError {
     Conflict,
     #[error("BoxLite instance is missing")]
     Missing,
+    #[error("BoxLite snapshot archive is invalid")]
+    ArchiveInvalid,
+    #[error("BoxLite snapshot archive exceeds its budget")]
+    Budget,
 }
 type Result<T> = std::result::Result<T, NativeError>;
 
@@ -62,6 +66,74 @@ impl NativeRuntime {
     }
 
     pub async fn inspect(&self, scope: &str, box_id: &str) -> Result<NativeInstance> {
+        self.inspect_known(scope, box_id, None).await
+    }
+
+    pub async fn inspect_target(
+        &self,
+        journal: &Journal,
+        operation: &str,
+    ) -> Result<NativeInstance> {
+        let state = journal.snapshot().map_err(|_| NativeError::Unavailable)?;
+        let op = state
+            .operations
+            .get(operation)
+            .ok_or(NativeError::Conflict)?;
+        if state.current.get(&op.scoped_session_id).map(String::as_str) != Some(operation)
+            || op.kind != Kind::Target
+            || !op.verified
+            || op.box_id.is_empty()
+            || !matches!(op.phase, Phase::Importing | Phase::Ready | Phase::Active)
+        {
+            return Err(NativeError::Conflict);
+        }
+        let spec = op.restore_spec.as_ref().ok_or(NativeError::Conflict)?;
+        self.inspect_known(&op.scoped_session_id, &op.box_id, Some(spec))
+            .await
+    }
+
+    pub async fn inspect_source(
+        &self,
+        journal: &Journal,
+        operation: &str,
+    ) -> Result<NativeInstance> {
+        let state = journal.snapshot().map_err(|_| NativeError::Unavailable)?;
+        let op = state
+            .operations
+            .get(operation)
+            .ok_or(NativeError::Conflict)?;
+        if state.current.get(&op.scoped_session_id).map(String::as_str) != Some(operation)
+            || op.kind != Kind::Source
+            || !matches!(op.phase, Phase::Preparing | Phase::Frozen)
+        {
+            return Err(NativeError::Conflict);
+        }
+        let spec = op.restore_spec.as_ref().ok_or(NativeError::Conflict)?;
+        let imported = state.operations.values().any(|prior| {
+            prior.kind == Kind::Target
+                && prior.phase == Phase::Active
+                && prior.verified
+                && prior.archive.is_some()
+                && prior.scoped_session_id == op.scoped_session_id
+                && prior.generation == op.generation
+                && prior.box_id == op.box_id
+                && prior.restore_spec == op.restore_spec
+        });
+        let inspected = self
+            .inspect_known(&op.scoped_session_id, &op.box_id, imported.then_some(spec))
+            .await?;
+        if &inspected.spec != spec {
+            return Err(NativeError::Conflict);
+        }
+        Ok(inspected)
+    }
+
+    async fn inspect_known(
+        &self,
+        scope: &str,
+        box_id: &str,
+        expected: Option<&RestoreSpec>,
+    ) -> Result<NativeInstance> {
         if !valid_scope(scope) || !valid_id(box_id) {
             return Err(NativeError::Conflict);
         }
@@ -87,7 +159,13 @@ impl NativeRuntime {
         let config = tokio::task::spawn_blocking(move || read_config(&home, &id))
             .await
             .map_err(|_| NativeError::Unavailable)??;
-        let spec = spec_from_config(&config, &info)?;
+        let spec = match expected {
+            Some(pin) => spec_from_config_with_pin(&config, &info, Some(pin))?,
+            None => spec_from_config(&config, &info)?,
+        };
+        if expected.is_some_and(|expected| expected != &spec) {
+            return Err(NativeError::Conflict);
+        }
         Ok(NativeInstance {
             box_id: box_id.to_owned(),
             spec,
@@ -111,7 +189,7 @@ impl NativeRuntime {
         {
             return Err(NativeError::Conflict);
         }
-        let inspected = self.inspect(&op.scoped_session_id, &op.box_id).await?;
+        let inspected = self.inspect_source(journal, operation).await?;
         if Some(&inspected.spec) != op.restore_spec.as_ref() {
             return Err(NativeError::Conflict);
         }
@@ -122,9 +200,33 @@ impl NativeRuntime {
             .map_err(|_| NativeError::Unavailable)?
             .ok_or(NativeError::Missing)?;
         if inspected.status == BoxStatus::Running {
+            // Confirm that completed guest writes reach the backing disk before
+            // SDK stop, which may fall back to terminating an unresponsive VM.
+            let flush = async {
+                let execution = native
+                    .exec(boxlite::BoxCommand::new("python").args(["-c", "import os; os.sync()"]))
+                    .await
+                    .map_err(|_| NativeError::Unavailable)?;
+                let result = execution
+                    .wait()
+                    .await
+                    .map_err(|_| NativeError::Unavailable)?;
+                if result.exit_code != 0
+                    || result
+                        .error_message
+                        .as_ref()
+                        .is_some_and(|message| !message.is_empty())
+                {
+                    return Err(NativeError::Unavailable);
+                }
+                Ok(())
+            };
+            tokio::time::timeout(Duration::from_secs(10), flush)
+                .await
+                .map_err(|_| NativeError::Unavailable)??;
             native.stop().await.map_err(|_| NativeError::Unavailable)?;
         }
-        let stopped = self.inspect(&op.scoped_session_id, &op.box_id).await?;
+        let stopped = self.inspect_source(journal, operation).await?;
         let current = journal.snapshot().map_err(|_| NativeError::Unavailable)?;
         if stopped.status != BoxStatus::Stopped
             || stopped.pid.is_some()
@@ -220,6 +322,14 @@ fn read_config(home: &Path, id: &str) -> Result<BoxConfig> {
 }
 
 fn spec_from_config(config: &BoxConfig, info: &BoxInfo) -> Result<RestoreSpec> {
+    spec_from_config_with_pin(config, info, None)
+}
+
+fn spec_from_config_with_pin(
+    config: &BoxConfig,
+    info: &BoxInfo,
+    pin: Option<&RestoreSpec>,
+) -> Result<RestoreSpec> {
     if config.id != info.id || config.name != info.name {
         return Err(NativeError::Conflict);
     }
@@ -237,11 +347,16 @@ fn spec_from_config(config: &BoxConfig, info: &BoxInfo) -> Result<RestoreSpec> {
     {
         return Err(NativeError::Conflict);
     }
-    let resolved = info
-        .resolved_image
-        .as_ref()
-        .ok_or(NativeError::Unsupported)?;
-    let image = pin_image(original, &resolved.manifest_digest)?;
+    let image = if let Some(resolved) = info.resolved_image.as_ref() {
+        pin_image(original, &resolved.manifest_digest)?
+    } else {
+        let pin = pin.ok_or(NativeError::Unsupported)?;
+        pin.validate().map_err(|_| NativeError::Unsupported)?;
+        if original != &pin.image {
+            return Err(NativeError::Conflict);
+        }
+        pin.image.clone()
+    };
     let options = &config.options;
     let env: BTreeMap<_, _> = options.env.iter().cloned().collect();
     if env.len() != options.env.len() {
@@ -355,3 +470,6 @@ pub fn guest_platform() -> Result<&'static str> {
 #[cfg(test)]
 #[path = "native_tests.rs"]
 mod tests;
+
+#[path = "native_export.rs"]
+mod export;
