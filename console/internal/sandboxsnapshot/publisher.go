@@ -84,7 +84,7 @@ func (p *Publisher) Publish(ctx context.Context, operation Operation, snapshotID
 		if err = p.verifier.VerifySnapshot(ctx, object); err != nil {
 			return Snapshot{}, err
 		}
-		manifest := Manifest{Version: 1, Archive: object, RestoreSpec: session.Spec}
+		manifest := Manifest{Version: 1, Archive: object, RestoreSpec: session.Spec, ExpandedBytes: snapshot.Upload.ExpandedBytes}
 		payload, err := json.Marshal(manifest)
 		if err != nil {
 			return Snapshot{}, err

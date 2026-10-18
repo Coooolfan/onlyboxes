@@ -218,7 +218,7 @@ func (r *Repository) ReserveUpload(ctx context.Context, op Operation, upload obj
 	if err := object.Validate(); err != nil {
 		return err
 	}
-	if op.Kind != Suspend || object.OwnerID != op.OwnerID || object.SessionID != op.SessionID || object.SnapshotID == "" || object.Size <= 0 || quota <= 0 || upload.UploadID == "" || upload.PartSize < objectstore.MinSnapshotPartSize || upload.PartSize > objectstore.MaxSnapshotPartSize || (object.Size-1)/upload.PartSize+1 > objectstore.MaxSnapshotParts {
+	if op.Kind != Suspend || object.OwnerID != op.OwnerID || object.SessionID != op.SessionID || object.SnapshotID == "" || object.Size <= 0 || upload.ExpandedBytes <= 0 || quota <= 0 || upload.UploadID == "" || upload.PartSize < objectstore.MinSnapshotPartSize || upload.PartSize > objectstore.MaxSnapshotPartSize || (object.Size-1)/upload.PartSize+1 > objectstore.MaxSnapshotParts {
 		return ErrConflict
 	}
 	encoded, err := json.Marshal(upload)
@@ -346,7 +346,7 @@ func sameSpec(a, b RestoreSpec) bool {
 }
 
 func (r *Repository) MarkVerified(ctx context.Context, op Operation, snapshotID string, manifest Manifest, manifestVersionID string) error {
-	if manifest.Version != 1 {
+	if manifest.Version != 1 || manifest.ExpandedBytes <= 0 {
 		return errors.New("unsupported snapshot manifest version")
 	}
 	if err := manifest.RestoreSpec.Validate(); err != nil {
@@ -371,7 +371,7 @@ func (r *Repository) MarkVerified(ctx context.Context, op Operation, snapshotID 
 		if err != nil {
 			return err
 		}
-		if snapshot.OperationID != op.ID || snapshot.Status != "uploading" {
+		if snapshot.OperationID != op.ID || snapshot.Upload.ExpandedBytes != manifest.ExpandedBytes || snapshot.Status != "uploading" {
 			if snapshot.Status == "verified" && snapshot.Manifest != nil && reflect.DeepEqual(*snapshot.Manifest, manifest) && snapshot.ManifestVersionID == manifestVersionID {
 				return nil
 			}
@@ -516,7 +516,7 @@ func (r *Repository) FailAndHold(ctx context.Context, op Operation, code, messag
 
 // ResolveFailed requires a confirmed backend state: running after a failed
 // suspend, suspended only after a failed restore target can no longer execute.
-func (r *Repository) ResolveFailed(ctx context.Context, op Operation, confirmed State) error {
+func (r *Repository) ResolveFailed(ctx context.Context, op Operation, confirmed State, leaseExpiresUnixMS int64) error {
 	return r.transaction(ctx, func(tx *sql.Tx) error {
 		session, err := sessionIn(ctx, tx, op.OwnerID, op.SessionID)
 		if err != nil {
@@ -537,6 +537,9 @@ func (r *Repository) ResolveFailed(ctx context.Context, op Operation, confirmed 
 		}
 		worker := ""
 		if confirmed == Running {
+			if leaseExpiresUnixMS <= r.now().UnixMilli() {
+				return ErrConflict
+			}
 			worker = current.SourceWorkerID
 		}
 		if current.Kind == Resume {
@@ -547,6 +550,11 @@ func (r *Repository) ResolveFailed(ctx context.Context, op Operation, confirmed 
 		_, err = tx.ExecContext(ctx, `UPDATE sandbox_persistent_sessions SET state=?,worker_id=?,operation_id='',updated_at_unix_ms=? WHERE owner_id=? AND session_id=?`, confirmed, worker, r.now().UnixMilli(), op.OwnerID, op.SessionID)
 		if err != nil {
 			return err
+		}
+		if confirmed == Running {
+			if err = publishExecutionRoute(ctx, tx, session, worker, leaseExpiresUnixMS, r.now().UnixMilli()); err != nil {
+				return err
+			}
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE sandbox_persistence_operations SET phase='resolved',updated_at_unix_ms=? WHERE operation_id=?`, r.now().UnixMilli(), op.ID)
 		return err

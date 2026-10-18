@@ -1,6 +1,6 @@
 # Sandbox snapshot worker protocol
 
-Console's internal snapshot control channel uses the authenticated WorkerRegistry `Connect` stream. It is separate from `CommandDispatch`, ordinary capability inflight accounting and terminal command task recovery. This transport and restore placement implementation does not enable public suspend/resume endpoints. Runtime snapshot adapters, durable operation execution and configuration wiring are still required.
+Console's internal snapshot control channel uses the authenticated WorkerRegistry `Connect` stream. It is separate from `CommandDispatch`, ordinary capability inflight accounting and terminal command task recovery. This transport and restore placement implementation does not enable public suspend/resume endpoints. The internal asynchronous coordinator executes and reconciles these controls; runtime snapshot adapters and configuration wiring are still required.
 
 ## Runtime declaration and placement
 
@@ -35,3 +35,6 @@ go test -race ./internal/grpcserver ./internal/sandboxsnapshot
 ```
 
 See the [storage foundation](sandbox-snapshot-foundation.md), [lifecycle design](../../docs/plan/sandbox-session-persistence-lifecycle.zh-CN.md) and [storage/API design](../../docs/plan/sandbox-session-persistence-storage-api.zh-CN.md).
+
+
+The shared private action payloads are defined in `api/sandboxpersistence`. `PREPARE_SNAPSHOT` returns a frozen archive descriptor; `UPLOAD_SNAPSHOT` acknowledges exact part numbers, sizes and ETags; `VERIFY_SNAPSHOT` confirms complete remote content verification. `FINALIZE_SUSPEND` requires the committed-snapshot flag and returns `finalized` only after cleanup. Restore proceeds through `prepared`, `ready` and `active`; readiness, activation and source rollback include the matching restore specification, instance ID and absolute lease. `CANCEL` returns `canceled` only once the target cannot execute, or `running` after source rollback. `busy` requests a bounded retry without releasing durable ownership. Runtime adapters must maintain these states in an operation/generation journal and reject stale controls, including deliveries that arrive after cancellation.

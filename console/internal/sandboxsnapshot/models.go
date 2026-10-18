@@ -1,6 +1,6 @@
 // Package sandboxsnapshot stores durable filesystem snapshot operations separately
-// from transient terminal routes and ordinary command tasks. It does not activate
-// workers or publish routes; the lifecycle coordinator must fence execution first.
+// from transient terminal routes and ordinary command tasks. It atomically
+// publishes execution routes; the lifecycle coordinator fences and activates workers.
 package sandboxsnapshot
 
 import (
@@ -10,9 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"regexp"
 	"strings"
 
+	"github.com/onlyboxes/onlyboxes/api/sandboxpersistence"
 	"github.com/onlyboxes/onlyboxes/console/internal/objectstore"
 )
 
@@ -43,35 +43,7 @@ var (
 
 // RestoreSpec is private metadata and may contain secrets in Env. It must not be
 // returned in public session responses or written to application logs.
-type RestoreSpec struct {
-	Runtime        string            `json:"runtime"`
-	RuntimeVersion string            `json:"runtime_version"`
-	Platform       string            `json:"platform"`
-	Format         string            `json:"format"`
-	Image          string            `json:"image"`
-	MemoryMiB      int64             `json:"memory_mib"`
-	CPUs           int32             `json:"cpus"`
-	User           string            `json:"user,omitempty"`
-	WorkingDir     string            `json:"working_dir,omitempty"`
-	Env            map[string]string `json:"env,omitempty"`
-	Entrypoint     []string          `json:"entrypoint,omitempty"`
-	Command        []string          `json:"command,omitempty"`
-}
-
-var imageDigestPattern = regexp.MustCompile(`^.+@sha256:[0-9a-f]{64}$`)
-
-func (s RestoreSpec) Validate() error {
-	if s.Runtime != "docker" && s.Runtime != "boxlite" {
-		return errors.New("snapshot runtime must be docker or boxlite")
-	}
-	if strings.TrimSpace(s.RuntimeVersion) == "" || (s.Platform != "linux/amd64" && s.Platform != "linux/arm64") || !imageDigestPattern.MatchString(s.Image) || s.CPUs <= 0 || s.MemoryMiB <= 0 {
-		return errors.New("snapshot restore spec requires runtime version, supported platform, pinned image and positive resources")
-	}
-	if (s.Runtime == "docker" && s.Format != "docker-rootfs-v1") || (s.Runtime == "boxlite" && s.Format != "boxlite-archive-v1") {
-		return errors.New("snapshot format is not supported by its runtime")
-	}
-	return nil
-}
+type RestoreSpec = sandboxpersistence.RestoreSpec
 
 type Session struct {
 	OwnerID                string
@@ -157,9 +129,10 @@ func (r BeginRequest) validate(now int64) (string, json.RawMessage, error) {
 }
 
 type Manifest struct {
-	Version     int                        `json:"version"`
-	Archive     objectstore.SnapshotObject `json:"archive"`
-	RestoreSpec RestoreSpec                `json:"restore_spec"`
+	Version       int                        `json:"version"`
+	Archive       objectstore.SnapshotObject `json:"archive"`
+	RestoreSpec   RestoreSpec                `json:"restore_spec"`
+	ExpandedBytes int64                      `json:"expanded_bytes"`
 }
 
 type Snapshot struct {

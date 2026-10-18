@@ -22,13 +22,15 @@ import (
 // signatures, version-pinned reads/deletes and data integrity. It is not a claim
 // of conformance for a particular production S3-compatible implementation.
 type snapshotS3 struct {
-	mu         sync.Mutex
-	objects    map[string][]byte
-	uploads    map[string]map[int][]byte
-	uploadKeys map[string]string
-	nextID     int
-	corrupt    bool
-	deletes    map[string]string
+	mu               sync.Mutex
+	rejectArchiveGet bool
+	archiveGets      int
+	objects          map[string][]byte
+	uploads          map[string]map[int][]byte
+	uploadKeys       map[string]string
+	nextID           int
+	corrupt          bool
+	deletes          map[string]string
 }
 
 func newSnapshotS3(t *testing.T) (*snapshotS3, *SnapshotStore) {
@@ -152,6 +154,13 @@ func (s *snapshotS3) serve(w http.ResponseWriter, r *http.Request) {
 		s.objects[key] = body
 		w.Header().Set("x-amz-version-id", "manifest-v1")
 	case r.Method == http.MethodHead || r.Method == http.MethodGet:
+		if r.Method == http.MethodGet && strings.HasSuffix(key, "/archive") {
+			s.archiveGets++
+			if s.rejectArchiveGet {
+				s3Error(w, 403, "AccessDenied")
+				return
+			}
+		}
 		body, ok := s.objects[key]
 		if !ok {
 			s3Error(w, 404, "NoSuchKey")
@@ -401,5 +410,40 @@ func TestSnapshotConfigurationChangesDoNotInvalidateReservedUploads(t *testing.T
 	}
 	if _, err = store.BeginUpload(ctx, upload.Object); err == nil {
 		t.Fatal("new upload ignored reduced admission limit")
+	}
+}
+
+func TestSnapshotLostCompleteUsesRemoteVerifierWithoutConsoleArchiveGet(t *testing.T) {
+	fake, store := newSnapshotS3(t)
+	ctx := context.Background()
+	upload, parts := uploadSnapshot(t, store, []byte("snapshot"))
+	object, err := store.CompleteUpload(ctx, upload, parts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake.mu.Lock()
+	fake.rejectArchiveGet = true
+	fake.mu.Unlock()
+	calls := 0
+	remote := func(_ context.Context, candidate SnapshotObject) error {
+		calls++
+		if candidate != object {
+			t.Fatalf("remote verification lost immutable identity: %+v", candidate)
+		}
+		return nil
+	}
+	got, err := store.CompleteUploadWithVerifier(ctx, upload, parts, remote)
+	if err != nil || got != object || calls != 1 {
+		t.Fatalf("lost Complete did not delegate readback: %+v calls=%d err=%v", got, calls, err)
+	}
+	_, err = store.CompleteUploadWithVerifier(ctx, upload, parts, func(context.Context, SnapshotObject) error { return ErrSnapshotIntegrity })
+	if !errors.Is(err, ErrSnapshotIntegrity) {
+		t.Fatalf("remote corruption was ignored: %v", err)
+	}
+	fake.mu.Lock()
+	gets := fake.archiveGets
+	fake.mu.Unlock()
+	if gets != 0 {
+		t.Fatalf("Console downloaded archive %d times", gets)
 	}
 }

@@ -93,7 +93,7 @@ func TestSnapshotRoutePublicationIsAtomicAndPreservesPreview(t *testing.T) {
 	if err := r.FailAndHold(ctx, resume, "timeout", "activation acknowledgement lost"); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.ResolveFailed(ctx, resume, Suspended); err != nil {
+	if err := r.ResolveFailed(ctx, resume, Suspended, 0); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.ExecutionRoute(ctx, session.ScopedSessionID); !errors.Is(err, ErrNotFound) {
@@ -209,5 +209,73 @@ func TestStartupRoutePruningPreservesSnapshotOperationAndPreview(t *testing.T) {
 	var count int
 	if err := reopened.SQL.QueryRowContext(ctx, `SELECT COUNT(*) FROM proxy_routes WHERE route_key='preview'`).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("startup discarded stable preview: %d %v", count, err)
+	}
+}
+
+func TestFailedSuspendRollbackRecreatesPrunedRouteAtomically(t *testing.T) {
+	r, _, _ := testRepository(t)
+	ctx := context.Background()
+	op := begin(t, r, Suspend, "suspend")
+	if err := r.FailAndHold(ctx, op, "timeout", "uncertain source"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.db.ExecContext(ctx, `DELETE FROM terminal_session_routes`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.db.ExecContext(ctx, `CREATE TRIGGER reject_rollback_route BEFORE INSERT ON terminal_session_routes BEGIN SELECT RAISE(ABORT,'injected insert failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	lease := time.Now().Add(time.Hour).UnixMilli()
+	if err := r.ResolveFailed(ctx, op, Running, lease); err == nil {
+		t.Fatal("rollback opened execution without restoring the source route")
+	}
+	session, _ := r.Session(ctx, "owner", "session")
+	if session.State != Snapshotting || session.OperationID != op.ID {
+		t.Fatalf("failed route publication released ownership: %+v", session)
+	}
+	if _, err := r.db.ExecContext(ctx, `DROP TRIGGER reject_rollback_route`); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ResolveFailed(ctx, op, Running, lease); err != nil {
+		t.Fatal(err)
+	}
+	route, err := r.ExecutionRoute(ctx, ScopeSessionID("owner", "session"))
+	if err != nil || route.WorkerID != "worker-a" || route.LeaseExpiresUnixMS != lease {
+		t.Fatalf("rollback lost confirmed source lease: %+v %v", route, err)
+	}
+}
+
+func TestReconcileActivationKeepsGateUntilSameGenerationFinishes(t *testing.T) {
+	r, _, _ := testRepository(t)
+	ctx := context.Background()
+	suspend(t, r, "suspend", "snapshot")
+	op := begin(t, r, Resume, "resume")
+	if err := r.SetRestoreTarget(ctx, op, "worker-b"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.CommitRestore(ctx, op, "worker-b", time.Now().Add(time.Hour).UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.FailAndHold(ctx, op, "timeout", "activation response lost"); err != nil {
+		t.Fatal(err)
+	}
+	stale := op
+	stale.Generation--
+	if err := r.ReconcileActivation(ctx, stale); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale generation reclaimed activation: %v", err)
+	}
+	if err := r.ReconcileActivation(ctx, op); err != nil {
+		t.Fatal(err)
+	}
+	session, _ := r.Session(ctx, "owner", "session")
+	if session.OperationID != op.ID || session.State != Running || session.WorkerID != "worker-b" {
+		t.Fatalf("reconciliation opened gate or changed owner: %+v", session)
+	}
+	if err := r.Finish(ctx, op); err != nil {
+		t.Fatal(err)
+	}
+	session, _ = r.Session(ctx, "owner", "session")
+	if session.OperationID != "" {
+		t.Fatal("activation acknowledgement did not release lifecycle gate")
 	}
 }

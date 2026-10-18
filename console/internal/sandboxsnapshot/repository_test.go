@@ -35,7 +35,7 @@ func testRepository(t *testing.T) (*Repository, *persistence.DB, string) {
 	return r, db, file
 }
 func testSpec() RestoreSpec {
-	return RestoreSpec{Runtime: "boxlite", RuntimeVersion: "0.10.6", Platform: "linux/arm64", Format: "boxlite-archive-v1", Image: "python@sha256:" + strings.Repeat("a", 64), MemoryMiB: 512, CPUs: 1}
+	return RestoreSpec{Runtime: "boxlite", RuntimeVersion: "0.10.6", Platform: "linux/arm64", Format: "boxlite-archive-v1", Image: "python@sha256:" + strings.Repeat("a", 64), MemoryMiB: 512, CPUs: 1, MaxProcesses: 128}
 }
 func request(kind Kind, key string) BeginRequest {
 	return BeginRequest{OwnerID: "owner", SessionID: "session", Kind: kind, IdempotencyKey: key, Parameters: json.RawMessage(`{"lease_ttl_sec":300}`), DeadlineUnixMS: time.Now().Add(time.Hour).UnixMilli()}
@@ -59,7 +59,7 @@ func testUpload(t *testing.T, id string) objectstore.SnapshotUpload {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return objectstore.SnapshotUpload{Object: ref, UploadID: "upload-" + id, PartSize: 5 << 20}
+	return objectstore.SnapshotUpload{Object: ref, UploadID: "upload-" + id, PartSize: 5 << 20, ExpandedBytes: 8}
 }
 func verified(t *testing.T, r *Repository, op Operation, id string) {
 	t.Helper()
@@ -71,7 +71,7 @@ func verified(t *testing.T, r *Repository, op Operation, id string) {
 	if err := r.RecordPart(ctx, op, id, objectstore.SnapshotPart{Number: 1, ETag: "etag", Size: 8}); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.MarkVerified(ctx, op, id, Manifest{Version: 1, Archive: upload.Object, RestoreSpec: testSpec()}, ""); err != nil {
+	if err := r.MarkVerified(ctx, op, id, Manifest{Version: 1, ExpandedBytes: 8, Archive: upload.Object, RestoreSpec: testSpec()}, ""); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -117,7 +117,7 @@ func TestVerifiedSnapshotCommitAndCrossWorkerOwnership(t *testing.T) {
 	if before.LatestSnapshotID != "" || before.State != Snapshotting || before.WorkerID != "worker-a" {
 		t.Fatalf("published unverified snapshot: %+v", before)
 	}
-	if err := r.MarkVerified(ctx, op, "snap-a", Manifest{Version: 1, Archive: upload.Object, RestoreSpec: testSpec()}, ""); err != nil {
+	if err := r.MarkVerified(ctx, op, "snap-a", Manifest{Version: 1, ExpandedBytes: 8, Archive: upload.Object, RestoreSpec: testSpec()}, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.CommitSuspend(ctx, op, "snap-a", time.Hour); err != nil {
@@ -258,10 +258,10 @@ func TestRestartPreservesUploadingAndFailedOperations(t *testing.T) {
 	if _, err = r.Begin(ctx, request(Suspend, "retry-too-early")); !errors.Is(err, ErrConflict) {
 		t.Fatalf("unknown source assumed running: %v", err)
 	}
-	if err = r.ResolveFailed(ctx, op, Suspended); !errors.Is(err, ErrConflict) {
+	if err = r.ResolveFailed(ctx, op, Suspended, 0); !errors.Is(err, ErrConflict) {
 		t.Fatalf("uncommitted snapshot assumed durable: %v", err)
 	}
-	if err = r.ResolveFailed(ctx, op, Running); err != nil {
+	if err = r.ResolveFailed(ctx, op, Running, time.Now().Add(time.Hour).UnixMilli()); err != nil {
 		t.Fatal(err)
 	}
 	ops, err = r.PendingOperations(ctx)
@@ -342,7 +342,7 @@ func TestAccountScopeAndManifestBinding(t *testing.T) {
 			t.Fatalf("cross-account lookup: %v", err)
 		}
 	}
-	manifest := Manifest{Version: 1, Archive: upload.Object, RestoreSpec: testSpec()}
+	manifest := Manifest{Version: 1, ExpandedBytes: 8, Archive: upload.Object, RestoreSpec: testSpec()}
 	manifest.Archive.SHA256 = strings.Repeat("b", 64)
 	if err := r.MarkVerified(ctx, op, "snap-a", manifest, ""); err == nil {
 		t.Fatal("accepted mismatched archive digest")
@@ -399,7 +399,7 @@ func TestFailedActivationKeepsSnapshotAndRetentionForRetry(t *testing.T) {
 	if err := r.FailAndHold(ctx, op, "timeout", "activation uncertain"); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.ResolveFailed(ctx, op, Suspended); err != nil {
+	if err := r.ResolveFailed(ctx, op, Suspended, 0); err != nil {
 		t.Fatal(err)
 	}
 	after, _ := r.Session(ctx, "owner", "session")
@@ -421,5 +421,18 @@ func TestExpiredSuspendedSessionCannotResume(t *testing.T) {
 	req.DeadlineUnixMS = r.now().Add(time.Hour).UnixMilli()
 	if _, err := r.Begin(context.Background(), req); !errors.Is(err, ErrConflict) {
 		t.Fatalf("expired snapshot admitted: %v", err)
+	}
+}
+
+func TestVerifiedManifestBindsExpandedStorageBudget(t *testing.T) {
+	r, _, _ := testRepository(t)
+	op := begin(t, r, Suspend, "suspend")
+	upload := testUpload(t, "snapshot")
+	if err := r.ReserveUpload(context.Background(), op, upload, 100<<30); err != nil {
+		t.Fatal(err)
+	}
+	manifest := Manifest{Version: 1, Archive: upload.Object, RestoreSpec: testSpec(), ExpandedBytes: upload.ExpandedBytes + 1}
+	if err := r.MarkVerified(context.Background(), op, "snapshot", manifest, "manifest-v1"); !errors.Is(err, ErrConflict) {
+		t.Fatalf("manifest changed reserved import storage budget: %v", err)
 	}
 }

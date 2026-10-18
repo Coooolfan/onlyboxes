@@ -15,7 +15,7 @@ import (
 )
 
 func snapshotTestSpec() sandboxsnapshot.RestoreSpec {
-	return sandboxsnapshot.RestoreSpec{Runtime: "docker", RuntimeVersion: "29.4.0", Platform: "linux/arm64", Format: "docker-rootfs-v1", Image: "example/runtime@sha256:" + strings.Repeat("a", 64), MemoryMiB: 256, CPUs: 1}
+	return sandboxsnapshot.RestoreSpec{Runtime: "docker", RuntimeVersion: "29.4.0", Platform: "linux/arm64", Format: "docker-rootfs-v1", Image: "example/runtime@sha256:" + strings.Repeat("a", 64), MemoryMiB: 256, CPUs: 1, MaxProcesses: 128}
 }
 
 func snapshotTestHello(id string) *registryv1.ConnectHello {

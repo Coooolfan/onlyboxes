@@ -65,9 +65,10 @@ type SnapshotObject struct {
 }
 
 type SnapshotUpload struct {
-	Object   SnapshotObject `json:"object"`
-	UploadID string         `json:"upload_id"`
-	PartSize int64          `json:"part_size"`
+	Object        SnapshotObject `json:"object"`
+	UploadID      string         `json:"upload_id"`
+	PartSize      int64          `json:"part_size"`
+	ExpandedBytes int64          `json:"expanded_bytes"`
 }
 
 type SnapshotPart struct {
@@ -266,6 +267,15 @@ func (s *SnapshotStore) ListSnapshotParts(ctx context.Context, upload SnapshotUp
 // CompleteUpload verifies the persisted worker-reported plan against the store.
 // If-None-Match prevents response-loss retries from overwriting committed bytes.
 func (s *SnapshotStore) CompleteUpload(ctx context.Context, upload SnapshotUpload, parts []SnapshotPart) (SnapshotObject, error) {
+	return s.CompleteUploadWithVerifier(ctx, upload, parts, s.VerifySnapshot)
+}
+
+// CompleteUploadWithVerifier keeps ambiguous-Complete readback on the worker.
+// The verifier must read the full immutable object and check its size/SHA-256.
+func (s *SnapshotStore) CompleteUploadWithVerifier(ctx context.Context, upload SnapshotUpload, parts []SnapshotPart, verify func(context.Context, SnapshotObject) error) (SnapshotObject, error) {
+	if verify == nil {
+		return SnapshotObject{}, errors.New("snapshot verifier is required")
+	}
 	if err := s.validateUpload(upload); err != nil {
 		return SnapshotObject{}, err
 	}
@@ -283,7 +293,7 @@ func (s *SnapshotStore) CompleteUpload(ctx context.Context, upload SnapshotUploa
 	}
 	stored, err := s.ListSnapshotParts(ctx, upload)
 	if isNoSuchUpload(err) {
-		return s.RecoverCompletedUpload(ctx, upload)
+		return s.recoverCompletedUpload(ctx, upload, verify)
 	}
 	if err != nil {
 		return SnapshotObject{}, err
@@ -298,7 +308,7 @@ func (s *SnapshotStore) CompleteUpload(ctx context.Context, upload SnapshotUploa
 	}
 	out, err := s.store.client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{Bucket: aws.String(s.config.BucketName), Key: aws.String(upload.Object.Key), UploadId: aws.String(upload.UploadID), IfNoneMatch: aws.String("*"), MultipartUpload: &types.CompletedMultipartUpload{Parts: completed}})
 	if isSnapshotPrecondition(err) || isNoSuchUpload(err) {
-		return s.RecoverCompletedUpload(ctx, upload)
+		return s.recoverCompletedUpload(ctx, upload, verify)
 	}
 	if err != nil {
 		return SnapshotObject{}, fmt.Errorf("complete snapshot upload: %w", err)
@@ -415,6 +425,10 @@ func isSnapshotPrecondition(err error) bool {
 // RecoverCompletedUpload handles an ambiguous Complete response. Only the exact
 // reserved size and SHA-256 can satisfy the retry; a matching key is insufficient.
 func (s *SnapshotStore) RecoverCompletedUpload(ctx context.Context, upload SnapshotUpload) (SnapshotObject, error) {
+	return s.recoverCompletedUpload(ctx, upload, s.VerifySnapshot)
+}
+
+func (s *SnapshotStore) recoverCompletedUpload(ctx context.Context, upload SnapshotUpload, verify func(context.Context, SnapshotObject) error) (SnapshotObject, error) {
 	if err := s.validateUpload(upload); err != nil {
 		return SnapshotObject{}, err
 	}
@@ -424,7 +438,10 @@ func (s *SnapshotStore) RecoverCompletedUpload(ctx context.Context, upload Snaps
 	}
 	object := upload.Object
 	object.VersionID = aws.ToString(head.VersionId)
-	if err = s.VerifySnapshot(ctx, object); err != nil {
+	if aws.ToInt64(head.ContentLength) != object.Size {
+		return SnapshotObject{}, ErrSnapshotIntegrity
+	}
+	if err = verify(ctx, object); err != nil {
 		return SnapshotObject{}, err
 	}
 	return object, nil

@@ -56,10 +56,10 @@ func commitRouteSnapshotTest(t *testing.T, svc *RegistryService, op sandboxsnaps
 	}
 	ctx := context.Background()
 	r := svc.snapshotRepository
-	if err := r.ReserveUpload(ctx, op, objectstore.SnapshotUpload{Object: object, UploadID: "upload", PartSize: 5 << 20}, 1<<30); err != nil {
+	if err := r.ReserveUpload(ctx, op, objectstore.SnapshotUpload{Object: object, UploadID: "upload", PartSize: 5 << 20, ExpandedBytes: 8}, 1<<30); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.MarkVerified(ctx, op, "snapshot", sandboxsnapshot.Manifest{Version: 1, Archive: object, RestoreSpec: snapshotTestSpec()}, ""); err != nil {
+	if err := r.MarkVerified(ctx, op, "snapshot", sandboxsnapshot.Manifest{Version: 1, ExpandedBytes: 8, Archive: object, RestoreSpec: snapshotTestSpec()}, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.CommitSuspend(ctx, op, "snapshot", time.Hour); err != nil {

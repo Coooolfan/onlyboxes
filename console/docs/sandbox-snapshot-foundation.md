@@ -1,6 +1,6 @@
 # Sandbox snapshot storage foundation
 
-`internal/sandboxsnapshot` provides durable metadata, filesystem snapshot publication and atomic terminal route transitions. `internal/objectstore.SnapshotStore` supplies a separate S3-compatible snapshot namespace. These packages do not expose suspend/resume HTTP endpoints or execute worker lifecycle operations.
+`internal/sandboxsnapshot` provides durable metadata, filesystem snapshot publication and atomic terminal route transitions. `internal/objectstore.SnapshotStore` supplies a separate S3-compatible snapshot namespace. The internal `grpcserver.SnapshotCoordinator` executes and reconciles lifecycle controls using these primitives. Public suspend/resume endpoints, configuration wiring and runtime adapters are not enabled.
 
 ## Publication contract
 
@@ -30,7 +30,7 @@ SQLite records stable sessions, operations, idempotency aliases, snapshots and u
 
 For restore, reserve a compatible target before `SetRestoreTarget`; verify its readiness and absolute execution lease before `CommitRestore(ctx, operation, worker, leaseExpiresUnixMS)`. That transaction records the new owner, execution route and preview worker binding. Call `RegistryService.RefreshSnapshotRoute` to refresh the in-memory route while the operation still holds the execution gate, then acknowledge activation before `Finish`. `Finish` refuses an expired or missing execution route. Worker activation itself remains the lifecycle coordinator's responsibility.
 
-`ResolveFailed` removes a committed restore target's route atomically when the coordinator has confirmed that target can no longer execute. The previous valid snapshot and its retention survive failed activation.
+`ResolveFailed` republishes a confirmed source route with its worker-confirmed absolute lease after failed suspend, even if ordinary lease pruning removed the old route. The state, route and operation release commit atomically. For failed resume, it removes a committed restore target's route atomically when the coordinator has confirmed that target can no longer execute. The previous valid snapshot and its retention survive failed activation.
 
 ## Execution and preview gates
 
@@ -69,4 +69,19 @@ go test ./...
 
 The overall target behavior and planned APIs are documented in [the lifecycle design](../../docs/plan/sandbox-session-persistence-lifecycle.zh-CN.md) and [the storage/API design](../../docs/plan/sandbox-session-persistence-storage-api.zh-CN.md).
 
-The separate [worker protocol and restore placement](sandbox-snapshot-worker-protocol.md) implementation provides bounded controls and connection-scoped capacity reservations. Runtime adapters, asynchronous operation execution/reconciliation, configuration, public lifecycle APIs, retention GC and real cross-worker acceptance are still required before the persistence feature is complete.
+The separate [worker protocol and restore placement](sandbox-snapshot-worker-protocol.md) implementation provides bounded controls and connection-scoped capacity reservations. Runtime adapters, configuration, public lifecycle APIs, retention GC and real cross-worker acceptance are still required before the persistence feature is complete.
+
+
+## Asynchronous lifecycle executor
+
+`grpcserver.SnapshotCoordinator` runs accepted operations under the server context, independently of HTTP request cancellation. Its bounded recovery loop scans pending operations and unresolved failures. Canonical retention and lease parameters, target assignment, upload plans and completed parts are durable; presigned URLs and connection reservations remain ephemeral.
+
+Suspend requires the worker to report a frozen archive with the original restore specification, full SHA-256, compressed archive size and expanded storage budget. Multipart grants are issued in bounded batches; acknowledged part results are persisted. Completion, full worker-side readback, immutable manifest publication and the atomic suspended-state commit precede source cleanup. A resume cannot start until source cleanup is acknowledged. Lost Complete responses also use worker-side verification, through `CompleteUploadWithVerifier`, so the Console never downloads archive bodies on that recovery path.
+
+Resume prefers the original compatible worker and persists its target before side effects. Target readiness must include the matching specification, instance identity and future absolute lease. Route publication precedes activation, while the operation gate remains closed. A recreated coordinator or replacement connection first inspects the same target's durable operation. A confirmed ready instance is activated without importing again; a missing journal is canceled and reconciled before another operation can be admitted. A lost activation acknowledgement can finish by inspecting the already-active operation, including after its original deadline.
+
+Worker-reported errors, timeouts and disconnects keep operation ownership until rollback, source cleanup or target cancellation is confirmed. An unconfirmed cancellation never releases the target reservation or opens execution. Failure codes and messages are sanitized rather than copying worker messages that may contain grants or environment secrets.
+
+`api/sandboxpersistence` defines shared private JSON payloads. Restore specifications require a pinned image, exact backend version/platform/format, CPU and memory limits, and a positive process limit. CPU limits retain fractional values. Manifests bind expanded storage to the reserved upload plan; restore placement budgets both archive and expanded workspace.
+
+Protocol-actor tests use real HTTP archive PUT/GET, the real SQLite repository and registry dispatch. They cover multipart publication and remote readback, request cancellation, first-session adoption, corruption rollback, source cleanup ordering, no compatible worker, unconfirmed cancellation, missing target journals, coordinator/connection replacement, and lost activation acknowledgements. These actors do not execute Docker or BoxLite. Real runtime export/import and cross-machine acceptance remain required.
