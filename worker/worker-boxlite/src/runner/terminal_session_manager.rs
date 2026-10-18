@@ -1609,10 +1609,7 @@ fn terminal_session_id_hash(session_id: &str) -> String {
 }
 
 fn terminal_session_resource_name(session_id: &str) -> String {
-    format!(
-        "onlyboxes-terminal-v1-{}",
-        terminal_session_id_hash(session_id)
-    )
+    worker_boxlite::persistence::terminal_name(session_id)
 }
 
 fn truncate_by_bytes(value: &str, max_bytes: usize) -> (String, bool) {

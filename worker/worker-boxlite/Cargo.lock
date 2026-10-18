@@ -4264,6 +4264,7 @@ dependencies = [
  "protoc-bin-vendored",
  "rand 0.8.5",
  "reqwest",
+ "rusqlite",
  "serde",
  "serde_json",
  "sha2 0.10.9",

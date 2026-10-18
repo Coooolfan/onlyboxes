@@ -7,6 +7,7 @@
 use std::error::Error;
 use std::path::Path;
 use std::process::Command;
+use std::sync::Arc;
 use std::time::Instant;
 
 use boxlite::{
@@ -15,6 +16,7 @@ use boxlite::{
 };
 use sha2::{Digest, Sha256};
 use tokio_stream::StreamExt;
+use worker_boxlite::persistence::{terminal_name, Journal, Kind, NativeRuntime, Operation, Phase};
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 const IMAGE: &str =
@@ -96,11 +98,17 @@ async fn python(litebox: &LiteBox, script: &str) -> Result<String> {
     Ok(output)
 }
 
-fn runtime(home: &Path) -> Result<BoxliteRuntime> {
-    Ok(BoxliteRuntime::new(BoxliteOptions {
+fn runtime(home: &Path) -> Result<Arc<BoxliteRuntime>> {
+    std::fs::create_dir_all(home)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(home, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(Arc::new(BoxliteRuntime::new(BoxliteOptions {
         home_dir: home.to_path_buf(),
         ..Default::default()
-    })?)
+    })?))
 }
 
 async fn phase(phase: &str, root: &Path, image: &str) -> Result<()> {
@@ -124,12 +132,82 @@ async fn phase(phase: &str, root: &Path, image: &str) -> Result<()> {
                         cmd: Some(vec!["while true; do sleep 3600; done".to_owned()]),
                         ..Default::default()
                     },
-                    Some("snapshot-source".to_owned()),
+                    Some(terminal_name("obx:smoke:session")),
                 )
                 .await?;
             litebox.start().await?;
             println!("{}", python(&litebox, WRITE).await?);
-            litebox.stop().await?;
+            let backend = NativeRuntime::new(runtime.clone(), root.join("source-home"))?;
+            let inspected = backend
+                .inspect("obx:smoke:session", litebox.id().as_str())
+                .await?;
+            if backend
+                .inspect("obx:smoke:other", litebox.id().as_str())
+                .await
+                .is_ok()
+            {
+                return Err("inspection accepted another scope".into());
+            }
+            let journal = Journal::open(root.join("source-journal"), "smoke-worker")?;
+            if backend
+                .stop_source(&journal, "missing-operation")
+                .await
+                .is_ok()
+            {
+                return Err("stop accepted an unclaimed operation".into());
+            }
+            if litebox.info().await?.status != BoxStatus::Running {
+                return Err("read-only inspection stopped the source".into());
+            }
+            journal.probe("obx:smoke:session", litebox.id().as_str())?;
+            journal.claim(Operation {
+                operation_id: "snapshot-source-operation".into(),
+                scoped_session_id: "obx:smoke:session".into(),
+                generation: 1,
+                kind: Kind::Source,
+                phase: Phase::Preparing,
+                restore_spec: Some(inspected.spec),
+                archive: None,
+                artifact: String::new(),
+                box_id: litebox.id().as_str().into(),
+                tombstone_box_id: String::new(),
+                lease_expires_unix_ms: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)?
+                    .as_millis() as i64
+                    + 300_000,
+                staging_bytes: 1 << 30,
+                snapshot_committed: false,
+                verified: false,
+                remote_verified: false,
+                cache_until_unix_ms: 0,
+                lease_ttl_sec: 0,
+            })?;
+            let wrong_journal = Journal::open(root.join("wrong-spec-journal"), "smoke-worker")?;
+            let mut wrong = journal.snapshot()?.operations["snapshot-source-operation"].clone();
+            wrong
+                .restore_spec
+                .as_mut()
+                .ok_or("missing source specification")?
+                .memory_mib += 1;
+            wrong_journal.claim(wrong)?;
+            if backend
+                .stop_source(&wrong_journal, "snapshot-source-operation")
+                .await
+                .is_ok()
+                || litebox.info().await?.status != BoxStatus::Running
+            {
+                return Err("a mismatched source specification stopped the VM".into());
+            }
+            wrong_journal.close()?;
+            backend
+                .stop_source(&journal, "snapshot-source-operation")
+                .await?;
+            backend
+                .stop_source(&journal, "snapshot-source-operation")
+                .await?;
+            println!(
+                "PASS: read-only native inspection, journal identity and idempotent source stop"
+            );
             if litebox.info().await?.status != BoxStatus::Stopped {
                 return Err("source did not stop all writers".into());
             }
