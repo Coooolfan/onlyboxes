@@ -144,3 +144,5 @@ Capability concurrency:
 
 Recommended setting:
 - `WORKER_CALL_TIMEOUT_SEC >= 2 * WORKER_HEARTBEAT_INTERVAL_SEC`
+
+Internal filesystem snapshot primitives and their tested boundaries: [Docker snapshot runtime adapter](docs/sandbox-snapshot-runtime.md). Persistence lifecycle controls are not enabled yet.
