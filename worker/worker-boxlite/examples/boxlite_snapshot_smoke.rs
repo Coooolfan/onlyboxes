@@ -196,6 +196,8 @@ async fn phase(phase: &str, root: &Path, image: &str) -> Result<()> {
                 artifact: String::new(),
                 box_id: litebox.id().as_str().into(),
                 tombstone_box_id: String::new(),
+                source_process: None,
+                source_stop_confirmed: false,
                 lease_expires_unix_ms: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)?
                     .as_millis() as i64
@@ -240,14 +242,35 @@ async fn phase(phase: &str, root: &Path, image: &str) -> Result<()> {
             {
                 return Err("insufficient staging admission stopped the VM".into());
             }
+            let unproven = journal.snapshot()?.operations["snapshot-source-operation"].clone();
             backend
                 .stop_source(&journal, "snapshot-source-operation")
                 .await?;
             backend
                 .stop_source(&journal, "snapshot-source-operation")
                 .await?;
+            let stopped_record=journal.snapshot()?.operations["snapshot-source-operation"].clone();
+            if !stopped_record.source_stop_confirmed || !stopped_record.source_process.as_ref()
+                .ok_or("source process evidence was not persisted")?.has_exited()? {
+                return Err("source stopped without durable host-process exit evidence".into());
+            }
+            let unproven_journal=Journal::open(root.join("unproven-source-journal"),"smoke-worker")?;
+            unproven_journal.claim(unproven)?;
+            if !matches!(backend.stop_source(&unproven_journal,"snapshot-source-operation").await,
+                Err(worker_boxlite::persistence::NativeError::Conflict)) {
+                return Err("stopped SDK metadata without prior host identity was trusted".into());
+            }
+            let interrupted=Journal::open(root.join("interrupted-stop-journal"),"smoke-worker")?;
+            let mut pending_stop=stopped_record.clone();
+            pending_stop.source_stop_confirmed=false;
+            interrupted.claim(pending_stop)?;
+            backend.stop_source(&interrupted,"snapshot-source-operation").await?;
+            let recovered_stop=interrupted.snapshot()?.operations["snapshot-source-operation"].clone();
+            if !recovered_stop.source_stop_confirmed || recovered_stop.source_process!=stopped_record.source_process {
+                return Err("stopped SDK instance could not recover the same host-process exit proof".into());
+            }
             println!(
-                "PASS: read-only native inspection, journal identity and idempotent source stop"
+                "PASS: private host-process proof, stop-ack recovery and idempotent source stop"
             );
             if litebox.info().await?.status != BoxStatus::Stopped {
                 return Err("source did not stop all writers".into());
@@ -385,6 +408,8 @@ async fn phase(phase: &str, root: &Path, image: &str) -> Result<()> {
                 ),
                 box_id: String::new(),
                 tombstone_box_id: String::new(),
+                source_process: None,
+                source_stop_confirmed: false,
                 lease_expires_unix_ms: 0,
                 staging_bytes: 65 << 30,
                 snapshot_committed: false,
@@ -684,6 +709,8 @@ async fn main() -> Result<()> {
         std::fs::remove_dir_all(root.join("source-journal"))?;
         std::fs::remove_dir_all(root.join("recovery-journal"))?;
         std::fs::remove_dir_all(root.join("wrong-spec-journal"))?;
+        std::fs::remove_dir_all(root.join("unproven-source-journal"))?;
+        std::fs::remove_dir_all(root.join("interrupted-stop-journal"))?;
         std::fs::remove_file(root.join("snapshot.boxlite"))?;
         let mut archive = std::fs::File::open(&store.object)?;
         let mut digest = Sha256::new();

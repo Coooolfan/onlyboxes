@@ -199,79 +199,6 @@ impl NativeRuntime {
             pid: info.pid,
         })
     }
-
-    /// Caller must close command/preview admission and drain in-flight work.
-    /// The durable source claim precedes stopping; an uncertain stop retains
-    /// that claim and the same rootfs for reconciliation. No instance is removed.
-    pub async fn stop_source(&self, journal: &Journal, operation: &str) -> Result<NativeInstance> {
-        let state = journal.snapshot().map_err(|_| NativeError::Unavailable)?;
-        let op = state
-            .operations
-            .get(operation)
-            .ok_or(NativeError::Conflict)?;
-        if state.current.get(&op.scoped_session_id).map(String::as_str) != Some(operation)
-            || op.kind != Kind::Source
-            || !matches!(op.phase, Phase::Preparing | Phase::Frozen)
-        {
-            return Err(NativeError::Conflict);
-        }
-        let inspected = self.inspect_source(journal, operation).await?;
-        if Some(&inspected.spec) != op.restore_spec.as_ref() {
-            return Err(NativeError::Conflict);
-        }
-        let native = self
-            .runtime
-            .get(&op.box_id)
-            .await
-            .map_err(|_| NativeError::Unavailable)?
-            .ok_or(NativeError::Missing)?;
-        if inspected.status == BoxStatus::Running {
-            // Confirm that completed guest writes reach the backing disk before
-            // SDK stop, which may fall back to terminating an unresponsive VM.
-            let flush = async {
-                let execution = native
-                    .exec(boxlite::BoxCommand::new("python").args(["-c", "import os; os.sync()"]))
-                    .await
-                    .map_err(|_| NativeError::Unavailable)?;
-                let result = execution
-                    .wait()
-                    .await
-                    .map_err(|_| NativeError::Unavailable)?;
-                if result.exit_code != 0
-                    || result
-                        .error_message
-                        .as_ref()
-                        .is_some_and(|message| !message.is_empty())
-                {
-                    return Err(NativeError::Unavailable);
-                }
-                Ok(())
-            };
-            tokio::time::timeout(Duration::from_secs(10), flush)
-                .await
-                .map_err(|_| NativeError::Unavailable)??;
-            native.stop().await.map_err(|_| NativeError::Unavailable)?;
-        }
-        let stopped = self.inspect_source(journal, operation).await?;
-        let current = journal.snapshot().map_err(|_| NativeError::Unavailable)?;
-        if stopped.status != BoxStatus::Stopped
-            || stopped.pid.is_some()
-            || current
-                .current
-                .get(&op.scoped_session_id)
-                .map(String::as_str)
-                != Some(operation)
-            || Some(&stopped.spec) != op.restore_spec.as_ref()
-            || !current.operations.get(operation).is_some_and(|latest| {
-                latest.kind == Kind::Source
-                    && latest.generation == op.generation
-                    && matches!(latest.phase, Phase::Preparing | Phase::Frozen)
-            })
-        {
-            return Err(NativeError::Conflict);
-        }
-        Ok(stopped)
-    }
 }
 
 fn read_config(home: &Path, id: &str) -> Result<BoxConfig> {
@@ -512,3 +439,6 @@ mod export;
 
 #[path = "native_import.rs"]
 mod import;
+
+#[path = "native_stop.rs"]
+pub(super) mod stop;

@@ -390,3 +390,56 @@ fn native_unique_name_index_and_config_name_must_agree() {
         Err(NativeError::Conflict)
     ));
 }
+
+#[test]
+fn source_pid_evidence_requires_the_exact_sdk_and_os_process_identity() {
+    use crate::persistence::HostProcess;
+    let f = Fixture::new();
+    let record = HostProcess::capture(std::process::id()).unwrap();
+    let path = f.config.box_home.join("shim.pid");
+    fs::write(
+        &path,
+        format!("{}\n{}\nservices-mux-v1\n", record.pid, record.start_time),
+    )
+    .unwrap();
+    assert_eq!(
+        stop::read_shim_process(&f.home, f.config.id.as_str(), record.pid).unwrap(),
+        record
+    );
+    assert_eq!(
+        stop::read_shim_process(&f.home, f.config.id.as_str(), record.pid + 1),
+        Err(NativeError::Conflict)
+    );
+    fs::write(
+        &path,
+        format!("{}\n{}\n", record.pid, record.start_time + 1),
+    )
+    .unwrap();
+    assert_eq!(
+        stop::read_shim_process(&f.home, f.config.id.as_str(), record.pid),
+        Err(NativeError::Conflict)
+    );
+    fs::write(&path, format!("{}\n", record.pid)).unwrap();
+    assert_eq!(
+        stop::read_shim_process(&f.home, f.config.id.as_str(), record.pid),
+        Err(NativeError::Conflict)
+    );
+    fs::write(&path, b"bad\nrecord\n").unwrap();
+    assert_eq!(
+        stop::read_shim_process(&f.home, f.config.id.as_str(), record.pid),
+        Err(NativeError::Unsupported)
+    );
+    fs::write(&path, vec![b'x'; 129]).unwrap();
+    assert_eq!(
+        stop::read_shim_process(&f.home, f.config.id.as_str(), record.pid),
+        Err(NativeError::Unsupported)
+    );
+    fs::remove_file(&path).unwrap();
+    let other = f.home.join("other-pid");
+    fs::write(&other, format!("{}\n{}\n", record.pid, record.start_time)).unwrap();
+    symlink(&other, &path).unwrap();
+    assert_eq!(
+        stop::read_shim_process(&f.home, f.config.id.as_str(), record.pid),
+        Err(NativeError::Unavailable)
+    );
+}

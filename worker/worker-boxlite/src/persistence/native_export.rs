@@ -42,6 +42,16 @@ impl NativeRuntime {
             .artifact_path(&op.scoped_session_id, operation, op.generation)
             .map_err(|_| NativeError::Unavailable)?;
         if op.phase == Phase::Frozen {
+            if !op.source_stop_confirmed
+                || !op
+                    .source_process
+                    .as_ref()
+                    .ok_or(NativeError::Conflict)?
+                    .has_exited()
+                    .map_err(|_| NativeError::Unavailable)?
+            {
+                return Err(NativeError::Conflict);
+            }
             let archive = op.archive.ok_or(NativeError::Conflict)?;
             let scope = op.scoped_session_id;
             return blocking(move || {

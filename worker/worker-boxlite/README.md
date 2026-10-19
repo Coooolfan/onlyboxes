@@ -188,7 +188,7 @@ Manual smoke checklist:
 - send `terminalResource` against a missing file, a directory, and an oversized file and verify `file_not_found`, `path_is_directory`, and `file_too_large`
 
 Backend smoke test:
-- `cargo test --locked --lib` verifies the private lifecycle journal, generation/identity fences, file permissions, concurrent claims and process-crash recovery. Control-plane lifecycle integration remains pending; see [archive and journal boundaries](docs/sandbox-snapshot-runtime.md).
+- `cargo test --locked --lib` verifies the private lifecycle journal, generation/identity fences, host-process exit evidence, file permissions, concurrent claims and process-crash recovery. Control-plane lifecycle integration remains pending; see [archive and journal boundaries](docs/sandbox-snapshot-runtime.md).
 - `cargo run --locked --example boxlite_snapshot_smoke` verifies multipart HTTP upload, full remote readback, download and native archive restore in a separate process with an empty home after removing the source home, journals and local archive. It also checks operation/generation identity, import acknowledgement recovery and rejection of missing-instance replacement. See [archive acceptance and boundaries](docs/sandbox-snapshot-runtime.md).
 - `cargo run --example boxlite_smoke` exercises the boxlite API directly, without `console` or gRPC: runtime init, box create/start, exec, exit codes and stderr, filesystem state across executions, concurrent execution on a single box, `kill()` isolation between executions, `copy_out`, removal, and shutdown.
 - environment overrides: `BOXLITE_SMOKE_IMAGE` (default `alpine:latest`), `BOXLITE_SMOKE_HOME` (default a fresh temp dir), `BOXLITE_SMOKE_CONCURRENCY` (default `4`), `BOXLITE_SMOKE_KEEP_HOME`.

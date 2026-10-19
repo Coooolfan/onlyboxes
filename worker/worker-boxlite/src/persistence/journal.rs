@@ -218,6 +218,8 @@ impl Journal {
                     || prior.restore_spec != op.restore_spec
                     || prior.staging_bytes != op.staging_bytes
                     || prior.lease_ttl_sec != op.lease_ttl_sec
+                    || (op.source_process.is_some() && prior.source_process != op.source_process)
+                    || (op.source_stop_confirmed && !prior.source_stop_confirmed)
                     || (op.kind == Kind::Target && prior.archive != op.archive)
                     || (!op.box_id.is_empty() && prior.box_id != op.box_id)
                     || (!op.tombstone_box_id.is_empty()
@@ -309,6 +311,8 @@ impl Journal {
                 artifact: String::new(),
                 box_id: String::new(),
                 tombstone_box_id: String::new(),
+                source_process: None,
+                source_stop_confirmed: false,
                 lease_expires_unix_ms: 0,
                 staging_bytes: 0,
                 snapshot_committed: false,

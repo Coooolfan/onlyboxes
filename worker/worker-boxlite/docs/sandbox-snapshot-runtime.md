@@ -94,14 +94,22 @@ BoxLite 0.10.7 的公开 `BoxInfo` 不提供完整启动配置。检查器使用
 
 原生归档 smoke 会验证只读检查不停止 VM、未认领及规格不匹配的操作不能停止 VM，以及正确认领后的幂等停止。之后继续执行原生导出和空 home 恢复。这是独立的运行时验收：测试删除 source home 的步骤不表示生产协议可以在共享存储提交前删除源数据。
 
-当前停止确认基于 SDK 状态与 PID 元数据。SDK 在无法附着 live state 时仍可能继续清理并记录停止；生产接入还需持久化停止前的宿主进程身份，并独立核对对应 shim 已退出。原生 smoke 覆盖正常停止，不验证这个故障分支；SDK 的 `Stopped` 元数据不能单独替代所有写入者已退出的证明。
+停止前先读取当前原生实例的私有 `shim.pid`，要求 SDK PID、PID 文件中的启动时间与操作系统观察一致，再把稳定宿主身份、本次宿主启动 UUID、PID namespace、PID 和进程启动时间持久化为不可换绑的 `source_process`。PID 文件缺失、旧格式、损坏、链接或身份冲突都会保留源实例并报错，不把读取失败当作进程不存在。
+
+SDK 在无法附着 live state 时仍可能继续清理并记录停止，因此 `Stopped` 元数据本身不足以确认停止。SDK 停止后还会等待最多 10 秒，独立核对原 shim 已退出，再持久化不可撤销的 `source_stop_confirmed`。原进程仍活着或操作系统证据不可读时不能进入 `frozen`；停止前未记录进程身份的已停止实例也不能直接采纳。进程查询不会发送终止信号或回收其他进程；同宿主重启或 PID 对应的启动时间变化可证明旧生命周期结束，宿主身份不同，或同一次宿主启动内 PID namespace 改变，则拒绝确认，不能把 journal 跨机复制或 PID 不再可见当作原进程已退出。
+
+源操作的冻结、提交和完成记录必须包含停止确认与原进程身份。Worker 在 SDK 已停止、停止确认尚未写入时退出，重开 journal 后仍可用原身份补齐确认，不依赖 SDK 可能已经删除的 PID 文件。已冻结归档重放也要求这项身份记录和退出证据。未确认的停止保留原实例、磁盘和操作记录，由生命周期恢复流程继续核对。
+
+这些原语要求本地 SDK home 与 journal 由同一宿主独占，不共享或复制到另一台宿主运行。Linux 需要宿主唯一且可读的 `/etc/machine-id`、`/proc/sys/kernel/random/boot_id` 、`/proc/self/ns/pid` 及进程启动时间；容器部署须提供正确的宿主身份，不能使用预烘焙的重复 machine-id。macOS 使用 `gethostuuid`、`kern.bootsessionuuid` 和内核进程启动时间。身份读取不可用时停止原语报错。Worker 的持久化能力启用仍需在 SDK 初始化与恢复之前检查宿主、namespace 和本地 home 的归属，独立 lease 强制执行与异常 shim 回收尚未接入。
+
+原生 smoke 验证正常退出的进程证据、SDK 停止后丢失确认的重试，以及无先前进程证据时拒绝采纳停止状态。无 VM 测试使用真实子进程验证 Worker 被 SIGKILL 后仍保留身份、活跃写入者不能确认停止、退出后才能冻结，以及确认不可撤销。它不等同于在真实 SDK 无法附着且 shim 仍活着的分支注入故障。另在 Linux/arm64 的临时 Rust 容器中复用同一进程身份模块源码和固定 SDK 的进程查询实现，7 项进程身份测试通过；容器提供独立的测试 machine-id。这只验证 Linux 内核查询与身份判断分支，不验证 Linux 上的 BoxLite VM 或完整 Worker 生命周期。
 
 这些原语尚未接入 Worker 的管理命令接收与 session 门禁，也不会使 `sandbox_persistence` 声明自动启用。归档处理原语已实现固定镜像、规格、字节上限和完整性校验；后续仍需接入运行中的 Worker，并完成全局磁盘预算、传输协议编排、激活、恢复握手及回收链路。
 
 
 ## 受控导出与归档校验
 
-`NativeRuntime::export_source` 从 journal 中已认领的 source 操作导出。停止前先确认 guest `os.sync()` 成功；刷新失败会保留运行中的源实例用于核对。导出、压缩和完整校验在阻塞任务中运行。源实例及原始磁盘不会因成功导出或校验失败而删除。
+`NativeRuntime::export_source` 从 journal 中已认领的 source 操作导出。停止前先确认 guest `os.sync()` 成功；刷新失败会保留原实例与操作记录用于核对。导出、压缩和完整校验在阻塞任务中运行。源实例及原始磁盘不会因成功导出或校验失败而删除。
 
 导出先写入按操作标识隔离的私有工作目录，再验证和规范化原生归档。规范化只改变 manifest 与 tar 表达，磁盘逻辑字节及其 SHA-256 保持一致；镜像引用由原始 tag/index 改为已核实的平台 digest。完成后按不可覆盖方式发布归档、sync 父目录，最后将 journal 更新为 `frozen`，记录完整归档 SHA-256、大小和 `verified`。这不等于共享存储已经提交，`remote_verified` 与 `snapshot_committed` 不会由导出设置。
 

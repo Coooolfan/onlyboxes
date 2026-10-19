@@ -55,6 +55,8 @@ fn source() -> Operation {
         artifact: String::new(),
         box_id: "source_box_123".into(),
         tombstone_box_id: String::new(),
+        source_process: None,
+        source_stop_confirmed: false,
         lease_expires_unix_ms: 10000,
         staging_bytes: 1 << 20,
         snapshot_committed: false,
@@ -98,6 +100,14 @@ fn deletion() -> Operation {
 }
 fn freeze(j: &Journal) {
     j.update("suspend-1", |op| {
+        op.source_process = Some(crate::persistence::HostProcess {
+            host_id: "00000000-0000-4000-8000-000000000002".into(),
+            boot_id: "00000000-0000-4000-8000-000000000001".into(),
+            process_namespace: "host".into(),
+            pid: 1234,
+            start_time: 10,
+        });
+        op.source_stop_confirmed = true;
         op.phase = Phase::Frozen;
         op.archive = Some(archive());
         op.verified = true;
@@ -756,6 +766,18 @@ fn process_helper() {
     }
     let j = Journal::open(path, "worker-a").unwrap();
     j.claim(source()).unwrap();
+    if std::env::var("ONLYBOXES_JOURNAL_TEST_MODE").unwrap() == "pin_source" {
+        let pid = std::env::var("ONLYBOXES_JOURNAL_TEST_SOURCE_PID")
+            .unwrap()
+            .parse()
+            .unwrap();
+        let process = crate::persistence::HostProcess::capture(pid).unwrap();
+        j.update("suspend-1", |op| {
+            op.source_process = Some(process);
+            Ok(())
+        })
+        .unwrap();
+    }
     println!("JOURNAL_READY");
     std::io::stdout().flush().unwrap();
     loop {
@@ -854,4 +876,123 @@ fn target_cannot_begin_import_before_local_verification() {
         Err(Error::Conflict)
     );
     ready(&j, &id);
+}
+
+struct OwnedChild(std::process::Child);
+impl Drop for OwnedChild {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+#[tokio::test]
+async fn source_process_proof_survives_worker_sigkill_and_cannot_be_replaced() {
+    use crate::persistence::{native::stop::confirm_source_exit, HostProcess};
+    use std::time::Duration;
+    let root = Root::new();
+    let mut source_child = OwnedChild(Command::new("sleep").arg("300").spawn().unwrap());
+    let expected = HostProcess::capture(source_child.0.id()).unwrap();
+    let mut worker = OwnedChild(
+        helper(&root.journal(), "pin_source")
+            .env(
+                "ONLYBOXES_JOURNAL_TEST_SOURCE_PID",
+                source_child.0.id().to_string(),
+            )
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let stdout = worker.0.stdout.take().unwrap();
+    let mut ready = false;
+    for line in BufReader::new(stdout).lines() {
+        if line.unwrap().contains("JOURNAL_READY") {
+            ready = true;
+            break;
+        }
+    }
+    assert!(ready);
+    worker.0.kill().unwrap();
+    assert!(!worker.0.wait().unwrap().success());
+    let j = root.open();
+    let saved = j.snapshot().unwrap().operations["suspend-1"].clone();
+    assert_eq!(saved.source_process.as_ref(), Some(&expected));
+    assert!(!saved.source_stop_confirmed);
+    // Even if an SDK record says Stopped, the independent confirmation path
+    // must reject a still-live writer, including after losing the Worker.
+    assert_eq!(
+        confirm_source_exit(&j, "suspend-1", Duration::ZERO).await,
+        Err(crate::persistence::NativeError::Unavailable)
+    );
+    assert!(!j.snapshot().unwrap().operations["suspend-1"].source_stop_confirmed);
+    assert_eq!(
+        j.update("suspend-1", |op| {
+            op.phase = Phase::Frozen;
+            op.archive = Some(archive());
+            op.verified = true;
+            op.artifact = artifact_name(&op.scoped_session_id, &op.operation_id, op.generation);
+            Ok(())
+        }),
+        Err(Error::Conflict)
+    );
+    let replacement = HostProcess::capture(std::process::id()).unwrap();
+    assert_eq!(
+        j.update("suspend-1", |op| {
+            op.source_process = Some(replacement.clone());
+            Ok(())
+        }),
+        Err(Error::Conflict)
+    );
+    let mut replay = source();
+    replay.source_process = Some(replacement);
+    assert_eq!(j.claim(replay), Err(Error::Conflict));
+    source_child.0.kill().unwrap();
+    source_child.0.wait().unwrap();
+    confirm_source_exit(&j, "suspend-1", Duration::from_secs(1))
+        .await
+        .unwrap();
+    j.close().unwrap();
+    let j = root.open();
+    let confirmed = &j.snapshot().unwrap().operations["suspend-1"];
+    assert!(confirmed.source_stop_confirmed);
+    assert_eq!(confirmed.source_process.as_ref(), Some(&expected));
+    assert_eq!(
+        j.update("suspend-1", |op| {
+            op.source_stop_confirmed = false;
+            Ok(())
+        }),
+        Err(Error::Conflict)
+    );
+    assert_eq!(
+        j.update("suspend-1", |op| {
+            op.source_process = None;
+            Ok(())
+        }),
+        Err(Error::Conflict)
+    );
+    j.update("suspend-1", |op| {
+        op.phase = Phase::Frozen;
+        op.archive = Some(archive());
+        op.verified = true;
+        op.artifact = artifact_name(&op.scoped_session_id, &op.operation_id, op.generation);
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[tokio::test]
+async fn stopped_metadata_without_captured_process_identity_is_insufficient() {
+    let root = Root::new();
+    let j = root.open();
+    j.claim(source()).unwrap();
+    assert_eq!(
+        crate::persistence::native::stop::confirm_source_exit(
+            &j,
+            "suspend-1",
+            std::time::Duration::ZERO
+        )
+        .await,
+        Err(crate::persistence::NativeError::Conflict)
+    );
+    assert!(!j.snapshot().unwrap().operations["suspend-1"].source_stop_confirmed);
 }

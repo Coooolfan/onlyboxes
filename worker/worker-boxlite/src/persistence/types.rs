@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use super::HostProcess;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -143,6 +144,10 @@ pub struct Operation {
     pub box_id: String,
     #[serde(default)]
     pub tombstone_box_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_process: Option<HostProcess>,
+    #[serde(default)]
+    pub source_stop_confirmed: bool,
     #[serde(default)]
     pub lease_expires_unix_ms: i64,
     #[serde(default)]
@@ -184,6 +189,21 @@ impl Operation {
             || self.cache_until_unix_ms < 0
             || (!self.box_id.is_empty() && !valid_id(&self.box_id))
             || (!self.tombstone_box_id.is_empty() && !valid_id(&self.tombstone_box_id))
+        {
+            return Err(Error::Conflict);
+        }
+        if let Some(process) = &self.source_process {
+            process.validate()?;
+        }
+        if (self.kind != Kind::Source
+            && (self.source_process.is_some() || self.source_stop_confirmed))
+            || (self.source_stop_confirmed && self.source_process.is_none())
+            || (self.kind == Kind::Source
+                && matches!(
+                    self.phase,
+                    Phase::Frozen | Phase::Committed | Phase::Finalized
+                )
+                && !self.source_stop_confirmed)
         {
             return Err(Error::Conflict);
         }
@@ -299,6 +319,8 @@ impl Operation {
             && self.generation == next.generation
             && self.kind == next.kind
             && self.restore_spec == next.restore_spec
+            && (self.source_process.is_none() || self.source_process == next.source_process)
+            && (!self.source_stop_confirmed || next.source_stop_confirmed)
             && self.staging_bytes == next.staging_bytes
             && self.lease_ttl_sec == next.lease_ttl_sec
             && (self.box_id.is_empty() || self.box_id == next.box_id)
