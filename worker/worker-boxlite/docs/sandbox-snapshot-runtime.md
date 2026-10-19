@@ -104,7 +104,7 @@ SDK 在无法附着 live state 时仍可能继续清理并记录停止，因此 
 
 原生 smoke 验证正常退出的进程证据、SDK 停止后丢失确认的重试，以及无先前进程证据时拒绝采纳停止状态。无 VM 测试使用真实子进程验证 Worker 被 SIGKILL 后仍保留身份、活跃写入者不能确认停止、退出后才能冻结，以及确认不可撤销。它不等同于在真实 SDK 无法附着且 shim 仍活着的分支注入故障。另在 Linux/arm64 的临时 Rust 容器中复用同一进程身份模块源码和固定 SDK 的进程查询实现，7 项进程身份测试通过；容器提供独立的测试 machine-id。这只验证 Linux 内核查询与身份判断分支，不验证 Linux 上的 BoxLite VM 或完整 Worker 生命周期。
 
-这些原语尚未接入 Worker 的管理命令接收与 session 门禁，也不会使 `sandbox_persistence` 声明自动启用。归档处理原语已实现固定镜像、规格、字节上限和完整性校验；后续仍需接入运行中的 Worker，并完成全局磁盘预算、传输协议编排、激活、恢复握手及回收链路。
+原生操作尚未由生命周期控制器接入 Worker 管理帧，也不会使 `sandbox_persistence` 声明自动启用。[session 门禁](sandbox-snapshot-session-gates.md)已有 generation、控制连接、source 保留和 ready 绑定的检查与入口。归档处理原语已实现固定镜像、规格、字节上限和完整性校验；后续仍需接入运行中的 Worker，并完成全局磁盘预算、传输协议编排、激活、恢复握手及回收链路。
 
 
 ## 受控导出与归档校验

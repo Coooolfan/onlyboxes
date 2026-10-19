@@ -17,18 +17,24 @@ use crate::proto::registryv1::{
 };
 
 use super::terminal_session_manager::{
-    shared_active_session_count, shared_recover_terminal_sessions,
+    shared_active_session_count, shared_recover_terminal_sessions, shared_terminal_session_manager,
 };
-use super::{
-    build_command_result, build_hello, command_dispatch_summary_for_log, duration_from_server,
-    RunnerError,
-};
+use super::{build_hello, command_dispatch_summary_for_log, duration_from_server, RunnerError};
 
 pub(crate) async fn run_session(
     shutdown: CancellationToken,
     cfg: &Config,
 ) -> Result<(), RunnerError> {
-    run_session_with_builder(shutdown, cfg, Arc::new(DefaultCommandResultBuilder)).await
+    let manager = shared_terminal_session_manager(cfg);
+    if manager.has_snapshot_journal().await {
+        manager.disconnect_current_persistence().await;
+    }
+    let result =
+        run_session_with_builder(shutdown, cfg, Arc::new(DefaultCommandResultBuilder)).await;
+    if manager.has_snapshot_journal().await {
+        manager.disconnect_current_persistence().await;
+    }
+    result
 }
 
 async fn run_session_with_builder(
@@ -36,6 +42,8 @@ async fn run_session_with_builder(
     cfg: &Config,
     command_result_builder: Arc<dyn CommandResultBuilder>,
 ) -> Result<(), RunnerError> {
+    let connection_shutdown = shutdown.child_token();
+    let _connection_guard = CancelConnectionOnDrop(connection_shutdown.clone());
     let (outbound_tx, outbound_rx) = mpsc::channel(64);
     let hello = build_hello(cfg, shared_active_session_count().await)?;
     outbound_tx
@@ -69,11 +77,32 @@ async fn run_session_with_builder(
         ));
     }
 
+    let manager = shared_terminal_session_manager(cfg);
+    let persistent_recovery = manager.has_snapshot_journal().await
+        || !ack.sandbox_persistence_recovery_candidates.is_empty()
+        || ack
+            .terminal_session_recovery_candidates
+            .iter()
+            .any(|c| c.generation != 0);
+    if persistent_recovery {
+        manager
+            .protect_persistence_recovery(
+                &ack.session_id,
+                &ack.terminal_session_recovery_candidates,
+                &ack.sandbox_persistence_recovery_candidates,
+            )
+            .await
+            .map_err(|_| {
+                RunnerError::Message(
+                    "sandbox persistence recovery could not establish ownership".into(),
+                )
+            })?;
+    }
     let recovery_results = tokio::select! {
         _ = shutdown.cancelled() => return Err(RunnerError::Message("worker shutdown during terminal session recovery".to_owned())),
         result = tokio::time::timeout(
             cfg.call_timeout,
-            shared_recover_terminal_sessions(cfg, &ack.terminal_session_recovery_candidates),
+            command_result_builder.recover(cfg, &ack.terminal_session_recovery_candidates),
         ) => result.map_err(|_| RunnerError::Message("terminal session recovery deadline exceeded".to_owned()))?,
     };
     outbound_tx
@@ -102,6 +131,14 @@ async fn run_session_with_builder(
         ));
     }
 
+    if persistent_recovery {
+        manager
+            .finish_persistence_recovery(&ack.session_id)
+            .await
+            .map_err(|_| {
+                RunnerError::Message("sandbox persistence recovery could not open admission".into())
+            })?;
+    }
     tracing::info!(
         executor_kind = "boxlite",
         candidates = recovery_results.len(),
@@ -139,13 +176,13 @@ async fn run_session_with_builder(
     let (session_err_tx, session_err_rx) = mpsc::channel(4);
 
     tokio::spawn(receiver_loop(
-        shutdown.clone(),
+        connection_shutdown.clone(),
         inbound,
         outbound_tx.clone(),
         heartbeat_ack_tx,
         session_err_tx,
         cfg.clone(),
-        command_result_builder,
+        (command_result_builder, ack.session_id.clone()),
     ));
 
     heartbeat_loop(
@@ -162,15 +199,33 @@ async fn run_session_with_builder(
 
 #[async_trait]
 trait CommandResultBuilder: Send + Sync {
-    async fn build(&self, cfg: &Config, dispatch: CommandDispatch) -> ConnectRequest;
+    async fn recover(
+        &self,
+        cfg: &Config,
+        candidates: &[crate::proto::registryv1::TerminalSessionRecoveryCandidate],
+    ) -> Vec<crate::proto::registryv1::TerminalSessionRecoveryResult> {
+        shared_recover_terminal_sessions(cfg, candidates).await
+    }
+    async fn build(
+        &self,
+        cfg: &Config,
+        dispatch: CommandDispatch,
+        connection: &str,
+    ) -> ConnectRequest;
 }
 
 struct DefaultCommandResultBuilder;
 
 #[async_trait]
 impl CommandResultBuilder for DefaultCommandResultBuilder {
-    async fn build(&self, cfg: &Config, dispatch: CommandDispatch) -> ConnectRequest {
-        build_command_result(cfg, dispatch).await
+    async fn build(
+        &self,
+        cfg: &Config,
+        dispatch: CommandDispatch,
+        connection: &str,
+    ) -> ConnectRequest {
+        super::capability_executor::build_command_result_for_connection(cfg, dispatch, connection)
+            .await
     }
 }
 
@@ -191,8 +246,9 @@ async fn receiver_loop(
     heartbeat_ack_tx: mpsc::Sender<HeartbeatAck>,
     session_err_tx: mpsc::Sender<RunnerError>,
     cfg: Config,
-    command_result_builder: Arc<dyn CommandResultBuilder>,
+    command: (Arc<dyn CommandResultBuilder>, String),
 ) {
+    let (command_result_builder, connection_id) = command;
     loop {
         let message = tokio::select! {
             _ = shutdown.cancelled() => return,
@@ -214,7 +270,35 @@ async fn receiver_loop(
                         cfg.clone(),
                         dispatch,
                         command_result_builder.clone(),
+                        connection_id.clone(),
                     );
+                }
+                Some(connect_response::Payload::SandboxPersistenceControl(control)) => {
+                    let report = crate::proto::registryv1::SandboxPersistenceReport {
+                        request_id: control.request_id,
+                        operation_id: control.operation_id,
+                        scoped_session_id: control.scoped_session_id,
+                        generation: control.generation,
+                        action: control.action,
+                        completed: true,
+                        phase: String::new(),
+                        payload_json: Vec::new(),
+                        error: Some(crate::proto::registryv1::CommandError {
+                            code: "persistence_unavailable".into(),
+                            message: "worker sandbox persistence is unavailable".into(),
+                        }),
+                    };
+                    if outbound_tx
+                        .send(ConnectRequest {
+                            payload: Some(connect_request::Payload::SandboxPersistenceReport(
+                                report,
+                            )),
+                        })
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
                 }
                 _ => {
                     report_session_error(
@@ -248,6 +332,7 @@ fn handle_command_dispatch(
     cfg: Config,
     dispatch: CommandDispatch,
     command_result_builder: Arc<dyn CommandResultBuilder>,
+    connection_id: String,
 ) {
     let capability = dispatch.capability.trim().to_ascii_lowercase();
     let command_id = dispatch.command_id.trim().to_owned();
@@ -260,7 +345,12 @@ fn handle_command_dispatch(
     );
 
     tokio::spawn(async move {
-        let result = command_result_builder.build(&cfg, dispatch).await;
+        if shutdown.is_cancelled() {
+            return;
+        }
+        let result = command_result_builder
+            .build(&cfg, dispatch, &connection_id)
+            .await;
         let send_result = tokio::select! {
             _ = shutdown.cancelled() => Err(()),
             send_result = outbound_tx.send(result) => send_result.map_err(|_| ())
@@ -374,6 +464,13 @@ where
     }
 }
 
+struct CancelConnectionOnDrop(CancellationToken);
+impl Drop for CancelConnectionOnDrop {
+    fn drop(&mut self) {
+        self.0.cancel();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
@@ -436,7 +533,22 @@ mod tests {
 
     #[async_trait]
     impl CommandResultBuilder for FakeCommandResultBuilder {
-        async fn build(&self, _cfg: &Config, dispatch: CommandDispatch) -> ConnectRequest {
+        async fn recover(
+            &self,
+            _cfg: &Config,
+            candidates: &[crate::proto::registryv1::TerminalSessionRecoveryCandidate],
+        ) -> Vec<crate::proto::registryv1::TerminalSessionRecoveryResult> {
+            assert!(candidates.is_empty());
+            Vec::new()
+        }
+
+        async fn build(
+            &self,
+            _cfg: &Config,
+            dispatch: CommandDispatch,
+            connection: &str,
+        ) -> ConnectRequest {
+            assert_eq!(connection, TEST_SESSION_ID);
             let payload_json = match dispatch.capability.as_str() {
                 "pythonExec" => serde_json::json!({
                     "output": "hello from python\n",
@@ -719,8 +831,14 @@ mod tests {
         let shutdown = CancellationToken::new();
         let session_shutdown = shutdown.clone();
         let task_cfg = cfg.clone();
-        let session_task =
-            tokio::spawn(async move { run_session(session_shutdown, &task_cfg).await });
+        let session_task = tokio::spawn(async move {
+            run_session_with_builder(
+                session_shutdown,
+                &task_cfg,
+                Arc::new(FakeCommandResultBuilder),
+            )
+            .await
+        });
 
         let hello = timeout(Duration::from_secs(2), hello_rx)
             .await
@@ -804,8 +922,14 @@ mod tests {
         let shutdown = CancellationToken::new();
         let session_shutdown = shutdown.clone();
         let task_cfg = cfg;
-        let session_task =
-            tokio::spawn(async move { run_session(session_shutdown, &task_cfg).await });
+        let session_task = tokio::spawn(async move {
+            run_session_with_builder(
+                session_shutdown,
+                &task_cfg,
+                Arc::new(FakeCommandResultBuilder),
+            )
+            .await
+        });
 
         let _hello = timeout(Duration::from_secs(2), hello_rx)
             .await
@@ -964,7 +1088,14 @@ mod tests {
         let session_task = {
             let task_cfg = cfg.clone();
             let session_shutdown = shutdown.clone();
-            tokio::spawn(async move { run_session(session_shutdown, &task_cfg).await })
+            tokio::spawn(async move {
+                run_session_with_builder(
+                    session_shutdown,
+                    &task_cfg,
+                    Arc::new(FakeCommandResultBuilder),
+                )
+                .await
+            })
         };
 
         let _hello = timeout(Duration::from_secs(2), hello_rx)

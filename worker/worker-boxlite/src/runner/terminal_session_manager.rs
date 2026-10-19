@@ -108,6 +108,8 @@ static TERMINAL_SESSION_MANAGER: OnceLock<Arc<TerminalSessionManager>> = OnceLoc
 pub(crate) struct TerminalExecRequest {
     pub command: String,
     pub session_id: String,
+    pub generation: i64,
+    pub connection_id: Option<String>,
     pub create_if_missing: bool,
     pub lease_ttl_sec: Option<i32>,
     pub deadline_unix_ms: i64,
@@ -128,6 +130,8 @@ pub(crate) struct TerminalExecRunResult {
 #[derive(Debug)]
 pub(crate) struct TerminalLeaseRenewRequest {
     pub session_id: String,
+    pub generation: i64,
+    pub connection_id: Option<String>,
     pub lease_ttl_sec: i32,
 }
 
@@ -140,6 +144,8 @@ pub(crate) struct TerminalLeaseRenewResult {
 #[derive(Debug, Clone)]
 pub(crate) struct TerminalResourceRequest {
     pub session_id: String,
+    pub generation: i64,
+    pub connection_id: Option<String>,
     pub file_path: String,
     pub action: String,
     pub signed_url: String,
@@ -262,6 +268,12 @@ pub(crate) trait TerminalBackend: Send + Sync {
     ) -> Result<Option<String>, TerminalOperationError> {
         Ok(None)
     }
+    async fn recover_pinned_session_box(
+        &self,
+        _box_id: &str,
+    ) -> Result<Option<String>, TerminalOperationError> {
+        Ok(None)
+    }
     async fn cleanup_orphan_session_boxes(&self, _expected_names: &HashSet<String>) -> usize {
         0
     }
@@ -318,6 +330,9 @@ struct TerminalSession {
     /// empty box_id before the microVM exists, so concurrent callers must wait
     /// here rather than exec against an empty id.
     ready_tx: watch::Sender<SessionReadyState>,
+    proxy_cancel: CancellationToken,
+    proxy_inflight: Arc<AtomicU32>,
+    persistence_fault: bool,
 }
 
 #[derive(Clone)]
@@ -334,7 +349,8 @@ pub(crate) struct TerminalSessionManagerConfig {
 
 pub(crate) struct TerminalSessionManager {
     backend: Arc<dyn TerminalBackend>,
-    sessions: Mutex<HashMap<String, TerminalSession>>,
+    sessions: Mutex<persistence::SessionState>,
+    persistence_changed: Arc<Notify>,
     lease_min_sec: u32,
     lease_max_sec: u32,
     lease_default_sec: u32,
@@ -343,6 +359,7 @@ pub(crate) struct TerminalSessionManager {
     session_max_inflight: u32,
     max_active_sessions: u32,
     active_session_reservations: AtomicU32,
+    retiring_capacity: std::sync::Mutex<HashMap<String, u32>>,
     pending_creations: AtomicU32,
     cleanup_done: Notify,
     pending_cleanups: AtomicU32,
@@ -354,20 +371,7 @@ pub(crate) struct TerminalSessionManager {
 
 pub(crate) fn shared_terminal_session_manager(cfg: &Config) -> Arc<TerminalSessionManager> {
     TERMINAL_SESSION_MANAGER
-        .get_or_init(|| {
-            TerminalSessionManager::new(
-                TerminalSessionManagerConfig {
-                    lease_min_sec: cfg.terminal_lease_min_sec,
-                    lease_max_sec: cfg.terminal_lease_max_sec,
-                    lease_default_sec: cfg.terminal_lease_default_sec,
-                    output_limit_bytes: cfg.terminal_output_limit_bytes,
-                    export_max_bytes: cfg.terminal_export_max_bytes,
-                    session_max_inflight: cfg.terminal_session_max_inflight,
-                    max_active_sessions: cfg.terminal_max_active_sessions,
-                },
-                Arc::new(BoxliteTerminalBackend::new(cfg.clone())),
-            )
-        })
+        .get_or_init(|| TerminalSessionManager::from_config(cfg))
         .clone()
 }
 
@@ -394,6 +398,7 @@ pub(crate) async fn shared_recover_terminal_sessions(
 }
 
 struct RetiredSession {
+    scope: String,
     box_id: String,
     capacity_reserved: bool,
     cleanup_tracked: bool,
@@ -415,6 +420,7 @@ impl Drop for PendingCreationGuard<'_> {
 }
 
 struct RetiredCleanupGuard<'a> {
+    scope: String,
     manager: &'a TerminalSessionManager,
     capacity_reserved: bool,
     cleanup_tracked: bool,
@@ -423,12 +429,7 @@ struct RetiredCleanupGuard<'a> {
 impl Drop for RetiredCleanupGuard<'_> {
     fn drop(&mut self) {
         if self.capacity_reserved {
-            let released = self.manager.active_session_reservations.fetch_update(
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-                |count| count.checked_sub(1),
-            );
-            debug_assert!(released.is_ok(), "terminal capacity reservation underflow");
+            self.manager.release_retired_capacity(&self.scope);
         }
         if self.cleanup_tracked {
             let released = self.manager.pending_cleanups.fetch_update(
@@ -446,6 +447,61 @@ impl Drop for RetiredCleanupGuard<'_> {
 }
 
 impl TerminalSessionManager {
+    fn reservation_count(&self, state: &persistence::SessionState) -> u32 {
+        let retiring = self
+            .retiring_capacity
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.active_session_reservations
+            .load(Ordering::SeqCst)
+            .saturating_add(state.additional_reservations(&retiring))
+    }
+    fn mark_retiring_capacity(&self, scope: &str, reserved: bool) {
+        if !reserved {
+            return;
+        }
+        let mut retiring = self
+            .retiring_capacity
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *retiring.entry(scope.into()).or_default() += 1;
+    }
+    fn release_retired_capacity(&self, scope: &str) {
+        let mut retiring = self
+            .retiring_capacity
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let released = self.active_session_reservations.fetch_update(
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+            |count| count.checked_sub(1),
+        );
+        debug_assert!(released.is_ok(), "terminal capacity reservation underflow");
+        if let Some(count) = retiring.get_mut(scope) {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                retiring.remove(scope);
+            }
+        } else {
+            debug_assert!(false, "retiring capacity scope is missing");
+        }
+    }
+
+    pub(crate) fn from_config(cfg: &Config) -> Arc<Self> {
+        Self::new(
+            TerminalSessionManagerConfig {
+                lease_min_sec: cfg.terminal_lease_min_sec,
+                lease_max_sec: cfg.terminal_lease_max_sec,
+                lease_default_sec: cfg.terminal_lease_default_sec,
+                output_limit_bytes: cfg.terminal_output_limit_bytes,
+                export_max_bytes: cfg.terminal_export_max_bytes,
+                session_max_inflight: cfg.terminal_session_max_inflight,
+                max_active_sessions: cfg.terminal_max_active_sessions,
+            },
+            Arc::new(BoxliteTerminalBackend::new(cfg.clone())),
+        )
+    }
+
     pub(crate) fn new(
         cfg: TerminalSessionManagerConfig,
         backend: Arc<dyn TerminalBackend>,
@@ -464,7 +520,8 @@ impl TerminalSessionManager {
         let max_active_sessions = cfg.max_active_sessions;
         let manager = Arc::new(Self {
             backend,
-            sessions: Mutex::new(HashMap::new()),
+            sessions: Mutex::new(persistence::SessionState::default()),
+            persistence_changed: Arc::new(Notify::new()),
             lease_min_sec,
             lease_max_sec,
             lease_default_sec,
@@ -473,6 +530,7 @@ impl TerminalSessionManager {
             session_max_inflight: cfg.session_max_inflight.max(1),
             max_active_sessions,
             active_session_reservations: AtomicU32::new(0),
+            retiring_capacity: std::sync::Mutex::new(HashMap::new()),
             pending_creations: AtomicU32::new(0),
             cleanup_done: Notify::new(),
             pending_cleanups: AtomicU32::new(0),
@@ -508,7 +566,13 @@ impl TerminalSessionManager {
         let session_id = req.session_id.trim().to_owned();
 
         let claimed = self
-            .claim_session_for_exec(session_id, req.create_if_missing, lease_target)
+            .claim_session_for_exec(
+                session_id,
+                req.create_if_missing,
+                lease_target,
+                req.generation,
+                req.connection_id.as_deref(),
+            )
             .await?;
 
         let box_id = if claimed.created {
@@ -598,7 +662,7 @@ impl TerminalSessionManager {
                 .into())
             }
             Err(BoxliteCommandError::ExecutionFailed(message)) => {
-                self.release_session(&claimed.session_id).await;
+                self.finish_session(&claimed.session_id, true, false).await;
                 Err(TerminalOperationError::ExecutionFailed(message))
             }
         }
@@ -625,6 +689,8 @@ impl TerminalSessionManager {
                 "terminal session manager is closed".to_owned(),
             ));
         }
+        sessions.check_command_access(&session_id, req.generation, req.connection_id.as_deref())?;
+        sessions.persist_lease(&session_id, req.generation, lease_target)?;
         let Some(session) = sessions.get_mut(&session_id) else {
             return Err(TerminalExecError {
                 code: TERMINAL_EXEC_CODE_SESSION_NOT_FOUND.to_owned(),
@@ -648,37 +714,16 @@ impl TerminalSessionManager {
         })
     }
 
+    #[cfg(test)]
     pub(crate) async fn resolve_proxy_target(
         &self,
         session_id: &str,
         guest_port: u16,
         now: SystemTime,
     ) -> Result<String, ProxyTargetError> {
-        let sessions = self.sessions.lock().await;
-        let Some(session) = sessions.get(session_id.trim()) else {
-            return Err(ProxyTargetError::SessionNotFound);
-        };
-        if session.destroying || session.box_id.trim().is_empty() || session.lease_expires_at <= now
-        {
-            return Err(ProxyTargetError::SessionNotFound);
-        }
-        let enabled_ports = self.backend.proxy_ports();
-        if !enabled_ports.contains(&guest_port) {
-            return Err(ProxyTargetError::PortNotEnabled {
-                requested_port: guest_port,
-                enabled_ports,
-            });
-        }
-        Ok(session.box_id.clone())
-    }
-
-    pub(crate) async fn proxy_session_active(&self, session_id: &str, now: SystemTime) -> bool {
-        let sessions = self.sessions.lock().await;
-        sessions.get(session_id.trim()).is_some_and(|session| {
-            !session.destroying
-                && !session.box_id.trim().is_empty()
-                && session.lease_expires_at > now
-        })
+        self.claim_proxy(session_id, guest_port, 0, now)
+            .await
+            .map(|permit| permit.box_id.clone())
     }
 
     pub(crate) async fn resolve_resource(
@@ -718,7 +763,9 @@ impl TerminalSessionManager {
             .into());
         }
 
-        let claimed = self.claim_existing_session(&session_id).await?;
+        let claimed = self
+            .claim_existing_session(&session_id, req.generation, req.connection_id.as_deref())
+            .await?;
         let box_id = match self
             .await_session_ready(&claimed, req.deadline_unix_ms)
             .await
@@ -751,7 +798,8 @@ impl TerminalSessionManager {
                 if failure.destroy {
                     self.release_and_destroy_session(&session_id).await;
                 } else {
-                    self.release_session(&session_id).await;
+                    let uncertain = !matches!(&failure.error, TerminalOperationError::Terminal(_));
+                    self.finish_session(&session_id, uncertain, false).await;
                 }
                 Err(failure.error)
             }
@@ -903,22 +951,34 @@ impl TerminalSessionManager {
 
         let sessions = {
             let mut sessions = self.sessions.lock().await;
+            let held: HashSet<_> = sessions
+                .keys()
+                .filter(|scope| sessions.preserve(scope))
+                .cloned()
+                .collect();
             sessions
                 .drain()
-                .map(|(_, session)| RetiredSession {
-                    box_id: session.box_id,
-                    capacity_reserved: session.capacity_reserved,
-                    cleanup_tracked: false,
+                .map(|(_, session)| {
+                    session.proxy_cancel.cancel();
+                    self.mark_retiring_capacity(&session.session_id, session.capacity_reserved);
+                    (
+                        RetiredSession {
+                            scope: session.session_id.clone(),
+                            box_id: session.box_id,
+                            capacity_reserved: session.capacity_reserved,
+                            cleanup_tracked: false,
+                        },
+                        held.contains(&session.session_id),
+                    )
                 })
                 .collect::<Vec<_>>()
         };
 
         self.wait_for_pending_cleanups().await;
-        for session in sessions {
-            if preserve {
+        for (session, held) in sessions {
+            if preserve || held {
                 if session.capacity_reserved {
-                    self.active_session_reservations
-                        .fetch_sub(1, Ordering::SeqCst);
+                    self.release_retired_capacity(&session.scope);
                 }
             } else {
                 self.cleanup_retired_session(session).await;
@@ -936,26 +996,43 @@ impl TerminalSessionManager {
     }
 
     pub(crate) async fn active_session_count(&self) -> i32 {
-        self.active_session_reservations
-            .load(Ordering::SeqCst)
-            .min(i32::MAX as u32) as i32
+        let state = self.sessions.lock().await;
+        self.reservation_count(&state).min(i32::MAX as u32) as i32
     }
 
     pub(crate) async fn recover_sessions(
         &self,
         candidates: &[TerminalSessionRecoveryCandidate],
     ) -> Vec<TerminalSessionRecoveryResult> {
+        {
+            let mut state = self.sessions.lock().await;
+            if state.failed
+                || (state.journal.is_none() && candidates.iter().any(|c| c.generation != 0))
+            {
+                state.fail();
+                return candidates
+                    .iter()
+                    .map(|candidate| TerminalSessionRecoveryResult {
+                        session_id: candidate.session_id.clone(),
+                        status: terminal_session_recovery_result::Status::Invalid as i32,
+                    })
+                    .collect();
+            }
+        }
         let started_at = std::time::Instant::now();
         let now = SystemTime::now();
         let mut results = Vec::with_capacity(candidates.len());
-        let mut recovered_names = HashSet::with_capacity(candidates.len());
+        let mut recovered_names = self.sessions.lock().await.protected_names.clone();
 
         for candidate in candidates {
             let session_id = candidate.session_id.trim();
             let lease_expires_at = system_time_from_unix_millis(candidate.lease_expires_unix_ms);
             let status = match lease_expires_at {
                 Some(lease_expires_at) if !session_id.is_empty() && lease_expires_at > now => {
-                    match self.recover_one_session(session_id, lease_expires_at).await {
+                    match self
+                        .recover_one_session(session_id, lease_expires_at, candidate.generation)
+                        .await
+                    {
                         Ok(true) => {
                             recovered_names.insert(terminal_session_resource_name(session_id));
                             terminal_session_recovery_result::Status::Recovered
@@ -1014,23 +1091,45 @@ impl TerminalSessionManager {
         &self,
         session_id: &str,
         lease_expires_at: SystemTime,
+        generation: i64,
     ) -> Result<bool, TerminalOperationError> {
         {
             let mut sessions = self.sessions.lock().await;
+            state_recovery_allowed(&sessions, session_id, generation)?;
+            sessions.persist_lease(session_id, generation, lease_expires_at)?;
             if let Some(session) = sessions.get_mut(session_id) {
                 if session.destroying || session.box_id.trim().is_empty() {
                     return Err(TerminalOperationError::ExecutionFailed(
                         "terminal session is not recoverable".to_owned(),
                     ));
                 }
-                session.lease_expires_at = lease_expires_at;
+                if session.lease_expires_at < lease_expires_at {
+                    session.lease_expires_at = lease_expires_at;
+                }
                 return Ok(true);
             }
         }
 
-        let Some(box_id) = self.backend.recover_session_box(session_id).await? else {
+        let pinned = {
+            let state = self.sessions.lock().await;
+            state_recovery_allowed(&state, session_id, generation)?;
+            state
+                .fences
+                .get(session_id)
+                .map(|f| f.box_id.clone())
+                .or_else(|| state.bootstrap.get(session_id).cloned())
+        };
+        let recovered = if let Some(ref id) = pinned {
+            self.backend.recover_pinned_session_box(id).await?
+        } else {
+            self.backend.recover_session_box(session_id).await?
+        };
+        let Some(box_id) = recovered else {
             return Ok(false);
         };
+        if pinned.as_ref().is_some_and(|expected| *expected != box_id) {
+            return Err(persistence::conflict());
+        }
 
         let mut sessions = self.sessions.lock().await;
         if self.closed.load(Ordering::SeqCst) {
@@ -1038,6 +1137,12 @@ impl TerminalSessionManager {
                 TERMINAL_MANAGER_CLOSED_MESSAGE.to_owned(),
             ));
         }
+        state_recovery_allowed(&sessions, session_id, generation)?;
+        let lease_expires_at = if generation > 0 && sessions.fences.contains_key(session_id) {
+            sessions.journal_lease(session_id)?.max(lease_expires_at)
+        } else {
+            lease_expires_at
+        };
         if let Some(session) = sessions.get_mut(session_id) {
             session.lease_expires_at = lease_expires_at;
             return Ok(true);
@@ -1054,6 +1159,9 @@ impl TerminalSessionManager {
                 destroying: false,
                 capacity_reserved: true,
                 ready_tx,
+                proxy_cancel: CancellationToken::new(),
+                proxy_inflight: Arc::new(AtomicU32::new(0)),
+                persistence_fault: false,
             },
         );
         self.active_session_reservations
@@ -1067,8 +1175,11 @@ impl TerminalSessionManager {
             let mut sessions = self.sessions.lock().await;
             let expired_ids = sessions
                 .iter()
-                .filter(|(_, session)| {
-                    session.inflight == 0 && !session.destroying && session.lease_expires_at <= now
+                .filter(|(scope, session)| {
+                    !sessions.preserve(scope)
+                        && session.inflight == 0
+                        && session.proxy_inflight.load(Ordering::SeqCst) == 0
+                        && (session.destroying || session.lease_expires_at <= now)
                 })
                 .map(|(session_id, _)| session_id.clone())
                 .collect::<Vec<_>>();
@@ -1077,8 +1188,11 @@ impl TerminalSessionManager {
                 .into_iter()
                 .filter_map(|session_id| sessions.remove(&session_id))
                 .map(|session| {
+                    session.proxy_cancel.cancel();
                     self.pending_cleanups.fetch_add(1, Ordering::SeqCst);
+                    self.mark_retiring_capacity(&session.session_id, session.capacity_reserved);
                     RetiredSession {
+                        scope: session.session_id.clone(),
                         box_id: session.box_id,
                         capacity_reserved: session.capacity_reserved,
                         cleanup_tracked: true,
@@ -1102,10 +1216,11 @@ impl TerminalSessionManager {
     }
 
     async fn cleanup_retired_session(&self, session: RetiredSession) {
-        // Drop releases local capacity even if this async cleanup is cancelled.
-        // The backend attempt is no longer in progress once the future is dropped.
+        // The guard releases this ordinary cleanup's capacity bookkeeping.
+        // Lifecycle native cleanup acknowledgement is owned by the controller.
         let _cleanup_guard = RetiredCleanupGuard {
             manager: self,
+            scope: session.scope.clone(),
             capacity_reserved: session.capacity_reserved,
             cleanup_tracked: session.cleanup_tracked,
         };
@@ -1151,6 +1266,8 @@ impl TerminalSessionManager {
         session_id: String,
         create_if_missing: bool,
         lease_target: SystemTime,
+        generation: i64,
+        connection_id: Option<&str>,
     ) -> Result<ClaimedSession, TerminalOperationError> {
         let mut sessions = self.sessions.lock().await;
         if self.closed.load(Ordering::SeqCst) {
@@ -1158,6 +1275,8 @@ impl TerminalSessionManager {
                 "terminal session manager is closed".to_owned(),
             ));
         }
+        sessions.check_command_access(&session_id, generation, connection_id)?;
+        sessions.persist_lease(&session_id, generation, lease_target)?;
         if session_id.is_empty() {
             return self.insert_pending_session(
                 &mut sessions,
@@ -1207,12 +1326,12 @@ impl TerminalSessionManager {
 
     fn insert_pending_session(
         &self,
-        sessions: &mut HashMap<String, TerminalSession>,
+        sessions: &mut persistence::SessionState,
         session_id: String,
         lease_target: SystemTime,
     ) -> Result<ClaimedSession, TerminalOperationError> {
         if self.max_active_sessions > 0
-            && self.active_session_reservations.load(Ordering::SeqCst) >= self.max_active_sessions
+            && self.reservation_count(sessions) >= self.max_active_sessions
         {
             return Err(TerminalExecError {
                 code: TERMINAL_EXEC_CODE_SESSION_CAPACITY_EXCEEDED.to_owned(),
@@ -1232,6 +1351,9 @@ impl TerminalSessionManager {
                 destroying: false,
                 capacity_reserved: true,
                 ready_tx,
+                proxy_cancel: CancellationToken::new(),
+                proxy_inflight: Arc::new(AtomicU32::new(0)),
+                persistence_fault: false,
             },
         );
         self.active_session_reservations
@@ -1247,6 +1369,8 @@ impl TerminalSessionManager {
     async fn claim_existing_session(
         &self,
         session_id: &str,
+        generation: i64,
+        connection_id: Option<&str>,
     ) -> Result<ClaimedSession, TerminalOperationError> {
         let mut sessions = self.sessions.lock().await;
         if self.closed.load(Ordering::SeqCst) {
@@ -1254,6 +1378,7 @@ impl TerminalSessionManager {
                 "terminal session manager is closed".to_owned(),
             ));
         }
+        sessions.check_command_access(session_id, generation, connection_id)?;
         match sessions.get_mut(session_id) {
             Some(session) if !session.destroying => {
                 if session.inflight >= self.session_max_inflight {
@@ -1343,60 +1468,51 @@ impl TerminalSessionManager {
     /// Gives back one inflight slot and reports the current lease. A command
     /// that already produced a result still reports success here, even if the
     /// session is being torn down: the work completed and its output is valid.
-    async fn release_session(&self, session_id: &str) -> Option<SystemTime> {
+    async fn release_session(&self, scope: &str) -> Option<SystemTime> {
+        self.finish_session(scope, false, false).await
+    }
+    async fn release_and_destroy_session(&self, scope: &str) {
+        self.finish_session(scope, true, true).await;
+    }
+    async fn finish_session(&self, scope: &str, failed: bool, destroy: bool) -> Option<SystemTime> {
         let (lease, retired) = {
-            let mut sessions = self.sessions.lock().await;
-            let session = sessions.get_mut(session_id)?;
+            let mut state = self.sessions.lock().await;
+            let preserve = state.preserve(scope);
+            let session = state.get_mut(scope)?;
+            if preserve && failed {
+                session.persistence_fault = true;
+            }
+            if destroy && !preserve {
+                session.destroying = true;
+                session.proxy_cancel.cancel();
+            }
             session.inflight = session.inflight.saturating_sub(1);
             let lease = session.lease_expires_at;
-            let reclaim = session.destroying && session.inflight == 0;
+            let reclaim = !preserve
+                && session.destroying
+                && session.inflight == 0
+                && session.proxy_inflight.load(Ordering::SeqCst) == 0;
             let retired = if reclaim {
                 self.pending_cleanups.fetch_add(1, Ordering::SeqCst);
-                sessions.remove(session_id).map(|session| RetiredSession {
-                    box_id: session.box_id,
-                    capacity_reserved: session.capacity_reserved,
-                    cleanup_tracked: true,
+                state.remove(scope).map(|session| {
+                    self.mark_retiring_capacity(&session.session_id, session.capacity_reserved);
+                    RetiredSession {
+                        scope: session.session_id,
+                        box_id: session.box_id,
+                        capacity_reserved: session.capacity_reserved,
+                        cleanup_tracked: true,
+                    }
                 })
             } else {
                 None
             };
             (lease, retired)
         };
-
+        self.persistence_changed.notify_waiters();
         if let Some(retired) = retired {
             self.cleanup_retired_session(retired).await;
         }
         Some(lease)
-    }
-
-    /// Retires the caller's slot and marks the session for destruction. The box
-    /// survives until the last concurrent command drains, so one command's
-    /// timeout cannot kill its siblings.
-    async fn release_and_destroy_session(&self, session_id: &str) {
-        let retired = {
-            let mut sessions = self.sessions.lock().await;
-            match sessions.get_mut(session_id) {
-                Some(session) => {
-                    session.destroying = true;
-                    session.inflight = session.inflight.saturating_sub(1);
-                    if session.inflight == 0 {
-                        self.pending_cleanups.fetch_add(1, Ordering::SeqCst);
-                        sessions.remove(session_id).map(|session| RetiredSession {
-                            box_id: session.box_id,
-                            capacity_reserved: session.capacity_reserved,
-                            cleanup_tracked: true,
-                        })
-                    } else {
-                        None
-                    }
-                }
-                None => None,
-            }
-        };
-
-        if let Some(retired) = retired {
-            self.cleanup_retired_session(retired).await;
-        }
     }
 
     #[cfg(test)]
@@ -1419,6 +1535,9 @@ impl TerminalSessionManager {
                 destroying: false,
                 capacity_reserved: false,
                 ready_tx,
+                proxy_cancel: CancellationToken::new(),
+                proxy_inflight: Arc::new(AtomicU32::new(0)),
+                persistence_fault: false,
             },
         );
     }
@@ -1532,6 +1651,15 @@ impl TerminalBackend for BoxliteTerminalBackend {
         )
         .await
         .map_err(map_boxlite_terminal_error)
+    }
+
+    async fn recover_pinned_session_box(
+        &self,
+        box_id: &str,
+    ) -> Result<Option<String>, TerminalOperationError> {
+        boxlite_runtime::recover_pinned_terminal_session_box(&self.cfg, box_id)
+            .await
+            .map_err(map_boxlite_terminal_error)
     }
 
     async fn cleanup_orphan_session_boxes(&self, expected_names: &HashSet<String>) -> usize {
@@ -2557,6 +2685,8 @@ mod tests {
 
         let first = manager
             .execute(TerminalExecRequest {
+                generation: 0,
+                connection_id: None,
                 command: "set-persist-value".to_owned(),
                 session_id: String::new(),
                 create_if_missing: false,
@@ -2570,6 +2700,8 @@ mod tests {
 
         let second = manager
             .execute(TerminalExecRequest {
+                generation: 0,
+                connection_id: None,
                 command: "get-persist-value".to_owned(),
                 session_id: first.session_id.clone(),
                 create_if_missing: false,
@@ -2590,6 +2722,8 @@ mod tests {
         let manager = manager_with_backend(backend, 1024);
         let created = manager
             .execute(TerminalExecRequest {
+                generation: 0,
+                connection_id: None,
                 command: "seed".to_owned(),
                 session_id: String::new(),
                 create_if_missing: false,
@@ -2600,6 +2734,8 @@ mod tests {
             .expect("create session");
         let renewed = manager
             .renew_lease(TerminalLeaseRenewRequest {
+                generation: 0,
+                connection_id: None,
                 session_id: created.session_id.clone(),
                 lease_ttl_sec: 120,
             })
@@ -2608,6 +2744,8 @@ mod tests {
         assert!(renewed.lease_expires_unix_ms > created.lease_expires_unix_ms);
         let shorter = manager
             .renew_lease(TerminalLeaseRenewRequest {
+                generation: 0,
+                connection_id: None,
                 session_id: created.session_id,
                 lease_ttl_sec: 60,
             })
@@ -2623,6 +2761,8 @@ mod tests {
         let manager = manager_with_backend(backend, 1024 * 1024);
         let created = manager
             .execute(TerminalExecRequest {
+                generation: 0,
+                connection_id: None,
                 command: "true".to_owned(),
                 session_id: String::new(),
                 create_if_missing: false,
@@ -2693,6 +2833,8 @@ mod tests {
         let first = tokio::spawn(async move {
             manager_for_task
                 .execute(TerminalExecRequest {
+                    generation: 0,
+                    connection_id: None,
                     command: "block-command".to_owned(),
                     session_id: String::new(),
                     create_if_missing: false,
@@ -2714,6 +2856,8 @@ mod tests {
 
         let err = manager
             .execute(TerminalExecRequest {
+                generation: 0,
+                connection_id: None,
                 command: "any-command".to_owned(),
                 session_id,
                 create_if_missing: false,
@@ -2744,6 +2888,8 @@ mod tests {
 
         let err = manager
             .execute(TerminalExecRequest {
+                generation: 0,
+                connection_id: None,
                 command: "timeout-command".to_owned(),
                 session_id: "timeout-session".to_owned(),
                 create_if_missing: true,
@@ -2768,6 +2914,8 @@ mod tests {
         let high = 120;
         let first = manager
             .execute(TerminalExecRequest {
+                generation: 0,
+                connection_id: None,
                 command: "big-output".to_owned(),
                 session_id: String::new(),
                 create_if_missing: false,
@@ -2784,6 +2932,8 @@ mod tests {
         let low = 60;
         let second = manager
             .execute(TerminalExecRequest {
+                generation: 0,
+                connection_id: None,
                 command: "big-output".to_owned(),
                 session_id: first.session_id.clone(),
                 create_if_missing: false,
@@ -2804,6 +2954,8 @@ mod tests {
 
         let result = manager
             .execute(TerminalExecRequest {
+                generation: 0,
+                connection_id: None,
                 command: "你好世界".to_owned(),
                 session_id: String::new(),
                 create_if_missing: false,
@@ -2835,6 +2987,8 @@ mod tests {
 
         let validate = manager
             .resolve_resource(TerminalResourceRequest {
+                generation: 0,
+                connection_id: None,
                 session_id: "sess-1".to_owned(),
                 file_path: "/tmp/hello.txt".to_owned(),
                 action: TERMINAL_RESOURCE_ACTION_VALIDATE.to_owned(),
@@ -2849,6 +3003,8 @@ mod tests {
 
         let read = manager
             .resolve_resource(TerminalResourceRequest {
+                generation: 0,
+                connection_id: None,
                 session_id: "sess-1".to_owned(),
                 file_path: "/tmp/hello.txt".to_owned(),
                 action: TERMINAL_RESOURCE_ACTION_READ.to_owned(),
@@ -2879,6 +3035,8 @@ mod tests {
 
         let result = manager
             .resolve_resource(TerminalResourceRequest {
+                generation: 0,
+                connection_id: None,
                 session_id: "sess-export".to_owned(),
                 file_path: "/root/hello.txt".to_owned(),
                 action: TERMINAL_RESOURCE_ACTION_EXPORT.to_owned(),
@@ -2921,6 +3079,8 @@ mod tests {
 
         let err = manager
             .resolve_resource(TerminalResourceRequest {
+                generation: 0,
+                connection_id: None,
                 session_id: "sess-export-missing-url".to_owned(),
                 file_path: "/tmp/hello.txt".to_owned(),
                 action: TERMINAL_RESOURCE_ACTION_EXPORT.to_owned(),
@@ -2947,6 +3107,8 @@ mod tests {
 
         let err = manager
             .resolve_resource(TerminalResourceRequest {
+                generation: 0,
+                connection_id: None,
                 session_id: "missing-session".to_owned(),
                 file_path: "/tmp/hello.txt".to_owned(),
                 action: TERMINAL_RESOURCE_ACTION_EXPORT.to_owned(),
@@ -2993,6 +3155,8 @@ mod tests {
 
         let err = manager
             .resolve_resource(TerminalResourceRequest {
+                generation: 0,
+                connection_id: None,
                 session_id: "sess-export-oversized".to_owned(),
                 file_path: "/root/large.bin".to_owned(),
                 action: TERMINAL_RESOURCE_ACTION_EXPORT.to_owned(),
@@ -3052,6 +3216,8 @@ mod tests {
 
             let err = manager
                 .resolve_resource(TerminalResourceRequest {
+                    generation: 0,
+                    connection_id: None,
                     session_id: "sess-1".to_owned(),
                     file_path: "/tmp/hello.txt".to_owned(),
                     action: TERMINAL_RESOURCE_ACTION_READ.to_owned(),
@@ -3085,6 +3251,8 @@ mod tests {
 
         let err = manager
             .resolve_resource(TerminalResourceRequest {
+                generation: 0,
+                connection_id: None,
                 session_id: "sess-empty".to_owned(),
                 file_path: "/tmp/hello.txt".to_owned(),
                 action: TERMINAL_RESOURCE_ACTION_VALIDATE.to_owned(),
@@ -3114,6 +3282,8 @@ mod tests {
 
         let missing = manager
             .resolve_resource(TerminalResourceRequest {
+                generation: 0,
+                connection_id: None,
                 session_id: "missing".to_owned(),
                 file_path: "/tmp/hello.txt".to_owned(),
                 action: String::new(),
@@ -3140,6 +3310,8 @@ mod tests {
             .await;
         let busy = manager
             .resolve_resource(TerminalResourceRequest {
+                generation: 0,
+                connection_id: None,
                 session_id: "busy".to_owned(),
                 file_path: "/tmp/hello.txt".to_owned(),
                 action: String::new(),
@@ -3166,6 +3338,8 @@ mod tests {
             .await;
         let err = manager
             .resolve_resource(TerminalResourceRequest {
+                generation: 0,
+                connection_id: None,
                 session_id: "sess-timeout".to_owned(),
                 file_path: "/tmp/hello.txt".to_owned(),
                 action: TERMINAL_RESOURCE_ACTION_READ.to_owned(),
@@ -3205,6 +3379,8 @@ mod tests {
 
         manager
             .execute(TerminalExecRequest {
+                generation: 0,
+                connection_id: None,
                 command: "seed".to_owned(),
                 session_id: "resource-timeout".to_owned(),
                 create_if_missing: true,
@@ -3215,6 +3391,8 @@ mod tests {
             .unwrap();
         let err = manager
             .resolve_resource(TerminalResourceRequest {
+                generation: 0,
+                connection_id: None,
                 session_id: "resource-timeout".to_owned(),
                 file_path: "/workspace/file.txt".to_owned(),
                 action: TERMINAL_RESOURCE_ACTION_READ.to_owned(),
@@ -3248,6 +3426,8 @@ mod tests {
         let first = tokio::spawn(async move {
             manager_for_task
                 .execute(TerminalExecRequest {
+                    generation: 0,
+                    connection_id: None,
                     command: "block-command".to_owned(),
                     session_id: "sess-shared".to_owned(),
                     create_if_missing: true,
@@ -3260,6 +3440,8 @@ mod tests {
         exec_started.await;
         let err = manager
             .resolve_resource(TerminalResourceRequest {
+                generation: 0,
+                connection_id: None,
                 session_id: "sess-shared".to_owned(),
                 file_path: "/tmp/hello.txt".to_owned(),
                 action: TERMINAL_RESOURCE_ACTION_VALIDATE.to_owned(),
@@ -3305,6 +3487,8 @@ mod tests {
         let exec_task = tokio::spawn(async move {
             exec_manager
                 .execute(TerminalExecRequest {
+                    generation: 0,
+                    connection_id: None,
                     command: "block-command".to_owned(),
                     session_id: "sess-exec".to_owned(),
                     create_if_missing: true,
@@ -3318,6 +3502,8 @@ mod tests {
         let resource_task = tokio::spawn(async move {
             resource_manager
                 .resolve_resource(TerminalResourceRequest {
+                    generation: 0,
+                    connection_id: None,
                     session_id: "sess-resource".to_owned(),
                     file_path: "/tmp/hello.txt".to_owned(),
                     action: TERMINAL_RESOURCE_ACTION_VALIDATE.to_owned(),
@@ -3399,6 +3585,8 @@ mod tests {
         for session_id in ["session-a", "session-b"] {
             manager
                 .execute(TerminalExecRequest {
+                    generation: 0,
+                    connection_id: None,
                     command: "seed".to_owned(),
                     session_id: session_id.to_owned(),
                     create_if_missing: true,
@@ -3412,6 +3600,8 @@ mod tests {
 
         let err = manager
             .execute(TerminalExecRequest {
+                generation: 0,
+                connection_id: None,
                 command: "overflow".to_owned(),
                 session_id: "session-c".to_owned(),
                 create_if_missing: true,
@@ -3434,6 +3624,8 @@ mod tests {
 
         let missing = manager
             .execute(TerminalExecRequest {
+                generation: 0,
+                connection_id: None,
                 command: "missing".to_owned(),
                 session_id: "missing".to_owned(),
                 create_if_missing: false,
@@ -3451,6 +3643,8 @@ mod tests {
 
         let reused = manager
             .execute(TerminalExecRequest {
+                generation: 0,
+                connection_id: None,
                 command: "reuse".to_owned(),
                 session_id: "session-a".to_owned(),
                 create_if_missing: false,
@@ -3463,6 +3657,8 @@ mod tests {
 
         let resource = manager
             .resolve_resource(TerminalResourceRequest {
+                generation: 0,
+                connection_id: None,
                 session_id: "session-a".to_owned(),
                 file_path: "/workspace/a.txt".to_owned(),
                 action: TERMINAL_RESOURCE_ACTION_VALIDATE.to_owned(),
@@ -3497,6 +3693,8 @@ mod tests {
         for session_id in ["one", "two", "three"] {
             manager
                 .execute(TerminalExecRequest {
+                    generation: 0,
+                    connection_id: None,
                     command: "seed".to_owned(),
                     session_id: session_id.to_owned(),
                     create_if_missing: true,
@@ -3536,6 +3734,8 @@ mod tests {
         let creator = tokio::spawn(async move {
             manager_for_task
                 .execute(TerminalExecRequest {
+                    generation: 0,
+                    connection_id: None,
                     command: "create".to_owned(),
                     session_id: "creating".to_owned(),
                     create_if_missing: true,
@@ -3549,6 +3749,8 @@ mod tests {
 
         let err = manager
             .execute(TerminalExecRequest {
+                generation: 0,
+                connection_id: None,
                 command: "overflow".to_owned(),
                 session_id: "second".to_owned(),
                 create_if_missing: true,
@@ -3574,6 +3776,8 @@ mod tests {
         backend.fail_next_create.store(true, Ordering::SeqCst);
         let failed = manager
             .execute(TerminalExecRequest {
+                generation: 0,
+                connection_id: None,
                 command: "failed".to_owned(),
                 session_id: String::new(),
                 create_if_missing: false,
@@ -3586,6 +3790,8 @@ mod tests {
 
         manager
             .execute(TerminalExecRequest {
+                generation: 0,
+                connection_id: None,
                 command: "replacement".to_owned(),
                 session_id: "replacement".to_owned(),
                 create_if_missing: true,
@@ -3621,6 +3827,8 @@ mod tests {
         let creator = tokio::spawn(async move {
             creator_manager
                 .execute(TerminalExecRequest {
+                    generation: 0,
+                    connection_id: None,
                     command: "creator".to_owned(),
                     session_id: "waiter-deadline".to_owned(),
                     create_if_missing: true,
@@ -3633,6 +3841,8 @@ mod tests {
 
         let waiter_error = manager
             .execute(TerminalExecRequest {
+                generation: 0,
+                connection_id: None,
                 command: "waiter".to_owned(),
                 session_id: "waiter-deadline".to_owned(),
                 create_if_missing: true,
@@ -3677,6 +3887,8 @@ mod tests {
         let creator = tokio::spawn(async move {
             creator_manager
                 .execute(TerminalExecRequest {
+                    generation: 0,
+                    connection_id: None,
                     command: "creator".to_owned(),
                     session_id: "creation-deadline".to_owned(),
                     create_if_missing: true,
@@ -3691,6 +3903,8 @@ mod tests {
         let waiter = tokio::spawn(async move {
             waiter_manager
                 .execute(TerminalExecRequest {
+                    generation: 0,
+                    connection_id: None,
                     command: "waiter".to_owned(),
                     session_id: "creation-deadline".to_owned(),
                     create_if_missing: true,
@@ -3748,6 +3962,8 @@ mod tests {
 
         manager
             .execute(TerminalExecRequest {
+                generation: 0,
+                connection_id: None,
                 command: "seed".to_owned(),
                 session_id: "expired".to_owned(),
                 create_if_missing: true,
@@ -3775,6 +3991,8 @@ mod tests {
 
         let err = manager
             .execute(TerminalExecRequest {
+                generation: 0,
+                connection_id: None,
                 command: "overflow".to_owned(),
                 session_id: "replacement".to_owned(),
                 create_if_missing: true,
@@ -3826,6 +4044,8 @@ mod tests {
 
         manager
             .execute(TerminalExecRequest {
+                generation: 0,
+                connection_id: None,
                 command: "seed".to_owned(),
                 session_id: "cancelled-cleanup".to_owned(),
                 create_if_missing: true,
@@ -3881,6 +4101,8 @@ mod tests {
         let creator = tokio::spawn(async move {
             manager_for_creator
                 .execute(TerminalExecRequest {
+                    generation: 0,
+                    connection_id: None,
                     command: "create".to_owned(),
                     session_id: "creating-on-close".to_owned(),
                     create_if_missing: true,
@@ -3925,6 +4147,8 @@ mod tests {
         let creator = tokio::spawn(async move {
             manager_for_creator
                 .execute(TerminalExecRequest {
+                    generation: 0,
+                    connection_id: None,
                     command: "create".to_owned(),
                     session_id: "stuck-creation".to_owned(),
                     create_if_missing: true,
@@ -4148,6 +4372,8 @@ mod tests {
 
     fn exec_req(session_id: &str, command: &str, create_if_missing: bool) -> TerminalExecRequest {
         TerminalExecRequest {
+            generation: 0,
+            connection_id: None,
             command: command.to_owned(),
             session_id: session_id.to_owned(),
             create_if_missing,
@@ -4615,6 +4841,8 @@ mod tests {
         // terminalResource must not be blocked by the in-flight terminalExec.
         let resource = manager
             .resolve_resource(TerminalResourceRequest {
+                generation: 0,
+                connection_id: None,
                 session_id: "sess-mixed".to_owned(),
                 file_path: "/workspace/a.txt".to_owned(),
                 action: TERMINAL_RESOURCE_ACTION_VALIDATE.to_owned(),
@@ -4655,6 +4883,8 @@ mod tests {
 
         let err = manager
             .resolve_resource(TerminalResourceRequest {
+                generation: 0,
+                connection_id: None,
                 session_id: "sess-serial".to_owned(),
                 file_path: "/workspace/a.txt".to_owned(),
                 action: TERMINAL_RESOURCE_ACTION_VALIDATE.to_owned(),
@@ -4687,6 +4917,7 @@ mod tests {
         let results = manager
             .recover_sessions(&[TerminalSessionRecoveryCandidate {
                 generation: 0,
+
                 session_id: session_id.to_owned(),
                 lease_expires_unix_ms: lease_unix_ms,
             }])
@@ -4722,6 +4953,7 @@ mod tests {
         let repeated = manager
             .recover_sessions(&[TerminalSessionRecoveryCandidate {
                 generation: 0,
+
                 session_id: session_id.to_owned(),
                 lease_expires_unix_ms: lease_unix_ms,
             }])
@@ -4754,6 +4986,7 @@ mod tests {
             .recover_sessions(&[
                 TerminalSessionRecoveryCandidate {
                     generation: 0,
+
                     session_id: "session-missing".to_owned(),
                     lease_expires_unix_ms: to_unix_millis(
                         SystemTime::now() + Duration::from_secs(60),
@@ -4761,6 +4994,7 @@ mod tests {
                 },
                 TerminalSessionRecoveryCandidate {
                     generation: 0,
+
                     session_id: "session-expired".to_owned(),
                     lease_expires_unix_ms: to_unix_millis(
                         SystemTime::now() - Duration::from_secs(60),
@@ -4788,6 +5022,7 @@ mod tests {
         let manager = manager_with_limit(backend, 1);
         let candidates = vec![TerminalSessionRecoveryCandidate {
             generation: 0,
+
             session_id: session_id.to_owned(),
             lease_expires_unix_ms: to_unix_millis(SystemTime::now() + Duration::from_secs(60)),
         }];
@@ -4815,3 +5050,8 @@ mod tests {
         assert_eq!(name, terminal_session_resource_name(session_id));
     }
 }
+
+#[path = "terminal_persistence.rs"]
+mod persistence;
+use persistence::state_recovery_allowed;
+pub(crate) use persistence::ProxyPermit;

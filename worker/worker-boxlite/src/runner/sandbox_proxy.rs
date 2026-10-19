@@ -14,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 use crate::config::Config;
 use crate::{boxlite_runtime, boxlite_runtime::BoxliteCommandError};
 
-use super::terminal_session_manager::{ProxyTargetError, TerminalSessionManager};
+use super::terminal_session_manager::{ProxyPermit, ProxyTargetError, TerminalSessionManager};
 use super::RunnerError;
 
 const TOKEN_PREFIX: &str = "obx_route_v1.";
@@ -29,6 +29,8 @@ type HmacSha256 = Hmac<Sha256>;
 struct RouteClaims {
     worker_id: String,
     session_id: String,
+    #[serde(default)]
+    generation: i64,
     port: u16,
     exp: i64,
 }
@@ -135,8 +137,13 @@ async fn handle_connection(
         Ok(claims) if claims.worker_id == worker_id => claims,
         _ => return write_error(&mut client, 401, "invalid route token").await,
     };
-    let box_id = match manager
-        .resolve_proxy_target(&claims.session_id, claims.port, SystemTime::now())
+    let permit = match manager
+        .claim_proxy(
+            &claims.session_id,
+            claims.port,
+            claims.generation,
+            SystemTime::now(),
+        )
         .await
     {
         Ok(target) => target,
@@ -147,29 +154,74 @@ async fn handle_connection(
             return write_error(&mut client, 403, &err.to_string()).await
         }
     };
-    let mut upstream =
-        match boxlite_runtime::open_terminal_proxy_connection(&cfg, &box_id, claims.port).await {
-            Ok(connection) => connection,
-            Err(BoxliteCommandError::MissingBox) => {
-                return write_error(&mut client, 404, "sandbox session not found").await
-            }
-            Err(_) => return write_error(&mut client, 502, "sandbox upstream unavailable").await,
-        };
-    upstream.write_all(&cleaned).await?;
-
+    let box_id = permit.box_id.clone();
+    let cancel = permit.cancel.clone();
+    let opening = spawn_proxy_open(permit, move |box_id| async move {
+        boxlite_runtime::open_terminal_proxy_connection(&cfg, &box_id, claims.port).await
+    });
+    // Dropping this JoinHandle detaches the SDK open attempt. Its owned permit
+    // continues to block source drain until the attempt and connection end.
+    let mut upstream = tokio::select! {
+        biased;
+        _=cancel.cancelled()=>return Ok(()),
+        _=shutdown.cancelled()=>return Ok(()),
+        result=opening=>match result {
+            Ok(Ok(opened))=>opened,
+            Ok(Err(BoxliteCommandError::MissingBox))=>return write_error(&mut client,404,"sandbox session not found").await,
+            _=>return write_error(&mut client,502,"sandbox upstream unavailable").await,
+        }
+    };
+    tokio::select! {
+        biased;
+        _=cancel.cancelled()=>return Ok(()),
+        _=shutdown.cancelled()=>return Ok(()),
+        result=upstream.connection.write_all(&cleaned)=>result?,
+    }
     let session_id = claims.session_id;
     tokio::select! {
-        result = tokio::io::copy_bidirectional(&mut client, &mut upstream) => result.map(|_| ()),
-        _ = shutdown.cancelled() => Ok(()),
-        _ = wait_session_end(manager, session_id) => Ok(()),
+        biased;
+        _=cancel.cancelled()=>Ok(()),
+        _=shutdown.cancelled()=>Ok(()),
+        _=wait_session_end(manager,session_id,box_id,claims.generation)=>Ok(()),
+        result=tokio::io::copy_bidirectional(&mut client,&mut upstream.connection)=>result.map(|_|()),
     }
 }
 
-async fn wait_session_end(manager: Arc<TerminalSessionManager>, session_id: String) {
+// Declaration order ensures the tunnel closes before its drain permit drops.
+pub(super) struct OpenedProxy<T> {
+    connection: T,
+    _permit: ProxyPermit,
+}
+
+pub(super) fn spawn_proxy_open<T, E, F, Fut>(
+    permit: ProxyPermit,
+    open: F,
+) -> tokio::task::JoinHandle<Result<OpenedProxy<T>, E>>
+where
+    T: Send + 'static,
+    E: Send + 'static,
+    F: FnOnce(String) -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Result<T, E>> + Send + 'static,
+{
+    tokio::spawn(async move {
+        let connection = open(permit.box_id.clone()).await?;
+        Ok(OpenedProxy {
+            connection,
+            _permit: permit,
+        })
+    })
+}
+
+async fn wait_session_end(
+    manager: Arc<TerminalSessionManager>,
+    session_id: String,
+    box_id: String,
+    generation: i64,
+) {
     loop {
         tokio::time::sleep(Duration::from_secs(1)).await;
         if !manager
-            .proxy_session_active(&session_id, SystemTime::now())
+            .proxy_binding_active(&session_id, &box_id, generation, SystemTime::now())
             .await
         {
             return;
@@ -280,6 +332,7 @@ fn verify_token(key: &[u8], token: &str) -> Result<RouteClaims, ()> {
         .as_millis() as i64;
     if claims.worker_id.trim().is_empty()
         || claims.session_id.trim().is_empty()
+        || claims.generation < 0
         || claims.port == 0
         || claims.exp <= now
     {
@@ -385,6 +438,32 @@ mod tests {
             "fe80::1",
         ] {
             assert!(!is_unicast(address.parse().unwrap()), "accepted {address}");
+        }
+    }
+    #[test]
+    fn signed_route_generation_is_decoded_and_negative_generations_are_rejected() {
+        let key = derive_key("worker-secret").unwrap();
+        for generation in [0, 2, -1] {
+            let payload = URL_SAFE_NO_PAD.encode(
+                serde_json::to_vec(&serde_json::json!({
+                    "worker_id":"worker-a","session_id":"obx:owner:session","port":8080,
+                    "exp":4_102_444_800_000_i64,"generation":generation,
+                }))
+                .unwrap(),
+            );
+            let signed = format!("{TOKEN_PREFIX}{payload}");
+            let mut mac = HmacSha256::new_from_slice(&key).unwrap();
+            mac.update(signed.as_bytes());
+            let token = format!(
+                "{signed}.{}",
+                URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes())
+            );
+            let result = verify_token(&key, &token);
+            if generation < 0 {
+                assert!(result.is_err());
+            } else {
+                assert_eq!(result.unwrap().generation, generation);
+            }
         }
     }
 }

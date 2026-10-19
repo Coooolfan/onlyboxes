@@ -25,7 +25,6 @@ pub(crate) const TERMINAL_RESOURCE_CAPABILITY_NAME: &str = "terminalresource";
 pub(crate) const TERMINAL_RESOURCE_CAPABILITY_DECLARED: &str = "terminalResource";
 pub(crate) const PROXY_ENDPOINT_LABEL: &str = "obx.proxy_endpoint";
 
-pub(crate) use capability_executor::build_command_result;
 pub(crate) use capability_executor::command_dispatch_summary_for_log;
 pub(crate) use hello_builder::build_hello;
 pub(crate) use session_client::run_session;

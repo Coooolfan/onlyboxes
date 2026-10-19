@@ -38,6 +38,8 @@ struct PythonExecResult {
 
 #[derive(Debug, Deserialize)]
 struct TerminalExecPayload {
+    #[serde(default)]
+    generation: i64,
     command: String,
     #[serde(default)]
     session_id: String,
@@ -49,6 +51,8 @@ struct TerminalExecPayload {
 
 #[derive(Debug, Deserialize)]
 struct TerminalResourcePayload {
+    #[serde(default)]
+    generation: i64,
     session_id: String,
     file_path: String,
     #[serde(default)]
@@ -61,17 +65,34 @@ struct TerminalResourcePayload {
 
 #[derive(Debug, Deserialize)]
 struct TerminalLeaseRenewPayload {
+    #[serde(default)]
+    generation: i64,
     session_id: String,
     lease_ttl_sec: i32,
 }
 
-static DEFAULT_CAPABILITY_RUNTIME: DefaultCapabilityRuntime = DefaultCapabilityRuntime;
+#[cfg(test)]
+static DEFAULT_CAPABILITY_RUNTIME: DefaultCapabilityRuntime = DefaultCapabilityRuntime {
+    connection_id: None,
+};
 
+#[cfg(test)]
 pub(crate) async fn build_command_result(
     cfg: &Config,
     dispatch: CommandDispatch,
 ) -> ConnectRequest {
     build_command_result_with_runtime(cfg, dispatch, &DEFAULT_CAPABILITY_RUNTIME).await
+}
+
+pub(crate) async fn build_command_result_for_connection(
+    cfg: &Config,
+    dispatch: CommandDispatch,
+    connection: &str,
+) -> ConnectRequest {
+    let runtime = DefaultCapabilityRuntime {
+        connection_id: Some(connection.into()),
+    };
+    build_command_result_with_runtime(cfg, dispatch, &runtime).await
 }
 
 async fn build_command_result_with_runtime<R>(
@@ -168,6 +189,8 @@ where
         .run_terminal_lease_renew(
             cfg,
             TerminalLeaseRenewRequest {
+                generation: decoded.generation,
+                connection_id: None,
                 session_id: decoded.session_id,
                 lease_ttl_sec: decoded.lease_ttl_sec,
             },
@@ -277,6 +300,8 @@ where
         .run_terminal_exec(
             cfg,
             TerminalExecRequest {
+                generation: decoded.generation,
+                connection_id: None,
                 command: decoded.command,
                 session_id: decoded.session_id,
                 create_if_missing: decoded.create_if_missing,
@@ -346,6 +371,8 @@ where
         .run_terminal_resource(
             cfg,
             TerminalResourceRequest {
+                generation: decoded.generation,
+                connection_id: None,
                 session_id: decoded.session_id,
                 file_path: decoded.file_path,
                 action: decoded.action,
@@ -600,7 +627,9 @@ fn now_unix_ms() -> i64 {
         .unwrap_or_default()
 }
 
-struct DefaultCapabilityRuntime;
+struct DefaultCapabilityRuntime {
+    connection_id: Option<String>,
+}
 
 #[async_trait]
 trait CapabilityRuntime {
@@ -646,16 +675,27 @@ impl CapabilityRuntime for DefaultCapabilityRuntime {
     async fn run_terminal_exec(
         &self,
         cfg: &Config,
-        req: TerminalExecRequest,
+        mut req: TerminalExecRequest,
     ) -> Result<TerminalExecRunResult, TerminalOperationError> {
+        req.connection_id = self.connection_id.clone();
         shared_terminal_session_manager(cfg).execute(req).await
+    }
+
+    async fn run_terminal_lease_renew(
+        &self,
+        cfg: &Config,
+        mut req: TerminalLeaseRenewRequest,
+    ) -> Result<TerminalLeaseRenewResult, TerminalOperationError> {
+        req.connection_id = self.connection_id.clone();
+        shared_terminal_session_manager(cfg).renew_lease(req).await
     }
 
     async fn run_terminal_resource(
         &self,
         cfg: &Config,
-        req: TerminalResourceRequest,
+        mut req: TerminalResourceRequest,
     ) -> Result<TerminalResourceRunResult, TerminalOperationError> {
+        req.connection_id = self.connection_id.clone();
         shared_terminal_session_manager(cfg)
             .resolve_resource(req)
             .await
@@ -695,6 +735,9 @@ mod tests {
             _cfg: &Config,
             req: TerminalExecRequest,
         ) -> Result<TerminalExecRunResult, TerminalOperationError> {
+            if req.command == "assert-generation" {
+                assert_eq!(req.generation, 7);
+            }
             Ok(TerminalExecRunResult {
                 session_id: if req.session_id.is_empty() {
                     "sess-1".to_owned()
@@ -716,6 +759,9 @@ mod tests {
             _cfg: &Config,
             req: TerminalLeaseRenewRequest,
         ) -> Result<TerminalLeaseRenewResult, TerminalOperationError> {
+            if req.session_id == "assert-generation" {
+                assert_eq!(req.generation, 7);
+            }
             Ok(TerminalLeaseRenewResult {
                 session_id: req.session_id,
                 lease_expires_unix_ms: 123456789,
@@ -727,6 +773,9 @@ mod tests {
             _cfg: &Config,
             req: TerminalResourceRequest,
         ) -> Result<TerminalResourceRunResult, TerminalOperationError> {
+            if req.file_path == "/assert-generation" {
+                assert_eq!(req.generation, 7);
+            }
             if req.file_path == "/with-headers" {
                 assert_eq!(
                     req.headers.get("x-amz-acl").map(String::as_str),
@@ -1152,5 +1201,39 @@ mod tests {
             summary,
             "command_len=3 session_id_present=true create_if_missing=true lease_ttl_sec=90"
         );
+    }
+    #[tokio::test]
+    async fn internal_generation_reaches_exec_renew_and_resource_requests() {
+        let cfg = Config::load();
+        for (capability, payload) in [
+            (
+                "terminalExec",
+                serde_json::json!({"command":"assert-generation","session_id":"session","generation":7}),
+            ),
+            (
+                "terminalLeaseRenew",
+                serde_json::json!({"session_id":"assert-generation","lease_ttl_sec":300,"generation":7}),
+            ),
+            (
+                "terminalResource",
+                serde_json::json!({"session_id":"session","file_path":"/assert-generation","action":"read","generation":7}),
+            ),
+        ] {
+            let result = build_command_result_with_runtime(
+                &cfg,
+                CommandDispatch {
+                    command_id: "generation-test".into(),
+                    capability: capability.into(),
+                    payload_json: serde_json::to_vec(&payload).unwrap(),
+                    deadline_unix_ms: 0,
+                },
+                &FakeCapabilityRuntime,
+            )
+            .await;
+            let Some(connect_request::Payload::CommandResult(result)) = result.payload else {
+                panic!("missing result");
+            };
+            assert!(result.error.is_none());
+        }
     }
 }

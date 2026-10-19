@@ -228,6 +228,32 @@ pub(crate) async fn recover_terminal_session_box(
     Ok(Some(box_id))
 }
 
+/// Recover only the already running, durably selected ID. Ordinary name-based
+/// recovery can restart a stopped box and is not used for lifecycle-owned roots.
+pub(crate) async fn recover_pinned_terminal_session_box(
+    cfg: &Config,
+    box_id: &str,
+) -> Result<Option<String>, BoxliteCommandError> {
+    let runtime = runtime(cfg)?;
+    let Some(litebox) = runtime.get(box_id).await.map_err(|_| {
+        BoxliteCommandError::ExecutionFailed("inspect persistent terminal box failed".into())
+    })?
+    else {
+        return Ok(None);
+    };
+    let info = litebox.info().await.map_err(|_| {
+        BoxliteCommandError::ExecutionFailed("inspect persistent terminal box failed".into())
+    })?;
+    if info.id.as_str() != box_id || info.status != BoxStatus::Running || info.pid.is_none() {
+        return Err(BoxliteCommandError::ExecutionFailed(
+            "persistent terminal instance is not running".into(),
+        ));
+    }
+    let id = litebox.id().as_str().to_owned();
+    cache_terminal_session_box(litebox);
+    Ok(Some(id))
+}
+
 pub(crate) async fn cleanup_orphan_terminal_session_boxes(
     cfg: &Config,
     expected_names: &HashSet<String>,
@@ -398,7 +424,7 @@ pub(crate) async fn shutdown() {
     }
 }
 
-fn runtime(cfg: &Config) -> Result<&'static BoxliteRuntime, BoxliteCommandError> {
+pub(crate) fn runtime(cfg: &Config) -> Result<&'static BoxliteRuntime, BoxliteCommandError> {
     match RUNTIME.get_or_init(|| init_runtime(cfg)) {
         Ok(runtime) => Ok(runtime),
         Err(message) => Err(BoxliteCommandError::ExecutionFailed(message.clone())),
