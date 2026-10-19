@@ -144,6 +144,12 @@ pub struct Operation {
     pub box_id: String,
     #[serde(default)]
     pub tombstone_box_id: String,
+    #[serde(default)]
+    pub name_fences: BTreeMap<String, String>,
+    #[serde(default)]
+    pub cleanup_processes: BTreeMap<String, HostProcess>,
+    #[serde(default)]
+    pub cleanup_box_ids: std::collections::BTreeSet<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_process: Option<HostProcess>,
     #[serde(default)]
@@ -197,6 +203,37 @@ impl Operation {
             || (!self.tombstone_box_id.is_empty() && !valid_id(&self.tombstone_box_id))
         {
             return Err(Error::Conflict);
+        }
+        if (!self.name_fences.is_empty()
+            || !self.cleanup_processes.is_empty()
+            || !self.cleanup_box_ids.is_empty())
+            && !matches!(
+                (self.kind, self.phase),
+                (Kind::Source, Phase::Committed | Phase::Finalized)
+                    | (Kind::Target, Phase::Canceling | Phase::Canceled)
+                    | (Kind::Delete, Phase::Deleting | Phase::Deleted)
+            )
+        {
+            return Err(Error::Conflict);
+        }
+        for (name, id) in &self.name_fences {
+            if !(name.starts_with("onlyboxes-terminal-v1-")
+                || name.starts_with("onlyboxes-restore-v1-"))
+                || name.len() > 128
+                || !valid_id(name)
+                || !valid_id(id)
+            {
+                return Err(Error::Conflict);
+            }
+        }
+        if self.cleanup_box_ids.iter().any(|id| !valid_id(id)) {
+            return Err(Error::Conflict);
+        }
+        for (id, process) in &self.cleanup_processes {
+            if !valid_id(id) || !self.cleanup_box_ids.contains(id) {
+                return Err(Error::Conflict);
+            }
+            process.validate()?;
         }
         if let Some(process) = &self.started_process {
             process.validate()?;
@@ -354,6 +391,15 @@ impl Operation {
             && self.lease_ttl_sec == next.lease_ttl_sec
             && (self.box_id.is_empty() || self.box_id == next.box_id)
             && (self.tombstone_box_id.is_empty() || self.tombstone_box_id == next.tombstone_box_id)
+            && self.cleanup_box_ids.is_subset(&next.cleanup_box_ids)
+            && self
+                .name_fences
+                .iter()
+                .all(|(name, id)| next.name_fences.get(name) == Some(id))
+            && self
+                .cleanup_processes
+                .iter()
+                .all(|(id, process)| next.cleanup_processes.get(id) == Some(process))
             && (self.artifact.is_empty() || self.artifact == next.artifact)
             && (self.archive.is_none() || self.archive == next.archive)
             && (!self.verified || next.verified)

@@ -55,6 +55,9 @@ fn source() -> Operation {
         artifact: String::new(),
         box_id: "source_box_123".into(),
         tombstone_box_id: String::new(),
+        name_fences: Default::default(),
+        cleanup_processes: Default::default(),
+        cleanup_box_ids: Default::default(),
         source_process: None,
         source_stop_confirmed: false,
         start_attempted: false,
@@ -199,6 +202,49 @@ fn commit(j: &Journal) {
         Ok(())
     })
     .unwrap();
+}
+
+#[test]
+fn cleanup_evidence_and_name_reservations_are_durable_and_monotonic() {
+    let root = Root::new();
+    let j = root.open();
+    j.claim(source()).unwrap();
+    freeze(&j);
+    commit(&j);
+    let name = crate::persistence::terminal_name("obx:owner:session");
+    let process = crate::persistence::HostProcess::capture(std::process::id()).unwrap();
+    j.update("suspend-1", |op| {
+        op.cleanup_box_ids.insert(op.box_id.clone());
+        op.cleanup_processes
+            .insert(op.box_id.clone(), process.clone());
+        op.name_fences.insert(name.clone(), "marker_123".into());
+        Ok(())
+    })
+    .unwrap();
+    j.close().unwrap();
+    let j = root.open();
+    let op = j.snapshot().unwrap().operations["suspend-1"].clone();
+    assert_eq!(op.name_fences[&name], "marker_123");
+    assert!(op.cleanup_processes[&op.box_id] == process);
+    for field in ["ids", "processes", "names", "replacement"] {
+        assert_eq!(
+            j.update("suspend-1", |op| {
+                match field {
+                    "ids" => op.cleanup_box_ids.clear(),
+                    "processes" => op.cleanup_processes.clear(),
+                    "names" => op.name_fences.clear(),
+                    _ => {
+                        op.name_fences.insert(name.clone(), "replacement".into());
+                    }
+                }
+                Ok(())
+            }),
+            Err(Error::Conflict)
+        );
+    }
+    let mut unrelated = source();
+    unrelated.cleanup_box_ids.insert("unknown_native".into());
+    assert_eq!(unrelated.validate(), Err(Error::Conflict));
 }
 fn ready(j: &Journal, id: &str) {
     j.update(id, |op| {

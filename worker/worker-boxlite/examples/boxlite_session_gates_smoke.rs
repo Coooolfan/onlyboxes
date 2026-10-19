@@ -116,6 +116,9 @@ async fn main() -> Result<()> {
             artifact: String::new(),
             box_id: source_id.clone(),
             tombstone_box_id: String::new(),
+            name_fences: Default::default(),
+            cleanup_processes: Default::default(),
+            cleanup_box_ids: Default::default(),
             source_process: None,
             source_stop_confirmed: false,
             start_attempted: false,
@@ -155,6 +158,9 @@ async fn main() -> Result<()> {
         next.source_stop_confirmed = false;
         next.start_attempted = false;
         next.started_process = None;
+        next.cleanup_box_ids.clear();
+        next.cleanup_processes.clear();
+        next.name_fences.clear();
         journal.claim(next)?;
         manager.sync_snapshot_operation(SOURCE).await?;
         if manager.execute(request(1, "must-not-run")).await.is_ok() {
@@ -164,6 +170,9 @@ async fn main() -> Result<()> {
         let archive = native
             .export_source(journal.clone(), SOURCE, limits)
             .await?;
+        if native.finalize_source(&journal, SOURCE).await.is_ok()
+            || runtime.get_info(&source_id).await?.is_none()
+        { return Err("uncommitted source was reclaimed".into()); }
         let transfer = Transfer::new(4, Duration::from_secs(30))?;
         let file = std::fs::File::open(journal.artifact_path(SCOPE, SOURCE, 1)?)?;
         let pinned = transfer
@@ -208,11 +217,16 @@ async fn main() -> Result<()> {
             op.phase = Phase::Committed;
             Ok(())
         })?;
+        native.finalize_source(&journal, SOURCE).await?;
+        native.finalize_source(&journal, SOURCE).await?;
         boxlite_runtime::remove_box(&cfg, &source_id).await;
-        journal.update(SOURCE, |op| {
-            op.phase = Phase::Finalized;
-            Ok(())
-        })?;
+        if journal.snapshot()?.operations[SOURCE].name_fences.len() != 1 {
+            return Err("finalized source has no native name reservation".into());
+        }
+        if runtime.create(boxlite::BoxOptions::default(), Some(worker_boxlite::persistence::terminal_name(SCOPE))).await.is_ok() {
+            return Err("late create replaced finalized source name".into());
+        }
+
         manager.sync_snapshot_operation(SOURCE).await?;
         manager.detach_snapshot_instance(SCOPE, SOURCE, 1).await?;
         if runtime.get(&source_id).await?.is_some() {
@@ -233,6 +247,9 @@ async fn main() -> Result<()> {
             artifact: worker_boxlite::persistence::artifact_name(SCOPE, TARGET, 2),
             box_id: String::new(),
             tombstone_box_id: String::new(),
+            name_fences: Default::default(),
+            cleanup_processes: Default::default(),
+            cleanup_box_ids: Default::default(),
             source_process: None,
             source_stop_confirmed: false,
             start_attempted: false,
@@ -285,7 +302,43 @@ async fn main() -> Result<()> {
         {
             return Err("uncertain boot replay started a second writer".into());
         }
+        if native.cancel_target(&uncertain, TARGET).await.is_ok()
+            || runtime.get_info(&imported.box_id).await?.is_none()
+        { return Err("uncertain boot was removed without process evidence".into()); }
         uncertain.close()?;
+        // A separate inactive target exercises Ready cancellation and a lost
+        // database-first deletion ACK, without assigning it any public owner.
+        let cancel_id = "cancel-restore-operation";
+        let cancel_root = root.join("cancel-target-fixture");
+        let cancel_journal = Arc::new(Journal::open(&cancel_root, "smoke-worker")?);
+        let mut cancel_op = journal.snapshot()?.operations[TARGET].clone();
+        cancel_op.operation_id = cancel_id.into();
+        cancel_op.phase = Phase::Prepared;
+        cancel_op.box_id.clear();
+        cancel_op.verified = false;
+        cancel_op.artifact = worker_boxlite::persistence::artifact_name(SCOPE, cancel_id, 2);
+        cancel_journal.claim(cancel_op)?;
+        std::fs::copy(journal.artifact_path(SCOPE, TARGET, 2)?, cancel_journal.artifact_path(SCOPE, cancel_id, 2)?)?;
+        let canceled = native.import_target(cancel_journal.clone(), cancel_id, limits).await?;
+        native.start_target(&cancel_journal, cancel_id, now_ms()? + 300_000, Duration::from_secs(30)).await?;
+        native.cancel_target(&cancel_journal, cancel_id).await?;
+        let canceled_state = cancel_journal.snapshot()?.operations[cancel_id].clone();
+        if canceled_state.phase != Phase::Canceled || canceled_state.cleanup_processes.is_empty()
+            || canceled_state.name_fences.len() != 1 || runtime.get(&canceled.box_id).await?.is_some()
+        { return Err("canceled target retained a native writer or lost cleanup evidence".into()); }
+        // Model SDK's database-first removal with leftover physical contents.
+        let residue = home.join("boxes").join(&canceled.box_id);
+        private_directory(&residue)?;
+        std::fs::write(residue.join("orphaned-disk"), b"owned cleanup residue")?;
+        cancel_journal.close()?;
+        let cancel_journal = Journal::open(&cancel_root, "smoke-worker")?;
+        native.cancel_target(&cancel_journal, cancel_id).await?;
+        if residue.exists() { return Err("cleanup replay ignored native directory residue".into()); }
+        let canceled_name = worker_boxlite::persistence::target_name(SCOPE, cancel_id, 2);
+        if runtime.import_box(boxlite::BoxArchive::new(journal.artifact_path(SCOPE, TARGET, 2)?), Some(canceled_name)).await.is_ok()
+            || cancel_journal.snapshot()?.operations[cancel_id].name_fences != canceled_state.name_fences
+        { return Err("late import replaced canceled target name".into()); }
+        cancel_journal.close()?;
         native.start_target(&journal, TARGET, now_ms()? + 300_000, Duration::from_secs(30)).await?;
         // Lost readiness ACK replay must keep the same running host process.
         let first_process = journal.snapshot()?.operations[TARGET].started_process.clone();
@@ -340,6 +393,9 @@ async fn main() -> Result<()> {
                 return Err("stale generation executed".into());
             }
         }
+        if native.cancel_target(&journal, TARGET).await.is_ok()
+            || runtime.get_info(&imported.box_id).await?.is_none()
+        { return Err("late cancellation removed activated target".into()); }
         println!("PASS: restored root remains inactive until activation, then executes through its selected ID");
         manager.close_preserving().await;
         let recovered = TerminalSessionManager::from_config(&cfg);

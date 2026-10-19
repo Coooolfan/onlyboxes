@@ -118,6 +118,24 @@ fn readonly_inspection_does_not_rewrite_native_configuration() {
 }
 
 #[test]
+fn configuration_accepts_a_home_alias_but_not_an_escaping_box_parent() {
+    let mut f = Fixture::new();
+    let alias = f.home.with_extension("alias");
+    symlink(&f.home, &alias).unwrap();
+    f.config.box_home = alias.join("boxes").join(f.config.id.as_str());
+    f.save();
+    read_config(&f.home, f.config.id.as_str()).unwrap();
+    // Configured name reservations have metadata but need no disk/home yet.
+    fs::remove_dir_all(f.home.join("boxes").join(f.config.id.as_str())).unwrap();
+    assert!(read_config(&f.home, f.config.id.as_str()).is_err());
+    read_config_mode(&f.home, f.config.id.as_str(), false).unwrap();
+    f.config.box_home = alias.join(f.config.id.as_str());
+    f.save();
+    assert!(read_config_mode(&f.home, f.config.id.as_str(), false).is_err());
+    fs::remove_file(alias).unwrap();
+}
+
+#[test]
 fn repository_pin_preserves_registry_port_and_replaces_tags_and_indexes() {
     let digest = format!("sha256:{}", "a".repeat(64));
     for (reference, repository) in [

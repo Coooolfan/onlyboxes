@@ -37,7 +37,7 @@ Console 到 Worker 的 `terminalExec`、`terminalLeaseRenew` 和 `terminalResour
 
 ready 或回滚后的绑定会重新查询固定 Box ID，要求后端已运行，并刷新 Worker 缓存中的 SDK 句柄。BoxLite `stop()` 会使旧句柄失效，即使随后恢复同一 ID，也必须刷新才能继续执行。绑定拒绝缺失实例或返回其他 ID 的后端，不按名称恢复，不启动或新建实例；绑定成功仍不开放门禁。
 
-永久删除记录不能被更高 generation 的恢复预留替换。Console 重连时重复的终态恢复提示也不能重新占用容量。原生名称保留、迟到导入的清扫与永久删除 sentinel 仍需原生清理适配器落实。
+永久删除记录不能被更高 generation 的恢复预留替换。Console 重连时重复的终态恢复提示也不能重新占用容量。原生适配器已提供 source 最终回收、未激活 target 取消及其名称保留，包含迟到导入的拒绝；永久删除对所有历史名称和本地归档的清扫仍需完成。控制器必须先完成实际清理核对，再释放容量或返回 Console ACK。
 
 ## 启动与重连
 

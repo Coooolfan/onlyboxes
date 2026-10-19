@@ -113,7 +113,12 @@ impl NativeRuntime {
             || op.kind != Kind::Source
             || !matches!(
                 op.phase,
-                Phase::Preparing | Phase::Frozen | Phase::RollingBack | Phase::RolledBack
+                Phase::Preparing
+                    | Phase::Frozen
+                    | Phase::Committed
+                    | Phase::Finalized
+                    | Phase::RollingBack
+                    | Phase::RolledBack
             )
         {
             return Err(NativeError::Conflict);
@@ -205,16 +210,22 @@ impl NativeRuntime {
 }
 
 fn read_config(home: &Path, id: &str) -> Result<BoxConfig> {
+    read_config_mode(home, id, true)
+}
+fn read_config_mode(home: &Path, id: &str, require_home: bool) -> Result<BoxConfig> {
     if !valid_id(id) {
         return Err(NativeError::Conflict);
     }
     // SAFETY: geteuid reads process identity and takes no pointer.
     let uid = unsafe { libc::geteuid() };
-    for dir in [
-        home.join("db"),
-        home.join("boxes"),
-        home.join("boxes").join(id),
-    ] {
+    let mut directories = vec![home.join("db"), home.join("boxes")];
+    let box_home = home.join("boxes").join(id);
+    match fs::symlink_metadata(&box_home) {
+        Ok(_) => directories.push(box_home),
+        Err(e) if !require_home && e.kind() == std::io::ErrorKind::NotFound => (),
+        Err(_) => return Err(NativeError::Unavailable),
+    }
+    for dir in directories {
         let meta = fs::symlink_metadata(dir).map_err(|_| NativeError::Unavailable)?;
         if !meta.is_dir() || meta.uid() != uid || meta.mode() & 0o022 != 0 {
             return Err(NativeError::Unsupported);
@@ -264,8 +275,10 @@ fn read_config(home: &Path, id: &str) -> Result<BoxConfig> {
         serde_json::from_value(value.clone()).map_err(|_| NativeError::Unsupported)?;
     if config.id.as_str() != id
         || config.name != stored_name
-        || fs::canonicalize(&config.box_home).map_err(|_| NativeError::Conflict)?
-            != home.join("boxes").join(id)
+        || config.box_home.file_name().and_then(|name| name.to_str()) != Some(id)
+        || fs::canonicalize(config.box_home.parent().ok_or(NativeError::Conflict)?)
+            .map_err(|_| NativeError::Conflict)?
+            != home.join("boxes")
     {
         return Err(NativeError::Conflict);
     }
@@ -448,3 +461,6 @@ pub(super) mod stop;
 
 #[path = "native_start.rs"]
 mod start;
+
+#[path = "native_cleanup.rs"]
+mod cleanup;
