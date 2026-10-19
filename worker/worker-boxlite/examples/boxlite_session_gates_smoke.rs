@@ -30,6 +30,7 @@ use worker_boxlite::persistence::{
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 const SCOPE: &str = "obx:smoke:manager";
 const SOURCE: &str = "source-operation";
+const ROLLBACK: &str = "rollback-operation";
 const TARGET: &str = "restore-operation";
 const CONNECTION: &str = "coordinator-epoch-1";
 const IMAGE: &str =
@@ -103,9 +104,9 @@ async fn main() -> Result<()> {
         journal.probe(SCOPE, &source_id)?;
         manager.install_snapshot_journal(journal.clone()).await?;
         connect(&manager, CONNECTION).await?;
-        manager.hold_snapshot_source(SCOPE, SOURCE, 1).await?;
+        manager.hold_snapshot_source(SCOPE, ROLLBACK, 1).await?;
         journal.claim(Operation {
-            operation_id: SOURCE.into(),
+            operation_id: ROLLBACK.into(),
             scoped_session_id: SCOPE.into(),
             generation: 1,
             kind: Kind::Source,
@@ -117,6 +118,8 @@ async fn main() -> Result<()> {
             tombstone_box_id: String::new(),
             source_process: None,
             source_stop_confirmed: false,
+            start_attempted: false,
+            started_process: None,
             lease_expires_unix_ms: now_ms()? + 300_000,
             staging_bytes: 65 << 30,
             snapshot_committed: false,
@@ -125,6 +128,34 @@ async fn main() -> Result<()> {
             cache_until_unix_ms: 0,
             lease_ttl_sec: 0,
         })?;
+        manager.sync_snapshot_operation(ROLLBACK).await?;
+        manager.drain_snapshot_source(SCOPE, ROLLBACK, 1).await?;
+        // Roll back after native stop: the original host process must be proven
+        // dead before restarting the SAME disk/ID. Console activation is separate.
+        native.stop_source(&journal, ROLLBACK).await?;
+        let rollback = native.rollback_source(&journal, ROLLBACK, now_ms()? + 300_000, Duration::from_secs(30)).await?;
+        if rollback.box_id != source_id {
+            return Err("rollback replaced original root".into());
+        }
+        native.rollback_source(&journal, ROLLBACK, now_ms()? + 300_000, Duration::from_secs(30)).await?;
+        manager.sync_snapshot_operation(ROLLBACK).await?;
+        manager.bind_snapshot_instance(ROLLBACK).await?;
+        if manager.execute(request(1, "must-remain-gated")).await.is_ok() {
+            return Err("rollback opened admission before activation".into());
+        }
+        manager.activate_snapshot_instance(CONNECTION, SCOPE, ROLLBACK, 1).await?;
+        if manager.execute(request(1, "cat /onlyboxes-manager-data")).await?.stdout != "preserved" {
+            return Err("rollback changed source filesystem".into());
+        }
+        manager.hold_snapshot_source(SCOPE, SOURCE, 1).await?;
+        let mut next = journal.snapshot()?.operations[ROLLBACK].clone();
+        next.operation_id = SOURCE.into();
+        next.phase = Phase::Preparing;
+        next.source_process = None;
+        next.source_stop_confirmed = false;
+        next.start_attempted = false;
+        next.started_process = None;
+        journal.claim(next)?;
         manager.sync_snapshot_operation(SOURCE).await?;
         if manager.execute(request(1, "must-not-run")).await.is_ok() {
             return Err("source gate admitted execution".into());
@@ -204,6 +235,8 @@ async fn main() -> Result<()> {
             tombstone_box_id: String::new(),
             source_process: None,
             source_stop_confirmed: false,
+            start_attempted: false,
+            started_process: None,
             lease_expires_unix_ms: 0,
             staging_bytes: 65 << 30,
             snapshot_committed: false,
@@ -225,16 +258,42 @@ async fn main() -> Result<()> {
         let imported = native
             .import_target(journal.clone(), TARGET, limits)
             .await?;
-        journal.update(TARGET, |op| {
-            op.lease_expires_unix_ms =
-                now_ms().map_err(|_| worker_boxlite::persistence::Error::Unavailable)? + 300_000;
+        // Expired authority must not record an intent or start a writer.
+        if native.start_target(&journal, TARGET, now_ms()? - 1, Duration::from_secs(30)).await.is_ok()
+            || journal.snapshot()?.operations[TARGET].start_attempted
+        {
+            return Err("expired lease started target".into());
+        }
+        // Simulate a crash after durable intent and before SDK acknowledgement.
+        // This independent journal is a test fixture for the same stopped ID.
+        let uncertain = Journal::open(root.join("uncertain-boot-fixture"), "smoke-worker")?;
+        let mut pending = journal.snapshot()?.operations[TARGET].clone();
+        pending.phase = Phase::Prepared;
+        pending.verified = false;
+        uncertain.claim(pending)?;
+        uncertain.update(TARGET, |op| {
+            op.phase = Phase::Importing;
+            op.verified = true;
+            op.start_attempted = true;
+            op.lease_expires_unix_ms = now_ms().map_err(|_| worker_boxlite::persistence::Error::Unavailable)? + 300_000;
             Ok(())
         })?;
-        let target = runtime
-            .get(&imported.box_id)
-            .await?
-            .ok_or("import missing")?;
-        target.start().await?;
+        uncertain.close()?;
+        let uncertain = Journal::open(root.join("uncertain-boot-fixture"), "smoke-worker")?;
+        if native.start_target(&uncertain, TARGET, now_ms()? + 300_000, Duration::from_secs(30)).await.is_ok()
+            || native.inspect_target(&journal, TARGET).await?.status != boxlite::BoxStatus::Stopped
+        {
+            return Err("uncertain boot replay started a second writer".into());
+        }
+        uncertain.close()?;
+        native.start_target(&journal, TARGET, now_ms()? + 300_000, Duration::from_secs(30)).await?;
+        // Lost readiness ACK replay must keep the same running host process.
+        let first_process = journal.snapshot()?.operations[TARGET].started_process.clone();
+        native.start_target(&journal, TARGET, now_ms()? + 300_000, Duration::from_secs(30)).await?;
+        if journal.snapshot()?.operations[TARGET].started_process != first_process {
+            return Err("readiness replay replaced running process".into());
+        }
+        let target = runtime.get(&imported.box_id).await?.ok_or("import missing")?;
         boxlite_runtime::recover_pinned_terminal_session_box(&cfg, &imported.box_id)
             .await?
             .ok_or("target not running")?;
@@ -248,10 +307,6 @@ async fn main() -> Result<()> {
         if probe.stdout != "preserved" {
             return Err("restored filesystem content changed".into());
         }
-        journal.update(TARGET, |op| {
-            op.phase = Phase::Ready;
-            Ok(())
-        })?;
         manager.sync_snapshot_operation(TARGET).await?;
         manager.bind_snapshot_instance(TARGET).await?;
         if manager.active_session_count().await != 1
@@ -315,6 +370,11 @@ async fn main() -> Result<()> {
         }
         recovered.close_preserving().await;
         target.stop().await?;
+        if native.start_target(&journal, TARGET, now_ms()? + 300_000, Duration::from_secs(30)).await.is_ok()
+            || target.info().await?.status != boxlite::BoxStatus::Stopped
+        {
+            return Err("ready/active retry rebooted a stopped managed disk".into());
+        }
         let stopped = TerminalSessionManager::from_config(&cfg);
         stopped.install_snapshot_journal(journal.clone()).await?;
         stopped

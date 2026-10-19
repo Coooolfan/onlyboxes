@@ -59,7 +59,7 @@ Console 协议接入还需完成 journal 的运行时接入、连接恢复和执
 
 ## 持久化 journal
 
-`worker_boxlite::persistence` 提供 BoxLite Worker 的私有恢复规格、归档描述与操作 journal。它是生命周期控制器的存储原语，当前尚未在 Worker 启动、命令执行或恢复握手中启用；journal 测试通过不代表已支持持久化管理 API。
+`worker_boxlite::persistence` 提供 BoxLite Worker 的私有恢复规格、归档描述与操作 journal。会话管理器已提供 journal 安装、执行门禁与恢复握手的接入点；生产 Worker 尚未加载持久化配置或运行生命周期控制器，journal 测试通过不代表已支持持久化管理 API。
 
 journal 目录使用独立绝对路径，按 Worker identity 绑定。目录及 artifacts 子目录必须属于当前用户且仅当前用户可访问，文件必须为私有普通文件、单硬链接。进程独占锁覆盖 journal 句柄的整个有效期；相同目录不能同时被另一个进程或句柄打开。符号链接、FIFO、异常权限、损坏 JSON、未知字段和超限文件都会拒绝加载。
 
@@ -168,3 +168,15 @@ SDK 不会为导入实例补齐 `resolved_image`。`inspect_target` 因此要求
 原生 smoke 使用临时 HTTP 对象服务验证“导出 → 分片上传 → 协调方完成对象 → 完整回读 → 删除源状态 → HTTP 下载 → 空 home 导入 → 再次挂起”。该服务使用测试授权，不实现 S3 签名、版本控制、条件 manifest 写入或 Console 事务，不能作为真实 S3 兼容性或跨机器验收。传输故障测试覆盖中断续传、取消、响应头/正文停滞、授权过期、错误范围、checksum 失败、重定向、文件替换、发布应答丢失和阻塞 I/O 配额保持。
 
 这些是传输原语。Worker 的持久化能力声明、Console 授权续期与回读确认、缓存配额及回收仍需生命周期控制器接入。
+
+## 受控启动与 source 回滚
+
+`NativeRuntime::start_target` 只启动当前已验证、固定 Box ID 的 target；`rollback_source` 只恢复尚未提交的原 source，保留其 generation、ID 和磁盘。两者都要求调用方串行化 scope、维持门禁关闭，并持续持有任务直到 SDK 操作结束。启动不会创建替代实例，也不会开放执行或预览入口。
+
+调用方提供 Console 授权的绝对 lease。适配器拒绝过期或缩短的 lease，在任何原生启动之前同步持久化 lease、阶段与 `start_attempted`。source 从 preparing/frozen 进入 rolling_back；已经 committed 的 source 不允许回滚。对停止中的 source，仅当原停止流程记录了宿主进程身份、确认停止，且该进程仍可独立确认已经退出时，才允许启动原磁盘。
+
+启动后核对原生身份、规格与宿主进程生命周期，持久化 `started_process`，再实际执行 Python 和 `/bin/sh` 探测。探测成功后再次核对同一宿主进程、当前操作与有效 lease，才写入 target ready 或 source rolled_back。就绪超时受剩余 lease 限制；SDK 启动本身不使用会丢弃在途操作的超时。超时或异常保留原生实例和意图，不返回成功或触发空白重建。
+
+应答丢失后的重试只可复用同一运行进程，不能更换已记录的宿主生命周期。若 durable 启动意图已经存在，但 SDK 显示 stopped，则拒绝再次启动，保留给后续核对与清理；ready/active/rolled_back 实例停止后也不能靠重复请求自动重启。这样会牺牲部分异常场景的自动恢复，避免将不确定启动误判为尚未启动。
+
+`rolled_back` 在 journal 中代表原实例已恢复就绪；会话管理器仍须接收 Console 的明确激活授权，才可重新开放门禁。源停止前的进程证据和回滚启动后的进程证据分别保留，不能覆盖。跨 Worker 的独立 lease 强制执行、管理帧编排和异常启动核对仍需接入，当前不声明生产持久化能力。

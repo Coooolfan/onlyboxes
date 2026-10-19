@@ -313,6 +313,8 @@ impl Journal {
                 tombstone_box_id: String::new(),
                 source_process: None,
                 source_stop_confirmed: false,
+                start_attempted: false,
+                started_process: None,
                 lease_expires_unix_ms: 0,
                 staging_bytes: 0,
                 snapshot_committed: false,

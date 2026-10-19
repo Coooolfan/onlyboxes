@@ -57,6 +57,8 @@ fn source() -> Operation {
         tombstone_box_id: String::new(),
         source_process: None,
         source_stop_confirmed: false,
+        start_attempted: false,
+        started_process: None,
         lease_expires_unix_ms: 10000,
         staging_bytes: 1 << 20,
         snapshot_committed: false,
@@ -74,6 +76,74 @@ fn archive() -> Archive {
         expanded_bytes: 8192,
         format: ARCHIVE_FORMAT.into(),
     }
+}
+
+#[test]
+fn boot_intent_and_process_survive_reopen_and_cannot_be_replaced() {
+    let root = Root::new();
+    let j = root.open();
+    let op = source();
+    let id = op.operation_id.clone();
+    j.claim(op).unwrap();
+    // A lease and rollback authority are required before any native boot intent.
+    assert_eq!(
+        j.update(&id, |op| {
+            op.start_attempted = true;
+            Ok(())
+        }),
+        Err(Error::Conflict)
+    );
+    j.update(&id, |op| {
+        op.phase = Phase::RollingBack;
+        op.start_attempted = true;
+        Ok(())
+    })
+    .unwrap();
+    j.close().unwrap();
+    let j = root.open();
+    assert!(j.snapshot().unwrap().operations[&id].start_attempted);
+    assert_eq!(
+        j.update(&id, |op| {
+            op.start_attempted = false;
+            Ok(())
+        }),
+        Err(Error::Conflict)
+    );
+    let process = crate::persistence::HostProcess::capture(std::process::id()).unwrap();
+    j.update(&id, |op| {
+        op.started_process = Some(process.clone());
+        Ok(())
+    })
+    .unwrap();
+    j.close().unwrap();
+    let j = root.open();
+    assert!(
+        j.snapshot().unwrap().operations[&id]
+            .started_process
+            .as_ref()
+            == Some(&process)
+    );
+    assert_eq!(
+        j.update(&id, |op| {
+            op.started_process = None;
+            Ok(())
+        }),
+        Err(Error::Conflict)
+    );
+    let mut replacement = process;
+    replacement.start_time += 1;
+    assert_eq!(
+        j.update(&id, |op| {
+            op.started_process = Some(replacement);
+            Ok(())
+        }),
+        Err(Error::Conflict)
+    );
+    j.update(&id, |op| {
+        op.phase = Phase::RolledBack;
+        Ok(())
+    })
+    .unwrap();
 }
 fn target(generation: i64) -> Operation {
     let mut op = source();

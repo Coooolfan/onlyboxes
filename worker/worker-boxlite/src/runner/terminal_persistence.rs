@@ -633,6 +633,18 @@ impl TerminalSessionManager {
         {
             return Err(conflict());
         }
+        // SDK stop invalidates old LiteBox handles, including the ordinary
+        // terminal cache. Refresh only the selected, already-running ID before
+        // binding/rollback can be activated. This path never starts a box.
+        if self
+            .backend
+            .recover_pinned_session_box(&op.box_id)
+            .await?
+            .as_deref()
+            != Some(op.box_id.as_str())
+        {
+            return Err(conflict());
+        }
         if let Some(session) = state.entries.get(&op.scoped_session_id) {
             if session.box_id != op.box_id || session.destroying {
                 return Err(conflict());

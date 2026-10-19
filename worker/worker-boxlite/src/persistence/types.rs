@@ -148,6 +148,12 @@ pub struct Operation {
     pub source_process: Option<HostProcess>,
     #[serde(default)]
     pub source_stop_confirmed: bool,
+    /// Durable intent precedes a controlled native boot. An uncertain stopped
+    /// attempt cannot be retried by assuming that the old writer disappeared.
+    #[serde(default)]
+    pub start_attempted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_process: Option<HostProcess>,
     #[serde(default)]
     pub lease_expires_unix_ms: i64,
     #[serde(default)]
@@ -189,6 +195,27 @@ impl Operation {
             || self.cache_until_unix_ms < 0
             || (!self.box_id.is_empty() && !valid_id(&self.box_id))
             || (!self.tombstone_box_id.is_empty() && !valid_id(&self.tombstone_box_id))
+        {
+            return Err(Error::Conflict);
+        }
+        if let Some(process) = &self.started_process {
+            process.validate()?;
+        }
+        if (self.start_attempted
+            && (!matches!(self.kind, Kind::Source | Kind::Target)
+                || self.box_id.is_empty()
+                || self.lease_expires_unix_ms == 0
+                || !matches!(
+                    self.phase,
+                    Phase::Importing
+                        | Phase::Ready
+                        | Phase::Active
+                        | Phase::RollingBack
+                        | Phase::RolledBack
+                        | Phase::Canceling
+                        | Phase::Canceled
+                )))
+            || (self.started_process.is_some() && !self.start_attempted)
         {
             return Err(Error::Conflict);
         }
@@ -321,6 +348,8 @@ impl Operation {
             && self.restore_spec == next.restore_spec
             && (self.source_process.is_none() || self.source_process == next.source_process)
             && (!self.source_stop_confirmed || next.source_stop_confirmed)
+            && (!self.start_attempted || next.start_attempted)
+            && (self.started_process.is_none() || self.started_process == next.started_process)
             && self.staging_bytes == next.staging_bytes
             && self.lease_ttl_sec == next.lease_ttl_sec
             && (self.box_id.is_empty() || self.box_id == next.box_id)

@@ -35,6 +35,8 @@ Console 到 Worker 的 `terminalExec`、`terminalLeaseRenew` 和 `terminalResour
 
 未绑定本地 session 的 source/target 操作也占用容量。target 从虚拟预留转为 ready 绑定时只计一次，普通清理进行中的容量也不会与同一操作重复相加。只有 journal 中已完成清理的终态才能通过 `detach_snapshot_instance` 释放保留的容量；该方法本身不删除原生实例。控制器必须先完成物理清理及其核对，再写入终态。
 
+ready 或回滚后的绑定会重新查询固定 Box ID，要求后端已运行，并刷新 Worker 缓存中的 SDK 句柄。BoxLite `stop()` 会使旧句柄失效，即使随后恢复同一 ID，也必须刷新才能继续执行。绑定拒绝缺失实例或返回其他 ID 的后端，不按名称恢复，不启动或新建实例；绑定成功仍不开放门禁。
+
 永久删除记录不能被更高 generation 的恢复预留替换。Console 重连时重复的终态恢复提示也不能重新占用容量。原生名称保留、迟到导入的清扫与永久删除 sentinel 仍需原生清理适配器落实。
 
 ## 启动与重连
@@ -54,6 +56,6 @@ cargo run --locked --example boxlite_session_gates_smoke
 
 管理器测试覆盖并发排空、预览打开任务的延迟完成、执行失败时保留源数据、ready/active 边界、过期连接与 generation、lease 写入失败、固定 ID 恢复、永久删除及容量转换。
 
-原生 smoke 在本次调用拥有的私有 SDK home 中使用实际 Worker 管理器与后端：创建文件 → 保留与停止 source → 导出、HTTP 分片上传和完整回读 → 删除 source → 下载、导入与就绪探测 → 保持 ready 入口关闭 → 模拟本地协调方激活 → 通过原管理器读取恢复文件。它还重建管理器，核对只恢复同一运行 ID，以及受管理实例停止时不会被普通恢复启动。
+原生 smoke 在本次调用拥有的私有 SDK home 中使用实际 Worker 管理器与后端：创建文件 → 保留并停止 source → 在同一 ID 回滚、保持门禁关闭再明确激活 → 再次保留并停止 source → 导出、HTTP 分片上传和完整回读 → 删除 source → 下载、导入与就绪探测 → 保持 ready 入口关闭 → 模拟本地协调方激活 → 通过原管理器读取恢复文件。它还验证受控启动的 lease、就绪探测与应答重放，并重建管理器，核对只恢复同一运行 ID，以及受管理实例停止时不会被重复启动请求或普通恢复启动。
 
 示例使用临时 HTTP 对象服务并由测试协调方写入本地提交/激活记录。它不验证真实 S3 签名或条件写入、Console 数据库与路由事务、Worker 跨进程崩溃、跨机器调度或生产性能。完整管理帧编排、启动归属校验、独立 lease 强制执行和原生清理链路仍需完成。

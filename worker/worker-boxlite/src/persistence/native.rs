@@ -111,7 +111,10 @@ impl NativeRuntime {
             .ok_or(NativeError::Conflict)?;
         if state.current.get(&op.scoped_session_id).map(String::as_str) != Some(operation)
             || op.kind != Kind::Source
-            || !matches!(op.phase, Phase::Preparing | Phase::Frozen)
+            || !matches!(
+                op.phase,
+                Phase::Preparing | Phase::Frozen | Phase::RollingBack | Phase::RolledBack
+            )
         {
             return Err(NativeError::Conflict);
         }
@@ -442,3 +445,6 @@ mod import;
 
 #[path = "native_stop.rs"]
 pub(super) mod stop;
+
+#[path = "native_start.rs"]
+mod start;

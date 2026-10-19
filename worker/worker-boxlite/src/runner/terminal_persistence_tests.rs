@@ -152,6 +152,10 @@ impl Fixture {
         }
     }
     async fn ready(&self) {
+        self.stage_ready().await;
+        self.manager.bind_snapshot_instance(OP).await.unwrap();
+    }
+    async fn stage_ready(&self) {
         self.manager
             .reserve_snapshot_target(SCOPE, OP, 2)
             .await
@@ -173,7 +177,6 @@ impl Fixture {
             })
             .unwrap();
         self.manager.sync_snapshot_operation(OP).await.unwrap();
-        self.manager.bind_snapshot_instance(OP).await.unwrap();
     }
     async fn active(&self) {
         self.ready().await;
@@ -188,6 +191,27 @@ impl Fixture {
             .activate_snapshot_instance(CONNECTION, SCOPE, OP, 2)
             .await
             .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn ready_binding_refreshes_exact_id_and_rejects_missing_or_alias() {
+    for outcome in ["running", "missing", "alias"] {
+        let f = Fixture::new(1).await;
+        f.stage_ready().await;
+        f.backend
+            .missing
+            .store(outcome == "missing", Ordering::SeqCst);
+        f.backend.alias.store(outcome == "alias", Ordering::SeqCst);
+        assert_eq!(
+            f.manager.bind_snapshot_instance(OP).await.is_ok(),
+            outcome == "running"
+        );
+        assert_eq!(*f.backend.pinned.lock().await, vec!["restored-box"]);
+        assert!(f.backend.named.lock().await.is_empty());
+        assert_eq!(f.backend.created.load(Ordering::SeqCst), 0);
+        assert_eq!(f.manager.active_session_count().await, 1);
+        assert!(f.manager.execute(request("closed", 2)).await.is_err());
     }
 }
 impl Drop for Fixture {
@@ -252,6 +276,8 @@ fn target() -> Operation {
         tombstone_box_id: String::new(),
         source_process: None,
         source_stop_confirmed: false,
+        start_attempted: false,
+        started_process: None,
         lease_expires_unix_ms: 0,
         staging_bytes: 4096,
         snapshot_committed: false,
