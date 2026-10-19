@@ -464,3 +464,6 @@ mod start;
 
 #[path = "native_cleanup.rs"]
 mod cleanup;
+
+#[path = "native_delete.rs"]
+mod delete;

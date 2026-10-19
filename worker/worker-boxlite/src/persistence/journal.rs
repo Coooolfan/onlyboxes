@@ -314,6 +314,7 @@ impl Journal {
                 name_fences: Default::default(),
                 cleanup_processes: Default::default(),
                 cleanup_box_ids: Default::default(),
+                cleanup_names: Default::default(),
                 source_process: None,
                 source_stop_confirmed: false,
                 start_attempted: false,
@@ -456,3 +457,6 @@ fn write_atomic(root: &Path, name: &str, data: &[u8]) -> Result<()> {
 #[cfg(test)]
 #[path = "journal_tests.rs"]
 mod tests;
+
+#[path = "journal_artifacts.rs"]
+mod artifacts;

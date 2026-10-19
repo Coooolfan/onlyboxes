@@ -277,6 +277,7 @@ fn target() -> Operation {
         name_fences: Default::default(),
         cleanup_processes: Default::default(),
         cleanup_box_ids: Default::default(),
+        cleanup_names: Default::default(),
         source_process: None,
         source_stop_confirmed: false,
         start_attempted: false,

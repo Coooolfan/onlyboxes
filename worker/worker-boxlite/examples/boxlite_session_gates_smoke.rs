@@ -119,6 +119,7 @@ async fn main() -> Result<()> {
             name_fences: Default::default(),
             cleanup_processes: Default::default(),
             cleanup_box_ids: Default::default(),
+            cleanup_names: Default::default(),
             source_process: None,
             source_stop_confirmed: false,
             start_attempted: false,
@@ -159,6 +160,7 @@ async fn main() -> Result<()> {
         next.start_attempted = false;
         next.started_process = None;
         next.cleanup_box_ids.clear();
+        next.cleanup_names.clear();
         next.cleanup_processes.clear();
         next.name_fences.clear();
         journal.claim(next)?;
@@ -209,6 +211,7 @@ async fn main() -> Result<()> {
                 tokio_util::sync::CancellationToken::new(),
             )
             .await?;
+        drop(pinned);
         // This fixture coordinator models commit only after actual readback. It
         // does not exercise the production Console manifest/database transaction.
         journal.update(SOURCE, |op| {
@@ -250,6 +253,7 @@ async fn main() -> Result<()> {
             name_fences: Default::default(),
             cleanup_processes: Default::default(),
             cleanup_box_ids: Default::default(),
+            cleanup_names: Default::default(),
             source_process: None,
             source_stop_confirmed: false,
             start_attempted: false,
@@ -444,7 +448,58 @@ async fn main() -> Result<()> {
             return Err("ordinary recovery eagerly started a lifecycle-owned root".into());
         }
         stopped.close_preserving().await;
+        let other_scope = "obx:smoke:unrelated";
+        let mut unrelated_op = journal.snapshot()?.operations[TARGET].clone();
+        unrelated_op.operation_id = "unrelated-cache-operation".into();
+        unrelated_op.scoped_session_id = other_scope.into();
+        unrelated_op.phase = Phase::Prepared;
+        unrelated_op.box_id.clear();
+        unrelated_op.verified = false;
+        unrelated_op.start_attempted = false;
+        unrelated_op.started_process = None;
+        unrelated_op.lease_expires_unix_ms = 0;
+        unrelated_op.artifact = worker_boxlite::persistence::artifact_name(other_scope, &unrelated_op.operation_id, 2);
+        journal.claim(unrelated_op)?;
+        let other_cache = journal.artifact_path(other_scope, "unrelated-cache-operation", 2)?;
+        std::fs::write(&other_cache, b"unrelated cache must remain")?;
+        std::fs::set_permissions(&other_cache, std::fs::Permissions::from_mode(0o600))?;
+        let unrelated_native = runtime.create(boxlite::BoxOptions::default(), Some(worker_boxlite::persistence::terminal_name(other_scope))).await?;
+        let delete: Operation = serde_json::from_value(serde_json::json!({
+            "operation_id": "delete-session-operation", "scoped_session_id": SCOPE,
+            "generation": 3, "kind": "delete", "phase": "deleting",
+            "restore_spec": journal.snapshot()?.operations[TARGET].restore_spec,
+            "box_id": imported.box_id
+        }))?;
+        journal.claim(delete)?;
+        // Model an accepted SDK start completing after the delete intent. The
+        // caller joins it while gates stay closed, then purge must stop its new
+        // lifecycle as well as validate every older recorded process proof.
+        if !journal.snapshot()?.operations[TARGET].started_process.as_ref().ok_or("missing previous process")?.has_exited()? {
+            return Err("prior target process still owns the disk".into());
+        }
+        let late = runtime.get(&imported.box_id).await?.ok_or("target missing before late start")?;
+        late.start().await?;
+        native.purge_session(journal.clone(), "delete-session-operation").await?;
+        let deleted = journal.snapshot()?.operations["delete-session-operation"].clone();
+        if deleted.phase != Phase::Deleted || deleted.name_fences.len() != 2
+            || deleted.tombstone_box_id != journal.snapshot()?.operations[SOURCE].name_fences[&worker_boxlite::persistence::terminal_name(SCOPE)]
+            || runtime.get_info(&imported.box_id).await?.is_some()
+            || journal.artifact_path(SCOPE, SOURCE, 1)?.exists() || journal.artifact_path(SCOPE, TARGET, 2)?.exists()
+            || std::fs::read(&other_cache)? != b"unrelated cache must remain"
+            || runtime.get_info(unrelated_native.id().as_str()).await?.is_none()
+        { return Err("permanent deletion lost name fences or crossed scope boundaries".into()); }
+        native.purge_session(journal.clone(), "delete-session-operation").await?;
+        if runtime.create(boxlite::BoxOptions::default(), Some(worker_boxlite::persistence::terminal_name(SCOPE))).await.is_ok() {
+            return Err("deleted session name was recreated".into());
+        }
+        // Losing an acknowledged marker must not silently replace its ID.
+        runtime.remove(&deleted.tombstone_box_id, false).await?;
+        if native.purge_session(journal.clone(), "delete-session-operation").await.is_ok()
+            || runtime.get_info(&worker_boxlite::persistence::terminal_name(SCOPE)).await?.is_some()
+        { return Err("missing permanent name fence was silently replaced".into()); }
+        runtime.remove(unrelated_native.id().as_str(), false).await?;
         boxlite_runtime::remove_box(&cfg, &imported.box_id).await;
+        println!("PASS: permanent deletion reuses old markers, removes all recorded roots/caches and preserves unrelated scopes");
         println!("PASS: reconstructed manager recovers exact running ID and never eagerly starts stopped managed roots");
         Ok(())
     }.await;

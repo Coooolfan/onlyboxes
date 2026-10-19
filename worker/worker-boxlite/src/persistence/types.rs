@@ -150,6 +150,8 @@ pub struct Operation {
     pub cleanup_processes: BTreeMap<String, HostProcess>,
     #[serde(default)]
     pub cleanup_box_ids: std::collections::BTreeSet<String>,
+    #[serde(default)]
+    pub cleanup_names: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_process: Option<HostProcess>,
     #[serde(default)]
@@ -206,7 +208,8 @@ impl Operation {
         }
         if (!self.name_fences.is_empty()
             || !self.cleanup_processes.is_empty()
-            || !self.cleanup_box_ids.is_empty())
+            || !self.cleanup_box_ids.is_empty()
+            || !self.cleanup_names.is_empty())
             && !matches!(
                 (self.kind, self.phase),
                 (Kind::Source, Phase::Committed | Phase::Finalized)
@@ -228,6 +231,11 @@ impl Operation {
         }
         if self.cleanup_box_ids.iter().any(|id| !valid_id(id)) {
             return Err(Error::Conflict);
+        }
+        for (id, name) in &self.cleanup_names {
+            if !self.cleanup_box_ids.contains(id) || !valid_id(name) {
+                return Err(Error::Conflict);
+            }
         }
         for (id, process) in &self.cleanup_processes {
             if !valid_id(id) || !self.cleanup_box_ids.contains(id) {
@@ -392,6 +400,10 @@ impl Operation {
             && (self.box_id.is_empty() || self.box_id == next.box_id)
             && (self.tombstone_box_id.is_empty() || self.tombstone_box_id == next.tombstone_box_id)
             && self.cleanup_box_ids.is_subset(&next.cleanup_box_ids)
+            && self
+                .cleanup_names
+                .iter()
+                .all(|(id, name)| next.cleanup_names.get(id) == Some(name))
             && self
                 .name_fences
                 .iter()

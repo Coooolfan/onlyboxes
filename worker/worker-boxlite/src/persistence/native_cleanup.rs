@@ -72,13 +72,21 @@ impl NativeRuntime {
             .map_err(journal_error)
     }
 
-    async fn cleanup_named(&self, journal: &Journal, op: &Operation, name: &str) -> Result<()> {
+    pub(super) async fn cleanup_named(
+        &self,
+        journal: &Journal,
+        op: &Operation,
+        name: &str,
+    ) -> Result<()> {
         // Replay a database-first SDK deletion using the durable physical IDs.
-        if !op.box_id.is_empty() {
+        if op.kind != Kind::Delete && !op.box_id.is_empty() {
             self.cleanup_selected(journal, op, name, &op.box_id).await?;
         }
         for id in &op.cleanup_box_ids {
-            self.cleanup_selected(journal, op, name, id).await?;
+            if op.kind != Kind::Delete || op.cleanup_names.get(id).map(String::as_str) == Some(name)
+            {
+                self.cleanup_selected(journal, op, name, id).await?;
+            }
         }
         for _ in 0..4 {
             let (_, current) = cleanup_operation(journal, &op.operation_id)?;
@@ -92,7 +100,21 @@ impl NativeRuntime {
                 .map_err(|_| NativeError::Unavailable)?;
             if let Some(info) = info {
                 let id = info.id.as_str();
-                if self.inspect_name_fence(op, name, &info)? {
+                let state = journal.snapshot().map_err(journal_error)?;
+                let mut marker = self.inspect_name_fence(op, name, &info)?;
+                if op.kind == Kind::Delete && !marker {
+                    for prior in state.operations.values().filter(|prior| {
+                        prior.operation_id != op.operation_id
+                            && prior.scoped_session_id == op.scoped_session_id
+                            && prior.generation < op.generation
+                    }) {
+                        if self.inspect_name_fence(prior, name, &info)? {
+                            marker = true;
+                            break;
+                        }
+                    }
+                }
+                if marker {
                     if current.name_fences.get(name).is_some_and(|pin| pin != id) {
                         return Err(NativeError::Conflict);
                     }
@@ -147,6 +169,7 @@ impl NativeRuntime {
             journal
                 .update(&op.operation_id, |current| {
                     current.cleanup_box_ids.insert(id.to_owned());
+                    current.cleanup_names.insert(id.to_owned(), name.to_owned());
                     Ok(())
                 })
                 .map_err(journal_error)?;
@@ -221,7 +244,12 @@ impl NativeRuntime {
         Ok(())
     }
 
-    fn inspect_name_fence(&self, op: &Operation, name: &str, info: &BoxInfo) -> Result<bool> {
+    pub(super) fn inspect_name_fence(
+        &self,
+        op: &Operation,
+        name: &str,
+        info: &BoxInfo,
+    ) -> Result<bool> {
         let id = info.id.as_str();
         let config = read_config_mode(&self.home, id, false)?;
         if config.name.as_deref() != Some(name) || info.name.as_deref() != Some(name) {
@@ -253,7 +281,10 @@ impl NativeRuntime {
     }
 }
 
-fn cleanup_operation(journal: &Journal, operation: &str) -> Result<(JournalState, Operation)> {
+pub(super) fn cleanup_operation(
+    journal: &Journal,
+    operation: &str,
+) -> Result<(JournalState, Operation)> {
     let state = journal.snapshot().map_err(journal_error)?;
     let op = state
         .operations
@@ -265,7 +296,7 @@ fn cleanup_operation(journal: &Journal, operation: &str) -> Result<(JournalState
     }
     Ok((state, op))
 }
-fn source_name(state: &JournalState, op: &Operation) -> Result<String> {
+pub(super) fn source_name(state: &JournalState, op: &Operation) -> Result<String> {
     let mut origins = state.operations.values().filter(|prior| {
         prior.kind == Kind::Target
             && prior.phase == Phase::Active
@@ -321,7 +352,7 @@ fn fence_options(op: &Operation, name: &str) -> Result<BoxOptions> {
     options.sanitize().map_err(|_| NativeError::Unsupported)?;
     Ok(options)
 }
-async fn require_exited(process: &HostProcess) -> Result<()> {
+pub(super) async fn require_exited(process: &HostProcess) -> Result<()> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     while !process.has_exited().map_err(journal_error)? {
         if tokio::time::Instant::now() >= deadline {
@@ -358,7 +389,7 @@ fn remove_native_home(home: &Path, id: &str) -> Result<()> {
         _ => Err(NativeError::Conflict),
     }
 }
-fn journal_error(error: Error) -> NativeError {
+pub(super) fn journal_error(error: Error) -> NativeError {
     match error {
         Error::Conflict => NativeError::Conflict,
         Error::Unavailable => NativeError::Unavailable,

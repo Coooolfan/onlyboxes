@@ -58,6 +58,7 @@ fn source() -> Operation {
         name_fences: Default::default(),
         cleanup_processes: Default::default(),
         cleanup_box_ids: Default::default(),
+        cleanup_names: Default::default(),
         source_process: None,
         source_stop_confirmed: false,
         start_attempted: false,
@@ -215,6 +216,7 @@ fn cleanup_evidence_and_name_reservations_are_durable_and_monotonic() {
     let process = crate::persistence::HostProcess::capture(std::process::id()).unwrap();
     j.update("suspend-1", |op| {
         op.cleanup_box_ids.insert(op.box_id.clone());
+        op.cleanup_names.insert(op.box_id.clone(), name.clone());
         op.cleanup_processes
             .insert(op.box_id.clone(), process.clone());
         op.name_fences.insert(name.clone(), "marker_123".into());
@@ -226,11 +228,12 @@ fn cleanup_evidence_and_name_reservations_are_durable_and_monotonic() {
     let op = j.snapshot().unwrap().operations["suspend-1"].clone();
     assert_eq!(op.name_fences[&name], "marker_123");
     assert!(op.cleanup_processes[&op.box_id] == process);
-    for field in ["ids", "processes", "names", "replacement"] {
+    for field in ["ids", "idnames", "processes", "names", "replacement"] {
         assert_eq!(
             j.update("suspend-1", |op| {
                 match field {
                     "ids" => op.cleanup_box_ids.clear(),
+                    "idnames" => op.cleanup_names.clear(),
                     "processes" => op.cleanup_processes.clear(),
                     "names" => op.name_fences.clear(),
                     _ => {
