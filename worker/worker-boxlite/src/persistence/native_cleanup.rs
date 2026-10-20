@@ -339,7 +339,7 @@ pub(super) fn source_name(state: &JournalState, op: &Operation) -> Result<String
         })
         .unwrap_or_else(|| terminal_name(&op.scoped_session_id)))
 }
-fn fence_options(op: &Operation, name: &str) -> Result<BoxOptions> {
+pub(super) fn fence_options(op: &Operation, name: &str) -> Result<BoxOptions> {
     // /dev/null is a character device, so no path below it can be an OCI bundle.
     // Even an accidental SDK start cannot create a runnable replacement root.
     if !fs::symlink_metadata("/dev/null")

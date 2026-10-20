@@ -118,8 +118,13 @@ async fn main() -> Result<()> {
     cfg.terminal_max_active_sessions = 1;
     cfg.proxy_enabled = false;
     let mut manager = TerminalSessionManager::from_config(&cfg);
-    let journal = Arc::new(Journal::open(root.join("journal"), &cfg.worker_id)?);
-    let sdk = Arc::new(boxlite_runtime::runtime(&cfg)?.clone());
+    let guard = Arc::new(worker_boxlite::persistence::RuntimeHomeGuard::open(
+        &home,
+        root.join("journal"),
+        &cfg.worker_id,
+    )?);
+    let journal = guard.journal();
+    let sdk = Arc::new(boxlite_runtime::initialize_guarded(&cfg, guard.clone())?.clone());
     let native = Arc::new(NativeRuntime::new(sdk.clone(), &home)?);
     let settings = NativeControlConfig {
         max_inflight: 1,
@@ -376,6 +381,12 @@ async fn main() -> Result<()> {
     manager.close_preserving().await;
     boxlite_runtime::shutdown().await;
     if outcome.is_ok() {
+        // Audit the retained configured name fences only after every SDK task
+        // has joined; no VM or concurrent metadata mutation remains.
+        guard.census()?;
+        println!(
+            "PASS: post-shutdown startup census accepts retained journal-bound native name fences"
+        );
         journal.close()?;
         std::fs::remove_dir_all(&root)?;
     } else {

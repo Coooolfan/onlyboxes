@@ -94,6 +94,129 @@ impl Drop for Fixture {
     }
 }
 
+fn census_state(f: &Fixture) -> crate::persistence::JournalState {
+    let db = Connection::open(f.home.join("db/boxlite.db")).unwrap();
+    db.execute_batch(
+        "CREATE TABLE box_state(id TEXT PRIMARY KEY,status TEXT,pid INTEGER,json TEXT);",
+    )
+    .unwrap();
+    let state = boxlite::litebox::BoxState::new();
+    db.execute(
+        "INSERT INTO box_state VALUES(?1,?2,NULL,?3)",
+        rusqlite::params![
+            f.config.id.as_str(),
+            state.status.as_str(),
+            serde_json::to_string(&state).unwrap()
+        ],
+    )
+    .unwrap();
+    crate::persistence::JournalState {
+        version: 1,
+        worker_id: "worker".into(),
+        current: Default::default(),
+        operations: Default::default(),
+        probes: Default::default(),
+    }
+}
+
+#[test]
+fn startup_census_preserves_orphans_and_never_migrates_unsupported_schema() {
+    let f = Fixture::new();
+    let journal = census_state(&f);
+    preflight_home(&f.home, &journal).unwrap();
+    let orphan = f.home.join("boxes/unrecorded");
+    fs::create_dir(&orphan).unwrap();
+    fs::write(orphan.join("disk.qcow2"), b"unique").unwrap();
+    assert_eq!(
+        preflight_home(&f.home, &journal),
+        Err(NativeError::Conflict)
+    );
+    assert_eq!(fs::read(orphan.join("disk.qcow2")).unwrap(), b"unique");
+    fs::remove_dir_all(orphan).unwrap();
+    let pending = f.config.box_home.join(".snapshot_pending");
+    fs::write(&pending, b"preserve-native-snapshot-intent").unwrap();
+    assert_eq!(
+        preflight_home(&f.home, &journal),
+        Err(NativeError::Conflict)
+    );
+    assert_eq!(
+        fs::read(&pending).unwrap(),
+        b"preserve-native-snapshot-intent"
+    );
+    fs::remove_file(pending).unwrap();
+    let db = Connection::open(f.home.join("db/boxlite.db")).unwrap();
+    db.execute("UPDATE schema_version SET version=9", [])
+        .unwrap();
+    assert_eq!(
+        preflight_home(&f.home, &journal),
+        Err(NativeError::Unsupported)
+    );
+    assert_eq!(
+        db.query_row("SELECT version FROM schema_version", [], |row| row
+            .get::<_, i64>(0))
+            .unwrap(),
+        9
+    );
+}
+
+#[test]
+fn startup_census_rejects_name_substitution_and_non_image_rootfs() {
+    let mut f = Fixture::new();
+    let mut journal = census_state(&f);
+    journal
+        .probes
+        .insert("obx:owner:session".into(), f.config.id.to_string());
+    preflight_home(&f.home, &journal).unwrap();
+    journal
+        .probes
+        .insert("obx:owner:session".into(), "replacement-root".into());
+    assert_eq!(
+        preflight_home(&f.home, &journal),
+        Err(NativeError::Conflict)
+    );
+    journal
+        .probes
+        .insert("obx:owner:session".into(), f.config.id.to_string());
+    f.config.options.rootfs = RootfsSpec::RootfsPath("/unrelated-host-root".into());
+    f.save();
+    assert_eq!(
+        preflight_home(&f.home, &journal),
+        Err(NativeError::Unsupported)
+    );
+}
+
+#[test]
+fn startup_census_accepts_exact_non_detached_name_fences_but_no_guest_disk() {
+    let mut f = Fixture::new();
+    let scope = "obx:owner:session";
+    let operation = "canceled-import";
+    let name = target_name(scope, operation, 1);
+    let spec = spec_from_config(&f.config, &f.info).unwrap();
+    let op:crate::persistence::Operation=serde_json::from_value(serde_json::json!({
+        "operation_id":operation,"scoped_session_id":scope,"generation":1,"kind":"target","phase":"canceled",
+        "restore_spec":spec,"archive":{"snapshot_id":"shared","size_bytes":1,"sha256":"a".repeat(64),"expanded_bytes":1024,"format":ARCHIVE_FORMAT},
+        "artifact":crate::persistence::artifact_name(scope,operation,1),"staging_bytes":8192,
+        "name_fences":{name.clone():f.config.id.to_string()},
+    })).unwrap();
+    op.validate().unwrap();
+    f.config.name = Some(name.clone());
+    f.config.options = super::cleanup::fence_options(&op, &name).unwrap();
+    f.save();
+    assert!(!f.config.options.detach);
+    let mut journal = census_state(&f);
+    journal.current.insert(scope.into(), operation.into());
+    journal.operations.insert(operation.into(), op);
+    preflight_home(&f.home, &journal).unwrap();
+    fs::create_dir(f.config.box_home.join("disks")).unwrap();
+    let disk = f.config.box_home.join("disks/disk.qcow2");
+    fs::write(&disk, b"preserve").unwrap();
+    assert_eq!(
+        preflight_home(&f.home, &journal),
+        Err(NativeError::Conflict)
+    );
+    assert_eq!(fs::read(disk).unwrap(), b"preserve");
+}
+
 #[test]
 fn immutable_metadata_and_actual_digest_define_the_spec() {
     let f = Fixture::new();

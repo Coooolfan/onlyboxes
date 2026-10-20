@@ -472,3 +472,7 @@ mod cleanup;
 
 #[path = "native_delete.rs"]
 mod delete;
+
+#[path = "native_preflight.rs"]
+mod preflight;
+pub(super) use preflight::preflight_home;

@@ -1,6 +1,7 @@
 //! Private lifecycle records. Transfer grants never belong in durable state.
 
 mod archive;
+mod home;
 mod host_process;
 mod journal;
 mod native;
@@ -11,6 +12,7 @@ mod types;
 pub use archive::{
     canonicalize_export, prepare_import_archive, verify_archive, ArchiveError, ArchiveLimits,
 };
+pub use home::RuntimeHomeGuard;
 pub use host_process::HostProcess;
 pub use journal::{Journal, JournalState};
 pub use native::{

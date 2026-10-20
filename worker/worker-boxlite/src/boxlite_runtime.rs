@@ -19,6 +19,8 @@ const TERMINAL_EXEC_IDLE_COMMAND: &str = "while true; do sleep 3600; done";
 const TERMINAL_SESSION_CREATE_CANCELLED_MESSAGE: &str = "terminal session manager is closed";
 
 static RUNTIME: OnceLock<Result<BoxliteRuntime, String>> = OnceLock::new();
+static RUNTIME_INIT: Mutex<()> = Mutex::new(());
+static HOME_OWNER: OnceLock<Arc<worker_boxlite::persistence::RuntimeHomeGuard>> = OnceLock::new();
 // Keep terminal session handles alive so the first exec can reuse the
 // already-connected guest session instead of immediately reattaching by box_id.
 static TERMINAL_SESSION_BOXES: OnceLock<Mutex<HashMap<String, Arc<LiteBox>>>> = OnceLock::new();
@@ -425,6 +427,51 @@ pub(crate) async fn shutdown() {
 }
 
 pub(crate) fn runtime(cfg: &Config) -> Result<&'static BoxliteRuntime, BoxliteCommandError> {
+    let _initializing = RUNTIME_INIT.lock().map_err(|_| {
+        BoxliteCommandError::ExecutionFailed("Boxlite startup ownership is unavailable".into())
+    })?;
+    runtime_owned(cfg)
+}
+
+#[allow(dead_code)]
+pub(crate) fn initialize_guarded(
+    cfg: &Config,
+    guard: Arc<worker_boxlite::persistence::RuntimeHomeGuard>,
+) -> Result<&'static BoxliteRuntime, BoxliteCommandError> {
+    let _initializing = RUNTIME_INIT.lock().map_err(|_| {
+        BoxliteCommandError::ExecutionFailed("Boxlite startup ownership is unavailable".into())
+    })?;
+    if RUNTIME.get().is_some() {
+        return Err(BoxliteCommandError::ExecutionFailed(
+            "Boxlite runtime was already initialized".into(),
+        ));
+    }
+    guard
+        .verify(Path::new(&cfg.boxlite_home), &cfg.worker_id)
+        .map_err(|_| {
+            BoxliteCommandError::ExecutionFailed("Boxlite startup ownership is unavailable".into())
+        })?;
+    guard.census().map_err(|_| {
+        BoxliteCommandError::ExecutionFailed("Boxlite startup census is unavailable".into())
+    })?;
+    if HOME_OWNER.set(guard).is_err() {
+        return Err(BoxliteCommandError::ExecutionFailed(
+            "Boxlite runtime was already initialized".into(),
+        ));
+    }
+    runtime_owned(cfg)
+}
+
+fn runtime_owned(cfg: &Config) -> Result<&'static BoxliteRuntime, BoxliteCommandError> {
+    if let Some(owner) = HOME_OWNER.get() {
+        owner
+            .verify(Path::new(&cfg.boxlite_home), &cfg.worker_id)
+            .map_err(|_| {
+                BoxliteCommandError::ExecutionFailed(
+                    "Boxlite startup ownership is unavailable".into(),
+                )
+            })?;
+    }
     match RUNTIME.get_or_init(|| init_runtime(cfg)) {
         Ok(runtime) => Ok(runtime),
         Err(message) => Err(BoxliteCommandError::ExecutionFailed(message.clone())),
@@ -437,6 +484,14 @@ fn init_runtime(cfg: &Config) -> Result<BoxliteRuntime, String> {
         options.home_dir = PathBuf::from(cfg.boxlite_home.trim());
     }
 
+    if HOME_OWNER.get().is_none() {
+        for marker in [".onlyboxes-owner.json", ".onlyboxes-owner.lock"] {
+            match std::fs::symlink_metadata(options.home_dir.join(marker)) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+                _ => return Err("Boxlite home requires guarded journal ownership".into()),
+            }
+        }
+    }
     BoxliteRuntime::new(options).map_err(|err| format!("initialize Boxlite runtime: {err}"))
 }
 

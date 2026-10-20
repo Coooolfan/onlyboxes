@@ -184,6 +184,13 @@ impl Journal {
         Ok(())
     }
 
+    pub(super) fn verify_open(&self, worker: &str) -> Result<()> {
+        if self.inner()?.state.worker_id != worker {
+            return Err(Error::Unavailable);
+        }
+        Ok(())
+    }
+
     pub fn snapshot(&self) -> Result<JournalState> {
         Ok(self.inner()?.state.clone())
     }
@@ -370,7 +377,7 @@ impl Journal {
     }
 }
 
-fn private_options() -> OpenOptions {
+pub(super) fn private_options() -> OpenOptions {
     let mut options = OpenOptions::new();
     options
         .mode(0o600)
@@ -378,7 +385,7 @@ fn private_options() -> OpenOptions {
     options
 }
 
-fn private_directory(path: &Path) -> Result<()> {
+pub(super) fn private_directory(path: &Path) -> Result<()> {
     create_directory(path)?;
     let meta = fs::symlink_metadata(path).map_err(|_| Error::Unavailable)?;
     // SAFETY: geteuid reads the calling process identity and has no pointers.
@@ -412,7 +419,7 @@ fn create_directory(path: &Path) -> Result<()> {
         .map_err(|_| Error::Unavailable)
 }
 
-fn check_file(file: &File, limit: usize) -> Result<()> {
+pub(super) fn check_file(file: &File, limit: usize) -> Result<()> {
     let meta = file.metadata().map_err(|_| Error::Unavailable)?;
     // SAFETY: geteuid reads the calling process identity and has no pointers.
     if !meta.is_file()
@@ -426,7 +433,7 @@ fn check_file(file: &File, limit: usize) -> Result<()> {
     Ok(())
 }
 
-fn read_private(path: &Path, limit: usize) -> Result<Option<Vec<u8>>> {
+pub(super) fn read_private(path: &Path, limit: usize) -> Result<Option<Vec<u8>>> {
     let file = match private_options().read(true).open(path) {
         Ok(file) => file,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -451,7 +458,7 @@ fn persist_state(root: &Path, state: &JournalState) -> Result<()> {
     write_atomic(root, "journal.json", &data)
 }
 
-fn write_atomic(root: &Path, name: &str, data: &[u8]) -> Result<()> {
+pub(super) fn write_atomic(root: &Path, name: &str, data: &[u8]) -> Result<()> {
     let temp = root.join(format!("journal-{}.tmp", uuid::Uuid::new_v4()));
     let result = (|| {
         let mut file = private_options().write(true).create_new(true).open(&temp)?;

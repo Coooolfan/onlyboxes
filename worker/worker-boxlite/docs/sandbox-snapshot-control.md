@@ -26,7 +26,7 @@ BoxLite Worker 在普通命令与心跳所在的 gRPC `Connect` 流中接收 `Sa
 
 Console 的恢复 ACK 到达、会话恢复完成后，才开放新连接的动作准入。旧连接的控制帧被拒绝，旧连接随后触发的 disconnect 不会关闭新连接。每个 receiver 使用握手时固定的调度器引用；中途注册或更换对象不能绕过恢复屏障。
 
-退出先取消并等待生命周期任务，再关闭会话管理器和 SDK。这个进程内屏障不能替代 Worker 被 SIGKILL 后的独立 lease 强制执行；独立约束、SDK 初始化前的 home/journal 归属核对、生产配置接入仍需完成。
+退出先取消并等待生命周期任务，再关闭会话管理器和 SDK。这个进程内屏障不能替代 Worker 被 SIGKILL 后的独立 lease 强制执行；独立约束、生产配置接入，以及 boot/namespace 变化和已知清理残留的启动核对仍需完成。[SDK 初始化前的归属 Guard 与只读清单](sandbox-snapshot-startup.md)已接入原生验收。
 
 ## 验证
 
