@@ -23,7 +23,7 @@ use runner::terminal_session_manager::{
     NativeControlConfig, NativeControlEngine, TerminalExecRequest, TerminalSessionManager,
 };
 use std::{
-    os::unix::fs::PermissionsExt,
+    os::unix::fs::{FileExt, MetadataExt, PermissionsExt},
     path::Path,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -127,6 +127,7 @@ async fn main() -> Result<()> {
         drain_timeout: Duration::from_secs(30),
         readiness_timeout: Duration::from_secs(30),
         cache_ttl: Duration::from_secs(300),
+        cache_max_bytes: 64 << 20,
         transfer_concurrency: 4,
         transfer_idle: Duration::from_secs(30),
     };
@@ -272,7 +273,22 @@ async fn main() -> Result<()> {
         let restored_payload = Control { archive:Some(archive.clone()),
             download:Some(snapshot_store::grant(&store.url, "GET", archive.size_bytes, 0, None)), ..Default::default() };
         value(control_at(&dispatcher, "revoked-target", 3, Action::PrepareRestore, prepare.clone()).await?)?;
-        let ready = value(control_at(&dispatcher, "revoked-target", 3, Action::Restore, restored_payload.clone()).await?)?;
+        let gets_before_warm = store.get_requests.load(std::sync::atomic::Ordering::SeqCst);
+        // No transfer grant at all: only a fully verified matching local cache
+        // can satisfy this restore. It must still import a new writable root.
+        let ready = value(control_at(&dispatcher, "revoked-target", 3, Action::Restore, Control { archive:Some(archive.clone()), ..Default::default() }).await?)?;
+        if store.get_requests.load(std::sync::atomic::Ordering::SeqCst) != gets_before_warm {
+            return Err("warm restore fetched the shared object".into());
+        }
+        let source_cache = journal.artifact_path(SCOPE, SECOND, 1)?;
+        let target_cache = journal.artifact_path(SCOPE, "revoked-target", 3)?;
+        let source_meta = std::fs::metadata(&source_cache)?;
+        let target_meta = std::fs::metadata(&target_cache)?;
+        if (source_meta.dev(), source_meta.ino()) == (target_meta.dev(), target_meta.ino())
+            || source_meta.nlink() != 1 || target_meta.nlink() != 1 {
+            return Err("warm restore shared a mutable archive inode across operations".into());
+        }
+        println!("PASS: same-node committed-cache restore uses no GET/grant and copies into a distinct operation inode before native import");
         if ready.state != "ready" || ready.instance_id == id || manager.execute(exec(3, "before-activate")).await.is_ok() {
             return Err("imported target lost identity or opened before activation".into());
         }
@@ -319,7 +335,25 @@ async fn main() -> Result<()> {
         }
         println!("PASS: restore frames import verified bytes, preserve inactive readiness across manager reconstruction and require explicit activation/revocation");
         value(control_at(&dispatcher, "permanently-deleted-target", 4, Action::PrepareRestore, prepare.clone()).await?)?;
-        let final_ready = value(control_at(&dispatcher, "permanently-deleted-target", 4, Action::Restore, restored_payload).await?)?;
+        let mut corrupted = 0;
+        for prior in journal.snapshot()?.operations.values().filter(|op| op.scoped_session_id == SCOPE && op.verified
+            && ((op.kind == worker_boxlite::persistence::Kind::Source && op.snapshot_committed)
+                || (op.kind == worker_boxlite::persistence::Kind::Target && op.phase == worker_boxlite::persistence::Phase::Canceled))) {
+            let path = journal.artifact_path(SCOPE, &prior.operation_id, prior.generation)?;
+            if !path.exists() { continue; }
+            let file = std::fs::OpenOptions::new().read(true).write(true).open(path)?;
+            let mut byte = [0]; file.read_exact_at(&mut byte, 0)?; byte[0] ^= 1;
+            file.write_all_at(&byte, 0)?; file.sync_all()?; corrupted += 1;
+        }
+        if corrupted == 0 { return Err("corrupt-cache acceptance had no retained cache candidate".into()); }
+        let gets_before_cold = store.get_requests.load(std::sync::atomic::Ordering::SeqCst);
+        let cold_payload = Control { archive:Some(archive.clone()),
+            download:Some(snapshot_store::grant(&store.url, "GET", archive.size_bytes, 0, None)), ..Default::default() };
+        let final_ready = value(control_at(&dispatcher, "permanently-deleted-target", 4, Action::Restore, cold_payload).await?)?;
+        if store.get_requests.load(std::sync::atomic::Ordering::SeqCst) != gets_before_cold+1 {
+            return Err("corrupt caches did not fall back to exactly one complete shared GET".into());
+        }
+        println!("PASS: corrupted same-node caches are rejected and restore downloads the same committed reference before starting");
         value(control_at(&dispatcher, "permanently-deleted-target", 4, Action::Activate, Control::default()).await?)?;
         if manager.execute(exec(4, "cat /source-control-data")).await?.stdout != "preserved" { return Err("second restore lost snapshot bytes".into()); }
         let purge = Control { purge_session:true, restore_spec:Some(spec.clone()), ..Default::default() };

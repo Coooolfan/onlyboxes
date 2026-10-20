@@ -139,9 +139,9 @@ impl Transfer {
             result = verify => result,
         };
         if let Err(error) = verified {
-            if error == TransferError::Integrity && !local.cached {
+            if error == TransferError::Integrity {
                 let captured = local.clone();
-                self.io_task(move || discard_partial(&captured)).await?;
+                self.io_task(move || discard_corrupt(&captured)).await?;
             }
             return Err(error);
         }
@@ -320,6 +320,17 @@ fn discard_partial(local: &LocalFile) -> Result<()> {
     }
     Ok(())
 }
+fn discard_corrupt(local: &LocalFile) -> Result<()> {
+    if local.cached {
+        if !same_file(&local.file, &local.destination)? {
+            return Err(TransferError::Integrity);
+        }
+        fs::remove_file(&local.destination).map_err(|_| TransferError::Local)?;
+        cleanup_aliases(local)
+    } else {
+        discard_partial(local)
+    }
+}
 fn sync_parent(path: &Path) -> Result<()> {
     File::open(path.parent().ok_or(TransferError::Integrity)?)
         .and_then(|file| file.sync_all())
@@ -329,3 +340,6 @@ fn sync_parent(path: &Path) -> Result<()> {
 #[cfg(test)]
 #[path = "transfer_tests.rs"]
 mod tests;
+
+#[path = "transfer_cache.rs"]
+mod cache;

@@ -1,7 +1,10 @@
 //! Ephemeral HTTP object-service fixture, not an S3 conformance implementation.
 use chrono::Utc;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use worker_boxlite::persistence::{Archive, CompletedPart, TransferGrant};
@@ -9,6 +12,8 @@ use worker_boxlite::persistence::{Archive, CompletedPart, TransferGrant};
 pub struct Store {
     pub url: String,
     pub object: PathBuf,
+    #[allow(dead_code)]
+    pub get_requests: Arc<AtomicUsize>,
     root: PathBuf,
     task: tokio::task::JoinHandle<()>,
 }
@@ -26,20 +31,24 @@ impl Store {
         let address = listener.local_addr()?;
         let state = Arc::new(root.to_owned());
         let captured = state.clone();
+        let get_requests = Arc::new(AtomicUsize::new(0));
+        let counter = get_requests.clone();
         let task = tokio::spawn(async move {
             loop {
                 let Ok((socket, _)) = listener.accept().await else {
                     return;
                 };
                 let root = captured.clone();
+                let counter = counter.clone();
                 tokio::spawn(async move {
-                    let _ = serve(socket, &root).await;
+                    let _ = serve(socket, &root, &counter).await;
                 });
             }
         });
         Ok(Self {
             url: format!("http://{address}"),
             object: root.join("object"),
+            get_requests,
             root: state.as_ref().clone(),
             task,
         })
@@ -91,7 +100,7 @@ pub fn grant(base: &str, method: &str, size: i64, offset: i64, part: Option<i32>
         size_bytes: size,
     }
 }
-async fn serve(mut socket: TcpStream, root: &Path) -> std::io::Result<()> {
+async fn serve(mut socket: TcpStream, root: &Path, counter: &AtomicUsize) -> std::io::Result<()> {
     let mut bytes = Vec::new();
     let end = loop {
         let mut buf = [0; 8192];
@@ -163,6 +172,7 @@ async fn serve(mut socket: TcpStream, root: &Path) -> std::io::Result<()> {
         file.sync_all().await?;
         socket.write_all(format!("HTTP/1.1 200 OK\r\nETag: \"part-{number}\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").as_bytes()).await?;
     } else if method == "GET" && path == "/object" {
+        counter.fetch_add(1, Ordering::SeqCst);
         use tokio::io::AsyncSeekExt;
         let mut file = tokio::fs::File::open(root.join("object")).await?;
         let length = file.metadata().await?.len();

@@ -12,6 +12,8 @@ use worker_boxlite::persistence::{
     Operation, RestoreSpec, Transfer, TransferError, VerifiedSource,
 };
 
+#[path = "snapshot_cache_engine.rs"]
+mod cache;
 #[path = "snapshot_target_engine.rs"]
 mod target;
 
@@ -24,6 +26,7 @@ pub(crate) struct NativeControlConfig {
     pub drain_timeout: Duration,
     pub readiness_timeout: Duration,
     pub cache_ttl: Duration,
+    pub cache_max_bytes: i64,
     pub transfer_concurrency: usize,
     pub transfer_idle: Duration,
 }
@@ -57,6 +60,8 @@ impl NativeControlEngine {
             || config.drain_timeout > Duration::from_secs(600)
             || config.readiness_timeout.is_zero()
             || config.readiness_timeout > Duration::from_secs(600)
+            || config.cache_max_bytes < 0
+            || config.cache_max_bytes > config.tmp_quota_bytes
             || config.cache_ttl.is_zero()
             || config.cache_ttl.as_millis() > i64::MAX as u128
         {
@@ -311,7 +316,7 @@ impl NativeControlEngine {
                 None if action.frame.generation != 1 => return Err(ControlError::Conflict),
                 _ => (),
             }
-            self.reserve(action, stage)?;
+            self.reserve_with_cache(action, stage).await?;
             let state = self.journal.snapshot().map_err(journal_error)?;
             let (id, lease) = match self.binding(action).await {
                 Ok(binding) => binding,
@@ -498,14 +503,7 @@ impl NativeControlEngine {
             .finalize_source(&self.journal, &op.operation_id)
             .await
             .map_err(native_error)?;
-        self.journal
-            .update(&op.operation_id, |current| {
-                current.cache_until_unix_ms = now_ms()
-                    .map_err(|_| JournalError::Unavailable)?
-                    .saturating_add(self.config.cache_ttl.as_millis() as i64);
-                Ok(())
-            })
-            .map_err(journal_error)?;
+        self.retain_cache(&op.operation_id)?;
         self.manager
             .sync_snapshot_operation(&op.operation_id)
             .await
@@ -515,6 +513,7 @@ impl NativeControlEngine {
             .detach_snapshot_instance(&op.scoped_session_id, &op.operation_id, op.generation)
             .await
             .map_err(terminal_error)?;
+        self.trim_cache(self.config.cache_max_bytes).await?;
         self.current_result(&op.operation_id)
     }
 

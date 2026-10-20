@@ -96,7 +96,7 @@ impl NativeControlEngine {
                 return Err(ControlError::Conflict);
             }
             let stage = target_stage(archive)?;
-            self.reserve(action, stage)?;
+            self.reserve_with_cache(action, stage).await?;
             if let Err(error) = self.authorize(action).await {
                 self.release(action)?;
                 return Err(error);
@@ -168,7 +168,7 @@ impl NativeControlEngine {
         if matches!(op.phase, Phase::Ready | Phase::Active) {
             return self.inspect_other(action, &op).await;
         }
-        if op.box_id.is_empty() {
+        if op.box_id.is_empty() && !self.copy_cache(action, &op).await? {
             let path = self
                 .journal
                 .artifact_path(&op.scoped_session_id, &op.operation_id, op.generation)
@@ -223,6 +223,7 @@ impl NativeControlEngine {
             )
             .await
             .map_err(native_error)?;
+        self.retain_cache(&op.operation_id)?;
         self.manager
             .sync_snapshot_operation(&op.operation_id)
             .await
@@ -265,6 +266,7 @@ impl NativeControlEngine {
             .bind_snapshot_instance(&op.operation_id)
             .await
             .map_err(terminal_error)?;
+        self.trim_cache(self.config.cache_max_bytes).await?;
         self.authorize(action).await?;
         self.manager
             .activate_snapshot_instance(
@@ -336,6 +338,7 @@ impl NativeControlEngine {
                     .await
             }
             .map_err(native_error)?;
+            self.retain_cache(&op.operation_id)?;
             self.manager
                 .sync_snapshot_operation(&op.operation_id)
                 .await
@@ -345,6 +348,7 @@ impl NativeControlEngine {
                 .detach_snapshot_instance(&op.scoped_session_id, &op.operation_id, op.generation)
                 .await
                 .map_err(terminal_error)?;
+            self.trim_cache(self.config.cache_max_bytes).await?;
             return Ok(target_result(&op, "canceled"));
         }
         // No native import can precede a durable target claim. Fence delayed

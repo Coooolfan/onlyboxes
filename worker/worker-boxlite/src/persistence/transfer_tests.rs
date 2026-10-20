@@ -46,6 +46,208 @@ fn archive(data: &[u8]) -> Archive {
         format: crate::persistence::ARCHIVE_FORMAT.into(),
     }
 }
+
+#[tokio::test]
+async fn cache_copy_verifies_both_files_and_publishes_an_independent_inode() {
+    let root = Root::new();
+    let data = vec![b'c'; CHUNK * 3 + 7];
+    let source = root.source(&data);
+    source
+        .set_times(
+            std::fs::FileTimes::new()
+                .set_accessed(std::time::UNIX_EPOCH + Duration::from_secs(100)),
+        )
+        .unwrap();
+    let before = source.metadata().unwrap();
+    let descriptor = archive(&data);
+    let result = transfer()
+        .copy_cached_archive(
+            root.0.join("source"),
+            &descriptor,
+            root.destination(),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let copied = result.file.metadata().unwrap();
+    assert!(result.reused);
+    assert_ne!((before.dev(), before.ino()), (copied.dev(), copied.ino()));
+    assert_eq!(copied.nlink(), 1);
+    assert_eq!(source.metadata().unwrap().nlink(), 1);
+    assert!(source.metadata().unwrap().atime() > 100);
+    assert_eq!(fs::read(root.destination()).unwrap(), data);
+    assert_eq!(fs::read(root.0.join("source")).unwrap(), data);
+    let replay = transfer()
+        .copy_cached_archive(
+            root.0.join("source"),
+            &descriptor,
+            root.destination(),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay.file.metadata().unwrap().ino(), copied.ino());
+    assert!(!root.0.join("snapshot.boxlite.partial").exists());
+}
+
+#[tokio::test]
+async fn corrupt_cache_can_be_evicted_and_corrupt_completed_download_is_repaired() {
+    let root = Root::new();
+    let data = b"shared-snapshot-data";
+    root.source(b"broken-snapshot-data");
+    let expected = archive(data);
+    let t = transfer();
+    assert_eq!(
+        t.copy_cached_archive(
+            root.0.join("source"),
+            &expected,
+            root.destination(),
+            CancellationToken::new()
+        )
+        .await
+        .err(),
+        Some(TransferError::Integrity)
+    );
+    assert!(!root.destination().exists());
+    assert!(t
+        .evict_cached_archive(root.0.join("source"), &expected)
+        .await
+        .unwrap()
+        .is_some());
+    let server = Server::new(move |_| Reply::bytes(data)).await;
+    let grant = server.grant("GET", data.len());
+    t.download(
+        &grant,
+        &expected,
+        root.destination(),
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    let corrupt = OpenOptions::new()
+        .write(true)
+        .open(root.destination())
+        .unwrap();
+    corrupt.write_all_at(b"X", 0).unwrap();
+    assert_eq!(
+        t.download(
+            &grant,
+            &expected,
+            root.destination(),
+            CancellationToken::new()
+        )
+        .await
+        .err(),
+        Some(TransferError::Integrity)
+    );
+    assert!(!root.destination().exists());
+    assert_eq!(server.hits.load(Ordering::SeqCst), 1);
+    t.download(
+        &grant,
+        &expected,
+        root.destination(),
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(server.hits.load(Ordering::SeqCst), 2);
+    assert_eq!(fs::read(root.destination()).unwrap(), data);
+}
+
+#[tokio::test]
+async fn cache_locks_protect_readers_from_eviction_and_copy_never_follows_aliases() {
+    let root = Root::new();
+    let data = b"immutable-shared-copy";
+    root.source(data);
+    let descriptor = archive(data);
+    let t = transfer();
+    let lock = OpenOptions::new()
+        .write(true)
+        .read(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(root.0.join("source.lock"))
+        .unwrap();
+    lock.try_lock().unwrap();
+    assert_eq!(
+        t.evict_cached_archive(root.0.join("source"), &descriptor)
+            .await,
+        Err(TransferError::Retry)
+    );
+    assert_eq!(
+        t.copy_cached_archive(
+            root.0.join("source"),
+            &descriptor,
+            root.destination(),
+            CancellationToken::new()
+        )
+        .await
+        .err(),
+        Some(TransferError::Retry)
+    );
+    drop(lock);
+    symlink(root.0.join("source"), root.0.join("alias")).unwrap();
+    assert!(t
+        .copy_cached_archive(
+            root.0.join("alias"),
+            &descriptor,
+            root.destination(),
+            CancellationToken::new()
+        )
+        .await
+        .is_err());
+    fs::hard_link(root.0.join("source"), root.0.join("hardlink")).unwrap();
+    assert_eq!(
+        t.copy_cached_archive(
+            root.0.join("source"),
+            &descriptor,
+            root.destination(),
+            CancellationToken::new()
+        )
+        .await
+        .err(),
+        Some(TransferError::Integrity)
+    );
+    assert_eq!(fs::read(root.0.join("source")).unwrap(), data);
+    assert!(!root.destination().exists());
+}
+
+#[tokio::test]
+async fn cache_copy_cancellation_does_not_publish_or_overwrite_a_destination() {
+    let root = Root::new();
+    let data = b"immutable-shared-copy";
+    root.source(data);
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+    assert_eq!(
+        transfer()
+            .copy_cached_archive(
+                root.0.join("source"),
+                &archive(data),
+                root.destination(),
+                cancel
+            )
+            .await
+            .err(),
+        Some(TransferError::Retry)
+    );
+    assert!(!root.destination().exists());
+    let local = download::prepare(root.destination(), &archive(data)).unwrap();
+    assert_eq!(
+        transfer()
+            .copy_cached_archive(
+                root.0.join("source"),
+                &archive(data),
+                root.destination(),
+                CancellationToken::new()
+            )
+            .await
+            .err(),
+        Some(TransferError::Retry)
+    );
+    drop(local);
+    assert!(!root.destination().exists());
+}
 struct Request {
     method: String,
     path: String,
