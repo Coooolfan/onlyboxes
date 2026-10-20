@@ -539,6 +539,10 @@ fn cached_terminal_session_box(box_id: &str) -> Option<Arc<LiteBox>> {
         .and_then(|boxes| boxes.get(box_id.trim()).cloned())
 }
 
+pub(crate) fn forget_terminal_session_box(box_id: &str) {
+    drop_terminal_session_box(box_id);
+}
+
 fn drop_terminal_session_box(box_id: &str) {
     if let Ok(mut boxes) = terminal_session_boxes().lock() {
         boxes.remove(box_id.trim());

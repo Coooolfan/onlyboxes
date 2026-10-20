@@ -353,6 +353,11 @@ impl Journal {
         })
     }
 
+    pub fn available_artifact_bytes(&self) -> Result<u64> {
+        let _inner = self.inner()?;
+        super::space::available(&self.root.join("artifacts")).map_err(|_| Error::Unavailable)
+    }
+
     pub fn artifact_path(&self, scope: &str, operation: &str, generation: i64) -> Result<PathBuf> {
         if !valid_scope(scope) || !valid_id(operation) || generation <= 0 {
             return Err(Error::Conflict);

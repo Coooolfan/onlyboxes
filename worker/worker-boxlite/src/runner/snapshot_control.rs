@@ -58,6 +58,7 @@ pub(crate) enum ControlError {
     Quota,
     Storage,
     Capacity,
+    OperationCapacity,
     Busy,
 }
 impl ControlError {
@@ -69,6 +70,7 @@ impl ControlError {
             Self::Quota => "snapshot_quota_exceeded",
             Self::Storage => "snapshot_storage_error",
             Self::Capacity => "session_capacity_exceeded",
+            Self::OperationCapacity => "no_capacity",
             Self::Busy => "no_capacity",
         }
     }

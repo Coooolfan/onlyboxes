@@ -5055,3 +5055,6 @@ mod tests {
 mod persistence;
 use persistence::state_recovery_allowed;
 pub(crate) use persistence::ProxyPermit;
+
+#[allow(unused_imports)]
+pub(crate) use persistence::source_control::{SourceControlConfig, SourceControlEngine};

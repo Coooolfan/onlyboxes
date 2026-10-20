@@ -913,3 +913,7 @@ pub(super) fn state_recovery_allowed(
 #[cfg(test)]
 #[path = "terminal_persistence_tests.rs"]
 mod tests;
+
+#[allow(dead_code)]
+#[path = "snapshot_source_engine.rs"]
+pub(crate) mod source_control;

@@ -795,9 +795,20 @@ async fn cancelling_a_future_does_not_release_ongoing_filesystem_capacity() {
     first.abort();
     assert!(first.await.unwrap_err().is_cancelled());
     assert_eq!(t.io_slots.available_permits(), 0);
+    let idle = t.wait_io_idle();
+    tokio::pin!(idle);
+    assert!(tokio::time::timeout(Duration::from_millis(30), &mut idle)
+        .await
+        .is_err());
     let transfer = t.clone();
     let second = tokio::spawn(async move { transfer.io_task(|| Ok(())).await });
     release_tx.send(()).unwrap();
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(2), idle)
+            .await
+            .unwrap(),
+        Ok(())
+    );
     assert_eq!(
         tokio::time::timeout(Duration::from_secs(2), second)
             .await

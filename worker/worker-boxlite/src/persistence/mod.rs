@@ -4,6 +4,7 @@ mod archive;
 mod host_process;
 mod journal;
 mod native;
+mod space;
 mod transfer;
 mod types;
 

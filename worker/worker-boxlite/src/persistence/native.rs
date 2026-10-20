@@ -66,6 +66,11 @@ impl NativeRuntime {
         Ok(Self { runtime, home })
     }
 
+    /// Available capacity in the dedicated SDK home, before accepting staging.
+    pub fn available_staging_bytes(&self) -> Result<u64> {
+        crate::persistence::space::available(&self.home).map_err(|_| NativeError::Unavailable)
+    }
+
     pub async fn inspect(&self, scope: &str, box_id: &str) -> Result<NativeInstance> {
         self.inspect_known(scope, box_id, &terminal_name(scope), None)
             .await

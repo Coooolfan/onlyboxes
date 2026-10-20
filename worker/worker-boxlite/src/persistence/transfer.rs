@@ -108,6 +108,7 @@ pub struct Transfer {
     client: Client,
     slots: Arc<Semaphore>,
     io_slots: Arc<Semaphore>,
+    io_capacity: u32,
     idle: Duration,
 }
 impl Transfer {
@@ -132,8 +133,22 @@ impl Transfer {
             client,
             slots: Arc::new(Semaphore::new(concurrency)),
             io_slots: Arc::new(Semaphore::new(concurrency)),
+            io_capacity: concurrency as u32,
             idle,
         })
+    }
+
+    /// Wait for blocking file work that can outlive a canceled caller. The
+    /// caller must also join its transfer futures and release archive pins.
+    pub async fn wait_io_idle(&self) -> Result<()> {
+        let permits = self
+            .io_slots
+            .clone()
+            .acquire_many_owned(self.io_capacity)
+            .await
+            .map_err(|_| TransferError::Local)?;
+        drop(permits);
+        Ok(())
     }
 
     /// Verify once per immutable, pinned source rather than rehashing the

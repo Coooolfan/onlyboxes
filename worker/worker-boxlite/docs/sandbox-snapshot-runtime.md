@@ -1,6 +1,6 @@
 # BoxLite 原生归档与恢复
 
-Worker 固定依赖 BoxLite `0.10.7`，使用原生 `.boxlite` 归档验证同 runtime 的文件系统恢复。当前 Worker 尚未声明 `sandbox_persistence` 能力，也尚未接入 Console 的挂起、上传、恢复、激活和删除协议。
+Worker 固定依赖 BoxLite `0.10.7`，使用原生 `.boxlite` 归档验证同 runtime 的文件系统恢复。当前 Worker 尚未声明 `sandbox_persistence` 能力，生产启动路径尚未注册生命周期引擎；源动作已提供管理帧适配，目标恢复、激活和删除动作仍需接入。
 
 ## 原生验收
 
