@@ -296,6 +296,30 @@ fn private_files_owner_lock_and_nested_directories() {
 }
 
 #[test]
+fn explicit_close_releases_the_lock_even_if_a_descriptor_alias_survives() {
+    let root = Root::new();
+    let journal = root.open();
+    // A concurrent fork can inherit the open file description briefly before
+    // CLOEXEC closes it. An alias reproduces that ownership deterministically.
+    let alias = journal
+        .inner
+        .lock()
+        .unwrap()
+        .lock
+        .as_ref()
+        .unwrap()
+        .try_clone()
+        .unwrap();
+    journal.close().unwrap();
+    assert_eq!(journal.snapshot().err(), Some(Error::Unavailable));
+    let replacement = root.open();
+    assert!(Journal::open(root.journal(), "worker-a").is_err());
+    drop(alias);
+    assert!(Journal::open(root.journal(), "worker-a").is_err());
+    replacement.snapshot().unwrap();
+}
+
+#[test]
 fn reopen_preserves_source_identity_spec_and_commit_proof() {
     let root = Root::new();
     let j = root.open();

@@ -174,6 +174,12 @@ impl Journal {
 
     pub fn close(&self) -> Result<()> {
         let mut inner = self.inner.lock().map_err(|_| Error::Unavailable)?;
+        // A concurrent fork can temporarily retain this open file description
+        // until exec closes its CLOEXEC alias. Explicit close relinquishes the
+        // journal lock now; dropping our descriptor alone need not release it.
+        if let Some(file) = &inner.lock {
+            file.unlock().map_err(|_| Error::Unavailable)?;
+        }
         inner.lock.take();
         Ok(())
     }
