@@ -2,7 +2,7 @@
 
 BoxLite Worker 在普通命令与心跳所在的 gRPC `Connect` 流中接收 `SandboxPersistenceControl`，通过 `ControlDispatcher` 为生命周期动作保留独立任务。它不使用普通 `terminalExec` 的结果缓存或并发槽。
 
-当前阶段已接入控制帧分派、连接恢复屏障、后台任务所有权与报告发送。原生动作引擎尚未在生产启动路径中注册，Worker 不声明 `sandbox_persistence`；未注册时所有管理帧继续返回 `persistence_unavailable`。gRPC 传输测试使用可控引擎；下述源实例验收使用真实 BoxLite VM 和临时 HTTP 对象服务，但不代表真实 Console/S3 已经贯通。
+当前阶段已接入控制帧分派、连接恢复屏障、后台任务所有权与报告发送。原生动作引擎尚未在生产启动路径中注册，Worker 不声明 `sandbox_persistence`；未注册时所有管理帧继续返回 `persistence_unavailable`。gRPC 传输测试使用可控引擎；下述原生验收使用真实 BoxLite VM 和临时 HTTP 对象服务，但不代表真实 Console/S3 已经贯通。
 
 ## 准入与私有数据
 
@@ -26,7 +26,7 @@ BoxLite Worker 在普通命令与心跳所在的 gRPC `Connect` 流中接收 `Sa
 
 Console 的恢复 ACK 到达、会话恢复完成后，才开放新连接的动作准入。旧连接的控制帧被拒绝，旧连接随后触发的 disconnect 不会关闭新连接。每个 receiver 使用握手时固定的调度器引用；中途注册或更换对象不能绕过恢复屏障。
 
-退出先取消并等待生命周期任务，再关闭会话管理器和 SDK。这个进程内屏障不能替代 Worker 被 SIGKILL 后的独立 lease 强制执行；独立约束、SDK 初始化前的 home/journal 归属核对、目标恢复/激活/取消/永久删除动作及生产配置接入仍需完成。
+退出先取消并等待生命周期任务，再关闭会话管理器和 SDK。这个进程内屏障不能替代 Worker 被 SIGKILL 后的独立 lease 强制执行；独立约束、SDK 初始化前的 home/journal 归属核对、生产配置接入仍需完成。
 
 ## 验证
 
@@ -34,7 +34,7 @@ Console 的恢复 ACK 到达、会话恢复完成后，才开放新连接的动�
 
 ## 源实例动作引擎
 
-`SourceControlEngine` 实现 source 的 inspect、prepare_snapshot、upload_snapshot、verify_snapshot、finalize_suspend 和 cancel/rollback。它在控制连接、scope、操作和 generation 核对之后，调用同一 SDK runtime 上的原生适配器，保持所选 Box ID 不变。
+`NativeControlEngine` 实现 source 的 inspect、prepare_snapshot、upload_snapshot、verify_snapshot、finalize_suspend 和 cancel/rollback。它在控制连接、scope、操作和 generation 核对之后，调用同一 SDK runtime 上的原生适配器，保持所选 Box ID 不变。
 
 准备阶段先计算两个归档文件、展开预算与额外余量，串行核对全局暂存额度、未完成操作数、已保留缓存，以及 SDK home 和 artifacts 的可用空间，再关闭源入口。关闭后先写入 durable source 意图，再排空已接受的执行与预览。排空超时或出现执行故障时保留源与门禁，不继续导出。SDK 原生操作一旦开始就等待实际完成，外层取消不丢弃结果或开启新实例。
 
@@ -42,10 +42,20 @@ Console 的恢复 ACK 到达、会话恢复完成后，才开放新连接的动�
 
 回滚由 Console 明确授权。已有操作必须尚未共享提交；原生回滚将 lease 写入 journal 后才启动原实例，并保持用户入口关闭，直至同一控制连接明确完成绑定和激活。已接受执行故障会阻止快照导出；这些请求的计数与预览归零、原 VM 就绪后，可以恢复同一 root 的访问。缺少 source claim 的回滚只能使用已记录 probe 或旧 active 操作固定的 CID 和匹配规格重建 source 意图，不写入一个会阻断后续采纳的通用 cancel tombstone。管理器重建后没有本地请求计数时，仍根据已持久化的源身份完成核对，不能创建空白替代根。
 
-暂存额度和空闲空间查询属于准入估算，不是操作系统配额。SDK 临时文件、未登记孤儿和长期缓存的回收、硬磁盘配额与生产容量验收仍需完成。源引擎当前不处理目标恢复或永久 DELETE 管理帧；这些动作的原生原语已存在，后续接入同一调度边界。
+暂存额度和空闲空间查询属于准入估算，不是操作系统配额。SDK 临时文件、未登记孤儿和长期缓存的回收、硬磁盘配额与生产容量验收仍需完成。同节点恢复目前仍从共享对象服务获取目标归档；已提交源归档跨操作复用的本地缓存优化尚未接入。
 
 ```bash
-cargo run --locked --example boxlite_source_controls_smoke
+cargo run --locked --example boxlite_lifecycle_controls_smoke
 ```
 
-该验收在临时私有 home 中运行真实会话管理器、源动作引擎与 BoxLite VM，直接交付 protobuf 管理帧。覆盖预算拒绝后源仍可执行、缺少 claim 的源回滚、排空期间执行超时后的数据保留、冻结后重建管理器/引擎并重试、原 CID 回滚与重放、分片 HTTP 上传、完整回读、未验证/未提交时禁止清理，以及清理后容量归零与入口关闭。测试协调方负责完成分片和授予提交标志；不模拟真实 S3 条件 manifest 或 Console 数据库事务。管理器重建不等同于 Worker SIGKILL、跨机器或独立 lease 验收。
+该验收在临时私有 home 中运行真实会话管理器、原生动作引擎与 BoxLite VM，直接交付 protobuf 管理帧。覆盖预算拒绝后源仍可执行、缺少 claim 的源回滚、排空期间执行超时后的数据保留、冻结后重建管理器/引擎并重试、原 CID 回滚与重放、分片 HTTP 上传、完整回读、未验证/未提交时禁止清理，以及清理后容量归零与入口关闭。恢复端覆盖准备后取消、拒绝延迟准备、HTTP 下载及导入、ready 后重建管理器、固定 CID/进程/绝对 lease 的重试、显式激活、旧 generation 拒绝、普通取消不能删除 active 目标、显式撤销，以及运行中永久删除和禁止重建。测试协调方负责完成分片和授予提交标志；不模拟真实 S3 条件 manifest 或 Console 数据库事务。管理器重建不等同于 Worker SIGKILL、跨机器或独立 lease 验收。
+
+## 目标恢复、撤销与永久删除
+
+同一个 `NativeControlEngine` 处理 prepare_restore、restore、activate 以及 target cancel，和源动作共享准入锁、操作额度、暂存统计及 I/O 槽。prepare_restore 核对精确 runtime 版本、guest 平台、固定镜像与归档身份；本地计算下载归档、规范化归档、SDK 导入工作区和展开磁盘的预算，加上余量。Console 的 staging_bytes 是调度估算，不会降低本地预算。会话容量与 durable target 意图先于下载和 SDK 导入保留，普通命令不能在其间创建空白根。
+
+restore 通过完整 GET 校验归档，再核对格式、scope、规格、展开预算和独立磁盘身份。导入只选择当前操作/generation 派生名称对应的实例，不替换已记录 CID。绝对 lease 和启动意图先写 journal，再启动并探测 Python/sh 就绪。已接受的 import/start 始终等待 SDK 返回；连接断开后不开放入口。重试已启动目标使用原来的绝对 lease，不因重放而续期或重新启动曾经 ready 的停止实例。
+
+ready 仅表示实例已经就绪，执行与预览入口仍关闭。activate 核对实际运行进程与未过期 lease，记录 active 后在当前已恢复连接上显式绑定和开放。重复 activate 保留健康的在途工作。普通 cancel 只清理未激活目标；Console 的 delete=true 撤销授权允许先关闭 active 目标入口，排空已接受工作，再停止和移除该实例。撤销保留 session 的可恢复性，与永久删除不同。
+
+purge_session 使用更高 generation 的 Delete 意图永久封锁 scope。该意图与门禁更新在同一个会话锁下完成，随后排空执行/预览、释放该 scope 的传输 pin 并等待实际 I/O，再核对历史 writer、清理所有已记录原生根和归档。只有原生进程退出、物理残留与 artifacts 清理通过后才返回 canceled 并释放容量。删除记录和原生名称占位持续保留；同一 scope 的后续恢复或创建被拒绝。未知 target cancel 不能把仍有普通源实例或未清理 probe 的 scope 改成已取消状态。

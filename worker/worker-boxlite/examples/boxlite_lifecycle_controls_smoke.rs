@@ -1,4 +1,4 @@
-//! Exercise real BoxLite source lifecycle actions through management frames.
+//! Exercise real BoxLite lifecycle actions through management frames.
 //! The temporary object service/coordinator does not prove Console/S3 transactions.
 #![allow(dead_code, unused_imports)]
 #[path = "../src/boxlite_runtime.rs"]
@@ -20,7 +20,7 @@ use proto::registryv1::{
 };
 use runner::snapshot_control::{Control, ControlDispatcher, ResultPayload};
 use runner::terminal_session_manager::{
-    SourceControlConfig, SourceControlEngine, TerminalExecRequest, TerminalSessionManager,
+    NativeControlConfig, NativeControlEngine, TerminalExecRequest, TerminalSessionManager,
 };
 use std::{
     os::unix::fs::PermissionsExt,
@@ -65,6 +65,15 @@ async fn control(
     action: Action,
     payload: Control,
 ) -> Result<SandboxPersistenceReport> {
+    control_at(dispatcher, operation, 1, action, payload).await
+}
+async fn control_at(
+    dispatcher: &Arc<ControlDispatcher>,
+    operation: &str,
+    generation: i64,
+    action: Action,
+    payload: Control,
+) -> Result<SandboxPersistenceReport> {
     Ok(dispatcher
         .submit(
             EPOCH,
@@ -72,7 +81,7 @@ async fn control(
                 request_id: uuid::Uuid::new_v4().to_string(),
                 operation_id: operation.into(),
                 scoped_session_id: SCOPE.into(),
-                generation: 1,
+                generation,
                 action: action as i32,
                 deadline_unix_ms: now_ms() + 300_000,
                 payload_json: serde_json::to_vec(&payload)?,
@@ -112,7 +121,7 @@ async fn main() -> Result<()> {
     let journal = Arc::new(Journal::open(root.join("journal"), &cfg.worker_id)?);
     let sdk = Arc::new(boxlite_runtime::runtime(&cfg)?.clone());
     let native = Arc::new(NativeRuntime::new(sdk.clone(), &home)?);
-    let settings = SourceControlConfig {
+    let settings = NativeControlConfig {
         max_inflight: 1,
         tmp_quota_bytes: 128 << 30,
         drain_timeout: Duration::from_secs(30),
@@ -121,7 +130,7 @@ async fn main() -> Result<()> {
         transfer_concurrency: 4,
         transfer_idle: Duration::from_secs(30),
     };
-    let engine = SourceControlEngine::new(
+    let engine = NativeControlEngine::new(
         manager.clone(),
         journal.clone(),
         native.clone(),
@@ -144,7 +153,7 @@ async fn main() -> Result<()> {
         .map_err(|_| "connection recovery failed")?;
     let store = snapshot_store::Store::new(&root.join("object-store")).await?;
     println!(
-        "source management-frame acceptance; root={}",
+        "native management-frame acceptance; root={}",
         root.display()
     );
     let outcome: Result<()> = async {
@@ -161,6 +170,10 @@ async fn main() -> Result<()> {
         rejected(control(&dispatcher, "unclaimed-source-operation", Action::Cancel, Control { rollback: true, ..Default::default() }).await?, "session_state_conflict")?;
         if journal.snapshot()?.operations.contains_key("unclaimed-source-operation") {
             return Err("missing source metadata created a cancellation tombstone".into());
+        }
+        rejected(control(&dispatcher, "unknown-target-on-live-source", Action::Cancel, Control::default()).await?, "session_state_conflict")?;
+        if journal.snapshot()?.operations.contains_key("unknown-target-on-live-source") {
+            return Err("unknown target cancellation changed live source ownership".into());
         }
         let restored_unknown = value(control(&dispatcher, "unclaimed-source-operation", Action::Cancel, Control { restore_spec: Some(spec.clone()), rollback: true, ..Default::default() }).await?)?;
         if restored_unknown.instance_id != id || manager.execute(exec(1, "cat /source-control-data")).await?.stdout != "preserved" {
@@ -204,7 +217,7 @@ async fn main() -> Result<()> {
         dispatcher.close().await.map_err(|_| "old source dispatcher did not drain")?;
         manager.close_preserving().await;
         manager = TerminalSessionManager::from_config(&cfg);
-        let engine = SourceControlEngine::new(manager.clone(), journal.clone(), native.clone(), settings.clone()).await
+        let engine = NativeControlEngine::new(manager.clone(), journal.clone(), native.clone(), settings.clone()).await
             .map_err(|_| "reconstructed source engine failed")?;
         dispatcher = ControlDispatcher::new(engine, 2).map_err(|_| "reconstructed dispatcher failed")?;
         dispatcher.begin_connection(EPOCH).await.map_err(|_| "reconstructed connection failed")?;
@@ -246,6 +259,83 @@ async fn main() -> Result<()> {
             return Err("ephemeral transfer grants reached the journal".into());
         }
         println!("PASS: frames upload real archive parts, full-GET verify, require commit authority and finalize with gates closed");
+        let prepare = Control { restore_spec:Some(spec.clone()), archive:Some(archive.clone()),
+            max_bytes:archive.size_bytes, max_expanded_bytes:archive.expanded_bytes,
+            staging_bytes:archive.size_bytes + archive.expanded_bytes, lease_ttl_sec:300,
+            ..Default::default() };
+        let prepared = value(control_at(&dispatcher, "prepared-canceled-target", 2, Action::PrepareRestore, prepare.clone()).await?)?;
+        if prepared.state != "prepared" || manager.active_session_count().await != 1
+            || manager.execute(exec(2, "early-target")).await.is_ok() { return Err("prepared target did not reserve gated capacity".into()); }
+        let canceled = value(control_at(&dispatcher, "prepared-canceled-target", 2, Action::Cancel, Control::default()).await?)?;
+        if canceled.state != "canceled" || manager.active_session_count().await != 0 { return Err("prepared cancellation did not release capacity".into()); }
+        rejected(control_at(&dispatcher, "prepared-canceled-target", 2, Action::PrepareRestore, prepare.clone()).await?, "session_state_conflict")?;
+        let restored_payload = Control { archive:Some(archive.clone()),
+            download:Some(snapshot_store::grant(&store.url, "GET", archive.size_bytes, 0, None)), ..Default::default() };
+        value(control_at(&dispatcher, "revoked-target", 3, Action::PrepareRestore, prepare.clone()).await?)?;
+        let ready = value(control_at(&dispatcher, "revoked-target", 3, Action::Restore, restored_payload.clone()).await?)?;
+        if ready.state != "ready" || ready.instance_id == id || manager.execute(exec(3, "before-activate")).await.is_ok() {
+            return Err("imported target lost identity or opened before activation".into());
+        }
+        let selected_process = journal.snapshot()?.operations["revoked-target"].started_process.clone();
+        dispatcher.close().await.map_err(|_| "ready dispatcher did not drain")?;
+        manager.close_preserving().await;
+        manager = TerminalSessionManager::from_config(&cfg);
+        let engine = NativeControlEngine::new(manager.clone(), journal.clone(), native.clone(), settings.clone()).await
+            .map_err(|_| "ready engine reconstruction failed")?;
+        dispatcher = ControlDispatcher::new(engine, 2).map_err(|_| "ready dispatcher reconstruction failed")?;
+        dispatcher.begin_connection(EPOCH).await.map_err(|_| "ready connection failed")?;
+        manager.protect_persistence_recovery(EPOCH, &[], &[]).await?;
+        manager.finish_persistence_recovery(EPOCH).await?;
+        dispatcher.finish_connection(EPOCH).map_err(|_| "ready recovery failed")?;
+        let replay = value(control_at(&dispatcher, "revoked-target", 3, Action::Restore, restored_payload.clone()).await?)?;
+        if replay.state != "ready" || replay.instance_id != ready.instance_id
+            || replay.lease_expires_unix_ms != ready.lease_expires_unix_ms
+            || journal.snapshot()?.operations["revoked-target"].started_process != selected_process
+            || manager.execute(exec(3, "still-inactive")).await.is_ok() { return Err("ready replay rebooted, renewed lease or opened gates".into()); }
+        let active = value(control_at(&dispatcher, "revoked-target", 3, Action::Activate, Control::default()).await?)?;
+        let replay = value(control_at(&dispatcher, "revoked-target", 3, Action::Activate, Control::default()).await?)?;
+        if active.state != "active" || replay.instance_id != ready.instance_id
+            || manager.execute(exec(3, "cat /source-control-data")).await?.stdout != "preserved"
+            || manager.execute(exec(1, "stale-generation")).await.is_ok() { return Err("explicit activation lost restored data or fencing".into()); }
+        rejected(control_at(&dispatcher, "revoked-target", 3, Action::Cancel, Control::default()).await?, "session_state_conflict")?;
+        let accepted = tokio::spawn({ let manager = manager.clone(); async move {
+            manager.execute(exec(3, "python -c \"from pathlib import Path; Path('/revoke-exec-started').write_text('yes'); import time; time.sleep(1); print('finished')\"")).await
+        }});
+        let observed = async {
+            loop {
+                let probe = sdk.get(&ready.instance_id).await?.ok_or("target missing before revocation")?
+                    .exec(boxlite::BoxCommand::new("sh").args(["-c", "test -f /revoke-exec-started"])).await?.wait().await?;
+                if probe.exit_code == 0 { return Ok::<(), Box<dyn std::error::Error>>(()); }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(5), observed).await??;
+        let revoked = value(control_at(&dispatcher, "revoked-target", 3, Action::Cancel, Control { delete:true, ..Default::default() }).await?)?;
+        if accepted.await??.stdout.trim() != "finished" { return Err("revocation removed the target before accepted execution drained".into()); }
+
+        if revoked.state != "canceled" || sdk.get_info(&ready.instance_id).await?.is_some()
+            || manager.active_session_count().await != 0 || manager.execute(exec(3, "after-revoke")).await.is_ok() {
+            return Err("explicit target revocation retained execution or root".into());
+        }
+        println!("PASS: restore frames import verified bytes, preserve inactive readiness across manager reconstruction and require explicit activation/revocation");
+        value(control_at(&dispatcher, "permanently-deleted-target", 4, Action::PrepareRestore, prepare.clone()).await?)?;
+        let final_ready = value(control_at(&dispatcher, "permanently-deleted-target", 4, Action::Restore, restored_payload).await?)?;
+        value(control_at(&dispatcher, "permanently-deleted-target", 4, Action::Activate, Control::default()).await?)?;
+        if manager.execute(exec(4, "cat /source-control-data")).await?.stdout != "preserved" { return Err("second restore lost snapshot bytes".into()); }
+        let purge = Control { purge_session:true, restore_spec:Some(spec.clone()), ..Default::default() };
+        let deleted = value(control_at(&dispatcher, "permanent-session-deletion", 5, Action::Cancel, purge.clone()).await?)?;
+        let replay = value(control_at(&dispatcher, "permanent-session-deletion", 5, Action::Cancel, purge).await?)?;
+        if deleted.state != "canceled" || replay.state != "canceled"
+            || sdk.get_info(&final_ready.instance_id).await?.is_some() || manager.active_session_count().await != 0
+            || manager.execute(exec(5, "after-permanent-delete")).await.is_ok()
+            || journal.artifact_path(SCOPE, SECOND, 1)?.exists()
+            || journal.artifact_path(SCOPE, "revoked-target", 3)?.exists()
+            || journal.artifact_path(SCOPE, "permanently-deleted-target", 4)?.exists() {
+            return Err("permanent deletion did not remove every root/cache and gate".into());
+        }
+        rejected(control_at(&dispatcher, "forbidden-future-restore", 6, Action::PrepareRestore, prepare).await?, "session_state_conflict")?;
+        println!("PASS: permanent-delete frames remove a running target and all retained session archives; replay is idempotent and future recreation stays fenced");
+
         Ok(())
     }.await;
     let _ = dispatcher.close().await;

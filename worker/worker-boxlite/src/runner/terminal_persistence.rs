@@ -915,5 +915,5 @@ pub(super) fn state_recovery_allowed(
 mod tests;
 
 #[allow(dead_code)]
-#[path = "snapshot_source_engine.rs"]
-pub(crate) mod source_control;
+#[path = "snapshot_native_engine.rs"]
+pub(crate) mod native_control;

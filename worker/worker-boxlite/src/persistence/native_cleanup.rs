@@ -33,23 +33,41 @@ impl NativeRuntime {
     /// accepted work and joins every owned import/start task before calling.
     /// The operation name stays reserved even if a late SDK import finishes.
     pub async fn cancel_target(&self, journal: &Journal, operation: &str) -> Result<()> {
+        self.cancel_controlled_target(journal, operation, false)
+            .await
+    }
+
+    /// Console has explicitly revoked a previously activated target. The caller
+    /// must close execution/preview gates and drain accepted work first. This is
+    /// not permanent session deletion and never changes generation ownership.
+    pub async fn revoke_target(&self, journal: &Journal, operation: &str) -> Result<()> {
+        self.cancel_controlled_target(journal, operation, true)
+            .await
+    }
+
+    async fn cancel_controlled_target(
+        &self,
+        journal: &Journal,
+        operation: &str,
+        revoke: bool,
+    ) -> Result<()> {
         let (_, op) = cleanup_operation(journal, operation)?;
         if op.kind != Kind::Target
-            || !matches!(
+            || !(matches!(
                 op.phase,
                 Phase::Prepared
                     | Phase::Importing
                     | Phase::Ready
                     | Phase::Canceling
                     | Phase::Canceled
-            )
+            ) || (revoke && op.phase == Phase::Active))
         {
             return Err(NativeError::Conflict);
         }
         if op.phase != Phase::Canceled {
             journal
                 .update(operation, |current| {
-                    if current.phase == Phase::Active {
+                    if current.phase == Phase::Active && !revoke {
                         return Err(Error::Conflict);
                     }
                     current.phase = Phase::Canceling;

@@ -1,4 +1,4 @@
-//! Native source lifecycle actions. Admission/task ownership is supplied by the
+//! Native lifecycle actions. Admission/task ownership is supplied by the
 //! control dispatcher; this engine never registers a production capability.
 use super::*;
 use crate::proto::registryv1::sandbox_persistence_control::Action;
@@ -12,10 +12,13 @@ use worker_boxlite::persistence::{
     Operation, RestoreSpec, Transfer, TransferError, VerifiedSource,
 };
 
+#[path = "snapshot_target_engine.rs"]
+mod target;
+
 type Outcome<T> = Result<T, ControlError>;
 const MAX_BYTES: i64 = 1 << 60;
 #[derive(Clone)]
-pub(crate) struct SourceControlConfig {
+pub(crate) struct NativeControlConfig {
     pub max_inflight: usize,
     pub tmp_quota_bytes: i64,
     pub drain_timeout: Duration,
@@ -29,23 +32,23 @@ struct Reservation {
     generation: i64,
     bytes: i64,
 }
-pub(crate) struct SourceControlEngine {
+pub(crate) struct NativeControlEngine {
     manager: Arc<TerminalSessionManager>,
     journal: Arc<Journal>,
     native: Arc<NativeRuntime>,
     transfer: Transfer,
-    config: SourceControlConfig,
+    config: NativeControlConfig,
     admission: Mutex<()>,
     reservations: std::sync::Mutex<HashMap<String, Reservation>>,
     pins: std::sync::Mutex<HashMap<String, Arc<VerifiedSource>>>,
     failed: AtomicBool,
 }
-impl SourceControlEngine {
+impl NativeControlEngine {
     pub(crate) async fn new(
         manager: Arc<TerminalSessionManager>,
         journal: Arc<Journal>,
         native: Arc<NativeRuntime>,
-        config: SourceControlConfig,
+        config: NativeControlConfig,
     ) -> Outcome<Arc<Self>> {
         if !(1..=64).contains(&config.max_inflight)
             || config.tmp_quota_bytes <= 0
@@ -99,7 +102,13 @@ impl SourceControlEngine {
             return Err(ControlError::Conflict);
         }
         match Action::try_from(frame.action).map_err(|_| ControlError::Conflict)? {
+            Action::Inspect if known.as_ref().is_some_and(|op| op.kind != Kind::Source) => {
+                self.inspect_other(action, known.as_ref().unwrap()).await
+            }
             Action::Inspect => self.inspect(action, &state, known.as_ref()).await,
+            Action::PrepareRestore => self.prepare_restore(action, known).await,
+            Action::Restore => self.restore(action, known).await,
+            Action::Activate => self.activate(action, known).await,
             Action::PrepareSnapshot => self.prepare(action, known).await,
             Action::UploadSnapshot => self.upload(action, source(&known)?).await,
             Action::VerifySnapshot => self.verify(action, source(&known)?).await,
@@ -110,6 +119,16 @@ impl SourceControlEngine {
                     && !action.payload.delete =>
             {
                 self.rollback(action, &state, known).await
+            }
+            Action::Cancel
+                if action.payload.purge_session
+                    && !action.payload.rollback
+                    && !action.payload.delete =>
+            {
+                self.purge_session(action, known).await
+            }
+            Action::Cancel if !action.payload.rollback && !action.payload.purge_session => {
+                self.cancel_target(action, known).await
             }
             _ => Err(ControlError::Unavailable),
         }
@@ -867,7 +886,7 @@ impl SourceControlEngine {
     }
 }
 #[async_trait]
-impl LifecycleEngine for SourceControlEngine {
+impl LifecycleEngine for NativeControlEngine {
     async fn execute(&self, action: ActionContext) -> Outcome<ResultPayload> {
         let outcome = self.run(&action).await;
         if self.journal.snapshot().is_err() {
