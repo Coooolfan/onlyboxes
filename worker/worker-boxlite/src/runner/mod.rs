@@ -2,6 +2,8 @@ mod capability_executor;
 mod hello_builder;
 mod sandbox_proxy;
 mod session_client;
+#[allow(dead_code)]
+pub(crate) mod snapshot_control;
 pub(crate) mod terminal_session_manager;
 
 use std::time::Duration;
@@ -137,6 +139,11 @@ pub async fn run(shutdown: CancellationToken, cfg: Config) -> Result<(), RunnerE
 }
 
 pub async fn shutdown() {
+    if let Some(dispatcher) = snapshot_control::shared_dispatcher() {
+        if dispatcher.close().await.is_err() {
+            tracing::warn!("sandbox lifecycle dispatcher could not confirm shutdown");
+        }
+    }
     shutdown_shared_terminal_sessions().await;
 }
 

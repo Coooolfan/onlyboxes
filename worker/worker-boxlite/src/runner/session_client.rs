@@ -77,6 +77,28 @@ async fn run_session_with_builder(
         ));
     }
 
+    let dispatcher = command_result_builder.persistence_dispatcher();
+    let _dispatcher_guard = dispatcher
+        .as_ref()
+        .map(|dispatcher| DispatcherConnectionGuard {
+            dispatcher: dispatcher.clone(),
+            connection: ack.session_id.clone(),
+        });
+    if let Some(dispatcher) = &dispatcher {
+        tokio::time::timeout(
+            cfg.call_timeout,
+            dispatcher.begin_connection(&ack.session_id),
+        )
+        .await
+        .map_err(|_| {
+            RunnerError::Message(
+                "sandbox persistence is still finishing previous connection work".into(),
+            )
+        })?
+        .map_err(|_| {
+            RunnerError::Message("sandbox persistence connection admission failed".into())
+        })?;
+    }
     let manager = shared_terminal_session_manager(cfg);
     let persistent_recovery = manager.has_snapshot_journal().await
         || !ack.sandbox_persistence_recovery_candidates.is_empty()
@@ -139,6 +161,11 @@ async fn run_session_with_builder(
                 RunnerError::Message("sandbox persistence recovery could not open admission".into())
             })?;
     }
+    if let Some(dispatcher) = &dispatcher {
+        dispatcher.finish_connection(&ack.session_id).map_err(|_| {
+            RunnerError::Message("sandbox persistence connection recovery did not finish".into())
+        })?;
+    }
     tracing::info!(
         executor_kind = "boxlite",
         candidates = recovery_results.len(),
@@ -182,7 +209,11 @@ async fn run_session_with_builder(
         heartbeat_ack_tx,
         session_err_tx,
         cfg.clone(),
-        (command_result_builder, ack.session_id.clone()),
+        ConnectionCommands {
+            builder: command_result_builder,
+            connection_id: ack.session_id.clone(),
+            dispatcher,
+        },
     ));
 
     heartbeat_loop(
@@ -199,6 +230,10 @@ async fn run_session_with_builder(
 
 #[async_trait]
 trait CommandResultBuilder: Send + Sync {
+    fn persistence_dispatcher(&self) -> Option<Arc<super::snapshot_control::ControlDispatcher>> {
+        None
+    }
+
     async fn recover(
         &self,
         cfg: &Config,
@@ -218,6 +253,10 @@ struct DefaultCommandResultBuilder;
 
 #[async_trait]
 impl CommandResultBuilder for DefaultCommandResultBuilder {
+    fn persistence_dispatcher(&self) -> Option<Arc<super::snapshot_control::ControlDispatcher>> {
+        super::snapshot_control::shared_dispatcher()
+    }
+
     async fn build(
         &self,
         cfg: &Config,
@@ -239,6 +278,12 @@ async fn dial(cfg: &Config) -> Result<Channel, RunnerError> {
     endpoint.connect().await.map_err(RunnerError::from)
 }
 
+struct ConnectionCommands {
+    builder: Arc<dyn CommandResultBuilder>,
+    connection_id: String,
+    dispatcher: Option<Arc<super::snapshot_control::ControlDispatcher>>,
+}
+
 async fn receiver_loop(
     shutdown: CancellationToken,
     mut inbound: tonic::Streaming<ConnectResponse>,
@@ -246,9 +291,14 @@ async fn receiver_loop(
     heartbeat_ack_tx: mpsc::Sender<HeartbeatAck>,
     session_err_tx: mpsc::Sender<RunnerError>,
     cfg: Config,
-    command: (Arc<dyn CommandResultBuilder>, String),
+    command: ConnectionCommands,
 ) {
-    let (command_result_builder, connection_id) = command;
+    let ConnectionCommands {
+        builder: command_result_builder,
+        connection_id,
+        dispatcher,
+    } = command;
+    let report_slots = Arc::new(tokio::sync::Semaphore::new(64));
     loop {
         let message = tokio::select! {
             _ = shutdown.cancelled() => return,
@@ -274,20 +324,21 @@ async fn receiver_loop(
                     );
                 }
                 Some(connect_response::Payload::SandboxPersistenceControl(control)) => {
-                    let report = crate::proto::registryv1::SandboxPersistenceReport {
-                        request_id: control.request_id,
-                        operation_id: control.operation_id,
-                        scoped_session_id: control.scoped_session_id,
-                        generation: control.generation,
-                        action: control.action,
-                        completed: true,
-                        phase: String::new(),
-                        payload_json: Vec::new(),
-                        error: Some(crate::proto::registryv1::CommandError {
-                            code: "persistence_unavailable".into(),
-                            message: "worker sandbox persistence is unavailable".into(),
-                        }),
-                    };
+                    if let Some(dispatcher) = &dispatcher {
+                        if let Err(error) = dispatch_lifecycle_control(
+                            dispatcher,
+                            &connection_id,
+                            control,
+                            outbound_tx.clone(),
+                            shutdown.clone(),
+                            report_slots.clone(),
+                        ) {
+                            report_session_error(&session_err_tx, error).await;
+                            return;
+                        }
+                        continue;
+                    }
+                    let report = super::snapshot_control::unavailable_report(&control);
                     if outbound_tx
                         .send(ConnectRequest {
                             payload: Some(connect_request::Payload::SandboxPersistenceReport(
@@ -391,17 +442,15 @@ async fn heartbeat_loop(
             _ = tokio::time::sleep(wait_for) => {}
         }
 
-        outbound_tx
-            .send(ConnectRequest {
-                payload: Some(connect_request::Payload::Heartbeat(HeartbeatFrame {
-                    sandbox_persistence: None,
-                    node_id: cfg.worker_id.clone(),
-                    session_id: session_id.clone(),
-                    active_session_count: shared_active_session_count().await,
-                })),
-            })
-            .await
-            .map_err(|_| RunnerError::Message("enqueue heartbeat failed".to_owned()))?;
+        let heartbeat = ConnectRequest {
+            payload: Some(connect_request::Payload::Heartbeat(HeartbeatFrame {
+                sandbox_persistence: None,
+                node_id: cfg.worker_id.clone(),
+                session_id: session_id.clone(),
+                active_session_count: shared_active_session_count().await,
+            })),
+        };
+        enqueue_heartbeat(&shutdown, &outbound_tx, &mut session_err_rx, heartbeat).await?;
 
         let ack = tokio::select! {
             _ = shutdown.cancelled() => return Err(RunnerError::Cancelled),
@@ -425,6 +474,19 @@ async fn heartbeat_loop(
             ack.ok_or_else(|| RunnerError::Message("heartbeat ack channel closed".to_owned()))?;
         consecutive_ack_timeouts = 0;
         interval = duration_from_server(ack.heartbeat_interval_sec, interval);
+    }
+}
+
+async fn enqueue_heartbeat(
+    shutdown: &CancellationToken,
+    outbound: &mpsc::Sender<ConnectRequest>,
+    errors: &mut mpsc::Receiver<RunnerError>,
+    heartbeat: ConnectRequest,
+) -> Result<(), RunnerError> {
+    tokio::select! {
+        _ = shutdown.cancelled() => Err(RunnerError::Cancelled),
+        error = errors.recv() => Err(error.unwrap_or_else(|| RunnerError::Message("session error channel closed".into()))),
+        result = outbound.send(heartbeat) => result.map_err(|_| RunnerError::Message("enqueue heartbeat failed".into())),
     }
 }
 
@@ -468,6 +530,43 @@ struct CancelConnectionOnDrop(CancellationToken);
 impl Drop for CancelConnectionOnDrop {
     fn drop(&mut self) {
         self.0.cancel();
+    }
+}
+
+fn dispatch_lifecycle_control(
+    dispatcher: &Arc<super::snapshot_control::ControlDispatcher>,
+    connection: &str,
+    control: crate::proto::registryv1::SandboxPersistenceControl,
+    outbound: mpsc::Sender<ConnectRequest>,
+    stopped: CancellationToken,
+    report_slots: Arc<tokio::sync::Semaphore>,
+) -> Result<(), RunnerError> {
+    let permit = report_slots.try_acquire_owned().map_err(|_| {
+        RunnerError::Message("sandbox lifecycle report capacity is exhausted".into())
+    })?;
+    // Reserve bounded report capacity BEFORE admitting another native action.
+    let receipt = dispatcher.submit(connection, control);
+    tokio::spawn(async move {
+        let _permit = permit;
+        let report = tokio::select! {
+            _ = stopped.cancelled() => return,
+            report = receipt => match report { Ok(report) => report, Err(_) => return },
+        };
+        tokio::select! {
+            _ = stopped.cancelled() => (),
+            _ = outbound.send(ConnectRequest { payload: Some(connect_request::Payload::SandboxPersistenceReport(report)) }) => (),
+        }
+    });
+    Ok(())
+}
+
+struct DispatcherConnectionGuard {
+    dispatcher: Arc<super::snapshot_control::ControlDispatcher>,
+    connection: String,
+}
+impl Drop for DispatcherConnectionGuard {
+    fn drop(&mut self) {
+        self.dispatcher.disconnect(&self.connection);
     }
 }
 
@@ -517,6 +616,8 @@ mod tests {
         heartbeat_interval_sec: i32,
         ack_heartbeats: bool,
         dispatches: Vec<TestCommandDispatch>,
+        controls: Vec<test_registryv1::SandboxPersistenceControl>,
+        persistence_report_tx: mpsc::UnboundedSender<test_registryv1::SandboxPersistenceReport>,
         hello_tx: Mutex<Option<oneshot::Sender<ConnectHello>>>,
         command_result_tx: mpsc::UnboundedSender<CommandResult>,
         heartbeat_tx: mpsc::UnboundedSender<HeartbeatFrame>,
@@ -527,6 +628,7 @@ mod tests {
         hello_rx: oneshot::Receiver<ConnectHello>,
         command_result_rx: mpsc::UnboundedReceiver<CommandResult>,
         heartbeat_rx: mpsc::UnboundedReceiver<HeartbeatFrame>,
+        persistence_report_rx: mpsc::UnboundedReceiver<test_registryv1::SandboxPersistenceReport>,
         shutdown: CancellationToken,
         server_task: JoinHandle<Result<(), tonic::transport::Error>>,
     }
@@ -660,6 +762,21 @@ mod tests {
                     }
                 }
 
+                for control in &shared.controls {
+                    if response_tx
+                        .send(Ok(ConnectResponse {
+                            payload: Some(
+                                test_connect_response::Payload::SandboxPersistenceControl(
+                                    control.clone(),
+                                ),
+                            ),
+                        }))
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
                 loop {
                     match inbound.message().await {
                         Ok(Some(frame)) => match frame.payload {
@@ -683,8 +800,12 @@ mod tests {
                             Some(test_connect_request::Payload::CommandResult(result)) => {
                                 let _ = shared.command_result_tx.send(result);
                             }
+                            Some(test_connect_request::Payload::SandboxPersistenceReport(
+                                report,
+                            )) => {
+                                let _ = shared.persistence_report_tx.send(report);
+                            }
                             Some(test_connect_request::Payload::Hello(_))
-                            | Some(test_connect_request::Payload::SandboxPersistenceReport(_))
                             | Some(test_connect_request::Payload::TerminalSessionRecoveryReport(
                                 _,
                             ))
@@ -704,6 +825,20 @@ mod tests {
         ack_heartbeats: bool,
         heartbeat_interval_sec: i32,
     ) -> TestRegistryHandle {
+        spawn_fake_registry_with_controls(
+            dispatches,
+            ack_heartbeats,
+            heartbeat_interval_sec,
+            Vec::new(),
+        )
+        .await
+    }
+    async fn spawn_fake_registry_with_controls(
+        dispatches: Vec<CommandDispatch>,
+        ack_heartbeats: bool,
+        heartbeat_interval_sec: i32,
+        controls: Vec<test_registryv1::SandboxPersistenceControl>,
+    ) -> TestRegistryHandle {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let target = listener.local_addr().unwrap().to_string();
         let incoming = TcpListenerStream::new(listener);
@@ -713,6 +848,7 @@ mod tests {
         let (hello_tx, hello_rx) = oneshot::channel();
         let (command_result_tx, command_result_rx) = mpsc::unbounded_channel();
         let (heartbeat_tx, heartbeat_rx) = mpsc::unbounded_channel();
+        let (persistence_report_tx, persistence_report_rx) = mpsc::unbounded_channel();
 
         let shared = std::sync::Arc::new(FakeRegistryShared {
             heartbeat_interval_sec,
@@ -729,6 +865,8 @@ mod tests {
             hello_tx: Mutex::new(Some(hello_tx)),
             command_result_tx,
             heartbeat_tx,
+            controls,
+            persistence_report_tx,
         });
 
         let server_task = tokio::spawn(async move {
@@ -745,6 +883,7 @@ mod tests {
             heartbeat_rx,
             shutdown,
             server_task,
+            persistence_report_rx,
         }
     }
 
@@ -815,6 +954,7 @@ mod tests {
             mut heartbeat_rx,
             shutdown: server_shutdown,
             server_task,
+            persistence_report_rx: _,
         } = spawn_fake_registry(
             vec![CommandDispatch {
                 command_id: "cmd-1".to_owned(),
@@ -915,6 +1055,7 @@ mod tests {
             heartbeat_rx: _,
             shutdown: server_shutdown,
             server_task,
+            persistence_report_rx: _,
         } = spawn_fake_registry(dispatches, false, 0).await;
 
         let mut cfg = test_config(&target);
@@ -975,6 +1116,7 @@ mod tests {
             heartbeat_rx: _,
             shutdown: server_shutdown,
             server_task,
+            persistence_report_rx: _,
         } = spawn_fake_registry(
             vec![
                 CommandDispatch {
@@ -1081,6 +1223,7 @@ mod tests {
             mut heartbeat_rx,
             shutdown: server_shutdown,
             server_task,
+            persistence_report_rx: _,
         } = spawn_fake_registry(Vec::new(), false, 0).await;
 
         let cfg = test_config(&target);
@@ -1124,5 +1267,250 @@ mod tests {
         shutdown.cancel();
         server_shutdown.cancel();
         assert!(server_task.await.unwrap().is_ok());
+    }
+    struct LifecycleBuilder {
+        dispatcher: Arc<super::super::snapshot_control::ControlDispatcher>,
+    }
+    #[async_trait]
+    impl CommandResultBuilder for LifecycleBuilder {
+        fn persistence_dispatcher(
+            &self,
+        ) -> Option<Arc<super::super::snapshot_control::ControlDispatcher>> {
+            Some(self.dispatcher.clone())
+        }
+        async fn recover(
+            &self,
+            cfg: &Config,
+            candidates: &[crate::proto::registryv1::TerminalSessionRecoveryCandidate],
+        ) -> Vec<crate::proto::registryv1::TerminalSessionRecoveryResult> {
+            FakeCommandResultBuilder.recover(cfg, candidates).await
+        }
+        async fn build(
+            &self,
+            cfg: &Config,
+            dispatch: CommandDispatch,
+            connection: &str,
+        ) -> ConnectRequest {
+            FakeCommandResultBuilder
+                .build(cfg, dispatch, connection)
+                .await
+        }
+    }
+    #[derive(Default)]
+    struct PausedLifecycleEngine {
+        entered: tokio::sync::Notify,
+        release: tokio::sync::Notify,
+        calls: std::sync::atomic::AtomicU32,
+    }
+    #[async_trait]
+    impl super::super::snapshot_control::LifecycleEngine for PausedLifecycleEngine {
+        async fn execute(
+            &self,
+            action: super::super::snapshot_control::ActionContext,
+        ) -> Result<
+            super::super::snapshot_control::ResultPayload,
+            super::super::snapshot_control::ControlError,
+        > {
+            assert_eq!(action.connection, TEST_SESSION_ID);
+            assert_eq!(action.frame.operation_id, "restore-operation");
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.entered.notify_one();
+            self.release.notified().await;
+            assert!(action.authorized());
+            Ok(super::super::snapshot_control::ResultPayload {
+                state: "prepared".into(),
+                ..Default::default()
+            })
+        }
+        fn fail_closed(&self) {
+            panic!("transport fixture unexpectedly failed");
+        }
+    }
+    fn lifecycle_frame() -> test_registryv1::SandboxPersistenceControl {
+        test_registryv1::SandboxPersistenceControl {
+            request_id: "lifecycle-request".into(),
+            operation_id: "restore-operation".into(),
+            scoped_session_id: "obx:owner:session".into(),
+            generation: 2,
+            action: test_registryv1::sandbox_persistence_control::Action::Restore as i32,
+            deadline_unix_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as i64
+                + 60_000,
+            payload_json: b"{}".to_vec(),
+        }
+    }
+    #[tokio::test]
+    async fn lifecycle_actions_are_multiplexed_without_blocking_heartbeats() {
+        let mut server =
+            spawn_fake_registry_with_controls(Vec::new(), true, 0, vec![lifecycle_frame()]).await;
+        let mut cfg = test_config(&server.target);
+        cfg.call_timeout = Duration::from_secs(2);
+        let engine = Arc::new(PausedLifecycleEngine::default());
+        let dispatcher =
+            super::super::snapshot_control::ControlDispatcher::new(engine.clone(), 1).unwrap();
+        let shutdown = CancellationToken::new();
+        let session = tokio::spawn({
+            let shutdown = shutdown.clone();
+            let dispatcher = dispatcher.clone();
+            async move {
+                run_session_with_builder(shutdown, &cfg, Arc::new(LifecycleBuilder { dispatcher }))
+                    .await
+            }
+        });
+        timeout(Duration::from_secs(3), engine.entered.notified())
+            .await
+            .unwrap();
+        for _ in 0..2 {
+            let heartbeat = timeout(Duration::from_secs(2), server.heartbeat_rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(heartbeat.session_id, TEST_SESSION_ID);
+        }
+        assert!(server.persistence_report_rx.try_recv().is_err());
+        engine.release.notify_one();
+        let report = timeout(Duration::from_secs(2), server.persistence_report_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(report.completed && report.error.is_none());
+        assert_eq!(
+            (
+                report.request_id.as_str(),
+                report.operation_id.as_str(),
+                report.generation
+            ),
+            ("lifecycle-request", "restore-operation", 2)
+        );
+        assert_eq!(report.phase, "prepared");
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&report.payload_json).unwrap()["state"],
+            "prepared"
+        );
+        shutdown.cancel();
+        assert_stopped_by_shutdown(session.await.unwrap());
+        dispatcher.close().await.unwrap();
+        server.shutdown.cancel();
+        assert!(server.server_task.await.unwrap().is_ok());
+    }
+    #[tokio::test]
+    async fn lifecycle_frames_without_a_registered_engine_report_unavailable() {
+        let mut server =
+            spawn_fake_registry_with_controls(Vec::new(), true, 0, vec![lifecycle_frame()]).await;
+        let mut cfg = test_config(&server.target);
+        cfg.call_timeout = Duration::from_secs(2);
+        let shutdown = CancellationToken::new();
+        let session = tokio::spawn({
+            let shutdown = shutdown.clone();
+            async move {
+                run_session_with_builder(shutdown, &cfg, Arc::new(FakeCommandResultBuilder)).await
+            }
+        });
+        let report = timeout(Duration::from_secs(3), server.persistence_report_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(report.error.unwrap().code, "persistence_unavailable");
+        assert!(timeout(Duration::from_secs(2), server.heartbeat_rx.recv())
+            .await
+            .unwrap()
+            .is_some());
+        shutdown.cancel();
+        assert_stopped_by_shutdown(session.await.unwrap());
+        server.shutdown.cancel();
+        assert!(server.server_task.await.unwrap().is_ok());
+    }
+    #[tokio::test]
+    async fn report_capacity_is_reserved_before_starting_more_lifecycle_work() {
+        let engine = Arc::new(PausedLifecycleEngine::default());
+        let dispatcher =
+            super::super::snapshot_control::ControlDispatcher::new(engine.clone(), 2).unwrap();
+        dispatcher.begin_connection(TEST_SESSION_ID).await.unwrap();
+        dispatcher.finish_connection(TEST_SESSION_ID).unwrap();
+        let (outbound, mut reports) = mpsc::channel(4);
+        let slots = Arc::new(tokio::sync::Semaphore::new(1));
+        let shutdown = CancellationToken::new();
+        let source = lifecycle_frame();
+        let control = crate::proto::registryv1::SandboxPersistenceControl {
+            request_id: source.request_id,
+            operation_id: source.operation_id,
+            scoped_session_id: source.scoped_session_id,
+            generation: source.generation,
+            action: source.action,
+            deadline_unix_ms: source.deadline_unix_ms,
+            payload_json: source.payload_json,
+        };
+        dispatch_lifecycle_control(
+            &dispatcher,
+            TEST_SESSION_ID,
+            control.clone(),
+            outbound.clone(),
+            shutdown.clone(),
+            slots.clone(),
+        )
+        .unwrap();
+        timeout(Duration::from_secs(2), engine.entered.notified())
+            .await
+            .unwrap();
+        let mut next = control;
+        next.scoped_session_id = "obx:owner:other".into();
+        assert!(dispatch_lifecycle_control(
+            &dispatcher,
+            TEST_SESSION_ID,
+            next,
+            outbound,
+            shutdown,
+            slots
+        )
+        .is_err());
+        tokio::task::yield_now().await;
+        assert_eq!(engine.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        engine.release.notify_one();
+        assert!(timeout(Duration::from_secs(2), reports.recv())
+            .await
+            .unwrap()
+            .is_some());
+        dispatcher.close().await.unwrap();
+    }
+    #[tokio::test]
+    async fn heartbeat_backpressure_preserves_shutdown_and_session_error_handling() {
+        for signal in ["shutdown", "session_error"] {
+            let (outbound, _pending) = mpsc::channel(1);
+            outbound
+                .send(ConnectRequest { payload: None })
+                .await
+                .unwrap();
+            let (errors, mut error_rx) = mpsc::channel(1);
+            let stopped = CancellationToken::new();
+            let blocked = enqueue_heartbeat(
+                &stopped,
+                &outbound,
+                &mut error_rx,
+                ConnectRequest { payload: None },
+            );
+            tokio::pin!(blocked);
+            assert!(timeout(Duration::from_millis(30), &mut blocked)
+                .await
+                .is_err());
+            if signal == "shutdown" {
+                stopped.cancel();
+            } else {
+                errors
+                    .send(RunnerError::Message("bounded report queue is full".into()))
+                    .await
+                    .unwrap();
+            }
+            let result = timeout(Duration::from_secs(2), blocked).await.unwrap();
+            match result {
+                Err(RunnerError::Cancelled) => assert_eq!(signal, "shutdown"),
+                Err(RunnerError::Message(message)) => {
+                    assert_eq!(signal, "session_error");
+                    assert_eq!(message, "bounded report queue is full");
+                }
+                other => panic!("unexpected heartbeat enqueue result: {other:?}"),
+            }
+        }
     }
 }
