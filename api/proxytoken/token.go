@@ -31,6 +31,8 @@ type Claims struct {
 	SessionID       string `json:"session_id"`
 	Port            int    `json:"port"`
 	ExpiresAtUnixMs int64  `json:"exp"`
+	// Zero is an ordinary session; positive values bind persistent ownership.
+	Generation int64 `json:"generation,omitempty"`
 }
 
 func DeriveKey(workerSecret string) ([]byte, error) {
@@ -111,6 +113,9 @@ func Verify(key []byte, token string, now time.Time) (Claims, error) {
 }
 
 func validateClaims(claims Claims) error {
+	if claims.Generation < 0 {
+		return errors.New("generation must not be negative")
+	}
 	if strings.TrimSpace(claims.WorkerID) == "" {
 		return errors.New("worker_id is required")
 	}

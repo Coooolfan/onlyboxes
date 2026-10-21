@@ -1,6 +1,7 @@
 package proxytoken
 
 import (
+	"encoding/base64"
 	"errors"
 	"strings"
 	"testing"
@@ -120,6 +121,7 @@ func TestSignRejectsInvalidClaims(t *testing.T) {
 	}
 
 	tests := []Claims{
+		{WorkerID: "worker", SessionID: "session", Port: 8080, ExpiresAtUnixMs: 1, Generation: -1},
 		{SessionID: "session", Port: 8080, ExpiresAtUnixMs: 1},
 		{WorkerID: "worker", Port: 8080, ExpiresAtUnixMs: 1},
 		{WorkerID: "worker", SessionID: "session", Port: 0, ExpiresAtUnixMs: 1},
@@ -129,5 +131,42 @@ func TestSignRejectsInvalidClaims(t *testing.T) {
 		if _, err := Sign(key, claims); err == nil {
 			t.Fatalf("expected invalid claims rejection: %#v", claims)
 		}
+	}
+}
+
+func TestPersistentGenerationVectorAndTampering(t *testing.T) {
+	key, _ := DeriveKey("worker-secret")
+	claims := Claims{WorkerID: "worker-a", SessionID: "obx:owner:session", Port: 8080, ExpiresAtUnixMs: 4_102_444_800_000, Generation: 2}
+	token, err := Sign(key, claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "obx_route_v1.eyJ3b3JrZXJfaWQiOiJ3b3JrZXItYSIsInNlc3Npb25faWQiOiJvYng6b3duZXI6c2Vzc2lvbiIsInBvcnQiOjgwODAsImV4cCI6NDEwMjQ0NDgwMDAwMCwiZ2VuZXJhdGlvbiI6Mn0.-agCbNWpdTN1rBhGjyL6ol1vPBPv0XdKogMNgyVkxg0"
+	if token != want {
+		t.Fatal("persistent cross-language vector changed")
+	}
+	got, err := Verify(key, token, time.UnixMilli(1_730_000_000_000))
+	if err != nil || got != claims {
+		t.Fatalf("persistent claims lost: %+v %v", got, err)
+	}
+	// Replace only the encoded generation, preserving the original signature.
+	parts := strings.Split(token, ".")
+	payload, _ := base64.RawURLEncoding.DecodeString(parts[1])
+	changed := strings.Replace(string(payload), `"generation":2`, `"generation":3`, 1)
+	if changed == string(payload) {
+		t.Fatal("test did not alter generation")
+	}
+	parts[1] = base64.RawURLEncoding.EncodeToString([]byte(changed))
+	tampered := strings.Join(parts, ".")
+	if _, err := Verify(key, tampered, time.UnixMilli(1_730_000_000_000)); !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("generation tampering accepted: %v", err)
+	}
+}
+
+func TestVerifyRejectsSignedNegativeGeneration(t *testing.T) {
+	key, _ := DeriveKey("worker-secret")
+	const token = "obx_route_v1.eyJ3b3JrZXJfaWQiOiJ3b3JrZXItYSIsInNlc3Npb25faWQiOiJvYng6b3duZXI6c2Vzc2lvbiIsInBvcnQiOjgwODAsImV4cCI6NDEwMjQ0NDgwMDAwMCwiZ2VuZXJhdGlvbiI6LTF9.9k_vKjIBgU0b4I-vMmMLQT03emp_d4cih1J-gtjpKLo"
+	if _, err := Verify(key, token, time.UnixMilli(1_730_000_000_000)); !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("negative generation accepted: %v", err)
 	}
 }
