@@ -195,6 +195,11 @@ impl Journal {
         Ok(self.inner()?.state.clone())
     }
 
+    pub(super) fn with_state<T>(&self, visit: impl FnOnce(&JournalState) -> T) -> Result<T> {
+        let inner = self.inner()?;
+        Ok(visit(&inner.state))
+    }
+
     fn transaction(&self, change: impl FnOnce(&mut JournalState) -> Result<()>) -> Result<()> {
         let mut inner = self.inner()?;
         let mut next = inner.state.clone();

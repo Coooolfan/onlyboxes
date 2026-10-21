@@ -380,7 +380,7 @@ pub(super) async fn require_exited(process: &HostProcess) -> Result<()> {
     }
     Ok(())
 }
-fn remove_native_home(home: &Path, id: &str) -> Result<()> {
+pub(super) fn remove_native_home(home: &Path, id: &str) -> Result<()> {
     if !valid_id(id) {
         return Err(NativeError::Conflict);
     }

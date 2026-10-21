@@ -54,7 +54,7 @@ cargo test --locked --features integration --test integration -- --test-threads=
 
 SDK 的 `BoxArchive::new` 采用可信本地归档策略，会保留归档携带的启动与安全配置。平台适配器必须在导入前核对受控恢复规格、路径和挂载边界、完整 SHA-256、大小及展开预算，再决定导入策略。原生 SDK 的校验不能代替 Console 的账号归属、generation、所有权和激活栅栏。
 
-原生管理帧引擎已连接 journal、执行门禁、直接对象传输、目标容量预留、显式激活与删除原语；仍需完成生产启动配置、boot/namespace 变化和已知清理残留的启动核对、周期缓存/孤儿回收和 Worker 进程失效后的独立 lease 约束。完成前不向调度器声明此后端支持持久化恢复。
+原生管理帧引擎已连接 journal、执行门禁、直接对象传输、目标容量预留、显式激活与删除原语；仍需完成生产启动配置、boot/namespace 变化的启动核对、周期缓存/孤儿回收和 Worker 进程失效后的独立 lease 约束。完成前不向调度器声明此后端支持持久化恢复。
 
 
 ## 持久化 journal
@@ -179,7 +179,7 @@ SDK 不会为导入实例补齐 `resolved_image`。`inspect_target` 因此要求
 
 应答丢失后的重试只可复用同一运行进程，不能更换已记录的宿主生命周期。若 durable 启动意图已经存在，但 SDK 显示 stopped，则拒绝再次启动，保留给后续核对与清理；ready/active/rolled_back 实例停止后也不能靠重复请求自动重启。这样会牺牲部分异常场景的自动恢复，避免将不确定启动误判为尚未启动。
 
-`rolled_back` 在 journal 中代表原实例已恢复就绪；会话管理器仍须接收 Console 的明确激活授权，才可重新开放门禁。源停止前的进程证据和回滚启动后的进程证据分别保留，不能覆盖。跨 Worker 的独立 lease 强制执行、生产启动配置，以及 boot/namespace 变化和已知清理残留的启动核对仍需完成，当前不声明生产持久化能力。
+`rolled_back` 在 journal 中代表原实例已恢复就绪；会话管理器仍须接收 Console 的明确激活授权，才可重新开放门禁。源停止前的进程证据和回滚启动后的进程证据分别保留，不能覆盖。跨 Worker 的独立 lease 强制执行、生产启动配置，以及 boot/namespace 变化的启动核对仍需完成，当前不声明生产持久化能力。
 
 ## 原生清理与名称保留
 
@@ -205,11 +205,11 @@ BoxLite 删除按数据库优先执行，目录删除失败可能只记录日志
 
 `Journal::purge_session_artifacts` 仅回收从该 scope 的 source/target 历史计算出的归档、partial、描述临时文件和 UUID 工作目录。它先取得对应下载锁并验证全部待删路径，再删除与 sync 父目录。仍有下载者持锁时返回冲突，不清理其数据；空锁文件保留原 inode，避免迟到等待者与新请求形成两套锁。允许同一已发布文件与其 partial 的双硬链接，拒绝重定向根、异常权限和其他硬链接；目录中的符号链接不被递归跟随。其他 scope 的缓存和原生资源不参与回收。
 
-该链路只处理权威 journal 已登记的本地资源，不操作共享存储对象。Console 的共享对象引用核对和 GC 独立执行。初始化前的归属 Guard 和资源清单已接入原生验收；未登记孤儿巡检、生产配置与管理帧注册、boot/namespace 变化及清理残留核对、独立 lease 强制执行仍需完成；当前 Worker 不声明 `sandbox_persistence` 能力。
+该链路只处理权威 journal 已登记的本地资源，不操作共享存储对象。Console 的共享对象引用核对和 GC 独立执行。初始化前的归属 Guard 和资源清单已接入原生验收；未登记孤儿巡检、生产配置与管理帧注册、boot/namespace 变化的核对、独立 lease 强制执行仍需完成；当前 Worker 不声明 `sandbox_persistence` 能力。
 
 原生会话 smoke 覆盖永久删除的完整本地历史回收、删除意图之后完成的 SDK 启动、旧名称占位复用、重复删除、已确认占位丢失时拒绝重建，以及其他 scope 的缓存和原生资源保留。归档回收单测覆盖持锁拒绝、锁 inode 保留、partial 双硬链接、临时文件/工作目录清理和符号链接拒绝。
 
 
 ## 初始化前的 home/journal 归属
 
-原生生命周期验收先取得 [RuntimeHomeGuard](sandbox-snapshot-startup.md)，再调用受保护的 SDK 初始化入口。Guard 绑定目录、Worker、宿主机和 journal，并在 SDK 能够迁移或清理目录前核对原生资源。普通初始化不能绕过已有标记。生产配置、独立 lease、宿主启动上下文变化和已知物理清理残留的自动核对仍需完成；当前不声明生产持久化能力。
+原生生命周期验收先取得 [RuntimeHomeGuard](sandbox-snapshot-startup.md)，再调用受保护的 SDK 初始化入口。Guard 绑定目录、Worker、宿主机和 journal，并在 SDK 能够迁移或清理目录前核对原生资源。普通初始化不能绕过已有标记。生产配置、独立 lease、宿主启动上下文变化的自动核对仍需完成；当前不声明生产持久化能力。

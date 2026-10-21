@@ -476,3 +476,7 @@ mod delete;
 #[path = "native_preflight.rs"]
 mod preflight;
 pub(super) use preflight::preflight_home;
+
+#[path = "native_recovery.rs"]
+mod recovery;
+pub(super) use recovery::reconcile_home;

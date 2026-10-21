@@ -4,6 +4,14 @@ use crate::persistence::{HostProcess, JournalState};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(in crate::persistence) fn preflight_home(home: &Path, journal: &JournalState) -> Result<()> {
+    scan_home(home, journal, false).map(|_| ())
+}
+
+pub(super) fn scan_home(
+    home: &Path,
+    journal: &JournalState,
+    reconcile: bool,
+) -> Result<Vec<String>> {
     let host = HostProcess::capture(std::process::id()).map_err(|_| NativeError::Unavailable)?;
     let mut expected = BTreeMap::new();
     let mut known_names = BTreeSet::new();
@@ -103,7 +111,7 @@ pub(in crate::persistence) fn preflight_home(home: &Path, journal: &JournalState
                 && directories.is_empty()
                 && expected.is_empty() =>
         {
-            return Ok(())
+            return Ok(Vec::new())
         }
         Err(_) => return Err(NativeError::Unavailable),
         Ok(meta) => {
@@ -282,11 +290,17 @@ pub(in crate::persistence) fn preflight_home(home: &Path, journal: &JournalState
         }
         ids.insert(id);
     }
-    if directories.iter().any(|id| !ids.contains(id)) || markers.keys().any(|id| !ids.contains(id))
-    {
+    if markers.keys().any(|id| !ids.contains(id)) {
         return Err(NativeError::Conflict);
     }
-    Ok(())
+    let residual: Vec<_> = directories.difference(&ids).cloned().collect();
+    for id in &residual {
+        if !reconcile {
+            return Err(NativeError::Conflict);
+        }
+        super::recovery::authorize_residue(home, journal, id)?;
+    }
+    Ok(residual)
 }
 fn insert(map: &mut BTreeMap<String, String>, id: &str, name: &str) -> Result<()> {
     if map.get(id).is_some_and(|stored| stored != name) {

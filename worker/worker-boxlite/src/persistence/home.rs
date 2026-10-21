@@ -115,8 +115,7 @@ impl RuntimeHomeGuard {
                 return Err(Error::Unavailable);
             }
             let journal = Arc::new(Journal::open(&journal_dir.path, worker)?);
-            super::native::preflight_home(&home.path, &journal.snapshot()?)
-                .map_err(|_| Error::Unavailable)?;
+            super::native::reconcile_home(&home.path, &journal).map_err(|_| Error::Unavailable)?;
             (owner, journal)
         } else {
             // There is no adoption-by-empty-journal path. A new pair starts

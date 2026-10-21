@@ -19,6 +19,7 @@ use worker_boxlite::persistence::{terminal_name, RuntimeHomeGuard};
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 const WORKER: &str = "home-guard-fixture-worker";
 const SCOPE: &str = "obx:fixture:guarded-home";
+const DELETE: &str = "fixture-permanent-delete";
 #[derive(Serialize, Deserialize)]
 struct Record {
     id: String,
@@ -59,12 +60,66 @@ async fn child(mode: &str, root: &Path) -> Result<()> {
     cfg.worker_id = WORKER.into();
     cfg.worker_secret = "fixture".into();
     cfg.boxlite_home = home.to_str().ok_or("invalid test path")?.into();
+    if mode == "recover-cleanup" {
+        let record: Record = serde_json::from_slice(&std::fs::read(root.join("ready.json"))?)?;
+        if home.join("boxes").join(&record.id).exists()
+            || journal.snapshot()?.operations[DELETE].phase
+                != worker_boxlite::persistence::Phase::Deleting
+        {
+            return Err("startup did not reclaim authorized residue before SDK open, or prematurely completed the operation".into());
+        }
+    }
     let sdk = boxlite_runtime::initialize_guarded(&cfg, owner.clone())?;
     if boxlite_runtime::initialize_guarded(&cfg, owner).is_ok() {
         return Err("late guarded initialization was accepted".into());
     }
+    if matches!(mode, "cleanup" | "cleanup-residue" | "recover-cleanup") {
+        let record: Record = serde_json::from_slice(&std::fs::read(root.join("ready.json"))?)?;
+        let native = worker_boxlite::persistence::NativeRuntime::new(Arc::new(sdk.clone()), &home)?;
+        if !journal.snapshot()?.operations.contains_key(DELETE) {
+            let inspected = native.inspect(SCOPE, &record.id).await?;
+            journal.claim(serde_json::from_value(serde_json::json!({
+                "operation_id":DELETE,"scoped_session_id":SCOPE,"generation":2,"kind":"delete","phase":"deleting",
+                "restore_spec":inspected.spec,"box_id":record.id,
+            }))?)?;
+        }
+        let before = journal.snapshot()?.operations[DELETE].name_fences.clone();
+        native.purge_session(journal.clone(), DELETE).await?;
+        if mode == "recover-cleanup" && before != journal.snapshot()?.operations[DELETE].name_fences
+        {
+            return Err("cleanup replay replaced a recorded native name fence".into());
+        }
+        if mode == "cleanup-residue" {
+            boxlite_runtime::shutdown().await;
+            journal.close()?;
+            // Fault model: retain real cleanup IDs/exit proofs from this VM,
+            // reconstruct the database-first removal window in durable state,
+            // and leave only the physical residue that SDK removal can miss.
+            let path = state.join("journal.json");
+            let mut value: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+            value["operations"][DELETE]["phase"] = "deleting".into();
+            use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
+            let pending = state.join("fixture-recovery.pending");
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&pending)?;
+            file.write_all(&serde_json::to_vec(&value)?)?;
+            file.sync_all()?;
+            drop(file);
+            std::fs::rename(pending, &path)?;
+            std::fs::File::open(&state)?.sync_all()?;
+            let residue = home.join("boxes").join(&record.id);
+            private(&residue)?;
+            std::fs::write(residue.join("disk.qcow2"), b"physical removal residue")?;
+            std::fs::File::open(home.join("boxes"))?.sync_all()?;
+        }
+        return Ok(());
+    }
     if mode == "create" {
-        let options = boxlite::BoxOptions {
+        let mut options = boxlite::BoxOptions {
             cpus: Some(1),
             memory_mib: Some(256),
             auto_delete: Some(0),
@@ -77,6 +132,7 @@ async fn child(mode: &str, root: &Path) -> Result<()> {
             cmd: Some(vec!["while true; do sleep 3600; done".into()]),
             ..Default::default()
         };
+        options.advanced.security.resource_limits.max_processes = Some(128);
         let native = sdk.create(options, Some(terminal_name(SCOPE))).await?;
         native.start().await?;
         let execution = native
@@ -184,6 +240,7 @@ async fn main() -> Result<()> {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         worker.kill()?; worker.wait()?;
+        run(&exe,"reject-unguarded",&root)?;
         run(&exe,"reopen",&root)?;
         println!("PASS: a fresh process opens the paired journal/home before SDK recovery and reuses the same VM PID/start-time and filesystem after Worker SIGKILL");
         let orphan=root.join("sdk/boxes/unrecorded-root"); private(&orphan)?;
@@ -191,6 +248,9 @@ async fn main() -> Result<()> {
         run(&exe,"reject-orphan",&root)?;
         println!("PASS: startup census rejects an orphan before SDK cleanup and preserves its bytes");
         std::fs::remove_dir_all(&orphan)?;
+        run(&exe,"cleanup-residue",&root)?;
+        run(&exe,"recover-cleanup",&root)?;
+        println!("PASS: new-process startup removes only authorized DB-first residue using real VM exit proofs, then cleanup replay preserves native fence IDs");
         Ok(())
     }.await;
     // Always join our worker and try normal SDK cleanup of the exact recorded
