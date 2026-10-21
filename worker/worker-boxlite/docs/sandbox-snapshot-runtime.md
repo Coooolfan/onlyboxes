@@ -106,6 +106,16 @@ Linux detached 模式的 SDK PID 可能只是外层 launcher，其退出后内�
 
 [Linux 写入者测试](../tests/linux-writer-evidence/README.md)直接编译生产 cgroup 模块，不链接 VM SDK。本机 Linux/arm64 容器已验证 launcher 被杀死并回收后，活跃后代仍会阻止退出确认；整组停止后才确认空组，同时拒绝 inode 变化、缺失或重建的同名组。该测试未启动真实 Linux BoxLite VM，不代替 SDK 放置、独立 execution lease 或跨机器验收。
 
+### 独立停止原语
+
+`NativeRuntime::inspect_writer` 对原终端的 scope、固定 Box ID、名称、规格、运行状态和 PID 进行两次核对，返回可持久化的写入者身份；它不启动或停止实例。`HostProcess::request_writer_stop` 可在没有 SDK runtime 的独立进程中对该身份请求强制停止，保留 guest 磁盘和 SDK 数据库。返回成功只表示停止请求已交给内核，调用方仍须通过 `writers_exited` 确认写入者退出，不能把信号投递当作清理完成。
+
+Linux 使用已固定设备号和 inode 的 cgroup 目录描述符打开 `cgroup.kill`，只终止该组及其后代，不向单个可复用 PID 发信号。macOS 在 PID 与启动时间核对期间，通过 task-name right 读取 audit token 的 PID version，仅持久化版本号；停止时使用 `proc_signal_with_audittoken`，让内核在投递 `SIGKILL` 时校验 PID 和版本，避免用户态先检查再 `kill(pid)` 的复用窗口。缺少版本、跨宿主/namespace、内核接口不可用或 cgroup 被替换时均拒绝，不降级为普通 PID 信号。[Apple 的 audit-token 信号接口](https://github.com/apple-oss-distributions/xnu/blob/main/libsyscall/wrappers/libproc/libproc.c)、[内核的 audit-token 信号处理](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/proc_info.c)给出了对应的系统接口和校验路径。
+
+macOS 单元测试验证错误版本无法停止仍活着的自有子进程，精确版本可停止，缺少版本及跨宿主/namespace 会拒绝。原生 `boxlite_home_guard_smoke` 在 SDK 宿主被 SIGKILL、同一 VM 重连和 orphan 保留检查之后，由未初始化 SDK 的父进程停止固定 VM，确认进程退出及 guest 磁盘仍在，再由 SDK 完成授权删除。Linux 内核测试直接使用同一 cgroup 停止实现，覆盖后代退出和 inode 不匹配拒绝。
+
+这些是独立守护器的停止基础，不包含 durable lease 服务、到期调度、私有控制协议或守护进程监督。生产启动、采纳、受控启动前授权、续租和重连仍须接入同一个守护器后，才能声明完整的独立 execution lease 能力。
+
 原生 smoke 验证正常退出的进程证据、SDK 停止后丢失确认的重试，以及无先前进程证据时拒绝采纳停止状态。无 VM 测试使用真实子进程验证 Worker 被 SIGKILL 后仍保留身份、活跃写入者不能确认停止、退出后才能冻结，以及确认不可撤销。它不等同于在真实 SDK 无法附着且 shim 仍活着的分支注入故障。另在 Linux/arm64 的临时 Rust 容器中复用同一进程身份模块源码和固定 SDK 的进程查询实现，7 项进程身份测试通过；容器提供独立的测试 machine-id。这只验证 Linux 内核查询与身份判断分支，不验证 Linux 上的 BoxLite VM 或完整 Worker 生命周期。
 
 原生操作尚未由生命周期控制器接入 Worker 管理帧，也不会使 `sandbox_persistence` 声明自动启用。[session 门禁](sandbox-snapshot-session-gates.md)已有 generation、控制连接、source 保留和 ready 绑定的检查与入口。归档处理原语已实现固定镜像、规格、字节上限和完整性校验；后续仍需接入运行中的 Worker，并完成全局磁盘预算、传输协议编排、激活、恢复握手及回收链路。

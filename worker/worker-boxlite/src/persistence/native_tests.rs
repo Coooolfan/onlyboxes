@@ -543,9 +543,20 @@ fn source_pid_evidence_requires_the_exact_sdk_and_os_process_identity() {
         format!("{}\n{}\nservices-mux-v1\n", record.pid, record.start_time),
     )
     .unwrap();
+    #[cfg(target_os = "macos")]
+    {
+        let mut bound = record.clone();
+        bound.bind_writer_group(f.config.id.as_str()).unwrap();
+        assert_eq!(
+            stop::read_shim_process(&f.home, f.config.id.as_str(), record.pid).unwrap(),
+            bound
+        );
+    }
+    // The test process is not a BoxLite cgroup; PID-only evidence is rejected.
+    #[cfg(target_os = "linux")]
     assert_eq!(
-        stop::read_shim_process(&f.home, f.config.id.as_str(), record.pid).unwrap(),
-        record
+        stop::read_shim_process(&f.home, f.config.id.as_str(), record.pid),
+        Err(NativeError::Unavailable)
     );
     assert_eq!(
         stop::read_shim_process(&f.home, f.config.id.as_str(), record.pid + 1),

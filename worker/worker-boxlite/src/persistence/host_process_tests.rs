@@ -44,6 +44,38 @@ fn a_real_child_is_not_exited_until_it_terminates() {
 }
 
 #[test]
+fn a_stop_request_never_falls_back_to_an_unpinned_pid() {
+    let mut child = Sleeper::new();
+    let process = HostProcess::capture(child.0.id()).unwrap();
+    assert_eq!(process.request_writer_stop(), Err(Error::Unavailable));
+    assert!(child.0.try_wait().unwrap().is_none());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn exact_stop_refuses_foreign_host_namespace_and_process_versions() {
+    let mut child = Sleeper::new();
+    let mut process = HostProcess::capture(child.0.id()).unwrap();
+    process.bind_writer_group("owned_fixture").unwrap();
+    let mut foreign = process.clone();
+    foreign.host_id = uuid::Uuid::new_v4().to_string();
+    assert!(foreign.request_writer_stop().is_err());
+    let mut moved = process.clone();
+    moved.process_namespace = "linux-pid:1:2".into();
+    assert!(moved.request_writer_stop().is_err());
+    let mut wrong = process.clone();
+    wrong.signal_version = process
+        .signal_version
+        .map(|version| version.wrapping_add(1));
+    assert!(wrong.request_writer_stop().is_err());
+    assert!(child.0.try_wait().unwrap().is_none());
+    process.request_writer_stop().unwrap();
+    child.0.wait().unwrap();
+    assert_eq!(process.writers_exited(), Ok(true));
+    assert_eq!(process.request_writer_stop(), Ok(()));
+}
+
+#[test]
 fn launcher_only_evidence_cannot_prove_linux_writers_exited() {
     let mut child = Sleeper::new();
     let mut process = HostProcess::capture(child.0.id()).unwrap();

@@ -181,6 +181,7 @@ fn freeze(j: &Journal) {
             pid: 1234,
             start_time: 10,
             writer_cgroup: None,
+            signal_version: None,
         });
         op.source_stop_confirmed = true;
         op.phase = Phase::Frozen;

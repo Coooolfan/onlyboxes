@@ -4,6 +4,7 @@ mod archive;
 mod cgroup;
 mod home;
 mod host_process;
+mod host_signal;
 mod journal;
 mod native;
 mod space;

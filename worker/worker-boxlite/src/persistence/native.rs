@@ -76,6 +76,27 @@ impl NativeRuntime {
             .await
     }
 
+    /// Pin a running original session's writer identity without starting,
+    /// stopping or deleting it. The caller must durably bind this evidence
+    /// before using it for independent lease enforcement.
+    pub async fn inspect_writer(&self, scope: &str, box_id: &str) -> Result<super::HostProcess> {
+        let first = self.inspect(scope, box_id).await?;
+        if first.status != BoxStatus::Running {
+            return Err(NativeError::Conflict);
+        }
+        let pin =
+            stop::read_shim_process(&self.home, box_id, first.pid.ok_or(NativeError::Conflict)?)?;
+        let current = self.inspect(scope, box_id).await?;
+        if current.status != BoxStatus::Running
+            || current.pid != first.pid
+            || current.spec != first.spec
+            || stop::read_shim_process(&self.home, box_id, pin.pid)? != pin
+        {
+            return Err(NativeError::Conflict);
+        }
+        Ok(pin)
+    }
+
     pub async fn inspect_target(
         &self,
         journal: &Journal,

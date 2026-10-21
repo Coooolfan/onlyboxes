@@ -1,5 +1,6 @@
 //! Host process evidence survives SDK PID-file removal and Worker restarts.
-//! Queries never signal a process; unavailable OS evidence is not an exit.
+//! Exit queries never signal; explicit stops use pinned kernel identities.
+//! Unavailable OS evidence is not an exit.
 use super::{Error, WriterCgroup};
 use serde::{Deserialize, Serialize};
 
@@ -15,6 +16,8 @@ pub struct HostProcess {
     pub start_time: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub writer_cgroup: Option<WriterCgroup>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signal_version: Option<u32>,
 }
 impl HostProcess {
     pub(crate) fn validate_native_id(&self, id: &str) -> Result<()> {
@@ -37,11 +40,17 @@ impl HostProcess {
             || self.pid <= 1
             || self.pid > i32::MAX as u32
             || self.start_time == 0
+            || self.signal_version == Some(0)
         {
             return Err(Error::Conflict);
         }
         if let Some(group) = &self.writer_cgroup {
             group.validate()?;
+        }
+        if (self.signal_version.is_some() && self.process_namespace != "host")
+            || (self.writer_cgroup.is_some() && self.process_namespace == "host")
+        {
+            return Err(Error::Conflict);
         }
         Ok(())
     }
@@ -64,6 +73,7 @@ impl HostProcess {
             pid,
             start_time,
             writer_cgroup: None,
+            signal_version: None,
         };
         process.validate()?;
         if process.host_id != self::host_id()?
@@ -86,9 +96,49 @@ impl HostProcess {
             }
             self.writer_cgroup = Some(group);
         }
-        #[cfg(not(target_os = "linux"))]
-        let _ = box_id;
+        #[cfg(target_os = "macos")]
+        {
+            let _ = box_id;
+            let version = super::host_signal::version(self.pid)?;
+            if Self::capture(self.pid)? != *self {
+                return Err(Error::Unavailable);
+            }
+            self.signal_version = Some(version);
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        return Err(Error::Unavailable);
         Ok(())
+    }
+
+    /// Requests a hard stop of the pinned writer identity without touching its
+    /// disk or SDK database. Success is only signal delivery, not exit proof.
+    pub fn request_writer_stop(&self) -> Result<()> {
+        self.validate()?;
+        if self.host_id != host_id()? {
+            return Err(Error::Unavailable);
+        }
+        if self.boot_id != boot_id()? {
+            return Ok(());
+        }
+        if self.process_namespace != process_namespace()? {
+            return Err(Error::Unavailable);
+        }
+        #[cfg(target_os = "linux")]
+        {
+            self.writer_cgroup
+                .as_ref()
+                .ok_or(Error::Unavailable)?
+                .request_kill()
+        }
+        #[cfg(target_os = "macos")]
+        {
+            if self.has_exited()? {
+                return Ok(());
+            }
+            super::host_signal::kill(self.pid, self.signal_version.ok_or(Error::Unavailable)?)
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        Err(Error::Unavailable)
     }
 
     /// Publication/deletion proof includes descendants; ordinary process exit

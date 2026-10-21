@@ -1,5 +1,6 @@
 //! Real SDK reopening after an owned child is killed; pre-SDK refusals preserve
-//! orphan data. This does not validate independent execution-lease enforcement.
+//! orphan data and exact native stop after issuer loss. This does not validate
+//! an independently supervised lease service or expiry scheduling.
 #![allow(dead_code, unused_imports)]
 #[path = "../src/boxlite_runtime.rs"]
 mod boxlite_runtime;
@@ -25,6 +26,7 @@ struct Record {
     id: String,
     pid: u32,
     start_time: Option<u64>,
+    writer: worker_boxlite::persistence::HostProcess,
 }
 fn private(path: &Path) -> Result<()> {
     std::fs::create_dir(path)?;
@@ -81,6 +83,8 @@ async fn child(mode: &str, root: &Path) -> Result<()> {
             journal.claim(serde_json::from_value(serde_json::json!({
                 "operation_id":DELETE,"scoped_session_id":SCOPE,"generation":2,"kind":"delete","phase":"deleting",
                 "restore_spec":inspected.spec,"box_id":record.id,
+                "cleanup_box_ids":[record.id],"cleanup_names":{&record.id:terminal_name(SCOPE)},
+                "cleanup_processes":{&record.id:record.writer},
             }))?)?;
         }
         let before = journal.snapshot()?.operations[DELETE].name_fences.clone();
@@ -137,7 +141,8 @@ async fn child(mode: &str, root: &Path) -> Result<()> {
         native.start().await?;
         let execution = native
             .exec(
-                boxlite::BoxCommand::new("sh").args(["-c", "printf preserved > /home-guard-data"]),
+                boxlite::BoxCommand::new("sh")
+                    .args(["-c", "printf preserved > /home-guard-data; sync"]),
             )
             .await?
             .wait()
@@ -152,6 +157,9 @@ async fn child(mode: &str, root: &Path) -> Result<()> {
             home.join("boxes").join(&id).join("shim.pid"),
         )?)?;
         let record = Record {
+            writer: worker_boxlite::persistence::NativeRuntime::new(Arc::new(sdk.clone()), &home)?
+                .inspect_writer(SCOPE, &id)
+                .await?,
             id,
             pid: info.pid.ok_or("running PID missing")?,
             start_time: pid.start_time,
@@ -248,6 +256,15 @@ async fn main() -> Result<()> {
         run(&exe,"reject-orphan",&root)?;
         println!("PASS: startup census rejects an orphan before SDK cleanup and preserves its bytes");
         std::fs::remove_dir_all(&orphan)?;
+        let record:Record=serde_json::from_slice(&std::fs::read(root.join("ready.json"))?)?;
+        record.writer.request_writer_stop()?;
+        let deadline=std::time::Instant::now()+Duration::from_secs(10);
+        while !record.writer.writers_exited()? {
+            if std::time::Instant::now()>=deadline {return Err("native writer did not stop independently of the dead SDK issuer".into());}
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        if !root.join("sdk/boxes").join(&record.id).join("disks/disk.qcow2").is_file() {return Err("exact writer stop removed the retained guest disk".into());}
+        println!("PASS: a process without an SDK runtime stops the pinned native writer after issuer SIGKILL and retains the guest disk");
         run(&exe,"cleanup-residue",&root)?;
         run(&exe,"recover-cleanup",&root)?;
         println!("PASS: new-process startup removes only authorized DB-first residue using real VM exit proofs, then cleanup replay preserves native fence IDs");

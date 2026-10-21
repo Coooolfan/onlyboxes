@@ -81,6 +81,34 @@ impl WriterCgroup {
         self.is_empty_at(&self.path)
     }
 
+    #[cfg(target_os = "linux")]
+    pub(crate) fn request_kill(&self) -> Result<()> {
+        use std::io::Write;
+        use std::os::fd::{AsRawFd, FromRawFd};
+        self.validate()?;
+        let directory = open_directory(&self.path)?;
+        require_cgroupfs(&directory)?;
+        let metadata = directory.metadata().map_err(|_| Error::Unavailable)?;
+        if metadata.dev() != self.device || metadata.ino() != self.inode {
+            return Err(Error::Unavailable);
+        }
+        // SAFETY: fixed leaf under the exact pinned kernel directory. No path
+        // lookup after this point can redirect a stop into a replacement group.
+        let descriptor = unsafe {
+            libc::openat(
+                directory.as_raw_fd(),
+                c"cgroup.kill".as_ptr(),
+                libc::O_WRONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            )
+        };
+        if descriptor < 0 {
+            return Err(Error::Unavailable);
+        }
+        // SAFETY: transfer ownership of the new openat descriptor exactly once.
+        let mut kill = unsafe { File::from_raw_fd(descriptor) };
+        kill.write_all(b"1").map_err(|_| Error::Unavailable)
+    }
+
     fn is_empty_at(&self, path: &Path) -> Result<bool> {
         let directory = open_directory(path)?;
         require_cgroupfs(&directory)?;
@@ -334,14 +362,20 @@ mod tests {
         // The launcher is reaped; its independently running child still holds
         // the subtree populated. Empty direct-parent/PID evidence is insufficient.
         assert_eq!(evidence.is_empty(), Ok(false));
-        fs::write(group.group.join("cgroup.kill"), "1").unwrap();
+        let mut replaced = evidence.clone();
+        replaced.inode += 1;
+        assert!(replaced.request_kill().is_err());
+        assert_eq!(
+            evidence.is_empty(),
+            Ok(false),
+            "identity mismatch killed the live descendant"
+        );
+        evidence.request_kill().unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while evidence.is_empty() == Ok(false) && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         assert_eq!(evidence.is_empty(), Ok(true));
-        let mut replaced = evidence.clone();
-        replaced.inode += 1;
         assert!(replaced.is_empty().is_err());
         fs::remove_dir(&group.group).unwrap();
         assert!(
