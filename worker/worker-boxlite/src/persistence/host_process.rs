@@ -1,6 +1,6 @@
 //! Host process evidence survives SDK PID-file removal and Worker restarts.
 //! Queries never signal a process; unavailable OS evidence is not an exit.
-use super::Error;
+use super::{Error, WriterCgroup};
 use serde::{Deserialize, Serialize};
 
 type Result<T> = std::result::Result<T, Error>;
@@ -13,8 +13,18 @@ pub struct HostProcess {
     pub process_namespace: String,
     pub pid: u32,
     pub start_time: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub writer_cgroup: Option<WriterCgroup>,
 }
 impl HostProcess {
+    pub(crate) fn validate_native_id(&self, id: &str) -> Result<()> {
+        self.validate()?;
+        if let Some(group) = &self.writer_cgroup {
+            group.validate_native_id(id)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn validate(&self) -> Result<()> {
         let host = uuid::Uuid::parse_str(&self.host_id).map_err(|_| Error::Conflict)?;
         if host.is_nil() || host.to_string() != self.host_id {
@@ -29,6 +39,9 @@ impl HostProcess {
             || self.start_time == 0
         {
             return Err(Error::Conflict);
+        }
+        if let Some(group) = &self.writer_cgroup {
+            group.validate()?;
         }
         Ok(())
     }
@@ -50,6 +63,7 @@ impl HostProcess {
             process_namespace,
             pid,
             start_time,
+            writer_cgroup: None,
         };
         process.validate()?;
         if process.host_id != self::host_id()?
@@ -59,6 +73,41 @@ impl HostProcess {
             return Err(Error::Unavailable);
         }
         Ok(process)
+    }
+
+    /// Called while the exact native instance still runs, before its PID file
+    /// can be removed. Linux must bind the entire detached VM subtree.
+    pub(crate) fn bind_writer_group(&mut self, box_id: &str) -> Result<()> {
+        #[cfg(target_os = "linux")]
+        {
+            let group = WriterCgroup::capture(self.pid, box_id)?;
+            if Self::capture(self.pid)? != *self {
+                return Err(Error::Unavailable);
+            }
+            self.writer_cgroup = Some(group);
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = box_id;
+        Ok(())
+    }
+
+    /// Publication/deletion proof includes descendants; ordinary process exit
+    /// queries intentionally retain their narrower semantics.
+    pub fn writers_exited(&self) -> Result<bool> {
+        if !self.has_exited()? {
+            return Ok(false);
+        }
+        // A different boot on the same validated host ends every old writer.
+        if self.boot_id != boot_id()? {
+            return Ok(true);
+        }
+        if let Some(group) = &self.writer_cgroup {
+            return group.is_empty();
+        }
+        #[cfg(target_os = "linux")]
+        return Err(Error::Unavailable);
+        #[cfg(not(target_os = "linux"))]
+        Ok(true)
     }
 
     /// On the same host, a different boot or start time proves this lifecycle ended. This

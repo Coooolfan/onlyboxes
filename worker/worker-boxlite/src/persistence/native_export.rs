@@ -47,7 +47,7 @@ impl NativeRuntime {
                     .source_process
                     .as_ref()
                     .ok_or(NativeError::Conflict)?
-                    .has_exited()
+                    .writers_exited()
                     .map_err(|_| NativeError::Unavailable)?
             {
                 return Err(NativeError::Conflict);

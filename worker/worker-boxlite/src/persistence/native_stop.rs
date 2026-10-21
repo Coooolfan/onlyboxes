@@ -111,7 +111,7 @@ pub(in crate::persistence) async fn confirm_source_exit(
     let op = source_operation(journal, operation)?;
     let process = op.source_process.ok_or(NativeError::Conflict)?;
     let deadline = tokio::time::Instant::now() + wait;
-    while !process.has_exited().map_err(journal_error)? {
+    while !process.writers_exited().map_err(journal_error)? {
         if tokio::time::Instant::now() >= deadline {
             return Err(NativeError::Unavailable);
         }
@@ -167,9 +167,10 @@ pub(super) fn read_shim_process(home: &Path, id: &str, pid: u32) -> Result<HostP
     if record.pid != pid || record.start_time.is_none() {
         return Err(NativeError::Conflict);
     }
-    let process = HostProcess::capture(pid).map_err(journal_error)?;
+    let mut process = HostProcess::capture(pid).map_err(journal_error)?;
     if Some(process.start_time) != record.start_time {
         return Err(NativeError::Conflict);
     }
+    process.bind_writer_group(id).map_err(journal_error)?;
     Ok(process)
 }

@@ -372,7 +372,7 @@ pub(super) fn fence_options(op: &Operation, name: &str) -> Result<BoxOptions> {
 }
 pub(super) async fn require_exited(process: &HostProcess) -> Result<()> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    while !process.has_exited().map_err(journal_error)? {
+    while !process.writers_exited().map_err(journal_error)? {
         if tokio::time::Instant::now() >= deadline {
             return Err(NativeError::Unavailable);
         }

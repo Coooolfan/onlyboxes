@@ -42,6 +42,22 @@ fn a_real_child_is_not_exited_until_it_terminates() {
     child.0.wait().unwrap();
     assert_eq!(process.has_exited(), Ok(true));
 }
+
+#[test]
+fn launcher_only_evidence_cannot_prove_linux_writers_exited() {
+    let mut child = Sleeper::new();
+    let mut process = HostProcess::capture(child.0.id()).unwrap();
+    assert_eq!(process.writers_exited(), Ok(false));
+    child.0.kill().unwrap();
+    child.0.wait().unwrap();
+    assert_eq!(process.has_exited(), Ok(true));
+    #[cfg(target_os = "linux")]
+    assert_eq!(process.writers_exited(), Err(Error::Unavailable));
+    #[cfg(target_os = "macos")]
+    assert_eq!(process.writers_exited(), Ok(true));
+    process.boot_id = uuid::Uuid::new_v4().to_string();
+    assert_eq!(process.writers_exited(), Ok(true));
+}
 #[test]
 fn pid_reuse_and_reboot_do_not_signal_the_current_process() {
     let process = HostProcess::capture(std::process::id()).unwrap();

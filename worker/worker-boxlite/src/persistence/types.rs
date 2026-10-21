@@ -241,10 +241,10 @@ impl Operation {
             if !valid_id(id) || !self.cleanup_box_ids.contains(id) {
                 return Err(Error::Conflict);
             }
-            process.validate()?;
+            process.validate_native_id(id)?;
         }
         if let Some(process) = &self.started_process {
-            process.validate()?;
+            process.validate_native_id(&self.box_id)?;
         }
         if (self.start_attempted
             && (!matches!(self.kind, Kind::Source | Kind::Target)
@@ -265,7 +265,7 @@ impl Operation {
             return Err(Error::Conflict);
         }
         if let Some(process) = &self.source_process {
-            process.validate()?;
+            process.validate_native_id(&self.box_id)?;
         }
         if (self.kind != Kind::Source
             && (self.source_process.is_some() || self.source_stop_confirmed))

@@ -96,11 +96,15 @@ BoxLite 0.10.7 的公开 `BoxInfo` 不提供完整启动配置。检查器使用
 
 停止前先读取当前原生实例的私有 `shim.pid`，要求 SDK PID、PID 文件中的启动时间与操作系统观察一致，再把稳定宿主身份、本次宿主启动 UUID、PID namespace、PID 和进程启动时间持久化为不可换绑的 `source_process`。PID 文件缺失、旧格式、损坏、链接或身份冲突都会保留源实例并报错，不把读取失败当作进程不存在。
 
-SDK 在无法附着 live state 时仍可能继续清理并记录停止，因此 `Stopped` 元数据本身不足以确认停止。SDK 停止后还会等待最多 10 秒，独立核对原 shim 已退出，再持久化不可撤销的 `source_stop_confirmed`。原进程仍活着或操作系统证据不可读时不能进入 `frozen`；停止前未记录进程身份的已停止实例也不能直接采纳。进程查询不会发送终止信号或回收其他进程；同宿主重启或 PID 对应的启动时间变化可证明旧生命周期结束，宿主身份不同，或同一次宿主启动内 PID namespace 改变，则拒绝确认，不能把 journal 跨机复制或 PID 不再可见当作原进程已退出。
+SDK 在无法附着 live state 时仍可能继续清理并记录停止，因此 `Stopped` 元数据本身不足以确认停止。SDK 停止后还会等待最多 10 秒，独立核对原进程及其写入者已退出，再持久化不可撤销的 `source_stop_confirmed`。原进程仍活着或操作系统证据不可读时不能进入 `frozen`；停止前未记录进程身份的已停止实例也不能直接采纳。进程查询不会发送终止信号或回收其他进程；同宿主重启可证明旧启动中的全部写入者结束，PID 启动时间变化只证明该 PID 的旧生命周期结束。宿主身份不同，或同一次宿主启动内 PID namespace 改变，则拒绝确认，不能把 journal 跨机复制或 PID 不再可见当作原进程已退出。
+
+Linux detached 模式的 SDK PID 可能只是外层 launcher，其退出后内层 PID namespace 中的 VM 仍可存活。SDK 的整组清理属于 best-effort，不能代替停止证明。适配器在进程仍运行时读取精确 `/proc/<pid>/cgroup`，要求统一 cgroup v2、路径末尾与 `boxlite/<Box ID>` 匹配、真实 cgroup2 文件系统，并把目录设备号和 inode 随进程身份固定到 journal。PID 身份随后再次核对，防止采集期间换绑。停止、已冻结导出重放、回滚和删除/残留清理都要求旧 PID 退出，且原 cgroup 的分层 `cgroup.events` 为 `populated 0`，包括所有后代。事件通过固定目录描述符读取；同名替换、缺失组、损坏事件或权限失败都保持不可用。旧的仅 PID 记录在同一次 Linux 启动内不能作为完整写入者退出证明，也不会通过补写一个空组来修复。
 
 源操作的冻结、提交和完成记录必须包含停止确认与原进程身份。Worker 在 SDK 已停止、停止确认尚未写入时退出，重开 journal 后仍可用原身份补齐确认，不依赖 SDK 可能已经删除的 PID 文件。已冻结归档重放也要求这项身份记录和退出证据。未确认的停止保留原实例、磁盘和操作记录，由生命周期恢复流程继续核对。
 
 这些原语要求本地 SDK home 与 journal 由同一宿主独占，不共享或复制到另一台宿主运行。Linux 需要宿主唯一且可读的 `/etc/machine-id`、`/proc/sys/kernel/random/boot_id` 、`/proc/self/ns/pid` 及进程启动时间；容器部署须提供正确的宿主身份，不能使用预烘焙的重复 machine-id。macOS 使用 `gethostuuid`、`kern.bootsessionuuid` 和内核进程启动时间。身份读取不可用时停止原语报错。Worker 的持久化能力启用仍需在 SDK 初始化与恢复之前检查宿主、namespace 和本地 home 的归属，独立 lease 强制执行与异常 shim 回收尚未接入。
+
+[Linux 写入者测试](../tests/linux-writer-evidence/README.md)直接编译生产 cgroup 模块，不链接 VM SDK。本机 Linux/arm64 容器已验证 launcher 被杀死并回收后，活跃后代仍会阻止退出确认；整组停止后才确认空组，同时拒绝 inode 变化、缺失或重建的同名组。该测试未启动真实 Linux BoxLite VM，不代替 SDK 放置、独立 execution lease 或跨机器验收。
 
 原生 smoke 验证正常退出的进程证据、SDK 停止后丢失确认的重试，以及无先前进程证据时拒绝采纳停止状态。无 VM 测试使用真实子进程验证 Worker 被 SIGKILL 后仍保留身份、活跃写入者不能确认停止、退出后才能冻结，以及确认不可撤销。它不等同于在真实 SDK 无法附着且 shim 仍活着的分支注入故障。另在 Linux/arm64 的临时 Rust 容器中复用同一进程身份模块源码和固定 SDK 的进程查询实现，7 项进程身份测试通过；容器提供独立的测试 machine-id。这只验证 Linux 内核查询与身份判断分支，不验证 Linux 上的 BoxLite VM 或完整 Worker 生命周期。
 

@@ -125,7 +125,7 @@ pub(super) fn authorize_residue(home: &Path, state: &JournalState, id: &str) -> 
     }
     for process in &pins {
         if !process
-            .has_exited()
+            .writers_exited()
             .map_err(super::cleanup::journal_error)?
         {
             return Err(NativeError::Conflict);

@@ -30,9 +30,14 @@ impl Drop for Child {
 }
 fn exited() -> HostProcess {
     let mut child = Child::new();
-    let pin = child.pin();
+    let mut pin = child.pin();
     child.stop();
     assert!(pin.has_exited().unwrap());
+    // These fixture processes are ordinary sleep children, not native Linux
+    // cgroups. A previous boot provides full-writer exit evidence on Linux.
+    if cfg!(target_os = "linux") {
+        pin.boot_id = uuid::Uuid::new_v4().to_string();
+    }
     pin
 }
 struct Fixture {
@@ -214,10 +219,22 @@ fn live_writer_and_unknown_pid_fingerprints_block_cleanup() {
     f.pid_file(ID, &unknown);
     assert_eq!(
         reconcile_home(&f.home, &f.journal),
-        Err(NativeError::Conflict)
+        Err(if cfg!(target_os = "linux") {
+            NativeError::Unavailable
+        } else {
+            NativeError::Conflict
+        })
     );
     assert!(path.exists());
     f.pid_file(ID, &pin);
+    if cfg!(target_os = "linux") {
+        assert_eq!(
+            reconcile_home(&f.home, &f.journal),
+            Err(NativeError::Unavailable)
+        );
+        assert!(path.exists());
+        return;
+    }
     reconcile_home(&f.home, &f.journal).unwrap();
     assert!(!path.exists());
 }
@@ -304,6 +321,14 @@ fn every_recorded_lifecycle_must_exit_even_if_the_latest_writer_has_exited() {
     );
     assert!(path.exists());
     old_writer.stop();
+    if cfg!(target_os = "linux") {
+        assert_eq!(
+            reconcile_home(&f.home, &f.journal),
+            Err(NativeError::Unavailable)
+        );
+        assert!(path.exists());
+        return;
+    }
     reconcile_home(&f.home, &f.journal).unwrap();
     assert!(!path.exists());
 }

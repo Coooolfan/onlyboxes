@@ -180,6 +180,7 @@ fn freeze(j: &Journal) {
             process_namespace: "host".into(),
             pid: 1234,
             start_time: 10,
+            writer_cgroup: None,
         });
         op.source_stop_confirmed = true;
         op.phase = Phase::Frozen;

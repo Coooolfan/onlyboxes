@@ -63,7 +63,7 @@ impl NativeRuntime {
         // Never trust an SDK Stopped row after a shutdown acknowledgement loss.
         if kind == Kind::Source && action == BootAction::Start {
             let old = op.source_process.as_ref().ok_or(NativeError::Conflict)?;
-            if !op.source_stop_confirmed || !old.has_exited().map_err(journal_error)? {
+            if !op.source_stop_confirmed || !old.writers_exited().map_err(journal_error)? {
                 return Err(NativeError::Conflict);
             }
         }
