@@ -2,7 +2,7 @@
 
 `internal/runtimelease` and `cmd/runtime-lease-guard` implement a Docker-side lease enforcer whose process and timers are independent of the Worker. Its immutable container IDs and durable lease records survive the loss of the process that issued a lease. The helper stops expired containers while retaining their writable layers.
 
-The Worker lifecycle controller does not yet launch or call this helper. Its configuration, first-session adoption, controlled start/rollback, renewal, reconnect and cleanup hooks must be connected before persistence can rely on independent lease enforcement. The isolated Docker fixture below is not a Console-connected Worker SIGKILL, shared-store or cross-machine acceptance test.
+The lifecycle controller accepts a private guard client for controlled restore/rollback, durable renewal, running/activation checks, reconnect validation and native cleanup. Production `Run` does not yet launch or install that client, and initial-session adoption is not yet guarded. Helper identity/volume reconciliation, production configuration and initial adoption must be connected before persistence can rely on independent lease enforcement. The isolated fixtures below are not Console-connected Worker SIGKILL, production shared-store or cross-machine acceptance tests.
 
 ## Ownership and controls
 
@@ -13,6 +13,14 @@ Controls use a private Unix socket, with no TCP listener. `arm`, `renew` and `re
 `ping` checks private control-channel readiness without issuing a lease. `status` returns an existing record and rejects an expired lease that has not yet been durably marked revoked. The control client validates the exact acknowledged identity/revision and refuses a live receipt that is already expired on arrival.
 
 A record keeps the native generation fixed for its full container ID; rollback re-arms that same generation. A restored generation uses a new native ID. One scope cannot acquire a second local native ID while its prior lease record exists. `forget` releases a record only after Docker confirms that the full immutable ID no longer exists; a stopped retained root is insufficient. Lifecycle ownership and cancellation must still wait for every accepted start/import action to finish before native deletion and ownership transfer. A stop response alone does not settle an outstanding start request.
+
+## Controller ordering and retries
+
+With a guard installed, target startup persists its native ID and absolute lease, obtains the matching guard acknowledgement, starts the container and checks that same lease before ready/activation. A running target with missing or revoked guard ownership cannot be rearmed through a restore replay. Source rollback persists `rolling_back` and its lease before any native start/unpause. Rolling-back retries retain that deadline; completed rollback replays cannot extend it or restart an expired instance.
+
+Renewal persists the desired absolute expiry before requesting a guard CAS. A stored intent alone is insufficient proof of RPC completion: retry still queries/renews the guard and requires an exact receipt. The private exec client accepts only bounded, strict JSON replies from the immutable helper ID. Missing-record evidence uses a dedicated `not_found` stdout code; generic process errors or daemon diagnostics cannot authorize initial arming. Scope, generation, immutable ID, revision and lease are checked on acknowledgements.
+
+After native deletion, cleanup calls `forget` before returning its lifecycle acknowledgement. Even a missing status must pass through the guard's per-ID forget lock: an earlier arm may have inspected the old root while its durable write is still in progress. A revision conflict keeps cleanup pending. Logical deletion may fence a newer generation while forgetting the older, physically removed native ID; it cannot forget a newer or foreign record.
 
 ## Persistence and enforcement
 
@@ -31,6 +39,8 @@ Before the first sandbox lease, the launcher must verify the helper's immutable 
 `Dockerfile.runtime-lease-guard` builds a static, minimal Linux helper from repository-root context. Its `GO_IMAGE` build argument must be pinned by digest. The resulting deployment image must also be pinned by digest. It exposes only the helper binary, which includes the private Unix control client; it does not require a Docker CLI or shell in the production helper image. Worker-side packaging and startup reconciliation remain required.
 
 ## Validation
+
+Controller tests cover durable rollback-before-boot ordering, rejected unconfirmed renewal, lost arm acknowledgements, strict receipt identity and serialized missing-record cleanup. The controller transfer/cache fixture uses separate guard processes and state volumes for two logical Workers on one daemon; it covers verified restore, activation, renewal and cold HTTP download. It does not cover initial adoption or production helper launch.
 
 Unit/race tests cover monotonic expiry under clock rollback, revision replay, denied implicit revival, restart revocation, stalled unrelated native admission, immutable-root cleanup, private journal validation, interrupted writes, Docker identity rejection, diagnostic redaction, duplicate listener rejection and orderly control-server shutdown.
 

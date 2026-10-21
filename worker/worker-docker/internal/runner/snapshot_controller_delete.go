@@ -68,6 +68,9 @@ func (c *snapshotController) purgeSession(ctx context.Context, control *registry
 			return wire.Result{}, err
 		}
 	}
+	if err := c.forgetExecutionLease(ctx, current); err != nil {
+		return wire.Result{}, err
+	}
 	if err := c.ensureDeletionNameFence(ctx, &current); err != nil {
 		return wire.Result{}, err
 	}

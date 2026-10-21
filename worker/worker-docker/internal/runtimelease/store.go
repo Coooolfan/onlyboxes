@@ -14,6 +14,7 @@ import (
 )
 
 var (
+	ErrNotFound    = errors.New("runtime lease not found")
 	ErrConflict    = errors.New("runtime lease conflict")
 	ErrUnavailable = errors.New("runtime lease unavailable")
 	cidPattern     = regexp.MustCompile(`^[0-9a-f]{64}$`)

@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -45,6 +46,14 @@ func run() error {
 		defer cancel()
 		entry, err := runtimelease.Call(ctx, *socket, request)
 		if err != nil {
+			code := "unavailable"
+			if errors.Is(err, runtimelease.ErrNotFound) {
+				code = "not_found"
+			}
+			if errors.Is(err, runtimelease.ErrConflict) {
+				code = "conflict"
+			}
+			_ = json.NewEncoder(os.Stdout).Encode(runtimelease.Response{Error: code})
 			return err
 		}
 		if request.Action == "ping" {

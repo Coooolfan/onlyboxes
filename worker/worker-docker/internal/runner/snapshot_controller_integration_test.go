@@ -57,11 +57,12 @@ func TestIntegrationSnapshotControllerTransfersColdRestoreAndCache(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := terminalSessionManagerConfig{DockerImage: image, LeaseMinSec: 1, LeaseMaxSec: 600, LeaseDefaultSec: 300}
+	cfg := terminalSessionManagerConfig{WorkerID: "worker-a", DockerImage: image, LeaseMinSec: 1, LeaseMaxSec: 600, LeaseDefaultSec: 300}
 	manager := newTerminalSessionManager(cfg)
 	defer manager.Close()
 	journal := testSnapshotJournal(t)
 	controllerCfg := snapshotControllerConfig{MaxInflight: 2, TmpQuotaBytes: 2 << 30, CacheMaxBytes: 512 << 20, CacheTTL: time.Hour, DrainTimeout: time.Second, TransferConcurrency: 2, TransferIdleTimeout: 5 * time.Second}
+	controllerCfg.LeaseGuard = snapshotNativeLeaseFixture(t, ctx, image, runtime.platform, "worker-a")
 	controller, err := newSnapshotController(ctx, manager, journal, runtime, controllerCfg)
 	if err != nil {
 		t.Fatal(err)
@@ -187,7 +188,9 @@ func TestIntegrationSnapshotControllerTransfersColdRestoreAndCache(t *testing.T)
 	}
 	// A different controller/journal has no local cache. Restore the same
 	// immutable bytes into a different stable session to exercise actual GET.
-	coldManager := newTerminalSessionManager(cfg)
+	coldConfig := cfg
+	coldConfig.WorkerID = "worker-b"
+	coldManager := newTerminalSessionManager(coldConfig)
 	defer coldManager.Close()
 	coldRoot := t.TempDir()
 	if err := os.Chmod(coldRoot, 0700); err != nil {
@@ -198,7 +201,9 @@ func TestIntegrationSnapshotControllerTransfersColdRestoreAndCache(t *testing.T)
 		t.Fatal(err)
 	}
 	defer coldJournal.Close()
-	cold, err := newSnapshotController(ctx, coldManager, coldJournal, runtime, controllerCfg)
+	coldControllerConfig := controllerCfg
+	coldControllerConfig.LeaseGuard = snapshotNativeLeaseFixture(t, ctx, image, runtime.platform, "worker-b")
+	cold, err := newSnapshotController(ctx, coldManager, coldJournal, runtime, coldControllerConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,6 +275,7 @@ func TestIntegrationSnapshotWorkerReopensFrozenAndRunningOwnership(t *testing.T)
 	}
 	cfg := terminalSessionManagerConfig{WorkerID: "worker-a", PersistenceEnabled: true, PreserveOnClose: true, DockerImage: image, LeaseMinSec: 1, LeaseMaxSec: 600, LeaseDefaultSec: 300}
 	ccfg := snapshotControllerConfig{MaxInflight: 2, TmpQuotaBytes: 2 << 30, CacheMaxBytes: 512 << 20, CacheTTL: time.Hour, DrainTimeout: time.Second, TransferConcurrency: 2, TransferIdleTimeout: 5 * time.Second}
+	ccfg.LeaseGuard = snapshotNativeLeaseFixture(t, ctx, image, runtime.platform, "worker-a")
 	journal := testSnapshotJournal(t)
 	root := journal.root
 	manager := newTerminalSessionManager(cfg)

@@ -132,6 +132,11 @@ func (c *snapshotController) Recover(ctx context.Context, ordinary []*registryv1
 		if err := checkSnapshotGeneration(ctx, op.ContainerID, op.SessionID, operation, op.Generation); err != nil {
 			return err
 		}
+		recovered := op
+		recovered.LeaseExpiresUnixMS = candidate.LeaseExpiresUnixMs
+		if err := c.checkExecutionLease(ctx, recovered); err != nil {
+			return err
+		}
 		if err := c.journal.Update(op.ID, func(o *snapshotOperation) error { o.LeaseExpiresUnixMS = candidate.LeaseExpiresUnixMs; return nil }); err != nil {
 			return err
 		}

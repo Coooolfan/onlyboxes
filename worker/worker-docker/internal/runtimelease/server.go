@@ -98,6 +98,9 @@ func (g *Guard) Serve(ctx context.Context, listener net.Listener) error {
 			if errors.Is(err, ErrUnavailable) {
 				response.Error = "unavailable"
 			}
+			if errors.Is(err, ErrNotFound) {
+				response.Error = "not_found"
+			}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(response)
@@ -208,6 +211,9 @@ func Call(ctx context.Context, socket string, request Request) (Entry, error) {
 		return Entry{}, ErrUnavailable
 	}
 	if response.Error != "" {
+		if response.Error == "not_found" {
+			return Entry{}, ErrNotFound
+		}
 		if response.Error == "conflict" {
 			return Entry{}, ErrConflict
 		}

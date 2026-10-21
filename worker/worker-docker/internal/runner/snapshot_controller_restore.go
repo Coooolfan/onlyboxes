@@ -132,6 +132,17 @@ func (c *snapshotController) restore(ctx context.Context, op snapshotOperation, 
 	if err := dockerSnapshotJSON(ctx, &actual, "inspect", "--format", "{{json .State}}", op.ContainerID); err != nil {
 		return wire.Result{}, err
 	}
+	// A running instance without its live guard receipt is an unknown outcome;
+	// do not implicitly re-arm it through a repeated restore request.
+	if actual.Status == "created" {
+		if err := c.armExecutionLease(ctx, op); err != nil {
+			return wire.Result{}, err
+		}
+	} else {
+		if err := c.checkExecutionLease(ctx, op); err != nil {
+			return wire.Result{}, err
+		}
+	}
 	if actual.Status == "created" {
 		if err := dockerSnapshotCLI(ctx, nil, io.Discard, "start", op.ContainerID); err != nil {
 			return wire.Result{}, err
@@ -155,6 +166,9 @@ func (c *snapshotController) restore(ctx context.Context, op snapshotOperation, 
 func (c *snapshotController) checkRunning(ctx context.Context, op snapshotOperation) error {
 	if op.ContainerID == "" || op.LeaseExpiresUnixMS <= time.Now().UnixMilli() {
 		return errSnapshotJournalConflict
+	}
+	if err := c.checkExecutionLease(ctx, op); err != nil {
+		return err
 	}
 	operation := ""
 	if op.Kind == "target" {
@@ -193,22 +207,38 @@ func (c *snapshotController) cancel(ctx context.Context, op snapshotOperation, p
 		if op.Phase != "preparing" && op.Phase != "frozen" && op.Phase != "rolling_back" && op.Phase != "rolled_back" {
 			return wire.Result{}, errSnapshotJournalConflict
 		}
-		if op.Phase != "rolled_back" {
-			if err := c.update(op.ID, func(o *snapshotOperation) error { o.Phase = "rolling_back"; return nil }); err != nil {
+		if op.Phase == "rolled_back" {
+			if err := c.checkRunning(ctx, op); err != nil {
+				return wire.Result{}, err
+			}
+		} else {
+			lease := op.LeaseExpiresUnixMS
+			if op.Phase != "rolling_back" {
+				if lease <= time.Now().UnixMilli() {
+					lease = time.Now().Add(time.Duration(c.manager.leaseDefaultSec) * time.Second).UnixMilli()
+				}
+				if err := c.update(op.ID, func(o *snapshotOperation) error { o.Phase = "rolling_back"; o.LeaseExpiresUnixMS = lease; return nil }); err != nil {
+					return wire.Result{}, err
+				}
+			}
+			if lease <= time.Now().UnixMilli() {
+				return wire.Result{}, errSnapshotJournalConflict
+			}
+			op.Phase = "rolling_back"
+			op.LeaseExpiresUnixMS = lease
+			if err := c.armExecutionLease(ctx, op); err != nil {
+				return wire.Result{}, err
+			}
+			if err := c.runtime.Thaw(ctx, op.ContainerID); err != nil {
+				return wire.Result{}, err
+			}
+			if err := c.checkRunning(ctx, op); err != nil {
+				return wire.Result{}, err
+			}
+			if err := c.update(op.ID, func(o *snapshotOperation) error { o.Phase = "rolled_back"; return nil }); err != nil {
 				return wire.Result{}, err
 			}
 		}
-		if err := c.runtime.Thaw(ctx, op.ContainerID); err != nil {
-			return wire.Result{}, err
-		}
-		lease := op.LeaseExpiresUnixMS
-		if lease <= time.Now().UnixMilli() {
-			lease = time.Now().Add(time.Duration(c.manager.leaseDefaultSec) * time.Second).UnixMilli()
-		}
-		if err := c.update(op.ID, func(o *snapshotOperation) error { o.Phase = "rolled_back"; o.LeaseExpiresUnixMS = lease; return nil }); err != nil {
-			return wire.Result{}, err
-		}
-		op.LeaseExpiresUnixMS = lease
 		if err := c.attach(ctx, op, true); err != nil {
 			return wire.Result{}, err
 		}
@@ -241,6 +271,9 @@ func (c *snapshotController) cancel(ctx context.Context, op snapshotOperation, p
 			return wire.Result{}, err
 		}
 	}
+	if err := c.forgetExecutionLease(ctx, op); err != nil {
+		return wire.Result{}, err
+	}
 	c.detach(op)
 	if err := c.update(op.ID, func(o *snapshotOperation) error { o.Phase = "canceled"; return nil }); err != nil {
 		return wire.Result{}, err
@@ -270,6 +303,11 @@ func (c *snapshotController) cancelUnknown(ctx context.Context, control *registr
 }
 
 func (c *snapshotController) attach(ctx context.Context, op snapshotOperation, active bool) error {
+	if active {
+		if err := c.checkExecutionLease(ctx, op); err != nil {
+			return err
+		}
+	}
 	ip := ""
 	if c.manager.dockerNetwork != "" {
 		var err error

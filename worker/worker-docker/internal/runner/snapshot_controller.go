@@ -21,6 +21,7 @@ import (
 )
 
 type snapshotControllerConfig struct {
+	LeaseGuard          snapshotExecutionLeases
 	MaxInflight         int
 	TmpQuotaBytes       int64
 	CacheMaxBytes       int64
@@ -104,6 +105,8 @@ func (c *snapshotController) admit(connection string, control *registryv1.Sandbo
 				code = "snapshot_integrity_error"
 			case errors.Is(err, errSnapshotArchiveQuota):
 				code = "snapshot_quota_exceeded"
+			case errors.Is(err, errSnapshotLeaseUnavailable):
+				code = "persistence_unavailable"
 			case errors.Is(err, errSnapshotRuntimeUnsupported):
 				code = "persistence_unavailable"
 			}
@@ -267,6 +270,9 @@ func (c *snapshotController) execute(ctx context.Context, control *registryv1.Sa
 			return wire.Result{}, err
 		}
 		if err := c.runtime.Remove(ctx, op.ContainerID); err != nil {
+			return wire.Result{}, err
+		}
+		if err := c.forgetExecutionLease(ctx, op); err != nil {
 			return wire.Result{}, err
 		}
 		c.detach(op)
@@ -685,10 +691,16 @@ func (c *snapshotController) extendLease(scope string, generation int64, until t
 	if !op.active() || op.Generation != generation {
 		return errSnapshotJournalConflict
 	}
-	if until.UnixMilli() <= op.LeaseExpiresUnixMS {
-		return nil
+	if until.UnixMilli() > op.LeaseExpiresUnixMS {
+		if err := c.journal.Update(op.ID, func(o *snapshotOperation) error { o.LeaseExpiresUnixMS = until.UnixMilli(); return nil }); err != nil {
+			return err
+		}
+		op.LeaseExpiresUnixMS = until.UnixMilli()
 	}
-	return c.journal.Update(op.ID, func(o *snapshotOperation) error { o.LeaseExpiresUnixMS = until.UnixMilli(); return nil })
+	if c.config.LeaseGuard != nil {
+		return c.config.LeaseGuard.Renew(c.ctx, op)
+	}
+	return nil
 }
 
 func (c *snapshotController) Close(ctx context.Context) error {

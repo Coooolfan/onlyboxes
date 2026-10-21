@@ -24,6 +24,8 @@ Restore first considers a committed/verified local artifact matching the exact s
 
 An operation-specific image tag and immutable import-tag label make a lost import acknowledgement discoverable. Container creation uses the original stable session name but a new native ID, plus operation and generation labels. The chosen image/container IDs are durable before startup; retries inspect and reuse those resources. The execution lease starts immediately before startup. Readiness verifies the running instance and execution environment while local user entry remains closed.
 
+When an [independent guard](runtime-lease-guard.md) is installed, controlled startup requires its matching lease acknowledgement before starting the container; readiness, activation and reconnect also validate its receipt. Rollback persists its lease before thaw/start, and retries preserve the recorded deadline. Renewal does not succeed from a journal intent alone. Native cleanup includes the guard’s serialized forget acknowledgement. Production helper startup and initial adoption still require integration.
+
 Activation requires the same operation, generation and live lease. Ordinary delayed cancellation cannot delete an already-active instance. Console uses an explicit destructive cancellation flag only while reconciling published but expired target ownership; that operation still holds Console's execution gate. A target is reported canceled only after its owned container has been removed. Shared snapshot data is never consumed by a failed restore.
 
 ## Direct transfers and cache

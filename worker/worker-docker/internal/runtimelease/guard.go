@@ -69,7 +69,10 @@ func (g *Guard) Status(id string) (Entry, error) {
 		return Entry{}, ErrUnavailable
 	}
 	e, ok := g.entries[id]
-	if !ok || (!e.Revoked && g.expired(e)) {
+	if !ok {
+		return Entry{}, ErrNotFound
+	}
+	if !e.Revoked && g.expired(e) {
 		return Entry{}, ErrConflict
 	}
 	return e, nil
@@ -178,7 +181,7 @@ func (g *Guard) expired(e Entry) bool {
 // Forget releases capacity only after the immutable native ID no longer
 // exists. A stopped but retained writable layer still owns its lease record.
 func (g *Guard) Forget(ctx context.Context, id string, revision int64) error {
-	if !cidPattern.MatchString(id) || revision <= 0 {
+	if !cidPattern.MatchString(id) || revision < 0 {
 		return ErrConflict
 	}
 	l := g.lockID(id)
