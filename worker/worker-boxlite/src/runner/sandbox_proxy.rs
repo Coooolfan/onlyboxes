@@ -406,6 +406,29 @@ mod tests {
     }
 
     #[test]
+    fn persistent_route_token_matches_go_contract() {
+        let key = derive_key("worker-secret").unwrap();
+        // Shared with api/proxytoken: includes a positive signed generation.
+        let token = "obx_route_v1.eyJ3b3JrZXJfaWQiOiJ3b3JrZXItYSIsInNlc3Npb25faWQiOiJvYng6b3duZXI6c2Vzc2lvbiIsInBvcnQiOjgwODAsImV4cCI6NDEwMjQ0NDgwMDAwMCwiZ2VuZXJhdGlvbiI6Mn0.-agCbNWpdTN1rBhGjyL6ol1vPBPv0XdKogMNgyVkxg0";
+        let claims = verify_token(&key, token).unwrap();
+        assert_eq!(claims.worker_id, "worker-a");
+        assert_eq!(claims.session_id, "obx:owner:session");
+        assert_eq!(claims.port, 8080);
+        assert_eq!(claims.exp, 4_102_444_800_000);
+        assert_eq!(claims.generation, 2);
+
+        let mut parts: Vec<_> = token.split('.').map(str::to_owned).collect();
+        let payload = String::from_utf8(URL_SAFE_NO_PAD.decode(&parts[1]).unwrap()).unwrap();
+        let changed = payload.replace("\"generation\":2", "\"generation\":3");
+        assert_ne!(changed, payload);
+        parts[1] = URL_SAFE_NO_PAD.encode(changed);
+        assert!(verify_token(&key, &parts.join(".")).is_err());
+
+        let negative = "obx_route_v1.eyJ3b3JrZXJfaWQiOiJ3b3JrZXItYSIsInNlc3Npb25faWQiOiJvYng6b3duZXI6c2Vzc2lvbiIsInBvcnQiOjgwODAsImV4cCI6NDEwMjQ0NDgwMDAwMCwiZ2VuZXJhdGlvbiI6LTF9.9k_vKjIBgU0b4I-vMmMLQT03emp_d4cih1J-gtjpKLo";
+        assert!(verify_token(&key, negative).is_err());
+    }
+
+    #[test]
     fn sanitize_header_removes_internal_headers_and_preserves_body() {
         let request = b"POST /api HTTP/1.1\r\nHost: preview.test\r\nX-Onlyboxes-Route-Token: signed\r\nX-Onlyboxes-Upstream: forged\r\nContent-Length: 4\r\n\r\nbody";
         let (cleaned, token) = sanitize_header(request).unwrap();
