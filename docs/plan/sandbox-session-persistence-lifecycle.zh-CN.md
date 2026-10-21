@@ -182,6 +182,32 @@ sequenceDiagram
 
 ## 失败与重试
 
+### Worker 进程退出与执行租约
+
+Docker 的执行租约由独立守护器执行；Worker 的会话定时器不能单独保证进程被强制终止后的停止行为。首次采纳原实例时，先把不可变容器 ID 与当前绝对 lease 写入本地 journal，再确认守护器中的同一记录。确认失败时不开放新的会话入口，也不删除原可写层。恢复及回滚同样在 native start 前确认 lease；普通重连只核对已有运行实例，不能隐式重启已停止的持久化容器。
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant W as Docker Worker
+    participant J as 本地持久 journal
+    participant G as 独立 lease 守护器与持久 ledger
+    participant R as Docker daemon
+    W->>J: 记录原容器 ID、scope、generation、绝对 lease
+    J-->>W: fsync 完成
+    W->>G: 初次登记或续租（固定容器 ID、绝对 lease、revision）
+    G->>G: 校验 native 身份并持久化 CAS
+    G-->>W: 返回精确 lease 回执
+    W->>W: 重新核对实例与 lease 后确认采纳
+    Note over W,G: Worker 进程被 SIGKILL；守护器继续运行
+    G->>G: 单调时钟或绝对 lease 到期
+    G->>R: 按不可变容器 ID 强制停止
+    R-->>G: 返回停止结果；保留容器可写层
+    Note over G,R: 后续仍监视已撤销 ID，抑制延迟启动
+```
+
+本机已用实际 Worker `Run` 子进程验证首次采纳、普通续租、后台写入、Worker SIGKILL、独立到期停止和可写层保留；协调端是注册服务夹具，尚不等同于真实 Console/S3 或跨机器验收。守护器依赖 Docker daemon 可响应，不能承诺 daemon 故障时的停止时限。其重启会先撤销旧 lease；不能凭墙钟经过或 Worker 不可达就认定旧写入者已停止并转移所有权。BoxLite 的独立执行租约尚未生产接入。详见[守护器部署和验收边界](../../worker/worker-docker/docs/runtime-lease-guard.md)。
+
 ```mermaid
 sequenceDiagram
     actor U as 调用方

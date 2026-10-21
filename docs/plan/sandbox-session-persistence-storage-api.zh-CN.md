@@ -2,7 +2,7 @@
 
 ## 状态与范围
 
-本文补充[持久化与跨 Worker 唤醒时序](sandbox-session-persistence-lifecycle.zh-CN.md)，定义共享存储的职责、首期部署目标以及需要新增或调整的 API、配置和内部协议。本文描述首期完整设计，不表示所有验收项均已完成。已接入的接口与配置以[统一 API](../API.zh-CN.md#75-挂起--唤醒-session)、[Console 配置](../../console/docs/config-file.md#sandbox-persistence)及 [Docker 生命周期说明](../../worker/worker-docker/docs/sandbox-snapshot-controller.md)为准；BoxLite 接入、未登记孤儿资源扫描、独立 lease 强制执行与跨机器验收仍需完成。
+本文补充[持久化与跨 Worker 唤醒时序](sandbox-session-persistence-lifecycle.zh-CN.md)，定义共享存储的职责、首期部署目标以及需要新增或调整的 API、配置和内部协议。本文描述首期完整设计，不表示所有验收项均已完成。已接入的接口与配置以[统一 API](../API.zh-CN.md#75-挂起--唤醒-session)、[Console 配置](../../console/docs/config-file.md#sandbox-persistence)及 [Docker 生命周期说明](../../worker/worker-docker/docs/sandbox-snapshot-controller.md)为准。Docker 已接入独立 lease 守护器，并通过实际 Worker 进程 SIGKILL 后到期停止、保留可写层的本机测试；BoxLite 生产接入及独立 lease、未登记孤儿资源扫描、真实 Console/S3 与跨机器验收仍需完成。
 
 首期仅支持 Docker → Docker、BoxLite → BoxLite，恢复为新启动的执行实例。共享存储保存约定的文件系统归档；Console 数据库保存会话、快照引用和所有权。共享对象存储不承担会话调度、分布式锁或运行中沙箱的文件读写。
 
@@ -347,6 +347,8 @@ GC 先根据数据库确认对象没有有效会话引用、没有进行中的�
 | --- | --- | --- |
 | `WORKER_PERSISTENCE_ENABLED` | `false` | 是否宣告并接受持久化控制；未启用的 Worker 不进入恢复候选 |
 | `WORKER_SNAPSHOT_TMP_DIR` | 显式配置的本地 SSD 目录 | Worker 专用暂存；重启保留未完成操作的必要数据 |
+| `WORKER_SNAPSHOT_LEASE_GUARD_IMAGE` | Docker 启用持久化时必填 | 已加载且以仓库 digest 或完整 image ID 固定的可信独立守护器镜像；需符合 schema 2 部署契约 |
+| `WORKER_SNAPSHOT_LEASE_GUARD_DOCKER_SOCKET` | `/var/run/docker.sock` | Docker daemon 所在主机的 Unix socket；不是 Worker 客户端所在主机的路径 |
 | `WORKER_SNAPSHOT_CACHE_MAX_BYTES` | `10737418240` | 已提交归档缓存预算起点 10 GiB；`0` 禁用缓存，缓存计入暂存总预算而非额外增加预算 |
 | `WORKER_SNAPSHOT_CACHE_TTL_SEC` | `86400` | 未被操作固定引用的缓存最长保留 24 小时；容量压力下可提前 LRU 淘汰 |
 | `WORKER_SNAPSHOT_MAX_INFLIGHT` | `1` | 同时快照数，不等于普通命令 max_inflight |
@@ -361,6 +363,8 @@ GC 先根据数据库确认对象没有有效会话引用、没有进行中的�
 不新增 Worker 的 bucket AK/SK 配置。Worker 资源预算不足应在导出或恢复前拒绝；临时目录不能指向沙箱内部 `/tmp`。BoxLite 原生导出与 Docker 归档的物化/临时盘需求不同，由各适配器计算，不用同一个压缩比猜测。
 
 运行实例 lease 仍由现有会话配置管理；不能把 30 分钟快照 deadline 直接当作沙箱 execution lease 或数据保留期。操作期间的源实例/目标预留需由持久化协议持有，避免现有 lease janitor 在快照提交前删掉唯一磁盘。
+
+Docker 的两个 lease guard 配置已实现，配置文件键为 `[snapshot].lease_guard_image` 和 `[snapshot].lease_guard_docker_socket`。守护器的容器与持久卷独立于 Worker 进程存活；Worker 在 Hello 前核对 daemon、镜像、容器、卷和 lease store 身份，并连续观察进程稳定运行十秒。原始绑定丢失或资源被替换时拒绝启动，不能初始化空 ledger 后继续恢复。首次采纳先记录原容器 ID 与绝对 lease，取得守护器确认后才返回成功；恢复及回滚在 native start 前取得确认，续租在持久化意图后取得精确回执。完整部署约束和已验证边界见[独立执行租约](../../worker/worker-docker/docs/runtime-lease-guard.md)。这些 Docker 配置不表示 BoxLite 已具备同等能力。
 
 ## 首期验收清单
 
