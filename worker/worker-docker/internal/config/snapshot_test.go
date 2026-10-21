@@ -14,6 +14,7 @@ func TestSnapshotConfigurationStrictLimitsAndPrecedence(t *testing.T) {
 [snapshot]
 tmp_dir = "/var/lib/onlyboxes/snapshots"
 docker_helper_image = "helper@sha256:pinned"
+lease_guard_image = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 max_inflight = 2
 cache_max_bytes = 0
 transfer_idle_timeout_sec = 12
@@ -33,7 +34,7 @@ transfer_idle_timeout_sec = 12
 		t.Fatal("environment did not override file")
 	}
 	for key, value := range map[string]string{
-		"WORKER_PERSISTENCE_ENABLED": "maybe", "WORKER_SNAPSHOT_MAX_INFLIGHT": "65",
+		"WORKER_PERSISTENCE_ENABLED": "maybe", "WORKER_SNAPSHOT_LEASE_GUARD_IMAGE": "guard:latest", "WORKER_SNAPSHOT_LEASE_GUARD_DOCKER_SOCKET": "relative", "WORKER_SNAPSHOT_MAX_INFLIGHT": "65",
 		"WORKER_SNAPSHOT_TMP_DIR": "relative", "WORKER_SNAPSHOT_TMP_QUOTA_BYTES": "0",
 		"WORKER_SNAPSHOT_CACHE_MAX_BYTES": "-1", "WORKER_SNAPSHOT_CACHE_TTL_SEC": "9223372036854775807",
 		"WORKER_SNAPSHOT_TRANSFER_MAX_CONCURRENCY": "17", "WORKER_SNAPSHOT_DRAIN_TIMEOUT_SEC": "invalid-secret",

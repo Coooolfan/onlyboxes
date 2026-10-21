@@ -68,6 +68,10 @@ persistence_enabled = false
 # snapshot_tmp_dir = "/var/lib/onlyboxes/snapshots"
 # Preload a trusted GNU tar image pinned by digest on this Docker daemon.
 # snapshot_docker_helper_image = "repository@sha256:<digest>"
+# Preload the independent helper built with Dockerfile.runtime-lease-guard.
+# snapshot_lease_guard_image = "guard-repository@sha256:<digest>"
+# Unix socket on the Docker daemon host (not the Worker's client-side socket).
+# snapshot_lease_guard_docker_socket = "/var/run/docker.sock"
 snapshot_max_inflight = 1
 snapshot_tmp_quota_bytes = 107374182400
 snapshot_cache_max_bytes = 10737418240

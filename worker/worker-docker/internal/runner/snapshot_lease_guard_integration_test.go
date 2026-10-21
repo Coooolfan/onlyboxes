@@ -61,9 +61,7 @@ func snapshotNativeLeaseFixture(t *testing.T, ctx context.Context, image, platfo
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
-	var reply struct {
-		Ready bool `json:"ready"`
-	}
+	var reply runtimelease.Identity
 	if client.rpc(ctx, runtimelease.Request{Action: "ping"}, &reply) != nil || !reply.Ready {
 		t.Fatal("guard control readiness failed")
 	}

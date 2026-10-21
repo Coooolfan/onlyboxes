@@ -3,6 +3,8 @@ package runtimelease
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -17,6 +19,7 @@ var (
 	ErrNotFound    = errors.New("runtime lease not found")
 	ErrConflict    = errors.New("runtime lease conflict")
 	ErrUnavailable = errors.New("runtime lease unavailable")
+	stateIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 	cidPattern     = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
 
@@ -37,10 +40,17 @@ func (e Entry) valid() bool {
 	return len(parts) == 3 && parts[0] == "obx" && parts[1] != "" && parts[2] != "" && strings.TrimSpace(e.Scope) == e.Scope && cidPattern.MatchString(e.ContainerID) && len(e.Scope) > 4 && len(e.Scope) <= 1024 && bytes.HasPrefix([]byte(e.Scope), []byte("obx:")) && !bytes.ContainsAny([]byte(e.Scope), "\x00\r\n") && e.Generation > 0 && e.Revision > 0 && e.Revision < 1<<62 && e.ExpiresUnixMS > 0
 }
 
+type storeOwner struct {
+	Version int    `json:"version"`
+	Worker  string `json:"worker"`
+	StateID string `json:"state_id"`
+}
+
 type store struct {
-	root   string
-	lock   *os.File
-	worker string
+	stateID string
+	root    string
+	lock    *os.File
+	worker  string
 }
 
 func openStore(root, worker string) (*store, map[string]Entry, error) {
@@ -90,13 +100,11 @@ func openStore(root, worker string) (*store, map[string]Entry, error) {
 			continue
 		}
 		if name == "owner.json" {
-			var owner struct {
-				Version int    `json:"version"`
-				Worker  string `json:"worker"`
-			}
-			if s.read(name, &owner) != nil || owner.Version != 1 || owner.Worker != worker {
+			var owner storeOwner
+			if s.read(name, &owner) != nil || owner.Version != 2 || owner.Worker != worker || !stateIDPattern.MatchString(owner.StateID) {
 				return fail()
 			}
+			s.stateID = owner.StateID
 			ownerFound = true
 			continue
 		}
@@ -113,10 +121,15 @@ func openStore(root, worker string) (*store, map[string]Entry, error) {
 		return fail()
 	}
 	if !ownerFound {
-		if len(entries) != 0 || len(pending) != 0 || s.write("owner.json", struct {
-			Version int    `json:"version"`
-			Worker  string `json:"worker"`
-		}{1, worker}) != nil {
+		if len(entries) != 0 || len(pending) != 0 {
+			return fail()
+		}
+		var random [16]byte
+		if _, err := rand.Read(random[:]); err != nil {
+			return fail()
+		}
+		s.stateID = hex.EncodeToString(random[:])
+		if s.write("owner.json", storeOwner{Version: 2, Worker: worker, StateID: s.stateID}) != nil {
 			return fail()
 		}
 	}

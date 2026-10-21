@@ -59,7 +59,7 @@ func (g *dockerSnapshotLeaseClient) rpc(ctx context.Context, request runtimeleas
 		decoder := json.NewDecoder(bytes.NewReader(output.Bytes()))
 		decoder.DisallowUnknownFields()
 		var extra any
-		if decoder.Decode(&failure) != nil || decoder.Decode(&extra) != io.EOF || failure.Entry != nil || failure.Ready || failure.Forgotten {
+		if decoder.Decode(&failure) != nil || decoder.Decode(&extra) != io.EOF || failure.Entry != nil || failure.Identity != nil || failure.Ready || failure.Forgotten {
 			return errSnapshotLeaseUnavailable
 		}
 		if callErr != nil && failure.Error == "not_found" {

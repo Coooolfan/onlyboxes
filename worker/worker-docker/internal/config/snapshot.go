@@ -3,27 +3,33 @@ package config
 import (
 	"errors"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
 
 type SnapshotConfig struct {
-	Enabled             bool
-	TmpDir              string
-	HelperImage         string
-	MaxInflight         int
-	TmpQuotaBytes       int64
-	CacheMaxBytes       int64
-	CacheTTL            time.Duration
-	TransferConcurrency int
-	TransferIdleTimeout time.Duration
-	DrainTimeout        time.Duration
-	Error               string
+	Enabled                bool
+	TmpDir                 string
+	HelperImage            string
+	LeaseGuardImage        string
+	LeaseGuardDockerSocket string
+	MaxInflight            int
+	TmpQuotaBytes          int64
+	CacheMaxBytes          int64
+	CacheTTL               time.Duration
+	TransferConcurrency    int
+	TransferIdleTimeout    time.Duration
+	DrainTimeout           time.Duration
+	Error                  string
 }
 
 func (s source) snapshot() SnapshotConfig {
-	cfg := SnapshotConfig{TmpDir: strings.TrimSpace(s.get("WORKER_SNAPSHOT_TMP_DIR")), HelperImage: strings.TrimSpace(s.get("WORKER_SNAPSHOT_DOCKER_HELPER_IMAGE")), MaxInflight: 1, TmpQuotaBytes: 100 << 30, CacheMaxBytes: 10 << 30, CacheTTL: 24 * time.Hour, TransferConcurrency: 4, TransferIdleTimeout: time.Minute, DrainTimeout: time.Minute}
+	cfg := SnapshotConfig{LeaseGuardImage: strings.TrimSpace(s.get("WORKER_SNAPSHOT_LEASE_GUARD_IMAGE")), LeaseGuardDockerSocket: strings.TrimSpace(s.get("WORKER_SNAPSHOT_LEASE_GUARD_DOCKER_SOCKET")), TmpDir: strings.TrimSpace(s.get("WORKER_SNAPSHOT_TMP_DIR")), HelperImage: strings.TrimSpace(s.get("WORKER_SNAPSHOT_DOCKER_HELPER_IMAGE")), MaxInflight: 1, TmpQuotaBytes: 100 << 30, CacheMaxBytes: 10 << 30, CacheTTL: 24 * time.Hour, TransferConcurrency: 4, TransferIdleTimeout: time.Minute, DrainTimeout: time.Minute}
+	if cfg.LeaseGuardDockerSocket == "" {
+		cfg.LeaseGuardDockerSocket = "/var/run/docker.sock"
+	}
 	if enabled := strings.TrimSpace(s.get("WORKER_PERSISTENCE_ENABLED")); enabled != "" {
 		value, err := strconv.ParseBool(enabled)
 		if err != nil {
@@ -72,8 +78,8 @@ func (c SnapshotConfig) Validate() error {
 	if !c.Enabled {
 		return nil
 	}
-	if !filepath.IsAbs(c.TmpDir) || c.HelperImage == "" || c.MaxInflight < 1 || c.MaxInflight > 64 || c.TmpQuotaBytes <= 0 || c.TmpQuotaBytes > 1<<60 || c.CacheMaxBytes < 0 || c.CacheMaxBytes > c.TmpQuotaBytes || c.TransferConcurrency < 1 || c.TransferConcurrency > 16 || c.CacheTTL < time.Second || c.TransferIdleTimeout < time.Second || c.DrainTimeout < time.Second {
-		return errors.New("invalid Worker snapshot configuration: private absolute tmp directory, pinned GNU tar helper and bounded resource limits are required")
+	if !filepath.IsAbs(c.TmpDir) || c.HelperImage == "" || !regexp.MustCompile(`^(sha256:[0-9a-f]{64}|[^\s@]+@sha256:[0-9a-f]{64})$`).MatchString(c.LeaseGuardImage) || !filepath.IsAbs(c.LeaseGuardDockerSocket) || strings.ContainsAny(c.LeaseGuardDockerSocket, "\x00,\r\n") || c.MaxInflight < 1 || c.MaxInflight > 64 || c.TmpQuotaBytes <= 0 || c.TmpQuotaBytes > 1<<60 || c.CacheMaxBytes < 0 || c.CacheMaxBytes > c.TmpQuotaBytes || c.TransferConcurrency < 1 || c.TransferConcurrency > 16 || c.CacheTTL < time.Second || c.TransferIdleTimeout < time.Second || c.DrainTimeout < time.Second {
+		return errors.New("invalid Worker snapshot configuration: private absolute tmp directory, pinned GNU tar/lease helper images, absolute daemon socket and bounded resource limits are required")
 	}
 	return nil
 }

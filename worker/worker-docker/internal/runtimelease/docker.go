@@ -17,6 +17,7 @@ import (
 type Docker struct {
 	client         *http.Client
 	prefix, worker string
+	engine         string
 }
 
 // NewDocker accepts a local Unix socket only. It never follows HTTP redirects,
@@ -45,6 +46,16 @@ func NewDocker(ctx context.Context, socket, worker string) (*Docker, error) {
 		return nil, ErrUnavailable
 	}
 	d.prefix = "/v" + version.APIVersion
+	info, err := d.request(ctx, http.MethodGet, "/info")
+	if err != nil {
+		return nil, err
+	}
+	defer info.Body.Close()
+	var identity struct{ ID string }
+	if info.StatusCode != 200 || json.NewDecoder(io.LimitReader(info.Body, 1<<20)).Decode(&identity) != nil || !validEngineID(identity.ID) {
+		return nil, ErrUnavailable
+	}
+	d.engine = identity.ID
 	return d, nil
 }
 
@@ -124,4 +135,10 @@ func (d *Docker) Stop(ctx context.Context, e Entry) error {
 		return ErrUnavailable
 	}
 	return nil
+}
+
+func (d *Docker) EngineID() string { return d.engine }
+
+func validEngineID(id string) bool {
+	return regexp.MustCompile(`^[A-Za-z0-9:_.-]{1,128}$`).MatchString(id)
 }

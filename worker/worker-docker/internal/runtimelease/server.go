@@ -15,11 +15,19 @@ import (
 	"time"
 )
 
+type Identity struct {
+	StateID  string `json:"state_id"`
+	Ready    bool   `json:"ready"`
+	WorkerID string `json:"worker_id"`
+	EngineID string `json:"engine_id"`
+}
+
 type Response struct {
-	Ready     bool   `json:"ready,omitempty"`
-	Forgotten bool   `json:"forgotten,omitempty"`
-	Entry     *Entry `json:"entry,omitempty"`
-	Error     string `json:"error,omitempty"`
+	Identity  *Identity `json:"identity,omitempty"`
+	Ready     bool      `json:"ready,omitempty"`
+	Forgotten bool      `json:"forgotten,omitempty"`
+	Entry     *Entry    `json:"entry,omitempty"`
+	Error     string    `json:"error,omitempty"`
 }
 
 // Serve exposes controls only through a private Unix socket. The caller owns
@@ -87,6 +95,11 @@ func (g *Guard) Serve(ctx context.Context, listener net.Listener) error {
 		if request.Action == "ping" && err == nil {
 			response.Entry = nil
 			response.Ready = true
+			identity := Identity{Ready: true, WorkerID: g.store.worker, StateID: g.store.stateID}
+			if backend, ok := g.backend.(interface{ EngineID() string }); ok {
+				identity.EngineID = backend.EngineID()
+			}
+			response.Identity = &identity
 		}
 		if request.Action == "forget" && err == nil {
 			response.Entry = nil
@@ -181,13 +194,13 @@ func Listen(socket string) (net.Listener, error) {
 	return l, nil
 }
 
-func Call(ctx context.Context, socket string, request Request) (Entry, error) {
+func callResponse(ctx context.Context, socket string, request Request) (Response, error) {
 	if !filepath.IsAbs(socket) {
-		return Entry{}, ErrUnavailable
+		return Response{}, ErrUnavailable
 	}
 	data, err := json.Marshal(request)
 	if err != nil || len(data) > 4096 {
-		return Entry{}, ErrConflict
+		return Response{}, ErrConflict
 	}
 	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", socket)
@@ -196,11 +209,11 @@ func Call(ctx context.Context, socket string, request Request) (Entry, error) {
 	client := &http.Client{Transport: transport, Timeout: 6 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://guard/control", bytes.NewReader(data))
 	if err != nil {
-		return Entry{}, ErrUnavailable
+		return Response{}, ErrUnavailable
 	}
 	r, err := client.Do(req)
 	if err != nil {
-		return Entry{}, ErrUnavailable
+		return Response{}, ErrUnavailable
 	}
 	defer r.Body.Close()
 	var response Response
@@ -208,16 +221,38 @@ func Call(ctx context.Context, socket string, request Request) (Entry, error) {
 	decoder.DisallowUnknownFields()
 	var extra any
 	if r.StatusCode != 200 || decoder.Decode(&response) != nil || decoder.Decode(&extra) != io.EOF {
-		return Entry{}, ErrUnavailable
+		return Response{}, ErrUnavailable
 	}
 	if response.Error != "" {
+		if response.Entry != nil || response.Identity != nil || response.Ready || response.Forgotten {
+			return Response{}, ErrUnavailable
+		}
 		if response.Error == "not_found" {
-			return Entry{}, ErrNotFound
+			return Response{}, ErrNotFound
 		}
 		if response.Error == "conflict" {
-			return Entry{}, ErrConflict
+			return Response{}, ErrConflict
 		}
-		return Entry{}, ErrUnavailable
+		return Response{}, ErrUnavailable
+	}
+	return response, nil
+}
+
+func Readiness(ctx context.Context, socket string) (Identity, error) {
+	response, err := callResponse(ctx, socket, Request{Action: "ping"})
+	if err != nil {
+		return Identity{}, err
+	}
+	if !response.Ready || response.Forgotten || response.Entry != nil || response.Identity == nil || !response.Identity.Ready || response.Identity.WorkerID == "" || !validEngineID(response.Identity.EngineID) || !stateIDPattern.MatchString(response.Identity.StateID) {
+		return Identity{}, ErrUnavailable
+	}
+	return *response.Identity, nil
+}
+
+func Call(ctx context.Context, socket string, request Request) (Entry, error) {
+	response, err := callResponse(ctx, socket, request)
+	if err != nil {
+		return Entry{}, err
 	}
 	if request.Action == "ping" && response.Ready && response.Entry == nil && !response.Forgotten {
 		return Entry{}, nil

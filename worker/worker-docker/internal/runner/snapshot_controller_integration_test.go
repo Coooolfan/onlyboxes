@@ -23,6 +23,7 @@ import (
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
 	wire "github.com/onlyboxes/onlyboxes/api/sandboxpersistence"
 	"github.com/onlyboxes/onlyboxes/worker/worker-docker/internal/config"
+	"github.com/onlyboxes/onlyboxes/worker/worker-docker/internal/runtimelease"
 	"google.golang.org/grpc"
 )
 
@@ -442,6 +443,22 @@ func TestIntegrationSnapshotWorkerRunAdvertisesAndDispatchesLifecycle(t *testing
 		if !caps.GetEnabled() || caps.GetRuntime() != "docker" || caps.GetRuntimeVersion() == "" || caps.GetGuestPlatform() == "" || caps.GetMaxInflight() != 1 || caps.GetAvailableStagingBytes() <= 0 {
 			return fail(fmt.Errorf("incomplete persistence capabilities: %v", caps))
 		}
+		controller := workerSnapshots.Load()
+		if controller == nil {
+			return fail(fmt.Errorf("hello preceded lifecycle installation"))
+		}
+		guard, ok := controller.config.LeaseGuard.(*dockerSnapshotLeaseClient)
+		if !ok {
+			return fail(fmt.Errorf("hello preceded independent lease installation"))
+		}
+		state, err := controller.journal.Snapshot()
+		if err != nil || state.LeaseGuard == nil || state.LeaseGuard.HelperID != guard.helperID {
+			return fail(fmt.Errorf("hello preceded durable helper ownership"))
+		}
+		var ready runtimelease.Identity
+		if guard.rpc(stream.Context(), runtimelease.Request{Action: "ping"}, &ready) != nil || !ready.Ready || ready.WorkerID != req.GetHello().GetNodeId() || ready.EngineID != state.LeaseGuard.EngineID || ready.StateID != state.LeaseGuard.StateID {
+			return fail(fmt.Errorf("hello preceded guardian identity confirmation"))
+		}
 		if err := stream.Send(&registryv1.ConnectResponse{Payload: &registryv1.ConnectResponse_ConnectAck{ConnectAck: &registryv1.ConnectAck{SessionId: "run-connection", HeartbeatIntervalSec: 1}}}); err != nil {
 			return fail(err)
 		}
@@ -486,7 +503,8 @@ func TestIntegrationSnapshotWorkerRunAdvertisesAndDispatchesLifecycle(t *testing
 	cfg := testConfig()
 	cfg.WorkerID = "snapshot-run-" + uuid.NewString()
 	cfg.ConsoleGRPCTarget = listener.Addr().String()
-	cfg.Snapshot = config.SnapshotConfig{Enabled: true, TmpDir: root, HelperImage: image, MaxInflight: 1, TmpQuotaBytes: 1 << 30, CacheMaxBytes: 0, CacheTTL: time.Hour, TransferConcurrency: 2, TransferIdleTimeout: time.Second, DrainTimeout: time.Second}
+	cfg.Snapshot = config.SnapshotConfig{LeaseGuardImage: snapshotGuardImageFixture(t, ctx, "linux/"+snapshotTestDaemonArch(t, ctx)), LeaseGuardDockerSocket: "/var/run/docker.sock", Enabled: true, TmpDir: root, HelperImage: image, MaxInflight: 1, TmpQuotaBytes: 1 << 30, CacheMaxBytes: 0, CacheTTL: time.Hour, TransferConcurrency: 2, TransferIdleTimeout: time.Second, DrainTimeout: time.Second}
+	snapshotCleanupLaunchedGuard(t, root)
 	done := make(chan error, 1)
 	go func() { done <- Run(ctx, cfg) }()
 	select {
@@ -544,7 +562,7 @@ func TestIntegrationSnapshotWorkerMissingJournalRetainsOwnedResources(t *testing
 	}
 	cfg := testConfig()
 	cfg.WorkerID = workerID
-	cfg.Snapshot = config.SnapshotConfig{Enabled: true, TmpDir: root, HelperImage: image, MaxInflight: 1, TmpQuotaBytes: 1 << 30, CacheMaxBytes: 0, CacheTTL: time.Hour, TransferConcurrency: 2, TransferIdleTimeout: time.Second, DrainTimeout: time.Second}
+	cfg.Snapshot = config.SnapshotConfig{LeaseGuardImage: "sha256:" + strings.Repeat("a", 64), LeaseGuardDockerSocket: "/var/run/docker.sock", Enabled: true, TmpDir: root, HelperImage: image, MaxInflight: 1, TmpQuotaBytes: 1 << 30, CacheMaxBytes: 0, CacheTTL: time.Hour, TransferConcurrency: 2, TransferIdleTimeout: time.Second, DrainTimeout: time.Second}
 	if err := Run(ctx, cfg); err == nil || !strings.Contains(err.Error(), "operation journal is missing") {
 		t.Fatal("missing journal admitted unsafe orphan recovery", err)
 	}

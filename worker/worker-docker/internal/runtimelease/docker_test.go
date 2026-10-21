@@ -39,6 +39,10 @@ func TestDockerRequiresFullIdentityAndNeverRemovesOrUnpauses(t *testing.T) {
 			}
 			server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls = append(calls, r.Method+" "+r.URL.RequestURI())
+				if r.URL.Path == "/v1.54/info" {
+					_ = json.NewEncoder(w).Encode(map[string]string{"ID": "engine-test"})
+					return
+				}
 				if r.URL.Path == "/version" {
 					version := "1.54"
 					if mode == "old-api" {

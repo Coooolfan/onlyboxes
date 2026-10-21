@@ -311,3 +311,36 @@ func TestFailedAcknowledgementStillStopsNewlyKnownNativeID(t *testing.T) {
 		t.Fatal("unknown acknowledgement left new root executing")
 	}
 }
+
+func TestLeaseStoreIdentitySurvivesReopenAndChangesOnEmptyStoreReset(t *testing.T) {
+	root := privateDir(t)
+	b := backend()
+	g, err := Open(root, "worker-test", b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := g.store.stateID
+	if !stateIDPattern.MatchString(id) {
+		t.Fatal("missing persistent store identity")
+	}
+	g.Close()
+	g, err = Open(root, "worker-test", b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.store.stateID != id {
+		t.Fatal("reopen changed store identity")
+	}
+	g.Close()
+	if err := os.Remove(filepath.Join(root, "owner.json")); err != nil {
+		t.Fatal(err)
+	}
+	g, err = Open(root, "worker-test", b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer g.Close()
+	if g.store.stateID == id {
+		t.Fatal("empty state reset reused a prior store identity")
+	}
+}

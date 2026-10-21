@@ -121,6 +121,7 @@ func validPersistenceScope(id string) bool {
 }
 
 type snapshotJournalState struct {
+	LeaseGuard *snapshotLeaseBinding        `json:"lease_guard,omitempty"`
 	Version    int                          `json:"version"`
 	WorkerID   string                       `json:"worker_id"`
 	Current    map[string]string            `json:"current"`
@@ -178,6 +179,9 @@ func openSnapshotJournal(root, worker string) (*snapshotJournal, error) {
 		}
 		_ = file.Close()
 		if err != nil || j.state.Version != 1 || j.state.WorkerID != worker || j.state.Operations == nil || j.state.Current == nil {
+			return fail()
+		}
+		if j.state.LeaseGuard != nil && !j.state.LeaseGuard.valid(worker) {
 			return fail()
 		}
 		for scope, id := range j.state.Probes {

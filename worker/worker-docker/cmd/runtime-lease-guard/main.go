@@ -44,7 +44,14 @@ func run() error {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 		defer cancel()
-		entry, err := runtimelease.Call(ctx, *socket, request)
+		var entry runtimelease.Entry
+		var identity runtimelease.Identity
+		var err error
+		if request.Action == "ping" {
+			identity, err = runtimelease.Readiness(ctx, *socket)
+		} else {
+			entry, err = runtimelease.Call(ctx, *socket, request)
+		}
 		if err != nil {
 			code := "unavailable"
 			if errors.Is(err, runtimelease.ErrNotFound) {
@@ -57,7 +64,7 @@ func run() error {
 			return err
 		}
 		if request.Action == "ping" {
-			return json.NewEncoder(os.Stdout).Encode(map[string]bool{"ready": true})
+			return json.NewEncoder(os.Stdout).Encode(identity)
 		}
 		if request.Action == "forget" {
 			return json.NewEncoder(os.Stdout).Encode(map[string]bool{"forgotten": true})

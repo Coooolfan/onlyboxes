@@ -66,6 +66,8 @@ region = "cn"
 | --- | --- |
 | `WORKER_SNAPSHOT_TMP_DIR` | Required absolute private directory on durable local storage; journal and archive files share this root |
 | `WORKER_SNAPSHOT_DOCKER_HELPER_IMAGE` | Required locally available GNU tar image pinned by digest |
+| `WORKER_SNAPSHOT_LEASE_GUARD_IMAGE` | Required locally available independent helper image, pinned by repository digest or full `sha256:` image ID; build with `Dockerfile.runtime-lease-guard` |
+| `WORKER_SNAPSHOT_LEASE_GUARD_DOCKER_SOCKET` | `/var/run/docker.sock`; absolute Unix socket path on the daemon host, mounted read-only into the helper |
 | `WORKER_SNAPSHOT_MAX_INFLIGHT` | `1`; range `1..64` |
 | `WORKER_SNAPSHOT_TMP_QUOTA_BYTES` | `107374182400` (100 GiB); positive |
 | `WORKER_SNAPSHOT_CACHE_MAX_BYTES` | `10737418240` (10 GiB); `0` disables unused committed-copy caching; cannot exceed tmp quota |
@@ -77,6 +79,8 @@ region = "cn"
 All snapshot duration settings accept `1..2592000` seconds. Each key maps to a flat TOML key without `WORKER_`, or to `[snapshot]` fields with the `snapshot_` prefix removed. `persistence_enabled` remains a top-level key.
 
 The directory uses mode `0700`, files use `0600`, and a process lock binds the journal to one Worker identity. Keep this directory across binary upgrades, process restarts and container recreation; mount durable storage when the Worker itself runs in a container. Deleting the journal is not a cache reset. Startup rejects a missing journal if this Worker still owns persistence-labeled Docker resources, and rejects disabling persistence when the configured directory contains a journal. Console also rejects a Worker without persistence support while durable ownership remains, including expired routes.
+
+The independent helper is created and validated before Hello. Its private volume and immutable native identity are bound in the Worker journal; removing or replacing them is not a cache reset. Startup refuses unknown or changed bindings and verifies that the helper reaches the same daemon as the Worker. The helper remains alive across Worker exit. See [lease guard deployment and current boundaries](runtime-lease-guard.md). Initial-session adoption and full Worker SIGKILL acceptance still require integration/validation.
 
 Terminal containers carry a Worker identity label. Automatic orphan discovery is restricted to that identity, allowing isolated Workers to share one daemon without cleaning each other's resources. Unlabeled legacy orphans require explicit operator cleanup.
 

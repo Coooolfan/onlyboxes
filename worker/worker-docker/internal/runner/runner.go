@@ -123,7 +123,13 @@ func Run(ctx context.Context, cfg config.Config) error {
 			terminalManager.Close()
 			return fmt.Errorf("initialize snapshot backend: %w", err)
 		}
-		snapshots, err = newSnapshotController(ctx, terminalManager, snapshotJournalFile, backend, snapshotControllerConfig{MaxInflight: cfg.Snapshot.MaxInflight, TmpQuotaBytes: cfg.Snapshot.TmpQuotaBytes, CacheMaxBytes: cfg.Snapshot.CacheMaxBytes, CacheTTL: cfg.Snapshot.CacheTTL, DrainTimeout: cfg.Snapshot.DrainTimeout, TransferConcurrency: cfg.Snapshot.TransferConcurrency, TransferIdleTimeout: cfg.Snapshot.TransferIdleTimeout})
+		leases, err := startSnapshotLeaseGuard(ctx, snapshotJournalFile, cfg.Snapshot.LeaseGuardImage, cfg.Snapshot.LeaseGuardDockerSocket, backend.platform)
+		if err != nil {
+			_ = snapshotJournalFile.Close()
+			terminalManager.Close()
+			return err
+		}
+		snapshots, err = newSnapshotController(ctx, terminalManager, snapshotJournalFile, backend, snapshotControllerConfig{LeaseGuard: leases, MaxInflight: cfg.Snapshot.MaxInflight, TmpQuotaBytes: cfg.Snapshot.TmpQuotaBytes, CacheMaxBytes: cfg.Snapshot.CacheMaxBytes, CacheTTL: cfg.Snapshot.CacheTTL, DrainTimeout: cfg.Snapshot.DrainTimeout, TransferConcurrency: cfg.Snapshot.TransferConcurrency, TransferIdleTimeout: cfg.Snapshot.TransferIdleTimeout})
 		if err != nil {
 			_ = snapshotJournalFile.Close()
 			terminalManager.Close()

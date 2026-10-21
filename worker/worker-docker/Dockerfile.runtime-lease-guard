@@ -14,7 +14,7 @@ WORKDIR /src/worker/worker-docker
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -o /runtime-lease-guard ./cmd/runtime-lease-guard
 
 FROM scratch
-LABEL onlyboxes.component=runtime-lease-guard onlyboxes.runtime-lease-guard.schema=1
+LABEL onlyboxes.component=runtime-lease-guard onlyboxes.runtime-lease-guard.schema=2
 COPY --from=build /runtime-lease-guard /runtime-lease-guard
 USER 0:0
 ENTRYPOINT ["/runtime-lease-guard"]
