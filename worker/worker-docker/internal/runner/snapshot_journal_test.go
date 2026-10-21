@@ -29,6 +29,32 @@ func testSnapshotJournal(t *testing.T) *snapshotJournal {
 	return j
 }
 
+func TestSnapshotProbePersistsLeaseAndRejectsIdentityOrDeadlineRegression(t *testing.T) {
+	j := testSnapshotJournal(t)
+	op := testSnapshotOperation()
+	if err := j.Probe(op.SessionID, op.ContainerID, op.LeaseExpiresUnixMS); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Probe(op.SessionID, op.ContainerID, op.LeaseExpiresUnixMS-1); !errors.Is(err, errSnapshotJournalConflict) {
+		t.Fatal("probe lease regressed", err)
+	}
+	if err := j.Probe(op.SessionID, strings.Repeat("a", 64), op.LeaseExpiresUnixMS); !errors.Is(err, errSnapshotJournalConflict) {
+		t.Fatal("probe identity replaced", err)
+	}
+	if err := j.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := openSnapshotJournal(j.root, "worker-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	state, err := reopened.Snapshot()
+	if err != nil || state.Probes[op.SessionID] != op.ContainerID || state.ProbeLeases[op.SessionID] != op.LeaseExpiresUnixMS {
+		t.Fatal("probe ownership or lease lost", err)
+	}
+}
+
 func freezeTestSnapshot(t *testing.T, j *snapshotJournal, op snapshotOperation) {
 	t.Helper()
 	if err := j.Claim(op); err != nil {

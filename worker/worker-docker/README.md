@@ -18,7 +18,7 @@ Configuration sources:
 
 Snapshot lifecycle support is opt-in through `WORKER_PERSISTENCE_ENABLED=true`; see [configuration](docs/config-file.md#snapshot-lifecycle-configuration) and [controller/recovery behavior](docs/sandbox-snapshot-controller.md). The local journal directory must survive Worker restarts and container recreation.
 
-The [independent lease guard](docs/runtime-lease-guard.md) is connected to controlled lifecycle actions through an internal client, with real Docker controller verification. Production startup verifies and binds its helper image/container, daemon and durable volume before Hello. Initial-session adoption and full active-Worker SIGKILL acceptance remain incomplete. Worker process timers alone do not enforce execution leases after SIGKILL or a process hang.
+The [independent lease guard](docs/runtime-lease-guard.md) is connected to controlled lifecycle actions through an internal client, with real Docker controller verification. Production startup verifies and binds its helper image/container, daemon and durable volume before Hello. Initial-session adoption persists its immutable ID and lease before guard confirmation. A real Worker `Run` SIGKILL fixture verifies independent expiry and retained rootfs after adoption and renewal; deployed Console/S3 and cross-machine acceptance remain outstanding. Worker process timers alone do not enforce execution leases after SIGKILL or a process hang.
 
 Required identity:
 - `WORKER_ID`

@@ -82,7 +82,7 @@ func (c *snapshotController) endConnection(id string) {
 	c.manager.mu.Lock()
 	c.manager.persistenceDisconnected = true
 	for scope, session := range c.manager.sessions {
-		if _, persistent := c.manager.persistenceFences[scope]; persistent && session.proxyCancel != nil {
+		if _, persistent := c.manager.persistenceFences[scope]; (persistent || c.manager.persistenceBootstrap[scope] != "") && session.proxyCancel != nil {
 			session.proxyCancel()
 		}
 	}
@@ -102,12 +102,27 @@ func (c *snapshotController) Recover(ctx context.Context, ordinary []*registryv1
 	}
 	for _, candidate := range ordinary {
 		if candidate.GetGeneration() == 0 {
+			if id := state.Probes[candidate.SessionId]; id != "" && state.Current[candidate.SessionId] == "" {
+				probe := snapshotOperation{SessionID: candidate.SessionId, ContainerID: id, Generation: 1, LeaseExpiresUnixMS: state.ProbeLeases[candidate.SessionId]}
+				if probe.LeaseExpiresUnixMS <= time.Now().UnixMilli() || probe.LeaseExpiresUnixMS != candidate.LeaseExpiresUnixMs {
+					return errSnapshotJournalConflict
+				}
+				if err := checkSnapshotGeneration(ctx, id, candidate.SessionId, "", 1); err != nil {
+					return err
+				}
+				if err := c.checkExecutionLease(ctx, probe); err != nil {
+					return err
+				}
+				c.manager.mu.Lock()
+				c.manager.persistenceBootstrapReady[candidate.SessionId] = true
+				c.manager.mu.Unlock()
+			}
 			continue
 		}
 		op := state.Operations[state.Current[candidate.SessionId]]
 		if op.ID == "" && candidate.Generation == 1 {
 			id := state.Probes[candidate.SessionId]
-			if id == "" {
+			if id == "" || state.ProbeLeases[candidate.SessionId] <= 0 || state.ProbeLeases[candidate.SessionId] != candidate.LeaseExpiresUnixMs {
 				return errSnapshotJournalConflict
 			}
 			if err := checkSnapshotGeneration(ctx, id, candidate.SessionId, "", 1); err != nil {

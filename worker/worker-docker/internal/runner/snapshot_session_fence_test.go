@@ -12,6 +12,51 @@ import (
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
 )
 
+func TestSnapshotUnconfirmedAdoptionBlocksAccessAndPreservesRoot(t *testing.T) {
+	var removals, stops atomic.Int32
+	stubDockerConcurrency(t, func(_ context.Context, args ...string) dockerCommandResult {
+		if args[0] == "rm" {
+			removals.Add(1)
+		}
+		if args[0] == "stop" {
+			stops.Add(1)
+		}
+		return dockerCommandResult{}
+	})
+	m := newTerminalSessionManager(terminalSessionManagerConfig{LeaseMinSec: 1, LeaseDefaultSec: 60, LeaseMaxSec: 600})
+	defer m.Close()
+	op := testSnapshotOperation()
+	if _, err := m.Execute(context.Background(), terminalExecRequest{SessionID: op.SessionID, Command: "seed", CreateIfMissing: true}); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	session := m.sessions[op.SessionID]
+	session.persistenceContainerID = op.ContainerID
+	m.persistenceBootstrap = map[string]string{op.SessionID: op.ContainerID}
+	m.persistenceGuardRequired = true
+	m.mu.Unlock()
+	for _, gen := range []int64{0, 1} {
+		if _, err := m.Execute(context.Background(), terminalExecRequest{SessionID: op.SessionID, Command: "denied", Generation: gen, CreateIfMissing: true}); err == nil {
+			t.Fatal("unconfirmed adoption executed")
+		}
+		if _, err := m.RenewLease(context.Background(), terminalLeaseRenewPayload{SessionID: op.SessionID, LeaseTTLSec: 60, Generation: gen}); err == nil {
+			t.Fatal("unconfirmed adoption renewed")
+		}
+		if _, err := m.ResolveResource(context.Background(), terminalResourceRequest{SessionID: op.SessionID, FilePath: "/data", Generation: gen}); err == nil {
+			t.Fatal("unconfirmed adoption exposed files")
+		}
+	}
+	m.forceRemoveContainer(op.ContainerID)
+	m.forceRemoveContainer(terminalSessionResourceName(op.SessionID))
+	m.mu.Lock()
+	session.leaseExpiresAt = time.Now().Add(-time.Second)
+	m.mu.Unlock()
+	m.expireSessionLease(session)
+	if removals.Load() != 0 || stops.Load() != 1 {
+		t.Fatalf("adoption expiry must stop and retain root: rm=%d stop=%d", removals.Load(), stops.Load())
+	}
+}
+
 func TestSnapshotHeldSourceBlocksExecutionAndSurvivesLeaseAndClose(t *testing.T) {
 	var removals atomic.Int32
 	stubDockerConcurrency(t, func(_ context.Context, args ...string) dockerCommandResult {

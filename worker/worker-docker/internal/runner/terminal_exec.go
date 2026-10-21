@@ -161,16 +161,18 @@ type terminalSessionManagerConfig struct {
 }
 
 type terminalSessionManager struct {
-	persistenceEnabled       bool
-	workerID                 string
-	mu                       sync.Mutex
-	sessions                 map[string]*terminalSession
-	persistenceFences        map[string]terminalPersistenceFence
-	persistenceBootstrap     map[string]string
-	persistenceLeaseWriter   func(string, int64, time.Time) error
-	persistenceRecoveryHolds map[string]bool
-	persistenceFailed        bool
-	persistenceDisconnected  bool
+	persistenceEnabled        bool
+	workerID                  string
+	mu                        sync.Mutex
+	sessions                  map[string]*terminalSession
+	persistenceFences         map[string]terminalPersistenceFence
+	persistenceBootstrap      map[string]string
+	persistenceBootstrapReady map[string]bool
+	persistenceGuardRequired  bool
+	persistenceLeaseWriter    func(string, int64, time.Time) error
+	persistenceRecoveryHolds  map[string]bool
+	persistenceFailed         bool
+	persistenceDisconnected   bool
 
 	leaseMinSec               int
 	leaseMaxSec               int
@@ -413,7 +415,7 @@ func (m *terminalSessionManager) RenewLease(_ context.Context, req terminalLease
 		return terminalLeaseRenewResult{}, newTerminalExecError(terminalExecCodeSessionNotFound, terminalExecNoSessionMessage)
 	}
 	if session.leaseExpiresAt.Before(leaseTarget) {
-		if _, persistent := m.persistenceFences[sessionID]; persistent && m.persistenceLeaseWriter != nil {
+		if _, persistent := m.persistenceFences[sessionID]; (persistent || m.persistenceBootstrap[sessionID] != "") && m.persistenceLeaseWriter != nil {
 			if err := m.persistenceLeaseWriter(sessionID, req.Generation, leaseTarget); err != nil {
 				m.persistenceFailed = true
 				return terminalLeaseRenewResult{}, newTerminalExecError("persistence_unavailable", "could not persist execution lease")
@@ -721,7 +723,7 @@ func (m *terminalSessionManager) claimSession(
 			return nil, false, newTerminalExecError(terminalExecCodeSessionBusy, terminalExecBusyMessage)
 		}
 		if existing.leaseExpiresAt.Before(leaseTarget) {
-			if _, persistent := m.persistenceFences[sessionID]; persistent && m.persistenceLeaseWriter != nil {
+			if _, persistent := m.persistenceFences[sessionID]; (persistent || m.persistenceBootstrap[sessionID] != "") && m.persistenceLeaseWriter != nil {
 				if err := m.persistenceLeaseWriter(sessionID, generation, leaseTarget); err != nil {
 					m.persistenceFailed = true
 					return nil, false, newTerminalExecError("persistence_unavailable", "could not persist execution lease")
@@ -945,6 +947,7 @@ func (m *terminalSessionManager) cleanupSession(session *terminalSession) {
 	resource := session.executionResource()
 	persistentID := session.persistenceContainerID
 	_, persistent := m.persistenceFences[session.sessionID]
+	persistent = persistent || m.persistenceBootstrap[session.sessionID] != ""
 	m.mu.Unlock()
 	if proxyCancel != nil {
 		proxyCancel()
@@ -986,6 +989,12 @@ func (m *terminalSessionManager) forceRemoveContainer(containerName string) {
 	protected := m.persistenceFailed
 	for id, fence := range m.persistenceFences {
 		if terminalSessionResourceName(id) == containerName || fence.containerID != "" && fence.containerID == containerName {
+			protected = true
+			break
+		}
+	}
+	for scope, id := range m.persistenceBootstrap {
+		if containerName == id || containerName == terminalSessionResourceName(scope) {
 			protected = true
 			break
 		}

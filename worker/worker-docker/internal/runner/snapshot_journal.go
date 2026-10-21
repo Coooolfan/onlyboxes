@@ -121,12 +121,13 @@ func validPersistenceScope(id string) bool {
 }
 
 type snapshotJournalState struct {
-	LeaseGuard *snapshotLeaseBinding        `json:"lease_guard,omitempty"`
-	Version    int                          `json:"version"`
-	WorkerID   string                       `json:"worker_id"`
-	Current    map[string]string            `json:"current"`
-	Operations map[string]snapshotOperation `json:"operations"`
-	Probes     map[string]string            `json:"probes,omitempty"`
+	ProbeLeases map[string]int64             `json:"probe_leases,omitempty"`
+	LeaseGuard  *snapshotLeaseBinding        `json:"lease_guard,omitempty"`
+	Version     int                          `json:"version"`
+	WorkerID    string                       `json:"worker_id"`
+	Current     map[string]string            `json:"current"`
+	Operations  map[string]snapshotOperation `json:"operations"`
+	Probes      map[string]string            `json:"probes,omitempty"`
 }
 
 type snapshotJournal struct {
@@ -186,6 +187,11 @@ func openSnapshotJournal(root, worker string) (*snapshotJournal, error) {
 		}
 		for scope, id := range j.state.Probes {
 			if !validPersistenceScope(scope) || !dockerSnapshotDigest.MatchString("sha256:"+id) {
+				return fail()
+			}
+		}
+		for scope, lease := range j.state.ProbeLeases {
+			if j.state.Probes[scope] == "" || lease <= 0 {
 				return fail()
 			}
 		}
@@ -325,6 +331,7 @@ func (j *snapshotJournal) Claim(op snapshotOperation) error {
 		state.Operations[op.ID] = op
 		if op.Generation > 1 {
 			delete(state.Probes, op.SessionID)
+			delete(state.ProbeLeases, op.SessionID)
 		}
 		state.Current[op.SessionID] = op.ID
 		return nil
@@ -404,8 +411,8 @@ func (j *snapshotJournal) CancelUnknown(id, scope string, generation int64) erro
 
 // Probe binds initial adoption to an immutable instance without freezing it or
 // changing its execution generation. A delayed legacy create cannot replace it.
-func (j *snapshotJournal) Probe(scope, id string) error {
-	if !validPersistenceScope(scope) || !dockerSnapshotDigest.MatchString("sha256:"+id) {
+func (j *snapshotJournal) Probe(scope, id string, lease int64) error {
+	if !validPersistenceScope(scope) || !dockerSnapshotDigest.MatchString("sha256:"+id) || lease <= 0 {
 		return errSnapshotJournalConflict
 	}
 	return j.transaction(func(state *snapshotJournalState) error {
@@ -415,7 +422,14 @@ func (j *snapshotJournal) Probe(scope, id string) error {
 		if state.Probes == nil {
 			state.Probes = map[string]string{}
 		}
+		if lease < state.ProbeLeases[scope] {
+			return errSnapshotJournalConflict
+		}
+		if state.ProbeLeases == nil {
+			state.ProbeLeases = map[string]int64{}
+		}
 		state.Probes[scope] = id
+		state.ProbeLeases[scope] = lease
 		return nil
 	})
 }

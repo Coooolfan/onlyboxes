@@ -65,6 +65,9 @@ func newSnapshotController(ctx context.Context, m *terminalSessionManager, j *sn
 		return nil, err
 	}
 	c := &snapshotController{ctx: ctx, manager: m, journal: j, runtime: r, transfer: transfer, config: cfg, actions: map[string]snapshotActiveAction{}, pins: map[string]int{}}
+	m.mu.Lock()
+	m.persistenceGuardRequired = cfg.LeaseGuard != nil
+	m.mu.Unlock()
 	if err := m.InstallSnapshotJournal(j); err != nil {
 		return nil, err
 	}
@@ -207,27 +210,8 @@ func (c *snapshotController) execute(ctx context.Context, control *registryv1.Sa
 		if control.Generation != 1 || current.ID != "" {
 			return wire.Result{State: "missing"}, nil
 		}
-		instance, err := c.runtime.Describe(ctx, terminalSessionResourceName(control.ScopedSessionId), control.ScopedSessionId)
-		if err != nil {
-			return wire.Result{}, err
-		}
-		if err := c.journal.Probe(control.ScopedSessionId, instance.ID); err != nil {
-			return wire.Result{}, err
-		}
-		c.manager.mu.Lock()
-		local := c.manager.sessions[control.ScopedSessionId]
-		if local == nil || local.destroying || !local.leaseExpiresAt.After(time.Now()) {
-			c.manager.mu.Unlock()
-			return wire.Result{}, errSnapshotJournalConflict
-		}
-		if c.manager.persistenceBootstrap == nil {
-			c.manager.persistenceBootstrap = map[string]string{}
-		}
-		c.manager.persistenceBootstrap[control.ScopedSessionId] = instance.ID
-		local.persistenceContainerID = instance.ID
-		lease := local.leaseExpiresAt.UnixMilli()
-		c.manager.mu.Unlock()
-		return wire.Result{State: "running", Spec: &instance.Spec, InstanceID: instance.ID, LeaseExpiresUnixMS: lease}, nil
+		return c.probeInitialSession(ctx, control.ScopedSessionId)
+
 	case registryv1.SandboxPersistenceControl_PREPARE_SNAPSHOT:
 		return c.prepareSource(ctx, control, p, op, known)
 	case registryv1.SandboxPersistenceControl_UPLOAD_SNAPSHOT:
@@ -688,6 +672,22 @@ func (c *snapshotController) extendLease(scope string, generation int64, until t
 		return err
 	}
 	op := state.Operations[state.Current[scope]]
+	if op.ID == "" && state.Probes[scope] != "" && (generation == 0 || generation == 1) {
+		lease := state.ProbeLeases[scope]
+		if lease <= 0 {
+			return errSnapshotJournalConflict
+		}
+		if until.UnixMilli() > lease {
+			lease = until.UnixMilli()
+			if err := c.journal.Probe(scope, state.Probes[scope], lease); err != nil {
+				return err
+			}
+		}
+		if c.config.LeaseGuard != nil {
+			return c.config.LeaseGuard.Renew(c.ctx, snapshotOperation{SessionID: scope, ContainerID: state.Probes[scope], Generation: 1, LeaseExpiresUnixMS: lease})
+		}
+		return nil
+	}
 	if !op.active() || op.Generation != generation {
 		return errSnapshotJournalConflict
 	}

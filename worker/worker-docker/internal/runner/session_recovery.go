@@ -133,11 +133,22 @@ func (m *terminalSessionManager) recoverOneAttempt(
 		return registryv1.TerminalSessionRecoveryResult_INVALID, false
 	}
 	fence, persistent := m.persistenceFences[sessionID]
+	bootstrap := !persistent && m.persistenceBootstrap[sessionID] != ""
+	if bootstrap {
+		persistent = true
+		fence = terminalPersistenceFence{containerID: m.persistenceBootstrap[sessionID], generation: 1, active: true}
+	}
 	if existing := m.sessions[sessionID]; existing != nil && !existing.destroying {
-		existing.leaseExpiresAt = leaseExpiresAt
-		m.scheduleSessionLeaseTimerLocked(existing)
-		m.mu.Unlock()
-		return registryv1.TerminalSessionRecoveryResult_RECOVERED, false
+		if persistent && existing.persistenceContainerID != fence.containerID {
+			m.mu.Unlock()
+			return registryv1.TerminalSessionRecoveryResult_INVALID, false
+		}
+		if !bootstrap {
+			existing.leaseExpiresAt = leaseExpiresAt
+			m.scheduleSessionLeaseTimerLocked(existing)
+			m.mu.Unlock()
+			return registryv1.TerminalSessionRecoveryResult_RECOVERED, false
+		}
 	}
 	m.mu.Unlock()
 
@@ -202,6 +213,9 @@ func (m *terminalSessionManager) recoverOneAttempt(
 	switch strings.TrimSpace(strings.ToLower(parts[1])) {
 	case "running":
 	case "created", "exited", "stopped":
+		if persistent {
+			return registryv1.TerminalSessionRecoveryResult_INVALID, false
+		}
 		start := runDockerCommand(ctx, terminalExecDockerStartArgs(containerName)...)
 		if start.Err != nil || start.ExitCode != 0 {
 			return registryv1.TerminalSessionRecoveryResult_INVALID, true
@@ -216,7 +230,11 @@ func (m *terminalSessionManager) recoverOneAttempt(
 	containerIP := ""
 	if m.dockerNetwork != "" {
 		var err error
-		containerIP, err = inspectTerminalContainerIP(ctx, containerName, m.dockerNetwork)
+		resource := containerName
+		if persistent {
+			resource = fence.containerID
+		}
+		containerIP, err = inspectTerminalContainerIP(ctx, resource, m.dockerNetwork)
 		if err != nil {
 			return registryv1.TerminalSessionRecoveryResult_INVALID, true
 		}
@@ -236,6 +254,10 @@ func (m *terminalSessionManager) recoverOneAttempt(
 		if existing.containerName != containerName || existing.destroying {
 			return registryv1.TerminalSessionRecoveryResult_INVALID, false
 		}
+		existing.containerIP = containerIP
+		if bootstrap && (existing.proxyCtx == nil || existing.proxyCtx.Err() != nil) {
+			existing.proxyCtx, existing.proxyCancel = context.WithCancel(context.Background())
+		}
 		existing.leaseExpiresAt = leaseExpiresAt
 		m.scheduleSessionLeaseTimerLocked(existing)
 		return registryv1.TerminalSessionRecoveryResult_RECOVERED, false
@@ -249,7 +271,7 @@ func (m *terminalSessionManager) recoverOneAttempt(
 		proxyCancel:            proxyCancel,
 		ready:                  ready,
 		capacityReserved:       true,
-		persistenceContainerID: m.persistenceFences[sessionID].containerID,
+		persistenceContainerID: fence.containerID,
 	}
 	m.sessions[sessionID] = session
 	m.activeSessionReservations++
@@ -311,6 +333,12 @@ func (m *terminalSessionManager) cleanupOrphanContainers(ctx context.Context, ex
 		m.mu.Lock()
 		protected := false
 		for session := range m.persistenceFences {
+			if terminalSessionResourceName(session) == name {
+				protected = true
+				break
+			}
+		}
+		for session := range m.persistenceBootstrap {
 			if terminalSessionResourceName(session) == name {
 				protected = true
 				break

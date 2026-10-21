@@ -192,10 +192,10 @@ func TestSnapshotAdoptionProbeSurvivesRestartAndRejectsReplacement(t *testing.T)
 	journal := testSnapshotJournal(t)
 	scope := "obx:owner:probe"
 	id := strings.Repeat("b", 64)
-	if err := journal.Probe(scope, id); err != nil {
+	if err := journal.Probe(scope, id, time.Now().Add(time.Minute).UnixMilli()); err != nil {
 		t.Fatal(err)
 	}
-	if err := journal.Probe(scope, strings.Repeat("c", 64)); err == nil {
+	if err := journal.Probe(scope, strings.Repeat("c", 64), time.Now().Add(time.Minute).UnixMilli()); err == nil {
 		t.Fatal("adoption probe switched to another same-name instance")
 	}
 	_ = journal.Close()

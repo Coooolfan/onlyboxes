@@ -18,6 +18,7 @@ var errSnapshotLeaseUnavailable = errors.New("independent execution lease unavai
 // Arm is reserved for an explicitly authorized controlled boot. Check and
 // Renew can never revive stopped/revoked ownership or create a missing record.
 type snapshotExecutionLeases interface {
+	Adopt(context.Context, snapshotOperation) error
 	Arm(context.Context, snapshotOperation) error
 	Check(context.Context, snapshotOperation) error
 	Renew(context.Context, snapshotOperation) error
@@ -105,14 +106,18 @@ func (g *dockerSnapshotLeaseClient) status(ctx context.Context, op snapshotOpera
 	return entry, nil
 }
 
-func (g *dockerSnapshotLeaseClient) Arm(ctx context.Context, op snapshotOperation) error {
-	return g.grant(ctx, op, true)
-}
-func (g *dockerSnapshotLeaseClient) Renew(ctx context.Context, op snapshotOperation) error {
-	return g.grant(ctx, op, false)
+func (g *dockerSnapshotLeaseClient) Adopt(ctx context.Context, op snapshotOperation) error {
+	return g.grant(ctx, op, "adopt")
 }
 
-func (g *dockerSnapshotLeaseClient) grant(ctx context.Context, op snapshotOperation, arm bool) error {
+func (g *dockerSnapshotLeaseClient) Arm(ctx context.Context, op snapshotOperation) error {
+	return g.grant(ctx, op, "arm")
+}
+func (g *dockerSnapshotLeaseClient) Renew(ctx context.Context, op snapshotOperation) error {
+	return g.grant(ctx, op, "renew")
+}
+
+func (g *dockerSnapshotLeaseClient) grant(ctx context.Context, op snapshotOperation, mode string) error {
 	unlock, err := g.lock(op)
 	if err != nil {
 		return err
@@ -122,10 +127,10 @@ func (g *dockerSnapshotLeaseClient) grant(ctx context.Context, op snapshotOperat
 		return errSnapshotLeaseUnavailable
 	}
 	old, err := g.status(ctx, op)
-	if err != nil && !(arm && errors.Is(err, runtimelease.ErrNotFound)) {
+	if err != nil && !((mode == "arm" || mode == "adopt") && errors.Is(err, runtimelease.ErrNotFound)) {
 		return errSnapshotLeaseUnavailable
 	}
-	if !arm && (old.Revoked || old.ExpiresUnixMS <= time.Now().UnixMilli()) {
+	if mode != "arm" && old.Revision > 0 && (old.Revoked || old.ExpiresUnixMS <= time.Now().UnixMilli()) {
 		return errSnapshotLeaseUnavailable
 	}
 	if old.Revision > 0 && old.ExpiresUnixMS > op.LeaseExpiresUnixMS {
@@ -136,7 +141,7 @@ func (g *dockerSnapshotLeaseClient) grant(ctx context.Context, op snapshotOperat
 	}
 	want := runtimelease.Entry{ContainerID: op.ContainerID, Scope: op.SessionID, Generation: op.Generation, Revision: old.Revision + 1, ExpiresUnixMS: op.LeaseExpiresUnixMS}
 	action := "renew"
-	if arm {
+	if mode == "arm" || (mode == "adopt" && old.Revision == 0) {
 		action = "arm"
 	}
 	var got runtimelease.Entry

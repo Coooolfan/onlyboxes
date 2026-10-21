@@ -155,6 +155,45 @@ func TestLeaseClientMissingRecordCannotBeRenewed(t *testing.T) {
 	}
 }
 
+func TestLeaseClientAdoptionReconcilesLostReceipt(t *testing.T) {
+	client, path := newLeaseRPCFixture(t, leaseRPCFixture{DropReply: true})
+	op := testSnapshotOperation()
+	if client.Adopt(context.Background(), op) == nil {
+		t.Fatal("lost adoption receipt acknowledged")
+	}
+	if err := client.Adopt(context.Background(), op); err != nil {
+		t.Fatal(err)
+	}
+	op.LeaseExpiresUnixMS += 1000
+	if err := client.Adopt(context.Background(), op); err != nil {
+		t.Fatal(err)
+	}
+	state := readLeaseRPCFixture(t, path)
+	if strings.Join(state.Calls, ",") != "status,arm,status,status,renew" || state.Entry.Revision != 2 || state.Entry.ExpiresUnixMS != op.LeaseExpiresUnixMS {
+		t.Fatal("adoption replay reset ownership", state)
+	}
+}
+
+func TestLeaseClientAdoptionCannotReviveOwnership(t *testing.T) {
+	for _, revoked := range []bool{false, true} {
+		t.Run(map[bool]string{false: "expired", true: "revoked"}[revoked], func(t *testing.T) {
+			op := testSnapshotOperation()
+			expiry := time.Now().Add(-time.Second).UnixMilli()
+			if revoked {
+				expiry = op.LeaseExpiresUnixMS
+			}
+			entry := runtimelease.Entry{ContainerID: op.ContainerID, Scope: op.SessionID, Generation: op.Generation, Revision: 1, ExpiresUnixMS: expiry, Revoked: revoked}
+			client, path := newLeaseRPCFixture(t, leaseRPCFixture{Entry: &entry})
+			if client.Adopt(context.Background(), op) == nil {
+				t.Fatal("adoption revived invalid ownership")
+			}
+			if strings.Join(readLeaseRPCFixture(t, path).Calls, ",") != "status" {
+				t.Fatal("adoption mutated invalid ownership")
+			}
+		})
+	}
+}
+
 func TestLeaseClientMissingStatusStillRequiresForgetBarrier(t *testing.T) {
 	op := testSnapshotOperation()
 	entry := runtimelease.Entry{ContainerID: op.ContainerID, Scope: op.SessionID, Generation: op.Generation, Revision: 1, ExpiresUnixMS: op.LeaseExpiresUnixMS}
@@ -169,6 +208,10 @@ func TestLeaseClientMissingStatusStillRequiresForgetBarrier(t *testing.T) {
 }
 
 type testExecutionLeases struct{ arm, check, renew, forget func(snapshotOperation) error }
+
+func (g testExecutionLeases) Adopt(ctx context.Context, op snapshotOperation) error {
+	return g.Arm(ctx, op)
+}
 
 func (g testExecutionLeases) Arm(_ context.Context, op snapshotOperation) error {
 	if g.arm != nil {

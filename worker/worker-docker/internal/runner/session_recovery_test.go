@@ -21,6 +21,31 @@ func TestTerminalRecoveryResourceNameUsesFullHashWithoutSessionID(t *testing.T) 
 	}
 }
 
+func TestTerminalRecoveryCannotRestartProbedRoot(t *testing.T) {
+	op := testSnapshotOperation()
+	name := terminalSessionResourceName(op.SessionID)
+	stubDockerConcurrency(t, func(_ context.Context, args ...string) dockerCommandResult {
+		if args[0] == "inspect" && args[2] == "{{.Id}}" {
+			return dockerCommandResult{Stdout: op.ContainerID}
+		}
+		if args[0] == "inspect" {
+			return dockerCommandResult{Stdout: fmt.Sprintf("{\"%s\":\"%s\",\"%s\":\"1\"}\texited", terminalExecSessionLabelKey, terminalSessionIDHash(op.SessionID), terminalExecSchemaLabelKey)}
+		}
+		if args[0] == "ps" {
+			return dockerCommandResult{Stdout: name}
+		}
+		t.Fatalf("recovery mutated retained root: %v", args)
+		return dockerCommandResult{}
+	})
+	m := newTerminalSessionManager(terminalSessionManagerConfig{})
+	defer m.Close()
+	m.persistenceBootstrap = map[string]string{op.SessionID: op.ContainerID}
+	status, retry := m.recoverOneAttempt(context.Background(), op.SessionID, name, time.Now().Add(time.Minute))
+	if status != registryv1.TerminalSessionRecoveryResult_INVALID || retry {
+		t.Fatal("stopped probed root accepted", status, retry)
+	}
+}
+
 func TestTerminalRecoveryRestoresContainerAndExactLease(t *testing.T) {
 	original := runDockerCommand
 	t.Cleanup(func() { runDockerCommand = original })
