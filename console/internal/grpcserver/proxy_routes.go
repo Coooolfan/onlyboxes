@@ -136,7 +136,13 @@ func (s *RegistryService) ResolveProxySession(ownerID string, externalSessionID 
 	if strings.TrimSpace(scopedSessionID) == "" {
 		return ProxySessionTarget{}, ErrProxySessionNotFound
 	}
-	workerID, ok := s.proxyTerminalSessionWorker(scopedSessionID, now)
+	if now.IsZero() {
+		now = s.nowFn()
+	}
+	s.maybePruneTerminalSessionRoutes(now)
+	s.persistenceDispatchMu.RLock()
+	defer s.persistenceDispatchMu.RUnlock()
+	workerID, _, ok := s.proxyTerminalSessionWorker(scopedSessionID, now)
 	if !ok {
 		return ProxySessionTarget{}, ErrProxySessionNotFound
 	}
@@ -172,18 +178,27 @@ func (s *RegistryService) AuthorizeProxyRoute(
 	if !routeExpiresAt.After(now) {
 		return ProxyAuthorization{}, ErrProxySessionNotFound
 	}
-	mappedWorkerID, ok := s.proxyTerminalSessionWorker(scopedSessionID, now)
+	s.maybePruneTerminalSessionRoutes(now)
+	s.persistenceDispatchMu.RLock()
+	mappedWorkerID, generation, ok := s.proxyTerminalSessionWorker(scopedSessionID, now)
 	if !ok || mappedWorkerID != workerID {
+		s.persistenceDispatchMu.RUnlock()
 		return ProxyAuthorization{}, ErrProxySessionNotFound
 	}
 
 	session := s.getSession(workerID)
 	if !sessionSupportsProxy(session) {
+		s.persistenceDispatchMu.RUnlock()
 		return ProxyAuthorization{}, ErrProxyWorkerUnavailable
 	}
 	if session.proxyDirect != "" {
+		s.persistenceDispatchMu.RUnlock()
+		if generation != 0 {
+			return ProxyAuthorization{}, ErrProxyWorkerUnavailable
+		}
 		return s.authorizeDirectProxyRoute(ctx, session, scopedSessionID, port)
 	}
+	defer s.persistenceDispatchMu.RUnlock()
 	expiresAt := now.Add(proxyRouteTokenTTL)
 	if routeExpiresAt.Before(expiresAt) {
 		expiresAt = routeExpiresAt
@@ -193,6 +208,7 @@ func (s *RegistryService) AuthorizeProxyRoute(
 		SessionID:       scopedSessionID,
 		Port:            port,
 		ExpiresAtUnixMs: expiresAt.UnixMilli(),
+		Generation:      generation,
 	})
 	if err != nil {
 		return ProxyAuthorization{}, fmt.Errorf("sign proxy route token: %w", err)
@@ -273,26 +289,33 @@ func validateDirectProxyURL(raw string, allowedDomains []string) (*url.URL, erro
 	return parsed, nil
 }
 
-func (s *RegistryService) proxyTerminalSessionWorker(scopedSessionID string, now time.Time) (string, bool) {
-	if s == nil {
-		return "", false
+// proxyTerminalSessionWorker requires persistenceDispatchMu to remain held through
+// route resolution and signing, so lifecycle admission cannot interleave them.
+func (s *RegistryService) proxyTerminalSessionWorker(scopedSessionID string, now time.Time) (string, int64, bool) {
+	// Read without expiring or deleting a route: lifecycle ownership must be
+	// checked before any cached source entry can affect durable routing.
+	s.terminalRoutesMu.Lock()
+	route, ok := s.terminalSessionToNode[scopedSessionID]
+	s.terminalRoutesMu.Unlock()
+	if !ok || strings.TrimSpace(route.NodeID) == "" {
+		return "", 0, false
 	}
-	if now.IsZero() {
-		now = s.nowFn()
-	}
-	s.maybePruneTerminalSessionRoutes(now)
 	ctx, cancel := context.WithTimeout(context.Background(), terminalRouteStoreTimeout)
-	_, gateErr := s.checkPersistentExecution(ctx, scopedSessionID, "")
-	cancel()
-	if gateErr != nil {
-		return "", false
+	defer cancel()
+	generation, err := s.checkPersistentExecution(ctx, scopedSessionID, route.NodeID)
+	if err != nil {
+		return "", 0, false
 	}
-
-	route, ok := s.terminalSessionRouteSnapshot(scopedSessionID, now)
-	if !ok || route.ReservationID != 0 || route.RecoveryState != terminalSessionRecoveryReady || strings.TrimSpace(route.NodeID) == "" {
-		return "", false
+	// Ordinary exact-lease expiry still removes its route and previews even
+	// within the periodic prune interval, after the durable gate permits it.
+	current := route
+	if generation == 0 {
+		current, ok = s.terminalSessionRouteSnapshot(scopedSessionID, now)
 	}
-	return route.NodeID, true
+	if !ok || (current.LeaseExpiresUnixMs > 0 && current.LeaseExpiresUnixMs <= now.UnixMilli()) || current.NodeID != route.NodeID || current.ReservationID != 0 || current.RecoveryState != terminalSessionRecoveryReady {
+		return "", 0, false
+	}
+	return current.NodeID, generation, true
 }
 
 func sessionSupportsProxy(session *activeSession) bool {

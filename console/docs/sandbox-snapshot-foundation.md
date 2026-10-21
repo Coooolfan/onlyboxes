@@ -40,6 +40,8 @@ Console consults durable lifecycle ownership before task submission, command dis
 
 Ordinary terminal reconnect recovery excludes frozen sources and unactivated targets owned by persistence operations. Worker persistence journals must protect those resources and reconcile them through lifecycle controls before this feature is enabled; ordinary orphan cleanup cannot own them.
 
+Worker route tokens include the current execution `generation` in their signed claims. Console holds the lifecycle admission lock through route validation and signing, and checks the cached worker against the durable owner. A database read failure cannot fall back to generation zero. Docker and BoxLite require the signed generation to match their active local execution generation, including after restoring onto the same Worker; ordinary sessions use generation zero.
+
 Public preview URLs remain scoped to the stable account/session. Resolution obtains the current execution target rather than trusting the cached worker ID. Suspend and restore keep previews closed; activation lets the same unexpired URL reach the new worker. Existing preview TTLs remain independent of suspended-data retention. Ordinary non-persistent sessions still remove their previews when their runtime route is removed. Startup route pruning preserves durable operations and persistent preview records.
 
 ## Retention and storage accounting
