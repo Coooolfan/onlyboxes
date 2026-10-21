@@ -20,6 +20,16 @@ pub struct HostProcess {
     pub signal_version: Option<u32>,
 }
 impl HostProcess {
+    pub(crate) fn verify_current_writer(&self, box_id: &str) -> Result<()> {
+        self.validate_native_id(box_id)?;
+        let mut current = Self::capture(self.pid)?;
+        current.bind_writer_group(box_id)?;
+        if current != *self {
+            return Err(Error::Conflict);
+        }
+        Ok(())
+    }
+
     pub(crate) fn validate_native_id(&self, id: &str) -> Result<()> {
         self.validate()?;
         if let Some(group) = &self.writer_cgroup {

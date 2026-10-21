@@ -2,6 +2,7 @@
 
 mod archive;
 mod cgroup;
+mod execution_lease;
 mod home;
 mod host_process;
 mod host_signal;
@@ -15,6 +16,7 @@ pub use archive::{
     canonicalize_export, prepare_import_archive, verify_archive, ArchiveError, ArchiveLimits,
 };
 pub use cgroup::WriterCgroup;
+pub use execution_lease::{ExecutionLease, ExecutionLeaseLedger, LeaseEnforcement};
 pub use home::RuntimeHomeGuard;
 pub use host_process::HostProcess;
 pub use journal::{Journal, JournalState};
