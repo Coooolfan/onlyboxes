@@ -689,7 +689,7 @@ func TestTerminalSessionProxyTargetCachesContainerIP(t *testing.T) {
 		t.Fatalf("expected one inspect after container start, got %d", inspectCalls)
 	}
 	for range 20 {
-		target, err := manager.ResolveProxyTarget(context.Background(), created.SessionID, time.Now())
+		target, err := manager.ResolveProxyTarget(context.Background(), created.SessionID, 0, time.Now())
 		if err != nil {
 			t.Fatalf("resolve proxy target: %v", err)
 		}

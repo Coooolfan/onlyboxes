@@ -98,7 +98,7 @@ func (h *sandboxProxyHandler) ServeHTTP(w http.ResponseWriter, request *http.Req
 		return
 	}
 
-	target, err := h.manager.ResolveProxyTarget(request.Context(), claims.SessionID, now)
+	target, err := h.manager.ResolveProxyTarget(request.Context(), claims.SessionID, claims.Generation, now)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return

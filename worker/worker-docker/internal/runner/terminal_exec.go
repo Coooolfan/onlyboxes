@@ -589,7 +589,7 @@ type terminalProxyTarget struct {
 
 var errTerminalProxySessionNotFound = errors.New("proxy session not found")
 
-func (m *terminalSessionManager) ResolveProxyTarget(ctx context.Context, sessionID string, now time.Time) (terminalProxyTarget, error) {
+func (m *terminalSessionManager) ResolveProxyTarget(ctx context.Context, sessionID string, generation int64, now time.Time) (terminalProxyTarget, error) {
 	if m == nil {
 		return terminalProxyTarget{}, errTerminalProxySessionNotFound
 	}
@@ -603,7 +603,7 @@ func (m *terminalSessionManager) ResolveProxyTarget(ctx context.Context, session
 
 	m.mu.Lock()
 	session, ok := m.sessions[sessionID]
-	if !ok || session == nil || session.destroying || m.persistenceConflictLocked(sessionID, m.persistenceFences[sessionID].generation) != nil {
+	if !ok || session == nil || session.destroying || m.persistenceConflictLocked(sessionID, generation) != nil {
 		m.mu.Unlock()
 		return terminalProxyTarget{}, errTerminalProxySessionNotFound
 	}
@@ -622,7 +622,7 @@ func (m *terminalSessionManager) ResolveProxyTarget(ctx context.Context, session
 	var expired *terminalSession
 	m.mu.Lock()
 	current, ok := m.sessions[sessionID]
-	if !ok || current != session || session.destroying || session.initErr != nil || m.persistenceConflictLocked(sessionID, m.persistenceFences[sessionID].generation) != nil {
+	if !ok || current != session || session.destroying || session.initErr != nil || m.persistenceConflictLocked(sessionID, generation) != nil {
 		m.mu.Unlock()
 		return terminalProxyTarget{}, errTerminalProxySessionNotFound
 	}

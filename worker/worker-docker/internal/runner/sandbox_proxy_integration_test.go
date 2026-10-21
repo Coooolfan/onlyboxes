@@ -91,7 +91,7 @@ func TestSandboxProxyLinuxDockerIntegration(t *testing.T) {
 		t.Fatalf("proxy resource requests repeated docker inspect: %d calls", got)
 	}
 
-	target, err := manager.ResolveProxyTarget(ctx, created.SessionID, time.Now())
+	target, err := manager.ResolveProxyTarget(ctx, created.SessionID, 0, time.Now())
 	if err != nil {
 		t.Fatalf("resolve target for network isolation probe: %v", err)
 	}

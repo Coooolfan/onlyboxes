@@ -101,7 +101,7 @@ func TestTerminalRecoveryRestoresProxyRuntimeState(t *testing.T) {
 		t.Fatalf("unexpected recovery result: %#v", results)
 	}
 
-	target, err := manager.ResolveProxyTarget(context.Background(), sessionID, time.Now())
+	target, err := manager.ResolveProxyTarget(context.Background(), sessionID, 0, time.Now())
 	if err != nil {
 		t.Fatalf("resolve recovered proxy target: %v", err)
 	}
