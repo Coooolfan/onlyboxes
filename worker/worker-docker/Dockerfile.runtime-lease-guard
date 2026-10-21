@@ -1,0 +1,20 @@
+# check=skip=InvalidDefaultArgInFrom
+ARG GO_IMAGE
+FROM ${GO_IMAGE} AS build
+ARG GO_IMAGE
+ARG TARGETOS=linux
+ARG TARGETARCH
+RUN case "$GO_IMAGE" in *@sha256:*) ;; *) exit 1 ;; esac
+WORKDIR /src
+COPY api/go.* ./api/
+COPY worker/worker-docker/go.mod worker/worker-docker/go.sum ./worker/worker-docker/
+COPY worker/worker-docker/cmd/runtime-lease-guard ./worker/worker-docker/cmd/runtime-lease-guard/
+COPY worker/worker-docker/internal/runtimelease ./worker/worker-docker/internal/runtimelease/
+WORKDIR /src/worker/worker-docker
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -o /runtime-lease-guard ./cmd/runtime-lease-guard
+
+FROM scratch
+LABEL onlyboxes.component=runtime-lease-guard onlyboxes.runtime-lease-guard.schema=1
+COPY --from=build /runtime-lease-guard /runtime-lease-guard
+USER 0:0
+ENTRYPOINT ["/runtime-lease-guard"]

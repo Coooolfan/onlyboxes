@@ -18,6 +18,8 @@ Configuration sources:
 
 Snapshot lifecycle support is opt-in through `WORKER_PERSISTENCE_ENABLED=true`; see [configuration](docs/config-file.md#snapshot-lifecycle-configuration) and [controller/recovery behavior](docs/sandbox-snapshot-controller.md). The local journal directory must survive Worker restarts and container recreation.
 
+The separate [independent lease guard](docs/runtime-lease-guard.md) has isolated Docker verification; its Worker lifecycle hooks and deployment configuration remain unconnected. Worker process timers alone do not enforce execution leases after SIGKILL or a process hang.
+
 Required identity:
 - `WORKER_ID`
 - `WORKER_SECRET`
