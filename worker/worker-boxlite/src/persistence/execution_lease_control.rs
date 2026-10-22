@@ -1,7 +1,7 @@
 //! One bounded frame per private connection; native enforcement owns its own
 //! thread and never depends on a client or an asynchronous control task.
 use super::journal::{check_file, private_directory, private_options};
-use super::{Error, ExecutionLease, ExecutionLeaseLedger, HostProcess};
+use super::{BootAuthorization, Error, ExecutionLease, ExecutionLeaseLedger, HostProcess};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
@@ -60,6 +60,16 @@ struct Request {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 enum Command {
+    PrepareBoot {
+        authorization: BootAuthorization,
+    },
+    BindBoot {
+        authorization: BootAuthorization,
+        process: HostProcess,
+    },
+    BootStatus {
+        box_id: String,
+    },
     Ping,
     Status {
         box_id: String,
@@ -88,6 +98,8 @@ struct Response {
     deny_unknown_fields
 )]
 enum Reply {
+    BootPrepared(BootAuthorization),
+    BootStatus(Option<BootAuthorization>),
     Ready,
     Status(Option<ExecutionLease>),
     Granted(ExecutionLease),
@@ -362,6 +374,7 @@ struct Enforcer {
     closing: Arc<AtomicBool>,
     started: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
+    discovery: Option<std::thread::JoinHandle<()>>,
 }
 struct EnforcementExit {
     ledger: Arc<ExecutionLeaseLedger>,
@@ -384,6 +397,32 @@ impl Enforcer {
         let engine = ledger.clone();
         let started = Arc::new(AtomicBool::new(false));
         let ready = started.clone();
+        let boot_ready = Arc::new(AtomicBool::new(false));
+        let boot_ready_writer = boot_ready.clone();
+        let boot_engine = ledger.clone();
+        let boot_shutdown = shutdown.clone();
+        let boot_end = closing.clone();
+        let boot_active = active.clone();
+        let discovery = std::thread::spawn(move || {
+            let _exit = EnforcementExit {
+                ledger: boot_engine.clone(),
+                shutdown: boot_shutdown.clone(),
+            };
+            loop {
+                if boot_engine.enforce_boots().is_err() {
+                    boot_engine.close_admission();
+                    boot_shutdown.cancel();
+                }
+                boot_ready_writer.store(true, Ordering::SeqCst);
+                if boot_end.load(Ordering::SeqCst)
+                    && boot_active.load(Ordering::SeqCst) == 0
+                    && boot_engine.boots_settled() == Ok(true)
+                {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+        });
         let thread = std::thread::spawn(move || {
             let _exit = EnforcementExit {
                 ledger: engine.clone(),
@@ -396,7 +435,7 @@ impl Enforcer {
                 if engine.enforce().is_err() {
                     engine.close_admission();
                     shutdown.cancel();
-                } else {
+                } else if boot_ready.load(Ordering::SeqCst) {
                     ready.store(true, Ordering::SeqCst);
                 }
                 if end.load(Ordering::SeqCst)
@@ -413,14 +452,20 @@ impl Enforcer {
             closing,
             started,
             thread: Some(thread),
+            discovery: Some(discovery),
         }
     }
     async fn join(&mut self) -> Result<()> {
         let thread = self.thread.take().ok_or(Error::Unavailable)?;
-        tokio::task::spawn_blocking(move || thread.join())
-            .await
-            .map_err(|_| Error::Unavailable)?
-            .map_err(|_| Error::Unavailable)
+        let discovery = self.discovery.take().ok_or(Error::Unavailable)?;
+        tokio::task::spawn_blocking(move || {
+            let a = thread.join();
+            let b = discovery.join();
+            a.and(b)
+        })
+        .await
+        .map_err(|_| Error::Unavailable)?
+        .map_err(|_| Error::Unavailable)
     }
 }
 impl Drop for Enforcer {
@@ -458,6 +503,16 @@ async fn handle(
         tokio::task::spawn_blocking(move || {
             let _job = job;
             let result = match request.command {
+                Command::PrepareBoot { authorization } => {
+                    ledger.prepare_boot(authorization).map(Reply::BootPrepared)
+                }
+                Command::BindBoot {
+                    authorization,
+                    process,
+                } => ledger.bind_boot(authorization, process).map(Reply::Granted),
+                Command::BootStatus { box_id } => {
+                    ledger.boot_status(&box_id).map(Reply::BootStatus)
+                }
                 Command::Ping => ledger.control_available().map(|_| Reply::Ready),
                 Command::Status { box_id } => ledger.status(&box_id).map(Reply::Status),
                 Command::Adopt { lease } => ledger.adopt(lease).map(Reply::Granted),
@@ -542,6 +597,71 @@ impl LeaseGuardClient {
             Reply::Rejected(_) => Err(Error::Unavailable),
             reply => Ok(reply),
         }
+    }
+    pub async fn prepare_boot(
+        &self,
+        authorization: BootAuthorization,
+    ) -> Result<BootAuthorization> {
+        authorization.validate()?;
+        match self
+            .call(Command::PrepareBoot {
+                authorization: authorization.clone(),
+            })
+            .await?
+        {
+            Reply::BootPrepared(grant) if grant == authorization => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|_| Error::Unavailable)?
+                    .as_millis();
+                if grant.expires_unix_ms as u128 <= now {
+                    return Err(Error::Unavailable);
+                }
+                Ok(grant)
+            }
+            _ => Err(Error::Unavailable),
+        }
+    }
+    pub async fn boot_status(&self, id: &str) -> Result<Option<BootAuthorization>> {
+        match self.call(Command::BootStatus { box_id: id.into() }).await? {
+            Reply::BootStatus(grant) => {
+                if let Some(grant) = &grant {
+                    grant.validate()?;
+                    if grant.box_id != id {
+                        return Err(Error::Unavailable);
+                    }
+                }
+                Ok(grant)
+            }
+            _ => Err(Error::Unavailable),
+        }
+    }
+    pub async fn bind_boot(
+        &self,
+        authorization: BootAuthorization,
+        process: HostProcess,
+    ) -> Result<ExecutionLease> {
+        let wanted = ExecutionLease {
+            box_id: authorization.box_id.clone(),
+            scoped_session_id: authorization.scoped_session_id.clone(),
+            generation: authorization.generation,
+            revision: authorization
+                .prior_revision
+                .unwrap_or(0)
+                .checked_add(1)
+                .ok_or(Error::Conflict)?,
+            expires_unix_ms: authorization.expires_unix_ms,
+            process: process.clone(),
+            revoked: false,
+        };
+        self.grant(
+            Command::BindBoot {
+                authorization,
+                process,
+            },
+            wanted,
+        )
+        .await
     }
     pub async fn status(&self, id: &str) -> Result<Option<ExecutionLease>> {
         match self.call(Command::Status { box_id: id.into() }).await? {

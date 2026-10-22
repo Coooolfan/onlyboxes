@@ -1,5 +1,6 @@
 //! Durable receipts and a disk-independent expiry view for the lease enforcer.
 //! The caller runs enforcement independently of the Worker and control I/O.
+use super::execution_boot::{BootRecord, BootWatch};
 use super::journal::{check_file, private_directory, private_options, read_private, write_atomic};
 use super::types::{valid_id, valid_scope};
 use super::{Error, HostProcess};
@@ -12,9 +13,9 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-type Result<T> = std::result::Result<T, Error>;
-const MAX_RECORDS: usize = 16384;
-const MAX_BYTES: usize = 64 << 20;
+pub(super) type Result<T> = std::result::Result<T, Error>;
+pub(super) const MAX_RECORDS: usize = 16384;
+pub(super) const MAX_BYTES: usize = 64 << 20;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -61,19 +62,21 @@ struct Owner {
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct State {
+pub(super) struct State {
     version: u32,
     store_id: String,
-    leases: BTreeMap<String, ExecutionLease>,
+    pub(super) leases: BTreeMap<String, ExecutionLease>,
+    #[serde(default)]
+    pub(super) boots: BTreeMap<String, BootRecord>,
 }
 
 #[derive(Clone, Copy)]
-struct Moment {
+pub(super) struct Moment {
     wall: i64,
     monotonic: Instant,
 }
 impl Moment {
-    fn now() -> Result<Self> {
+    pub(super) fn now() -> Result<Self> {
         Ok(Self {
             wall: i64::try_from(
                 SystemTime::now()
@@ -87,14 +90,15 @@ impl Moment {
     }
 }
 #[derive(Clone)]
-struct Watch {
+pub(super) struct Watch {
     process: HostProcess,
     expires: i64,
     deadline: Instant,
-    revoked: bool,
+    pub(super) revoked: bool,
+    pub(super) retired: bool,
 }
 impl Watch {
-    fn initial(lease: &ExecutionLease, now: Moment, revoked: bool) -> Result<Self> {
+    pub(super) fn initial(lease: &ExecutionLease, now: Moment, revoked: bool) -> Result<Self> {
         let remaining = lease.expires_unix_ms.saturating_sub(now.wall).max(0) as u64;
         Ok(Self {
             process: lease.process.clone(),
@@ -104,6 +108,7 @@ impl Watch {
                 .checked_add(Duration::from_millis(remaining))
                 .ok_or(Error::Unavailable)?,
             revoked: revoked || lease.revoked || remaining == 0,
+            retired: false,
         })
     }
     fn renewed(&self, lease: &ExecutionLease) -> Result<Self> {
@@ -120,13 +125,14 @@ impl Watch {
                 .checked_add(Duration::from_millis(delta as u64))
                 .ok_or(Error::Unavailable)?,
             revoked: false,
+            retired: false,
         })
     }
-    fn live(&mut self, now: Moment) -> bool {
+    pub(super) fn live(&mut self, now: Moment) -> bool {
         if now.wall >= self.expires || now.monotonic >= self.deadline {
             self.revoked = true;
         }
-        !self.revoked
+        !self.revoked && !self.retired
     }
 }
 
@@ -143,10 +149,12 @@ pub struct ExecutionLeaseLedger {
     root: PathBuf,
     owner: Owner,
     lock: File,
-    state: Mutex<State>,
-    watches: RwLock<BTreeMap<String, Arc<Mutex<Watch>>>>,
-    poisoned: AtomicBool,
+    pub(super) state: Mutex<State>,
+    pub(super) watches: RwLock<BTreeMap<String, Arc<Mutex<Watch>>>>,
+    pub(super) poisoned: AtomicBool,
+    pub(super) boot_watches: RwLock<BTreeMap<String, Arc<Mutex<BootWatch>>>>,
     cursor: AtomicUsize,
+    pub(super) boot_cursor: AtomicUsize,
     control_claimed: AtomicBool,
     persist: fn(&Path, &State) -> Result<()>,
 }
@@ -236,6 +244,7 @@ impl ExecutionLeaseLedger {
                 version: 1,
                 store_id: owner.store_id.clone(),
                 leases: BTreeMap::new(),
+                boots: BTreeMap::new(),
             };
             persist_state(&root, &state)?;
             write_atomic(
@@ -245,7 +254,7 @@ impl ExecutionLeaseLedger {
             )?;
             (owner, state)
         };
-        if state.leases.len() > MAX_RECORDS {
+        if state.leases.len() > MAX_RECORDS || state.boots.len() > MAX_RECORDS {
             return Err(Error::Unavailable);
         }
         let now = Moment::now()?;
@@ -264,6 +273,57 @@ impl ExecutionLeaseLedger {
             watches.insert(
                 id.clone(),
                 Arc::new(Mutex::new(Watch::initial(lease, now, true)?)),
+            );
+        }
+        let mut boot_watches = BTreeMap::new();
+        let mut boot_scopes = BTreeSet::new();
+        let mut boot_operations = BTreeSet::new();
+        for (id, record) in &state.boots {
+            let grant = &record.authorization;
+            grant.validate().map_err(|_| Error::Unavailable)?;
+            if id != &grant.box_id
+                || !boot_scopes.insert(&grant.scoped_session_id)
+                || !boot_operations.insert(&grant.operation_id)
+                || grant.origin.host_id != owner.host_id
+                || (grant.origin.boot_id == current.boot_id
+                    && grant.origin.process_namespace != current.process_namespace)
+                || state.leases.values().any(|lease| {
+                    lease.box_id != *id && lease.scoped_session_id == grant.scoped_session_id
+                })
+            {
+                return Err(Error::Unavailable);
+            }
+            if let Some(process) = &record.bound_process {
+                process
+                    .validate_native_id(id)
+                    .map_err(|_| Error::Unavailable)?;
+                let lease = state.leases.get(id).ok_or(Error::Unavailable)?;
+                if lease.process != *process
+                    || lease.generation != grant.generation
+                    || lease.scoped_session_id != grant.scoped_session_id
+                    || lease.revision <= grant.prior_revision.unwrap_or(0)
+                    || lease.expires_unix_ms < grant.expires_unix_ms
+                {
+                    return Err(Error::Unavailable);
+                }
+            } else if let Some(lease) = state.leases.get(id) {
+                if Some(lease.revision) != grant.prior_revision
+                    || lease.generation != grant.generation
+                    || lease.scoped_session_id != grant.scoped_session_id
+                {
+                    return Err(Error::Unavailable);
+                }
+            } else if grant.prior_revision.is_some() {
+                return Err(Error::Unavailable);
+            }
+            if record.bound_process.is_none() {
+                if let Some(old) = watches.get(id) {
+                    old.lock().map_err(|_| Error::Unavailable)?.retired = true;
+                }
+            }
+            boot_watches.insert(
+                id.clone(),
+                Arc::new(Mutex::new(BootWatch::new(record, now, true)?)),
             );
         }
         // Recognized interrupted atomic writes can be removed only after the
@@ -293,7 +353,9 @@ impl ExecutionLeaseLedger {
             state: Mutex::new(state),
             watches: RwLock::new(watches),
             poisoned: AtomicBool::new(false),
+            boot_watches: RwLock::new(boot_watches),
             cursor: AtomicUsize::new(0),
+            boot_cursor: AtomicUsize::new(0),
             control_claimed: AtomicBool::new(false),
             persist: persist_state,
         })
@@ -322,6 +384,9 @@ impl ExecutionLeaseLedger {
         self.poisoned.store(true, Ordering::SeqCst);
     }
     pub(super) fn writers_stopped(&self) -> Result<bool> {
+        if !self.boots_settled()? {
+            return Ok(false);
+        }
         let slots: Vec<_> = self
             .watches
             .read()
@@ -383,6 +448,12 @@ impl ExecutionLeaseLedger {
         lease.process.verify_current_writer(&lease.box_id)?;
         let mut state = self.state.lock().map_err(|_| Error::Unavailable)?;
         self.available()?;
+        if state.boots.values().any(|record| {
+            record.authorization.box_id == lease.box_id
+                || record.authorization.scoped_session_id == lease.scoped_session_id
+        }) {
+            return Err(Error::Conflict);
+        }
         if let Some(prior) = state.leases.get(&lease.box_id) {
             return if prior == &lease
                 && self
@@ -488,6 +559,9 @@ impl ExecutionLeaseLedger {
         let mut expired = Vec::new();
         for slot in watches {
             let mut watch = slot.lock().map_err(|_| Error::Unavailable)?;
+            if watch.retired {
+                continue;
+            }
             let expired_now = match now {
                 Ok(now) => !watch.live(now),
                 Err(_) => true,
@@ -498,13 +572,16 @@ impl ExecutionLeaseLedger {
                 expired.push(slot);
             }
         }
-        let mut result = LeaseEnforcement::default();
+        let mut result = self.enforce_known_boots()?;
         if !expired.is_empty() {
             let start = self.cursor.fetch_add(64, Ordering::SeqCst) % expired.len();
             for offset in 0..expired.len().min(64) {
                 let mut watch = expired[(start + offset) % expired.len()]
                     .lock()
                     .map_err(|_| Error::Unavailable)?;
+                if watch.retired {
+                    continue;
+                }
                 // Serialize native delivery with lease publication, without a
                 // disk mutation lock. A stale scan cannot stop a renewed lease.
                 watch.revoked = true;
@@ -517,7 +594,7 @@ impl ExecutionLeaseLedger {
         Ok(result)
     }
 
-    fn available(&self) -> Result<()> {
+    pub(super) fn available(&self) -> Result<()> {
         if self.poisoned.load(Ordering::SeqCst) {
             return Err(Error::Unavailable);
         }
@@ -555,7 +632,7 @@ impl ExecutionLeaseLedger {
         }
         Ok(())
     }
-    fn watch(&self, id: &str) -> Result<Arc<Mutex<Watch>>> {
+    pub(super) fn watch(&self, id: &str) -> Result<Arc<Mutex<Watch>>> {
         self.watches
             .read()
             .map_err(|_| Error::Unavailable)?
@@ -563,7 +640,7 @@ impl ExecutionLeaseLedger {
             .cloned()
             .ok_or(Error::Unavailable)
     }
-    fn commit(&self, state: &mut State, next: State) -> Result<()> {
+    pub(super) fn commit(&self, state: &mut State, next: State) -> Result<()> {
         self.available()?;
         if (self.persist)(&self.root, &next).is_err() {
             self.poisoned.store(true, Ordering::SeqCst);

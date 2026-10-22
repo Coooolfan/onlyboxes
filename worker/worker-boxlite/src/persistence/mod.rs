@@ -3,6 +3,7 @@
 mod archive;
 mod boot_executable;
 mod cgroup;
+mod execution_boot;
 mod execution_lease;
 mod execution_lease_control;
 mod home;
@@ -19,6 +20,7 @@ pub use archive::{
 };
 pub use boot_executable::BootExecutable;
 pub use cgroup::WriterCgroup;
+pub use execution_boot::BootAuthorization;
 pub use execution_lease::{ExecutionLease, ExecutionLeaseLedger, LeaseEnforcement};
 pub use execution_lease_control::{LeaseGuardClient, LeaseGuardIdentity, LeaseGuardServer};
 pub use home::RuntimeHomeGuard;

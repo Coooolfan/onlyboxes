@@ -8,11 +8,20 @@ impl Root {
         let path = PathBuf::from("/tmp").join(format!("obx-bx-{}", uuid::Uuid::new_v4()));
         private_directory(&path).unwrap();
         private_directory(&path.join("boxes")).unwrap();
+        fs::copy("/bin/sleep", path.join("fixture-sleep")).unwrap();
+        #[cfg(target_os = "macos")]
+        assert!(std::process::Command::new("/usr/bin/codesign")
+            .args(["--force", "--sign", "-"])
+            .arg(path.join("fixture-sleep"))
+            .output()
+            .unwrap()
+            .status
+            .success());
         Self(fs::canonicalize(path).unwrap())
     }
     fn prepare(&self, id: &str) -> BootExecutable {
         private_directory(&self.0.join("boxes").join(id)).unwrap();
-        BootExecutable::prepare(&self.0, id, Path::new("/bin/sleep"), true).unwrap()
+        BootExecutable::prepare(&self.0, id, &self.0.join("fixture-sleep"), true).unwrap()
     }
 }
 impl Drop for Root {
@@ -29,7 +38,7 @@ fn executable_pin_is_private_independent_and_replayable() {
     assert_eq!(file.metadata().unwrap().nlink(), 1);
     assert_eq!(file.metadata().unwrap().permissions().mode() & 0o777, 0o500);
     assert_eq!(
-        BootExecutable::prepare(&root.0, "owned", Path::new("/bin/sleep"), true).unwrap(),
+        BootExecutable::prepare(&root.0, "owned", &root.0.join("fixture-sleep"), true).unwrap(),
         pin
     );
     let copy: BootExecutable = serde_json::from_slice(&serde_json::to_vec(&pin).unwrap()).unwrap();
@@ -44,11 +53,15 @@ fn byte_changes_links_and_directory_replacements_are_not_repaired() {
     fs::set_permissions(pin.path(), fs::Permissions::from_mode(0o700)).unwrap();
     fs::write(pin.path(), b"different executable").unwrap();
     assert!(pin.verify().is_err());
-    assert!(BootExecutable::prepare(&root.0, "owned", Path::new("/bin/sleep"), true).is_err());
+    assert!(
+        BootExecutable::prepare(&root.0, "owned", &root.0.join("fixture-sleep"), true).is_err()
+    );
     assert_eq!(fs::read(pin.path()).unwrap(), b"different executable");
     fs::remove_file(pin.path()).unwrap();
     symlink("/bin/sleep", pin.path()).unwrap();
-    assert!(BootExecutable::prepare(&root.0, "owned", Path::new("/bin/sleep"), true).is_err());
+    assert!(
+        BootExecutable::prepare(&root.0, "owned", &root.0.join("fixture-sleep"), true).is_err()
+    );
     let other = root.prepare("other");
     fs::rename(root.0.join("boxes/other/bin"), root.0.join("saved-bin")).unwrap();
     private_directory(&root.0.join("boxes/other/bin")).unwrap();
@@ -58,9 +71,14 @@ fn byte_changes_links_and_directory_replacements_are_not_repaired() {
 #[test]
 fn unsafe_ids_and_missing_live_executables_do_not_create_replacements() {
     let root = Root::new();
-    assert!(BootExecutable::prepare(&root.0, "../outside", Path::new("/bin/sleep"), true).is_err());
+    assert!(
+        BootExecutable::prepare(&root.0, "../outside", &root.0.join("fixture-sleep"), true)
+            .is_err()
+    );
     private_directory(&root.0.join("boxes/owned")).unwrap();
-    assert!(BootExecutable::prepare(&root.0, "owned", Path::new("/bin/sleep"), false).is_err());
+    assert!(
+        BootExecutable::prepare(&root.0, "owned", &root.0.join("fixture-sleep"), false).is_err()
+    );
     assert!(!root.0.join("boxes/owned/bin").exists());
 }
 
