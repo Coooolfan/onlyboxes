@@ -99,7 +99,11 @@ impl NativeRuntime {
                 Err(NativeError::Conflict)
             };
         };
-        let mut current = guard.status(&op.box_id).await.map_err(guard_error)?;
+        let mut current = if may_bind {
+            guard.status(&op.box_id).await.map_err(guard_error)?
+        } else {
+            Some(guard.check_running(&op.box_id).await.map_err(guard_error)?)
+        };
         let matches = |running: &crate::persistence::ExecutionLease| {
             running.box_id == op.box_id
                 && running.scoped_session_id == op.scoped_session_id

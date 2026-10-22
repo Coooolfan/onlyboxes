@@ -25,6 +25,18 @@ impl HostProcess {
         Self::capture(std::process::id())
     }
 
+    /// Read-only capture of a native writer selected by a trusted SDK caller.
+    /// Signals still require the pinned kernel identity; this grants no lease.
+    pub fn inspect_writer(pid: u32, box_id: &str) -> Result<Self> {
+        if !super::types::valid_id(box_id) {
+            return Err(Error::Conflict);
+        }
+        let mut process = Self::capture(pid)?;
+        process.bind_writer_group(box_id)?;
+        process.verify_current_writer(box_id)?;
+        Ok(process)
+    }
+
     pub(crate) fn verify_current_writer(&self, box_id: &str) -> Result<()> {
         self.validate_native_id(box_id)?;
         let mut current = Self::capture(self.pid)?;

@@ -433,6 +433,17 @@ impl ExecutionLeaseLedger {
         Ok(Some(lease))
     }
 
+    /// Read-only execution authority, including the exact live kernel writer.
+    /// Unlike status, stopped predecessors are rejected rather than returned.
+    pub fn check_running(&self, id: &str) -> Result<ExecutionLease> {
+        let lease = self.status(id)?.ok_or(Error::Conflict)?;
+        if lease.revoked {
+            return Err(Error::Conflict);
+        }
+        lease.process.verify_current_writer(id)?;
+        Ok(lease)
+    }
+
     /// Initial adoption of an already-running, exactly pinned process. This
     /// cannot authorize a controlled boot or rearm a revoked/expired record.
     pub fn adopt(&self, lease: ExecutionLease) -> Result<ExecutionLease> {

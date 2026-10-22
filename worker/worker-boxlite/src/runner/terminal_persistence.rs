@@ -23,6 +23,7 @@ pub(super) struct SessionState {
     pub(super) fences: HashMap<String, Fence>,
     pub(super) bootstrap: HashMap<String, String>,
     pub(super) journal: Option<Arc<Journal>>,
+    pub(super) execution_guard: Option<worker_boxlite::persistence::LeaseGuardClient>,
     pub(super) protected_names: HashSet<String>,
     connection: Option<String>,
     connected: bool,
@@ -156,42 +157,189 @@ impl SessionState {
         }
         Ok(())
     }
-    pub(super) fn persist_lease(
+    pub(super) async fn persist_lease(
         &mut self,
         scope: &str,
         generation: i64,
         target: SystemTime,
     ) -> Result<(), TerminalOperationError> {
         let Some(fence) = self.fences.get(scope) else {
-            return Ok(());
+            return self
+                .confirm_execution_guard(scope, generation, Some(target))
+                .await;
         };
-        if self
+        let already_covered = self
             .entries
             .get(scope)
-            .is_some_and(|s| s.lease_expires_at >= target)
-        {
-            return Ok(());
-        }
+            .is_some_and(|s| s.lease_expires_at >= target);
         let Some(journal) = self.journal.as_ref() else {
             self.fail();
             return Err(unavailable());
         };
         let id = fence.operation.clone();
         let box_id = fence.box_id.clone();
-        let result = journal.update(&id, |op| {
-            if !op.active()
-                || op.scoped_session_id != scope
-                || op.generation != generation
-                || op.box_id != box_id
-            {
-                return Err(worker_boxlite::persistence::Error::Conflict);
-            }
-            op.lease_expires_unix_ms = op.lease_expires_unix_ms.max(to_unix_millis(target));
+        let result = if already_covered {
             Ok(())
-        });
+        } else {
+            journal.update(&id, |op| {
+                if !op.active()
+                    || op.scoped_session_id != scope
+                    || op.generation != generation
+                    || op.box_id != box_id
+                {
+                    return Err(worker_boxlite::persistence::Error::Conflict);
+                }
+                op.lease_expires_unix_ms = op.lease_expires_unix_ms.max(to_unix_millis(target));
+                Ok(())
+            })
+        };
         if result.is_err() {
             self.fail();
             return Err(unavailable());
+        }
+        self.confirm_execution_guard(scope, generation, Some(target))
+            .await
+    }
+    pub(super) async fn confirm_execution_guard(
+        &mut self,
+        scope: &str,
+        generation: i64,
+        extend: Option<SystemTime>,
+    ) -> Result<(), TerminalOperationError> {
+        let managed = self.fences.contains_key(scope) || self.bootstrap.contains_key(scope);
+        let memory = self
+            .entries
+            .get(scope)
+            .map(|session| session.lease_expires_at);
+        let effective = match (memory, extend) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (a, b) => a.or(b),
+        };
+        let result = self
+            .check_execution_guard(scope, generation, extend)
+            .await
+            .and_then(|()| {
+                if managed && effective.is_none_or(|deadline| deadline <= SystemTime::now()) {
+                    Err(unavailable())
+                } else {
+                    Ok(())
+                }
+            });
+        if result.is_err() {
+            self.fail();
+        }
+        result
+    }
+    async fn check_execution_guard(
+        &mut self,
+        scope: &str,
+        generation: i64,
+        extend: Option<SystemTime>,
+    ) -> Result<(), TerminalOperationError> {
+        let managed = self.fences.contains_key(scope) || self.bootstrap.contains_key(scope);
+        if !managed {
+            return Ok(());
+        }
+        let snapshot = self.read_journal()?;
+        let op = snapshot
+            .current
+            .get(scope)
+            .map(|id| &snapshot.operations[id]);
+        let Some(guard) = self.execution_guard.clone() else {
+            return if op.is_none_or(|op| op.boot_guard.is_none()) {
+                Ok(())
+            } else {
+                Err(unavailable())
+            };
+        };
+        if guard.identity().worker_id != snapshot.worker_id {
+            return Err(unavailable());
+        }
+        let (box_id, process) = if let Some(fence) = self.fences.get(scope) {
+            let op = op.ok_or_else(unavailable)?;
+            if fence.operation != op.operation_id
+                || fence.generation != generation
+                || fence.box_id != op.box_id
+                || !op.active()
+                || op
+                    .boot_guard
+                    .as_ref()
+                    .is_none_or(|binding| &binding.guard != guard.identity())
+            {
+                return Err(unavailable());
+            }
+            (
+                op.box_id.clone(),
+                Some(op.started_process.clone().ok_or_else(unavailable)?),
+            )
+        } else {
+            if generation != 1 {
+                return Err(conflict());
+            }
+            (
+                self.bootstrap.get(scope).cloned().ok_or_else(conflict)?,
+                None,
+            )
+        };
+        let memory = self.entries.get(scope).map(|entry| entry.lease_expires_at);
+        let mut required = extend.or(memory).ok_or_else(unavailable)?;
+        if let Some(memory) = memory {
+            required = required.max(memory);
+        }
+        if extend.is_some() {
+            if let Some(op) = op {
+                required = required.max(
+                    system_time_from_unix_millis(op.lease_expires_unix_ms)
+                        .ok_or_else(unavailable)?,
+                );
+            }
+        }
+        check_guard_lease(
+            &guard,
+            scope,
+            generation,
+            &box_id,
+            process.as_ref(),
+            required,
+            extend.is_some(),
+        )
+        .await
+    }
+    async fn verify_saved_guard(
+        &self,
+        op: &worker_boxlite::persistence::Operation,
+        worker: &str,
+        running: bool,
+    ) -> Result<(), TerminalOperationError> {
+        let Some(guard) = &self.execution_guard else {
+            return if op.boot_guard.is_none() {
+                Ok(())
+            } else {
+                Err(unavailable())
+            };
+        };
+        if guard.identity().worker_id != worker
+            || op
+                .boot_guard
+                .as_ref()
+                .is_none_or(|binding| &binding.guard != guard.identity())
+        {
+            return Err(unavailable());
+        }
+        if running {
+            let process = op.started_process.as_ref().ok_or_else(unavailable)?;
+            let lease =
+                system_time_from_unix_millis(op.lease_expires_unix_ms).ok_or_else(unavailable)?;
+            check_guard_lease(
+                guard,
+                &op.scoped_session_id,
+                op.generation,
+                &op.box_id,
+                Some(process),
+                lease,
+                false,
+            )
+            .await?;
         }
         Ok(())
     }
@@ -232,6 +380,60 @@ impl SessionState {
     }
 }
 
+// Round up so the millisecond companion grant covers the full in-memory time.
+fn guard_deadline(time: SystemTime) -> Result<i64, TerminalOperationError> {
+    let duration = time
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_err(|_| unavailable())?;
+    let floor = i64::try_from(duration.as_millis()).map_err(|_| unavailable())?;
+    floor
+        .checked_add(i64::from(
+            !duration.subsec_nanos().is_multiple_of(1_000_000),
+        ))
+        .ok_or_else(unavailable)
+}
+async fn check_guard_lease(
+    guard: &worker_boxlite::persistence::LeaseGuardClient,
+    scope: &str,
+    generation: i64,
+    box_id: &str,
+    process: Option<&worker_boxlite::persistence::HostProcess>,
+    required: SystemTime,
+    extend: bool,
+) -> Result<(), TerminalOperationError> {
+    let required = guard_deadline(required)?;
+    let current = guard
+        .check_running(box_id)
+        .await
+        .map_err(|_| unavailable())?;
+    if current.scoped_session_id != scope
+        || current.generation != generation
+        || process.is_some_and(|process| process != &current.process)
+    {
+        return Err(unavailable());
+    }
+    if current.expires_unix_ms < required {
+        if !extend {
+            return Err(unavailable());
+        }
+        guard
+            .renew(
+                current.revision,
+                worker_boxlite::persistence::ExecutionLease {
+                    revision: current.revision.checked_add(1).ok_or_else(unavailable)?,
+                    expires_unix_ms: required,
+                    ..current
+                },
+            )
+            .await
+            .map_err(|_| unavailable())?;
+    }
+    if required <= to_unix_millis(SystemTime::now()) {
+        return Err(unavailable());
+    }
+    Ok(())
+}
+
 pub(crate) struct ProxyPermit {
     pub(crate) box_id: String,
     pub(crate) cancel: CancellationToken,
@@ -260,6 +462,26 @@ impl TerminalSessionManager {
         self.sessions.lock().await.journal.is_some()
     }
 
+    pub(crate) async fn install_execution_guard(
+        &self,
+        guard: Option<worker_boxlite::persistence::LeaseGuardClient>,
+    ) -> Result<(), TerminalOperationError> {
+        let mut state = self.sessions.lock().await;
+        if self.closed.load(Ordering::SeqCst) || state.failed {
+            return Err(unavailable());
+        }
+        if state.execution_guard.as_ref().is_some_and(|old| {
+            guard
+                .as_ref()
+                .is_none_or(|new| old.identity() != new.identity())
+        }) {
+            state.fail();
+            return Err(unavailable());
+        }
+        state.execution_guard = guard;
+        Ok(())
+    }
+
     pub(crate) async fn install_snapshot_journal(
         &self,
         journal: Arc<Journal>,
@@ -277,6 +499,20 @@ impl TerminalSessionManager {
         }
         for (scope, id) in &snapshot.current {
             let op = &snapshot.operations[id];
+            if !op.terminal()
+                && (op.active() || op.phase == Phase::Ready || op.boot_guard.is_some())
+                && state
+                    .verify_saved_guard(
+                        op,
+                        &snapshot.worker_id,
+                        op.active() || op.phase == Phase::Ready,
+                    )
+                    .await
+                    .is_err()
+            {
+                state.fail();
+                return Err(unavailable());
+            }
             if state.entries.get(scope).is_some_and(|s| {
                 !s.box_id.is_empty() && !op.box_id.is_empty() && s.box_id != op.box_id
             }) {
@@ -633,6 +869,14 @@ impl TerminalSessionManager {
         {
             return Err(conflict());
         }
+        if state
+            .verify_saved_guard(op, &snapshot.worker_id, true)
+            .await
+            .is_err()
+        {
+            state.fail();
+            return Err(unavailable());
+        }
         // SDK stop invalidates old LiteBox handles, including the ordinary
         // terminal cache. Refresh only the selected, already-running ID before
         // binding/rollback can be activated. This path never starts a box.
@@ -764,6 +1008,14 @@ impl TerminalSessionManager {
         {
             return Err(conflict());
         }
+        if state
+            .verify_saved_guard(op, &snapshot.worker_id, true)
+            .await
+            .is_err()
+        {
+            state.fail();
+            return Err(unavailable());
+        }
         let already_active = fence.active;
         let session = state.entries.get_mut(scope).ok_or_else(conflict)?;
         if already_active
@@ -847,9 +1099,16 @@ impl TerminalSessionManager {
         generation: i64,
         now: SystemTime,
     ) -> Result<ProxyPermit, ProxyTargetError> {
-        let state = self.sessions.lock().await;
+        let mut state = self.sessions.lock().await;
         if self.closed.load(Ordering::SeqCst)
             || state.check_access(scope.trim(), generation).is_err()
+        {
+            return Err(ProxyTargetError::SessionNotFound);
+        }
+        if state
+            .confirm_execution_guard(scope.trim(), generation, None)
+            .await
+            .is_err()
         {
             return Err(ProxyTargetError::SessionNotFound);
         }
@@ -857,7 +1116,10 @@ impl TerminalSessionManager {
             .entries
             .get(scope.trim())
             .ok_or(ProxyTargetError::SessionNotFound)?;
-        if session.destroying || session.box_id.is_empty() || session.lease_expires_at <= now {
+        if session.destroying
+            || session.box_id.is_empty()
+            || session.lease_expires_at <= SystemTime::now().max(now)
+        {
             return Err(ProxyTargetError::SessionNotFound);
         }
         let enabled_ports = self.backend.proxy_ports();
@@ -883,13 +1145,20 @@ impl TerminalSessionManager {
         generation: i64,
         now: SystemTime,
     ) -> bool {
-        let state = self.sessions.lock().await;
-        !self.closed.load(Ordering::SeqCst)
-            && state.check_access(scope, generation).is_ok()
-            && state
+        let mut state = self.sessions.lock().await;
+        if self.closed.load(Ordering::SeqCst)
+            || state.check_access(scope, generation).is_err()
+            || !state
                 .entries
                 .get(scope)
                 .is_some_and(|s| !s.destroying && s.box_id == box_id && s.lease_expires_at > now)
+        {
+            return false;
+        }
+        state
+            .confirm_execution_guard(scope, generation, None)
+            .await
+            .is_ok()
     }
 }
 

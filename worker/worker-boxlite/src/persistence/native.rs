@@ -58,6 +58,10 @@ impl NativeRuntime {
         self
     }
 
+    pub fn execution_guard(&self) -> Option<&super::LeaseGuardClient> {
+        self.execution_guard.as_ref()
+    }
+
     fn boot_executable(&self, box_id: &str, create: bool) -> Result<super::BootExecutable> {
         let config = read_config(&self.home, box_id)?;
         if !config.options.advanced.security.jailer_enabled

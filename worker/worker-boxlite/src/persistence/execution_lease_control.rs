@@ -60,6 +60,9 @@ struct Request {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 enum Command {
+    CheckRunning {
+        box_id: String,
+    },
     PrepareBoot {
         authorization: BootAuthorization,
     },
@@ -98,6 +101,7 @@ struct Response {
     deny_unknown_fields
 )]
 enum Reply {
+    Running(ExecutionLease),
     BootPrepared(BootAuthorization),
     BootStatus(Option<BootAuthorization>),
     Ready,
@@ -503,6 +507,9 @@ async fn handle(
         tokio::task::spawn_blocking(move || {
             let _job = job;
             let result = match request.command {
+                Command::CheckRunning { box_id } => {
+                    ledger.check_running(&box_id).map(Reply::Running)
+                }
                 Command::PrepareBoot { authorization } => {
                     ledger.prepare_boot(authorization).map(Reply::BootPrepared)
                 }
@@ -662,6 +669,25 @@ impl LeaseGuardClient {
             wanted,
         )
         .await
+    }
+    pub async fn check_running(&self, id: &str) -> Result<ExecutionLease> {
+        match self
+            .call(Command::CheckRunning { box_id: id.into() })
+            .await?
+        {
+            Reply::Running(lease) => {
+                lease.validate()?;
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|_| Error::Unavailable)?
+                    .as_millis();
+                if lease.box_id != id || lease.revoked || lease.expires_unix_ms as u128 <= now {
+                    return Err(Error::Unavailable);
+                }
+                Ok(lease)
+            }
+            _ => Err(Error::Unavailable),
+        }
     }
     pub async fn status(&self, id: &str) -> Result<Option<ExecutionLease>> {
         match self.call(Command::Status { box_id: id.into() }).await? {

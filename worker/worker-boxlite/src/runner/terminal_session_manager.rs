@@ -690,7 +690,9 @@ impl TerminalSessionManager {
             ));
         }
         sessions.check_command_access(&session_id, req.generation, req.connection_id.as_deref())?;
-        sessions.persist_lease(&session_id, req.generation, lease_target)?;
+        sessions
+            .persist_lease(&session_id, req.generation, lease_target)
+            .await?;
         let Some(session) = sessions.get_mut(&session_id) else {
             return Err(TerminalExecError {
                 code: TERMINAL_EXEC_CODE_SESSION_NOT_FOUND.to_owned(),
@@ -1096,7 +1098,9 @@ impl TerminalSessionManager {
         {
             let mut sessions = self.sessions.lock().await;
             state_recovery_allowed(&sessions, session_id, generation)?;
-            sessions.persist_lease(session_id, generation, lease_expires_at)?;
+            sessions
+                .persist_lease(session_id, generation, lease_expires_at)
+                .await?;
             if let Some(session) = sessions.get_mut(session_id) {
                 if session.destroying || session.box_id.trim().is_empty() {
                     return Err(TerminalOperationError::ExecutionFailed(
@@ -1276,7 +1280,9 @@ impl TerminalSessionManager {
             ));
         }
         sessions.check_command_access(&session_id, generation, connection_id)?;
-        sessions.persist_lease(&session_id, generation, lease_target)?;
+        sessions
+            .persist_lease(&session_id, generation, lease_target)
+            .await?;
         if session_id.is_empty() {
             return self.insert_pending_session(
                 &mut sessions,
@@ -1379,6 +1385,9 @@ impl TerminalSessionManager {
             ));
         }
         sessions.check_command_access(session_id, generation, connection_id)?;
+        sessions
+            .confirm_execution_guard(session_id, generation, None)
+            .await?;
         match sessions.get_mut(session_id) {
             Some(session) if !session.destroying => {
                 if session.inflight >= self.session_max_inflight {

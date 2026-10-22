@@ -898,3 +898,7 @@ async fn retiring_managed_capacity_is_not_counted_as_a_second_virtual_slot() {
     assert_eq!(f.manager.active_session_count().await, 0);
     f.manager.close_preserving().await;
 }
+
+#[cfg(target_os = "macos")]
+#[path = "terminal_persistence_guard_tests.rs"]
+mod guard;

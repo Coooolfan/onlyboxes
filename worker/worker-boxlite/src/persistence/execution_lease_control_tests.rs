@@ -210,6 +210,29 @@ mod native {
     }
 
     #[tokio::test]
+    async fn running_checks_reject_a_dead_writer_without_erasing_status() {
+        let root = Root::new();
+        let ledger = root.ledger();
+        let mut child = Child::new();
+        let lease = child.lease(10_000);
+        ledger.adopt(lease.clone()).unwrap();
+        let server = LeaseGuardServer::bind(ledger.clone(), root.0.join("rpc"))
+            .await
+            .unwrap();
+        let client = LeaseGuardClient::bind(root.socket(), server.identity().clone());
+        let shutdown = CancellationToken::new();
+        let task = tokio::spawn(server.run(shutdown.clone()));
+        assert_eq!(client.check_running(&lease.box_id).await, Ok(lease.clone()));
+        assert_eq!(ledger.status(&lease.box_id).unwrap(), Some(lease.clone()));
+        child.0.kill().unwrap();
+        child.exited().await;
+        assert!(client.check_running(&lease.box_id).await.is_err());
+        assert_eq!(client.status(&lease.box_id).await.unwrap(), Some(lease));
+        shutdown.cancel();
+        task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
     async fn expiry_survives_slow_connections_and_a_lost_adoption_reply() {
         let root = Root::new();
         let ledger = root.ledger();

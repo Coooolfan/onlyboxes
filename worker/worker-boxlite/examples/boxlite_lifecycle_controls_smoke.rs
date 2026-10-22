@@ -389,6 +389,20 @@ async fn main() -> Result<()> {
         println!("PASS: corrupted same-node caches are rejected and restore downloads the same committed reference before starting");
         value(control_at(&dispatcher, "permanently-deleted-target", 4, Action::Activate, Control::default()).await?)?;
         if manager.execute(exec(4, "cat /source-control-data")).await?.stdout != "preserved" { return Err("second restore lost snapshot bytes".into()); }
+        let explicit = manager.renew_lease(runner::terminal_session_manager::TerminalLeaseRenewRequest {
+            session_id:SCOPE.into(),generation:4,connection_id:Some(EPOCH.into()),lease_ttl_sec:600,
+        }).await?;
+        let confirmed = execution_guard.as_ref().unwrap().client.check_running(&final_ready.instance_id).await?;
+        if confirmed.revision <= guarded_lease.revision || confirmed.expires_unix_ms < explicit.lease_expires_unix_ms
+            || confirmed.expires_unix_ms < journal.snapshot()?.operations["permanently-deleted-target"].lease_expires_unix_ms {
+            return Err("ordinary execution or explicit renewal outlived its companion grant".into());
+        }
+        let resource = manager.resolve_resource(runner::terminal_session_manager::TerminalResourceRequest {
+            session_id:SCOPE.into(),generation:4,connection_id:Some(EPOCH.into()),file_path:"/source-control-data".into(),
+            action:"read".into(),signed_url:String::new(),headers:Default::default(),deadline_unix_ms:now_ms()+30_000,
+        }).await?;
+        if resource.blob != b"preserved" {return Err("guarded resource access lost restored bytes".into());}
+        println!("PASS: restored-session execution, explicit lease renewal and resource reads require the live companion; its confirmed CAS deadline covers journal and local acknowledgements");
         let purge = Control { purge_session:true, restore_spec:Some(spec.clone()), ..Default::default() };
         let deleted = value(control_at(&dispatcher, "permanent-session-deletion", 5, Action::Cancel, purge.clone()).await?)?;
         let replay = value(control_at(&dispatcher, "permanent-session-deletion", 5, Action::Cancel, purge).await?)?;

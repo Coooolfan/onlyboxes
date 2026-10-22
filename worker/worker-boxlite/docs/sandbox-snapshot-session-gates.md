@@ -31,7 +31,13 @@ Console 到 Worker 的 `terminalExec`、`terminalLeaseRenew` 和 `terminalResour
 
 ## lease、容量与清理
 
-已有 active journal 操作的执行与续期，在提高本地 lease 前先持久化同一操作、generation 和 Box ID 的绝对到期时间。写入失败会关闭门禁，不能返回续期成功。最初 probe 只固定 ID，后续 source claim 才记录其操作 lease；普通会话继续使用现有 lease 行为。独立于 Worker 进程的 lease 强制执行尚未接入。
+配置独立守护器后，受管理会话的执行、显式续期和恢复先记录同一操作、generation、Box ID 的绝对到期意图，再通过固定服务身份核对实际写入者；需要延长时执行 CAS 续租。守护器确认成功后才提高 Worker 内存中的期限。毫秒期限向上取整以覆盖内存中的完整时间精度；确认返回时还核对本地目标没有过期。已有较长期限时不生成新的 revision，但仍查询守护器，较短的续期请求不能绕过核验。
+
+资源访问、新预览和预览保活使用只读 `check_running`，同时检查有效期限与精确内核进程身份，不刷新 lease。守护器不可用、身份不匹配、实际写入者退出或租约撤销时关闭门禁并取消已有预览，保留原实例；不创建替代根。RPC 与内存期限发布在会话锁下串行，独立守护进程的到期执行不依赖这个锁。
+
+`NativeControlEngine` 从原生适配器安装同一守护器客户端，再安装 journal。重开带有受保护 active/ready 操作的 journal、绑定实例和显式激活，都要求相同服务身份及仍有效的写入者；缺失或替换客户端不能退回无守护器路径。journal 中尚未得到守护器确认的较远期限只表示意图，不能据此恢复执行权。
+
+初始 probe 固定 Box ID；在配置守护器的管理器中，generation `1` 请求还要求该 scope/Box ID 已有守护器确认的运行租约。管理器不自动采纳未知实例。未纳入持久化的 generation `0` 会话继续原有路径。Worker 首次创建/采纳、生产启动配置、全局 store/home 配对、原生清理后的租约释放及未知结果协调仍需接入，生产能力保持关闭。
 
 未绑定本地 session 的 source/target 操作也占用容量。target 从虚拟预留转为 ready 绑定时只计一次，普通清理进行中的容量也不会与同一操作重复相加。只有 journal 中已完成清理的终态才能通过 `detach_snapshot_instance` 释放保留的容量；该方法本身不删除原生实例。控制器必须先完成物理清理及其核对，再写入终态。
 
@@ -53,6 +59,8 @@ active 恢复仅查询 journal/probe 中固定的原生 ID，不按稳定名称�
 cargo test --locked
 cargo run --locked --example boxlite_session_gates_smoke
 ```
+
+macOS 管理器测试另使用真实 Unix 通道、独立到期线程和本次测试拥有的内核进程，核对普通执行/续期的确认顺序、较短续期的只读核验，以及守护器丢失时执行、资源、预览、恢复和激活均不开放、不延长内存期限或创建根。执行后端在这些测试中为可控实现；真实 VM 的恢复、续租和资源访问见[管理帧验收](sandbox-snapshot-control.md)。
 
 管理器测试覆盖并发排空、预览打开任务的延迟完成、执行失败时保留源数据、ready/active 边界、过期连接与 generation、lease 写入失败、固定 ID 恢复、永久删除及容量转换。
 
