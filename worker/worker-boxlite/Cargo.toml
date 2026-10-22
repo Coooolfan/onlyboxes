@@ -2,7 +2,12 @@
 name = "worker-boxlite"
 version = "0.1.0"
 edition = "2021"
+default-run = "worker-boxlite"
 build = "build.rs"
+
+[[bin]]
+name = "boxlite-lease-guard"
+path = "src/lease_guard_main.rs"
 
 [dependencies]
 async-trait = "0.1"

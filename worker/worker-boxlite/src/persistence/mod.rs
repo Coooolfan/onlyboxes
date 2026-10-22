@@ -3,6 +3,7 @@
 mod archive;
 mod cgroup;
 mod execution_lease;
+mod execution_lease_control;
 mod home;
 mod host_process;
 mod host_signal;
@@ -17,6 +18,7 @@ pub use archive::{
 };
 pub use cgroup::WriterCgroup;
 pub use execution_lease::{ExecutionLease, ExecutionLeaseLedger, LeaseEnforcement};
+pub use execution_lease_control::{LeaseGuardClient, LeaseGuardIdentity, LeaseGuardServer};
 pub use home::RuntimeHomeGuard;
 pub use host_process::HostProcess;
 pub use journal::{Journal, JournalState};

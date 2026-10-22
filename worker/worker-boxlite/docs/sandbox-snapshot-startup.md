@@ -61,6 +61,7 @@ BoxLite `0.10.7` 初始化时会更新恢复状态、回收没有数据库记录
 
 ```bash
 cargo test --locked
+cargo build --locked --bin boxlite-lease-guard
 cargo run --locked --example boxlite_home_guard_smoke
 cargo run --locked --example boxlite_lifecycle_controls_smoke
 ```

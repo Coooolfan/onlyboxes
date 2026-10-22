@@ -28,7 +28,7 @@ pub struct ExecutionLease {
     pub revoked: bool,
 }
 impl ExecutionLease {
-    fn validate(&self) -> Result<()> {
+    pub(super) fn validate(&self) -> Result<()> {
         if !valid_id(&self.box_id)
             || !valid_scope(&self.scoped_session_id)
             || self.generation <= 0
@@ -147,6 +147,7 @@ pub struct ExecutionLeaseLedger {
     watches: RwLock<BTreeMap<String, Arc<Mutex<Watch>>>>,
     poisoned: AtomicBool,
     cursor: AtomicUsize,
+    control_claimed: AtomicBool,
     persist: fn(&Path, &State) -> Result<()>,
 }
 impl ExecutionLeaseLedger {
@@ -293,12 +294,62 @@ impl ExecutionLeaseLedger {
             watches: RwLock::new(watches),
             poisoned: AtomicBool::new(false),
             cursor: AtomicUsize::new(0),
+            control_claimed: AtomicBool::new(false),
             persist: persist_state,
         })
     }
 
     pub fn store_id(&self) -> &str {
         &self.owner.store_id
+    }
+
+    pub(super) fn worker_id(&self) -> &str {
+        &self.owner.worker_id
+    }
+    pub(super) fn claim_control(&self) -> Result<()> {
+        self.control_claimed
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .map(|_| ())
+            .map_err(|_| Error::Unavailable)
+    }
+    pub(super) fn separate_control_dir(&self, directory: &Path) -> bool {
+        !directory.starts_with(&self.root) && !self.root.starts_with(directory)
+    }
+    pub(super) fn control_available(&self) -> Result<()> {
+        self.available()
+    }
+    pub(super) fn close_admission(&self) {
+        self.poisoned.store(true, Ordering::SeqCst);
+    }
+    pub(super) fn writers_stopped(&self) -> Result<bool> {
+        let slots: Vec<_> = self
+            .watches
+            .read()
+            .map_err(|_| Error::Unavailable)?
+            .values()
+            .cloned()
+            .collect();
+        for slot in slots {
+            if !slot
+                .lock()
+                .map_err(|_| Error::Unavailable)?
+                .process
+                .writers_exited()?
+            {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+    #[cfg(test)]
+    pub(super) fn hold_mutations_for_test(
+        &self,
+        ready: std::sync::mpsc::Sender<()>,
+        release: std::sync::mpsc::Receiver<()>,
+    ) {
+        let _state = self.state.lock().unwrap();
+        ready.send(()).unwrap();
+        let _ = release.recv_timeout(Duration::from_secs(5));
     }
 
     pub fn status(&self, id: &str) -> Result<Option<ExecutionLease>> {

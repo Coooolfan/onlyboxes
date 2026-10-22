@@ -17,7 +17,7 @@ mod runner;
 use serde::{Deserialize, Serialize};
 use std::{os::unix::fs::PermissionsExt, path::Path, sync::Arc, time::Duration};
 use worker_boxlite::persistence::{
-    terminal_name, ExecutionLease, ExecutionLeaseLedger, RuntimeHomeGuard,
+    terminal_name, ExecutionLease, LeaseGuardClient, RuntimeHomeGuard,
 };
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 const WORKER: &str = "home-guard-fixture-worker";
@@ -55,49 +55,6 @@ fn private(path: &Path) -> Result<()> {
     Ok(())
 }
 async fn child(mode: &str, root: &Path) -> Result<()> {
-    if mode == "lease-guard" {
-        let record: Record = serde_json::from_slice(&std::fs::read(root.join("ready.json"))?)?;
-        let ledger = ExecutionLeaseLedger::open(root.join("execution-leases"), WORKER)?;
-        let initial = ledger.adopt(ExecutionLease {
-            box_id: record.id,
-            scoped_session_id: SCOPE.into(),
-            generation: 1,
-            revision: 1,
-            expires_unix_ms: now_ms() + 1000,
-            process: record.writer,
-            revoked: false,
-        })?;
-        let renewed = ExecutionLease {
-            revision: 2,
-            expires_unix_ms: initial.expires_unix_ms + 4000,
-            ..initial.clone()
-        };
-        let lease = ledger.renew(1, renewed)?;
-        let receipt = LeaseReady {
-            store_id: ledger.store_id().into(),
-            initial_expiry: initial.expires_unix_ms,
-            lease,
-        };
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut output = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(root.join("lease-ready.pending"))?;
-        output.write_all(&serde_json::to_vec(&receipt)?)?;
-        output.sync_all()?;
-        drop(output);
-        std::fs::rename(
-            root.join("lease-ready.pending"),
-            root.join("lease-ready.json"),
-        )?;
-        std::fs::File::open(root)?.sync_all()?;
-        loop {
-            ledger.enforce()?;
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
-    }
     let home = root.join("sdk");
     let state = root.join("state");
     if mode == "reject-unguarded" {
@@ -293,6 +250,23 @@ async fn main() -> Result<()> {
     if args.len() == 3 {
         return child(args[1].to_str().ok_or("invalid mode")?, Path::new(&args[2])).await;
     }
+    let helper = std::env::var_os("BOXLITE_LEASE_GUARD_BINARY")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::env::current_exe()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("boxlite-lease-guard")
+        });
+    if !helper.is_file() {
+        return Err("build the boxlite-lease-guard companion binary before this fixture".into());
+    }
+    let control = std::path::PathBuf::from("/tmp")
+        .join(format!("obx-ng-{}", &uuid::Uuid::new_v4().to_string()[..8]));
+    private(&control)?;
     let root = std::env::temp_dir().join(format!(
         "onlyboxes-home-guard-native-{}",
         uuid::Uuid::new_v4()
@@ -312,14 +286,18 @@ async fn main() -> Result<()> {
             if started.elapsed()>Duration::from_secs(120) { return Err("owned SDK child did not become ready".into()); }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        guardian=Some(Guardian(std::process::Command::new(&exe).arg("lease-guard").arg(&root).spawn()?));
+        guardian=Some(Guardian(std::process::Command::new(&helper).arg("--state-dir").arg(root.join("execution-leases")).arg("--socket-dir").arg(&control).arg("--worker-id").arg(WORKER).spawn()?));
         let guard_deadline=std::time::Instant::now()+Duration::from_secs(10);
-        while !root.join("lease-ready.json").exists() {
-            if guardian.as_mut().unwrap().0.try_wait()?.is_some() || std::time::Instant::now()>=guard_deadline {return Err("independent guardian did not acknowledge its durable grant".into());}
+        let identity=loop {
+            if guardian.as_mut().unwrap().0.try_wait()?.is_some() || std::time::Instant::now()>=guard_deadline {return Err("independent guardian did not become ready".into());}
+            if let Ok(identity)=LeaseGuardClient::discover(control.join("control.sock"),WORKER,None).await{break identity;}
             tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        let receipt:LeaseReady=serde_json::from_slice(&std::fs::read(root.join("lease-ready.json"))?)?;
-        if receipt.lease.revision!=2 || receipt.lease.expires_unix_ms<=receipt.initial_expiry || receipt.store_id.is_empty() {return Err("incomplete renewal receipt".into());}
+        };
+        let client=LeaseGuardClient::bind(control.join("control.sock"),identity.clone());
+        let record:Record=serde_json::from_slice(&std::fs::read(root.join("ready.json"))?)?;
+        let initial=client.adopt(ExecutionLease{box_id:record.id,scoped_session_id:SCOPE.into(),generation:1,revision:1,expires_unix_ms:now_ms()+2000,process:record.writer,revoked:false}).await?;
+        let lease=client.renew(1,ExecutionLease{revision:2,expires_unix_ms:initial.expires_unix_ms+4000,..initial.clone()}).await?;
+        let receipt=LeaseReady{store_id:identity.store_id,initial_expiry:initial.expires_unix_ms,lease};
         worker.kill()?; worker.wait()?;
         run(&exe,"reject-unguarded",&root)?;
         run(&exe,"reopen",&root)?;
@@ -342,6 +320,16 @@ async fn main() -> Result<()> {
         if !root.join("sdk/boxes").join(&record.id).join("disks/disk.qcow2").is_file() {return Err("exact writer stop removed the retained guest disk".into());}
         if guardian.as_mut().unwrap().0.try_wait()?.is_some() {return Err("expiry depended on the dead issuer instead of the independent guardian".into());}
         println!("PASS: an independent guardian confirms durable adoption/renewal, preserves the live background writer past the original deadline, then stops the pinned VM at the renewed lease after issuer SIGKILL and retains its guest disk");
+        let pid=guardian.as_ref().unwrap().0.id();
+        // SAFETY: the owned, unreaped helper reserves its PID until this parent waits.
+        if unsafe{libc::kill(pid as i32,libc::SIGTERM)}!=0{return Err("guardian shutdown signal failed".into());}
+        let closed=std::time::Instant::now()+Duration::from_secs(5);
+        loop {
+            if let Some(status)=guardian.as_mut().unwrap().0.try_wait()? {if !status.success(){return Err("guardian shutdown failed".into());}break;}
+            if std::time::Instant::now()>=closed{return Err("guardian did not drain after expiry".into());}
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        guardian.take();
         run(&exe,"cleanup-residue",&root)?;
         run(&exe,"recover-cleanup",&root)?;
         println!("PASS: new-process startup removes only authorized DB-first residue using real VM exit proofs, then cleanup replay preserves native fence IDs");
@@ -363,6 +351,7 @@ async fn main() -> Result<()> {
         Ok(())
     };
     drop(guardian);
+    let _ = std::fs::remove_dir_all(&control);
     if result.is_ok() && cleanup.is_ok() {
         std::fs::remove_dir_all(&root)?;
     } else {
