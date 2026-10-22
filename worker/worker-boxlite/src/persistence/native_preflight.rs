@@ -17,6 +17,11 @@ pub(super) fn scan_home(
     let mut known_names = BTreeSet::new();
     let mut markers = BTreeMap::new();
     for op in journal.operations.values() {
+        if let Some(executable) = &op.boot_executable {
+            executable
+                .validate_home(home, &op.box_id)
+                .map_err(|_| NativeError::Conflict)?;
+        }
         for process in op
             .source_process
             .iter()

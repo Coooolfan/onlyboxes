@@ -4,6 +4,37 @@ use super::*;
 use crate::persistence::{Error, Operation};
 
 impl NativeRuntime {
+    /// Materialize and pin the trusted per-box shim before a controlled boot.
+    /// This prepares evidence, but does not grant a lease or start an instance.
+    pub async fn prepare_boot_executable(
+        &self,
+        journal: &Journal,
+        operation: &str,
+    ) -> Result<crate::persistence::BootExecutable> {
+        let state = journal.snapshot().map_err(journal_error)?;
+        let kind = state
+            .operations
+            .get(operation)
+            .ok_or(NativeError::Conflict)?
+            .kind;
+        let op = current_operation(journal, operation, kind)?;
+        let inspected = self.inspect_start(journal, operation, kind).await?;
+        if boot_action(&op, inspected.status)? != BootAction::Start {
+            return Err(NativeError::Conflict);
+        }
+        if kind == Kind::Source
+            && (!op.source_stop_confirmed
+                || !op
+                    .source_process
+                    .as_ref()
+                    .ok_or(NativeError::Conflict)?
+                    .writers_exited()
+                    .map_err(journal_error)?)
+        {
+            return Err(NativeError::Conflict);
+        }
+        self.boot_executable(&op.box_id, true)
+    }
     /// Caller serializes this scope, keeps admission closed and owns this task
     /// through SDK completion, even after request cancellation. The absolute
     /// lease comes from Console authority; this method never invents a renewal.
@@ -67,6 +98,11 @@ impl NativeRuntime {
                 return Err(NativeError::Conflict);
             }
         }
+        let executable = if action == BootAction::Start {
+            Some(self.prepare_boot_executable(journal, operation).await?)
+        } else {
+            None
+        };
         let running = if action == BootAction::Reuse {
             let process = read_shim_process(
                 &self.home,
@@ -106,6 +142,9 @@ impl NativeRuntime {
                 }
                 current.lease_expires_unix_ms = lease;
                 current.start_attempted = true;
+                if let Some(executable) = &executable {
+                    current.boot_executable = Some(executable.clone());
+                }
                 if let Some(process) = &running {
                     current.started_process = Some(process.clone());
                 }
@@ -135,6 +174,24 @@ impl NativeRuntime {
             &op.box_id,
             started.pid.ok_or(NativeError::Conflict)?,
         )?;
+        if let Some(executable) = &executable {
+            let writers = executable.discover().map_err(journal_error)?;
+            #[cfg(target_os = "macos")]
+            let matched = writers.iter().any(|writer| writer == &process);
+            #[cfg(target_os = "linux")]
+            let matched = process.writer_cgroup.is_some()
+                && writers.iter().any(|writer| {
+                    writer.writer_cgroup == process.writer_cgroup
+                        && writer.host_id == process.host_id
+                        && writer.boot_id == process.boot_id
+                        && writer.process_namespace == process.process_namespace
+                });
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            let matched = false;
+            if !matched {
+                return Err(NativeError::Conflict);
+            }
+        }
         journal
             .update(operation, |current| {
                 if !same_operation(&op, current)

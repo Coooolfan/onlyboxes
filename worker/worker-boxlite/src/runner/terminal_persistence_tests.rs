@@ -282,6 +282,7 @@ fn target() -> Operation {
         source_stop_confirmed: false,
         start_attempted: false,
         started_process: None,
+        boot_executable: None,
         lease_expires_unix_ms: 0,
         staging_bytes: 4096,
         snapshot_committed: false,

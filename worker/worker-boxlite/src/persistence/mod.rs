@@ -1,6 +1,7 @@
 //! Private lifecycle records. Transfer grants never belong in durable state.
 
 mod archive;
+mod boot_executable;
 mod cgroup;
 mod execution_lease;
 mod execution_lease_control;
@@ -16,6 +17,7 @@ mod types;
 pub use archive::{
     canonicalize_export, prepare_import_archive, verify_archive, ArchiveError, ArchiveLimits,
 };
+pub use boot_executable::BootExecutable;
 pub use cgroup::WriterCgroup;
 pub use execution_lease::{ExecutionLease, ExecutionLeaseLedger, LeaseEnforcement};
 pub use execution_lease_control::{LeaseGuardClient, LeaseGuardIdentity, LeaseGuardServer};

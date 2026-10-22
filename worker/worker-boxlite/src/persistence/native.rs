@@ -50,6 +50,36 @@ pub struct NativeRuntime {
 }
 
 impl NativeRuntime {
+    fn boot_executable(&self, box_id: &str, create: bool) -> Result<super::BootExecutable> {
+        let config = read_config(&self.home, box_id)?;
+        if !config.options.advanced.security.jailer_enabled
+            || config.options.advanced.security.sandbox_profile.is_some()
+        {
+            return Err(NativeError::Unsupported);
+        }
+        let source =
+            boxlite::util::find_binary("boxlite-shim").map_err(|_| NativeError::Unavailable)?;
+        super::BootExecutable::prepare(&self.home, box_id, &source, create).map_err(|error| {
+            match error {
+                super::Error::Conflict => NativeError::Conflict,
+                super::Error::Unavailable => NativeError::Unavailable,
+            }
+        })
+    }
+
+    /// Read-only executable evidence for an original running session. No
+    /// missing executable is created around an already-running process.
+    pub async fn original_boot_executable(
+        &self,
+        scope: &str,
+        box_id: &str,
+    ) -> Result<super::BootExecutable> {
+        let instance = self.inspect(scope, box_id).await?;
+        if instance.status != BoxStatus::Running {
+            return Err(NativeError::Conflict);
+        }
+        self.boot_executable(box_id, false)
+    }
     /// The SDK runtime must use this private, dedicated home. No directory or
     /// permissions are changed by inspection or this constructor.
     pub fn new(runtime: Arc<BoxliteRuntime>, home: impl AsRef<Path>) -> Result<Self> {

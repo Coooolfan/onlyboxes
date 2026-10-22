@@ -162,6 +162,8 @@ pub struct Operation {
     pub start_attempted: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_process: Option<HostProcess>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boot_executable: Option<super::BootExecutable>,
     #[serde(default)]
     pub lease_expires_unix_ms: i64,
     #[serde(default)]
@@ -245,6 +247,12 @@ impl Operation {
         }
         if let Some(process) = &self.started_process {
             process.validate_native_id(&self.box_id)?;
+        }
+        if let Some(executable) = &self.boot_executable {
+            executable.validate_metadata(&self.box_id)?;
+            if !self.start_attempted || !matches!(self.kind, Kind::Source | Kind::Target) {
+                return Err(Error::Conflict);
+            }
         }
         if (self.start_attempted
             && (!matches!(self.kind, Kind::Source | Kind::Target)
@@ -395,6 +403,7 @@ impl Operation {
             && (!self.source_stop_confirmed || next.source_stop_confirmed)
             && (!self.start_attempted || next.start_attempted)
             && (self.started_process.is_none() || self.started_process == next.started_process)
+            && (self.boot_executable.is_none() || self.boot_executable == next.boot_executable)
             && self.staging_bytes == next.staging_bytes
             && self.lease_ttl_sec == next.lease_ttl_sec
             && (self.box_id.is_empty() || self.box_id == next.box_id)

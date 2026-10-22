@@ -35,6 +35,8 @@ BoxLite `0.10.7` 初始化时会更新恢复状态、回收没有数据库记录
 - 真实终端/恢复实例必须保留 `auto_delete=0` 和 `detach=true`；名称占位按精确配置使用 `detach=false`，仅允许无 PID、无 guest 磁盘的 configured/stopped 状态。已登记 home 内尚未进入持久化操作的普通终端、以及 unnamed 单次 Python Box 仍按各自原有生命周期处理。
 - `.snapshot_pending` 不属于平台文件系统快照协议。发现后保留标记并拒绝启动，不让 SDK 自动重写其磁盘或 backing 路径。
 
+清单还校验操作中保存的 `BootExecutable` 属于配对 SDK home 和同一 Box ID。已完成操作可以保留绑定元数据而不保留已清理的 shim 文件。受控启动前的可执行文件准备和 PID 文件缺失时的内核识别见[执行租约说明](execution-lease.md#启动前的写入者识别)。
+
 清单证明资源属于可核对的本地状态，不授予执行权。SDK 打开后，恢复动作仍要检查完整规格、实际进程身份、generation、有效 lease、连接恢复 ACK 和显式激活；不会因为清单通过而启动停止实例或创建替代根。
 
 普通 SDK 初始化入口若发现受保护 home 的归属标记或锁文件，会明确拒绝，不能通过漏装 Guard 绕过校验。生产持久化配置接入仍须强制使用受保护入口；不能把删除全部归属信息后改用普通启动当作恢复方案。

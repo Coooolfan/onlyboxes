@@ -237,6 +237,7 @@ impl Journal {
                     || prior.staging_bytes != op.staging_bytes
                     || prior.lease_ttl_sec != op.lease_ttl_sec
                     || (op.source_process.is_some() && prior.source_process != op.source_process)
+                    || (op.boot_executable.is_some() && prior.boot_executable != op.boot_executable)
                     || (op.source_stop_confirmed && !prior.source_stop_confirmed)
                     || (op.kind == Kind::Target && prior.archive != op.archive)
                     || (!op.box_id.is_empty() && prior.box_id != op.box_id)
@@ -337,6 +338,7 @@ impl Journal {
                 source_stop_confirmed: false,
                 start_attempted: false,
                 started_process: None,
+                boot_executable: None,
                 lease_expires_unix_ms: 0,
                 staging_bytes: 0,
                 snapshot_committed: false,

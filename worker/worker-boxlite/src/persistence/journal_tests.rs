@@ -63,6 +63,7 @@ fn source() -> Operation {
         source_stop_confirmed: false,
         start_attempted: false,
         started_process: None,
+        boot_executable: None,
         lease_expires_unix_ms: 10000,
         staging_bytes: 1 << 20,
         snapshot_committed: false,
@@ -1140,4 +1141,68 @@ async fn stopped_metadata_without_captured_process_identity_is_insufficient() {
         Err(crate::persistence::NativeError::Conflict)
     );
     assert!(!j.snapshot().unwrap().operations["suspend-1"].source_stop_confirmed);
+}
+
+#[test]
+fn boot_executable_is_durable_and_cannot_be_removed_or_rebound() {
+    let root = Root::new();
+    let home = root.0.join("native");
+    private_directory(&home).unwrap();
+    private_directory(&home.join("boxes")).unwrap();
+    let op = source();
+    private_directory(&home.join("boxes").join(&op.box_id)).unwrap();
+    let executable = crate::persistence::BootExecutable::prepare(
+        &home,
+        &op.box_id,
+        Path::new("/bin/sleep"),
+        true,
+    )
+    .unwrap();
+    let j = root.open();
+    let id = op.operation_id.clone();
+    j.claim(op).unwrap();
+    j.update(&id, |op| {
+        op.phase = Phase::RollingBack;
+        op.start_attempted = true;
+        op.boot_executable = Some(executable.clone());
+        Ok(())
+    })
+    .unwrap();
+    j.close().unwrap();
+    let j = root.open();
+    assert_eq!(
+        j.snapshot().unwrap().operations[&id].boot_executable,
+        Some(executable.clone())
+    );
+    assert_eq!(
+        crate::persistence::native::preflight_home(&root.0, &j.snapshot().unwrap()),
+        Err(crate::persistence::native::NativeError::Conflict)
+    );
+    assert_eq!(
+        j.update(&id, |op| {
+            op.boot_executable = None;
+            Ok(())
+        }),
+        Err(Error::Conflict)
+    );
+    let mut value = serde_json::to_value(&executable).unwrap();
+    value["box_id"] = "other_box".into();
+    let other = serde_json::from_value(value).unwrap();
+    assert_eq!(
+        j.update(&id, |op| {
+            op.boot_executable = Some(other);
+            Ok(())
+        }),
+        Err(Error::Conflict)
+    );
+    let mut value = serde_json::to_value(&executable).unwrap();
+    value["sha256"] = "e".repeat(64).into();
+    let changed = serde_json::from_value(value).unwrap();
+    assert_eq!(
+        j.update(&id, |op| {
+            op.boot_executable = Some(changed);
+            Ok(())
+        }),
+        Err(Error::Conflict)
+    );
 }

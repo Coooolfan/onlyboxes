@@ -29,6 +29,7 @@ struct Record {
     pid: u32,
     start_time: Option<u64>,
     writer: worker_boxlite::persistence::HostProcess,
+    executable: worker_boxlite::persistence::BootExecutable,
 }
 #[derive(Serialize, Deserialize)]
 struct LeaseReady {
@@ -178,6 +179,12 @@ async fn child(mode: &str, root: &Path) -> Result<()> {
             home.join("boxes").join(&id).join("shim.pid"),
         )?)?;
         let record = Record {
+            executable: worker_boxlite::persistence::NativeRuntime::new(
+                Arc::new(sdk.clone()),
+                &home,
+            )?
+            .original_boot_executable(SCOPE, &id)
+            .await?,
             writer: worker_boxlite::persistence::NativeRuntime::new(Arc::new(sdk.clone()), &home)?
                 .inspect_writer(SCOPE, &id)
                 .await?,
@@ -308,6 +315,13 @@ async fn main() -> Result<()> {
         println!("PASS: startup census rejects an orphan before SDK cleanup and preserves its bytes");
         std::fs::remove_dir_all(&orphan)?;
         let record:Record=serde_json::from_slice(&std::fs::read(root.join("ready.json"))?)?;
+        let pid_file=root.join("sdk/boxes").join(&record.id).join("shim.pid");
+        let saved=root.join("saved-shim.pid");
+        std::fs::rename(&pid_file,&saved)?;
+        let found=record.executable.discover()?;
+        std::fs::rename(&saved,&pid_file)?;
+        if !found.contains(&record.writer){return Err("kernel discovery lost the native VM when its PID file was unavailable".into());}
+        println!("PASS: a durable per-box executable identifies the same real VM through kernel process evidence while shim.pid is absent");
         while now_ms()<=receipt.initial_expiry+50 {tokio::time::sleep(Duration::from_millis(10)).await;}
         if record.writer.writers_exited()? {return Err("stale initial deadline stopped a renewed writer".into());}
         let remaining=receipt.lease.expires_unix_ms.saturating_sub(now_ms()).max(0) as u64;

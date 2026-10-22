@@ -14,6 +14,41 @@ unsafe extern "C" {
     fn task_name_for_pid(task: u32, pid: i32, name: *mut u32) -> i32;
     fn mach_port_deallocate(task: u32, name: u32) -> i32;
     fn proc_signal_with_audittoken(token: *const AuditToken, signal: i32) -> i32;
+    fn proc_pidpath_audittoken(
+        token: *const AuditToken,
+        buffer: *mut libc::c_void,
+        size: u32,
+    ) -> i32;
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn executable(pid: u32, version: u32) -> Result<std::path::PathBuf, Error> {
+    use std::os::unix::ffi::OsStringExt;
+    if pid <= 1 || pid > i32::MAX as u32 || version == 0 {
+        return Err(Error::Conflict);
+    }
+    let mut token = AuditToken { values: [0; 8] };
+    token.values[5] = pid;
+    token.values[7] = version;
+    let mut bytes = vec![0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+    // SAFETY: the pinned audit token and writable buffer match the public
+    // libproc ABI. The kernel rejects a recycled PID/version atomically.
+    let length =
+        unsafe { proc_pidpath_audittoken(&token, bytes.as_mut_ptr().cast(), bytes.len() as u32) };
+    if length <= 0 || length as usize >= bytes.len() {
+        return Err(Error::Unavailable);
+    }
+    let end = bytes
+        .iter()
+        .position(|byte| *byte == 0)
+        .ok_or(Error::Unavailable)?;
+    if end == 0 {
+        return Err(Error::Unavailable);
+    }
+    bytes.truncate(end);
+    Ok(std::path::PathBuf::from(std::ffi::OsString::from_vec(
+        bytes,
+    )))
 }
 
 #[cfg(target_os = "macos")]
