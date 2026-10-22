@@ -22,6 +22,7 @@ pub(super) struct SessionState {
     entries: HashMap<String, TerminalSession>,
     pub(super) fences: HashMap<String, Fence>,
     pub(super) bootstrap: HashMap<String, String>,
+    pub(super) pending_adoptions: HashSet<String>,
     pub(super) journal: Option<Arc<Journal>>,
     pub(super) execution_guard: Option<worker_boxlite::persistence::LeaseGuardClient>,
     pub(super) protected_names: HashSet<String>,
@@ -82,7 +83,11 @@ impl SessionState {
         }
     }
     pub(super) fn preserve(&self, scope: &str) -> bool {
-        self.failed || self.fences.get(scope).is_some_and(|f| f.held)
+        self.failed
+            || self.pending_adoptions.contains(scope)
+            || self.execution_guard.is_some()
+                && (self.bootstrap.contains_key(scope) || self.fences.contains_key(scope))
+            || self.fences.get(scope).is_some_and(|f| f.held)
     }
     pub(super) fn additional_reservations(&self, retiring: &HashMap<String, u32>) -> u32 {
         self.fences
@@ -96,6 +101,20 @@ impl SessionState {
                         .is_some_and(|s| s.capacity_reserved)
             })
             .count()
+            .saturating_add(
+                self.bootstrap
+                    .iter()
+                    .filter(|(scope, _)| {
+                        self.execution_guard.is_some()
+                            && !self.fences.contains_key(*scope)
+                            && !retiring.contains_key(*scope)
+                            && !self
+                                .entries
+                                .get(*scope)
+                                .is_some_and(|s| s.capacity_reserved)
+                    })
+                    .count(),
+            )
             .min(u32::MAX as usize) as u32
     }
     pub(super) fn check_access(
@@ -106,7 +125,7 @@ impl SessionState {
         if self.failed {
             return Err(unavailable());
         }
-        if generation < 0 {
+        if generation < 0 || self.pending_adoptions.contains(scope) {
             return Err(conflict());
         }
         match self.fences.get(scope) {
@@ -130,6 +149,7 @@ impl SessionState {
                     || self.bootstrap.get(scope) != Some(&session.box_id)
                     || session.destroying
                     || session.box_id.is_empty()
+                    || session.persistence_fault
                     || session.lease_expires_at <= SystemTime::now()
                 {
                     return Err(conflict());
@@ -246,7 +266,9 @@ impl SessionState {
             .get(scope)
             .map(|id| &snapshot.operations[id]);
         let Some(guard) = self.execution_guard.clone() else {
-            return if op.is_none_or(|op| op.boot_guard.is_none()) {
+            return if op.is_none_or(|op| op.boot_guard.is_none())
+                && !snapshot.adoptions.contains_key(scope)
+            {
                 Ok(())
             } else {
                 Err(unavailable())
@@ -276,9 +298,13 @@ impl SessionState {
             if generation != 1 {
                 return Err(conflict());
             }
+            let adoption = snapshot.adoptions.get(scope).ok_or_else(unavailable)?;
+            if !adoption.confirmed || &adoption.guard != guard.identity() {
+                return Err(unavailable());
+            }
             (
                 self.bootstrap.get(scope).cloned().ok_or_else(conflict)?,
-                None,
+                Some(adoption.lease.process.clone()),
             )
         };
         let memory = self.entries.get(scope).map(|entry| entry.lease_expires_at);
@@ -381,7 +407,7 @@ impl SessionState {
 }
 
 // Round up so the millisecond companion grant covers the full in-memory time.
-fn guard_deadline(time: SystemTime) -> Result<i64, TerminalOperationError> {
+pub(super) fn guard_deadline(time: SystemTime) -> Result<i64, TerminalOperationError> {
     let duration = time
         .duration_since(SystemTime::UNIX_EPOCH)
         .map_err(|_| unavailable())?;
@@ -558,7 +584,37 @@ impl TerminalSessionManager {
                 }
             }
         }
+        let mut pending = HashSet::new();
         for (scope, id) in &snapshot.probes {
+            if !snapshot.current.contains_key(scope) {
+                if let Some(adoption) = snapshot.adoptions.get(scope) {
+                    let Some(guard) = state.execution_guard.clone() else {
+                        state.fail();
+                        return Err(unavailable());
+                    };
+                    if guard.identity() != &adoption.guard {
+                        state.fail();
+                        return Err(unavailable());
+                    }
+                    if adoption.confirmed {
+                        let live = guard.check_running(id).await.map_err(|_| unavailable());
+                        if !live.as_ref().is_ok_and(|live| {
+                            live.scoped_session_id == *scope
+                                && live.generation == 1
+                                && live.process == adoption.lease.process
+                                && live.expires_unix_ms >= adoption.lease.expires_unix_ms
+                        }) {
+                            state.fail();
+                            return Err(unavailable());
+                        }
+                    } else {
+                        pending.insert(scope.clone());
+                    }
+                } else if state.execution_guard.is_some() {
+                    state.fail();
+                    return Err(unavailable());
+                }
+            }
             if state.entries.get(scope).is_some_and(|s| s.box_id != *id) {
                 state.fail();
                 return Err(conflict());
@@ -566,11 +622,91 @@ impl TerminalSessionManager {
             names.insert(terminal_session_resource_name(scope));
         }
         state.bootstrap = snapshot.probes.into_iter().collect();
+        state.pending_adoptions = pending;
         state.fences = fences;
         state.protected_names = names;
         state.journal = Some(journal);
         state.connected = false;
         // A poisoned manager stays closed until reconstructed with a healthy journal.
+        Ok(())
+    }
+
+    // Recover only the recorded running ID for an inspect retry. The entry
+    // stays closed until adoption confirmation; this never starts a new VM.
+    pub(crate) async fn restore_initial_adoption(
+        &self,
+        adoption: &worker_boxlite::persistence::InitialAdoption,
+    ) -> Result<(), TerminalOperationError> {
+        let scope = &adoption.lease.scoped_session_id;
+        let id = &adoption.lease.box_id;
+        let mut state = self.sessions.lock().await;
+        if self.closed.load(Ordering::SeqCst) || state.failed {
+            return Err(unavailable());
+        }
+        let snapshot = state.read_journal()?;
+        if snapshot.current.contains_key(scope)
+            || snapshot.adoptions.get(scope) != Some(adoption)
+            || state.bootstrap.get(scope) != Some(id)
+            || state
+                .execution_guard
+                .as_ref()
+                .is_none_or(|guard| guard.identity() != &adoption.guard)
+        {
+            return Err(conflict());
+        }
+        if let Some(entry) = state.entries.get(scope) {
+            return if entry.box_id == *id && !entry.destroying {
+                Ok(())
+            } else {
+                Err(conflict())
+            };
+        }
+        let lease = if adoption.confirmed {
+            let live = state
+                .execution_guard
+                .as_ref()
+                .unwrap()
+                .check_running(id)
+                .await
+                .map_err(|_| unavailable())?;
+            if live.process != adoption.lease.process
+                || live.scoped_session_id != *scope
+                || live.generation != 1
+            {
+                return Err(conflict());
+            }
+            live.expires_unix_ms
+        } else {
+            adoption.lease.expires_unix_ms
+        };
+        if self
+            .backend
+            .recover_pinned_session_box(id)
+            .await?
+            .as_deref()
+            != Some(id)
+        {
+            return Err(conflict());
+        }
+        let (ready_tx, _) = watch::channel(SessionReadyState::Ready(id.clone()));
+        state.entries.insert(
+            scope.clone(),
+            TerminalSession {
+                session_id: scope.clone(),
+                box_id: id.clone(),
+                lease_expires_at: system_time_from_unix_millis(lease).ok_or_else(conflict)?,
+                inflight: 0,
+                destroying: false,
+                capacity_reserved: true,
+                ready_tx,
+                proxy_cancel: CancellationToken::new(),
+                proxy_inflight: Arc::new(AtomicU32::new(0)),
+                persistence_fault: false,
+            },
+        );
+        state.pending_adoptions.insert(scope.clone());
+        self.active_session_reservations
+            .fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
 
@@ -1169,6 +1305,9 @@ pub(super) fn state_recovery_allowed(
 ) -> Result<(), TerminalOperationError> {
     if state.failed {
         return Err(unavailable());
+    }
+    if state.pending_adoptions.contains(scope) {
+        return Err(conflict());
     }
     match state.fences.get(scope) {
         Some(f) if f.active && f.generation == generation && !f.box_id.is_empty() => Ok(()),

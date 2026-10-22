@@ -10,6 +10,7 @@ mod execution_retirement;
 mod home;
 mod host_process;
 mod host_signal;
+mod initial_adoption;
 mod journal;
 mod native;
 mod space;
@@ -27,6 +28,7 @@ pub use execution_lease_control::{LeaseGuardClient, LeaseGuardIdentity, LeaseGua
 pub use execution_retirement::{LeaseRetirement, RetirementStatus};
 pub use home::RuntimeHomeGuard;
 pub use host_process::HostProcess;
+pub use initial_adoption::InitialAdoption;
 pub use journal::{Journal, JournalState};
 pub use native::{
     guest_platform, target_name, terminal_name, NativeError, NativeInstance, NativeRuntime,

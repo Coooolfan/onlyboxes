@@ -1405,3 +1405,63 @@ fn cleanup_receipts_are_immutable_and_a_higher_delete_retains_the_original_ancho
     fs::write(path, serde_json::to_vec(&state).unwrap()).unwrap();
     assert!(Journal::open(root.journal(), "worker-a").is_err());
 }
+
+#[test]
+fn initial_adoption_replay_preserves_first_grant_and_requires_exact_confirmation() {
+    use crate::persistence::{ExecutionLease, HostProcess, InitialAdoption, LeaseGuardIdentity};
+    let root = Root::new();
+    let journal = root.open();
+    let process = HostProcess::current().unwrap();
+    let record = InitialAdoption {
+        guard: LeaseGuardIdentity {
+            worker_id: "worker-a".into(),
+            store_id: uuid::Uuid::new_v4().to_string(),
+            epoch_id: uuid::Uuid::new_v4().to_string(),
+            process: process.clone(),
+        },
+        lease: ExecutionLease {
+            box_id: source().box_id,
+            scoped_session_id: source().scoped_session_id,
+            generation: 1,
+            revision: 1,
+            expires_unix_ms: 10000,
+            process,
+            revoked: false,
+        },
+        confirmed: false,
+    };
+    assert_eq!(
+        journal.begin_initial_adoption(record.clone()).unwrap(),
+        record
+    );
+    let mut later = record.clone();
+    later.lease.expires_unix_ms += 10000;
+    assert_eq!(
+        journal.begin_initial_adoption(later.clone()).unwrap(),
+        record
+    );
+    assert!(journal.confirm_initial_adoption(&later).is_err());
+    let mut changed = record.clone();
+    changed.guard.epoch_id = uuid::Uuid::new_v4().to_string();
+    assert!(journal.begin_initial_adoption(changed).is_err());
+    let mut changed = record.clone();
+    changed.lease.process.start_time += 1;
+    assert!(journal.begin_initial_adoption(changed).is_err());
+    drop(journal);
+    let journal = root.open();
+    assert_eq!(
+        journal.snapshot().unwrap().adoptions[&record.lease.scoped_session_id],
+        record
+    );
+    journal.confirm_initial_adoption(&record).unwrap();
+    journal.confirm_initial_adoption(&record).unwrap();
+    let confirmed = journal.begin_initial_adoption(later).unwrap();
+    assert!(confirmed.confirmed);
+    assert_eq!(confirmed.lease, record.lease);
+    journal.claim(source()).unwrap();
+    assert!(journal.begin_initial_adoption(record.clone()).is_err());
+    assert!(journal.confirm_initial_adoption(&record).is_err());
+    drop(journal);
+    let journal = root.open();
+    assert!(journal.snapshot().unwrap().adoptions[&record.lease.scoped_session_id].confirmed);
+}

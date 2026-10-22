@@ -21,6 +21,8 @@ pub struct JournalState {
     pub current: BTreeMap<String, String>,
     pub operations: BTreeMap<String, Operation>,
     pub probes: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub adoptions: BTreeMap<String, super::InitialAdoption>,
 }
 
 impl JournalState {
@@ -69,6 +71,20 @@ impl JournalState {
                 return Err(Error::Unavailable);
             };
             if scope != &op.scoped_session_id {
+                return Err(Error::Unavailable);
+            }
+        }
+        for (scope, adoption) in &self.adoptions {
+            adoption.validate().map_err(|_| Error::Unavailable)?;
+            if scope != &adoption.lease.scoped_session_id
+                || adoption.guard.worker_id != worker
+                || !(self.probes.get(scope) == Some(&adoption.lease.box_id)
+                    || self.operations.values().any(|op| {
+                        op.scoped_session_id == *scope
+                            && (op.box_id == adoption.lease.box_id
+                                || op.cleanup_box_ids.contains(&adoption.lease.box_id))
+                    }))
+            {
                 return Err(Error::Unavailable);
             }
         }
@@ -159,6 +175,7 @@ impl Journal {
                 current: BTreeMap::new(),
                 operations: BTreeMap::new(),
                 probes: BTreeMap::new(),
+                adoptions: BTreeMap::new(),
             };
             persist_state(&root, &state)?;
             state
@@ -219,7 +236,10 @@ impl Journal {
         Ok(visit(&inner.state))
     }
 
-    fn transaction(&self, change: impl FnOnce(&mut JournalState) -> Result<()>) -> Result<()> {
+    pub(super) fn transaction(
+        &self,
+        change: impl FnOnce(&mut JournalState) -> Result<()>,
+    ) -> Result<()> {
         let mut inner = self.inner()?;
         let mut next = inner.state.clone();
         change(&mut next)?;

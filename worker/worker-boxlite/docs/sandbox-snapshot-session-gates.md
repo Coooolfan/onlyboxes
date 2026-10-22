@@ -37,7 +37,11 @@ Console 到 Worker 的 `terminalExec`、`terminalLeaseRenew` 和 `terminalResour
 
 `NativeControlEngine` 从原生适配器安装同一守护器客户端，再安装 journal。重开带有受保护 active/ready 操作的 journal、绑定实例和显式激活，都要求相同服务身份及仍有效的写入者；缺失或替换客户端不能退回无守护器路径。journal 中尚未得到守护器确认的较远期限只表示意图，不能据此恢复执行权。
 
-初始 probe 固定 Box ID；在配置守护器的管理器中，generation `1` 请求还要求该 scope/Box ID 已有守护器确认的运行租约。管理器不自动采纳未知实例。未纳入持久化的 generation `0` 会话继续原有路径。Worker 首次创建/采纳、生产启动配置、全局 store/home 配对、回收凭据维护及未知结果协调仍需接入，生产能力保持关闭。
+配置守护器后，首次 generation `1` Inspect 将当前会话已有的运行实例纳入持久化管理。journal 先固定原 Box ID、精确写入者、守护器身份和初始绝对期限，再调用守护器 adopt；确认前关闭 generation `0` / `1` 的普通入口。采纳未确认时，管理入口只允许 Inspect 重试及更高 generation 的永久删除，不能提前创建快照或回滚意图。重试使用首次记录的期限，不能通过重试延长授权、更换进程或重新启动实例。
+
+管理器重建后，Inspect 只附着已记录且仍运行的原 CID。确认过的记录使用守护器当前有效期限恢复本地状态，未确认的记录保留首次期限等待核对；缺失实例不会创建空白替代根。采纳中的根及已受守护器保护的根保留磁盘和容量：普通 janitor 或命令失败不能删除它们，停止写入与释放 owner 分别由独立租约和显式清理协议负责。
+
+未纳入持久化的 generation `0` 会话继续原有路径。首次 VM 创建前的守护授权、生产启动配置、全局 store/home 配对、回收凭据维护及未知结果协调仍需接入，生产能力保持关闭。
 
 未绑定本地 session 的 source/target 操作也占用容量。target 从虚拟预留转为 ready 绑定时只计一次，普通清理进行中的容量也不会与同一操作重复相加。只有 journal 中已完成清理的终态才能通过 `detach_snapshot_instance` 释放保留的容量；该方法本身不删除原生实例。控制器必须先完成物理清理及其核对，再写入终态。
 

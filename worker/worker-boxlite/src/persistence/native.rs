@@ -533,6 +533,8 @@ pub(super) mod stop;
 
 #[path = "native_boot_guard.rs"]
 mod boot_guard;
+#[path = "native_initial_adoption.rs"]
+mod initial_adoption;
 #[path = "native_start.rs"]
 mod start;
 

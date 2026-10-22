@@ -16,6 +16,15 @@ pub(super) fn scan_home(
     let mut expected = BTreeMap::new();
     let mut known_names = BTreeSet::new();
     let mut markers = BTreeMap::new();
+    for adoption in journal.adoptions.values() {
+        let process = &adoption.lease.process;
+        if process.host_id != host.host_id
+            || process.boot_id == host.boot_id
+                && process.process_namespace != host.process_namespace
+        {
+            return Err(NativeError::Conflict);
+        }
+    }
     for op in journal.operations.values() {
         if let Some(executable) = &op.boot_executable {
             executable

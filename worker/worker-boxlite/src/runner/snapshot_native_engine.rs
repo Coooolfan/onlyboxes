@@ -156,6 +156,16 @@ impl NativeControlEngine {
         if !state.connected || state.connection.as_deref() != Some(&action.connection) {
             return Err(ControlError::Conflict);
         }
+        if state
+            .pending_adoptions
+            .contains(&action.frame.scoped_session_id)
+            && action.frame.action != Action::Inspect as i32
+            && !(action.frame.action == Action::Cancel as i32
+                && action.payload.purge_session
+                && action.frame.generation > 1)
+        {
+            return Err(ControlError::Busy);
+        }
         Ok(())
     }
     async fn binding(&self, action: &ActionContext) -> Outcome<(String, i64)> {
@@ -243,7 +253,25 @@ impl NativeControlEngine {
         }
         let (id, lease) = match self.binding(action).await {
             Ok(binding) => binding,
-            Err(ControlError::Conflict) => return Ok(state_result("missing")),
+            Err(ControlError::Conflict) => {
+                if let Some(adoption) =
+                    state
+                        .adoptions
+                        .get(&action.frame.scoped_session_id)
+                        .filter(|_| {
+                            action.frame.generation == 1
+                                && !state.current.contains_key(&action.frame.scoped_session_id)
+                        })
+                {
+                    self.manager
+                        .restore_initial_adoption(adoption)
+                        .await
+                        .map_err(terminal_error)?;
+                    self.binding(action).await?
+                } else {
+                    return Ok(state_result("missing"));
+                }
+            }
             Err(e) => return Err(e),
         };
         if lease <= now_ms()? {
@@ -264,12 +292,35 @@ impl NativeControlEngine {
             if session.box_id != id || session.destroying {
                 return Err(ControlError::Conflict);
             }
-            self.journal
-                .probe(&action.frame.scoped_session_id, &id)
-                .map_err(journal_error)?;
-            sessions
-                .bootstrap
-                .insert(action.frame.scoped_session_id.clone(), id.clone());
+            let scope = &action.frame.scoped_session_id;
+            if let Some(guard) = self.native.execution_guard() {
+                let deadline =
+                    super::guard_deadline(session.lease_expires_at).map_err(terminal_error)?;
+                sessions.bootstrap.insert(scope.clone(), id.clone());
+                sessions.pending_adoptions.insert(scope.clone());
+                sessions.get(scope).unwrap().proxy_cancel.cancel();
+                let adoption = self
+                    .native
+                    .prepare_initial_adoption(&self.journal, scope, &id, deadline)
+                    .await
+                    .map_err(native_error)?;
+                self.native
+                    .confirm_initial_adoption(&self.journal, &adoption)
+                    .await
+                    .map_err(native_error)?;
+                let live = guard.check_running(&id).await.map_err(journal_error)?;
+                if live.expires_unix_ms < deadline {
+                    return Err(ControlError::Conflict);
+                }
+                sessions.pending_adoptions.remove(scope);
+                let session = sessions.get_mut(scope).ok_or(ControlError::Conflict)?;
+                if session.proxy_cancel.is_cancelled() {
+                    session.proxy_cancel = tokio_util::sync::CancellationToken::new();
+                }
+            } else {
+                self.journal.probe(scope, &id).map_err(journal_error)?;
+                sessions.bootstrap.insert(scope.clone(), id.clone());
+            }
         }
         Ok(ResultPayload {
             state: "running".into(),

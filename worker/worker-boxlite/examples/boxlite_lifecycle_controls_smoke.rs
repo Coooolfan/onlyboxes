@@ -169,19 +169,36 @@ async fn main() -> Result<()> {
         root.display()
     );
     let outcome: Result<()> = async {
-        let created=manager.execute(exec(0, "python -c \"from pathlib import Path; Path('/source-control-data').write_text('preserved')\"" )).await?;
-        let original=sdk.get_info(&worker_boxlite::persistence::terminal_name(SCOPE)).await?
-            .ok_or("original root is missing before adoption")?;
-        let writer=native.inspect_writer(SCOPE,original.id.as_str()).await?;
-        execution_guard.as_ref().unwrap().client.adopt(worker_boxlite::persistence::ExecutionLease {
-            box_id:original.id.to_string(),scoped_session_id:SCOPE.into(),generation:1,revision:1,
-            expires_unix_ms:created.lease_expires_unix_ms+1,process:writer,revoked:false,
-        }).await?;
-
+        manager.execute(exec(0, "python -c \"from pathlib import Path; Path('/source-control-data').write_text('preserved')\"" )).await?;
         let initial = value(control(&dispatcher, FIRST, Action::Inspect, Control::default()).await?)?;
         if initial.state != "running" { return Err("source inspection failed".into()); }
         let spec = initial.restore_spec.ok_or("spec missing")?;
         let id = initial.instance_id;
+        let adoption=journal.snapshot()?.adoptions.get(SCOPE).cloned().ok_or("initial inspect did not persist adoption")?;
+        let original=execution_guard.as_ref().unwrap().client.check_running(&id).await?;
+        if !adoption.confirmed || adoption.lease.box_id!=id || adoption.lease.process!=original.process
+            || original.revision!=1 {return Err("initial inspect did not confirm the original VM's independent lease".into());}
+        let replay=value(control(&dispatcher,FIRST,Action::Inspect,Control::default()).await?)?;
+        if replay.instance_id!=id || journal.snapshot()?.adoptions[SCOPE]!=adoption {
+            return Err("initial inspect replay changed the original writer or first deadline".into());
+        }
+        println!("PASS: initial inspect automatically adopts the existing VM, durably confirms its first grant and replays without a new writer or deadline");
+        dispatcher.close().await.map_err(|_| "initial dispatcher did not drain")?;
+        manager.close_preserving().await;
+        manager = TerminalSessionManager::from_config(&cfg);
+        let engine = NativeControlEngine::new(manager.clone(), journal.clone(), native.clone(), settings.clone()).await
+            .map_err(|_| "initial adoption reconstruction failed")?;
+        dispatcher = ControlDispatcher::new(engine, 2).map_err(|_| "initial dispatcher reconstruction failed")?;
+        dispatcher.begin_connection(EPOCH).await.map_err(|_| "initial reconstructed connection failed")?;
+        manager.protect_persistence_recovery(EPOCH, &[], &[]).await?;
+        manager.finish_persistence_recovery(EPOCH).await?;
+        dispatcher.finish_connection(EPOCH).map_err(|_| "initial reconstructed recovery failed")?;
+        let reconstructed = value(control(&dispatcher, FIRST, Action::Inspect, Control::default()).await?)?;
+        if reconstructed.instance_id != id || journal.snapshot()?.adoptions[SCOPE] != adoption
+            || execution_guard.as_ref().unwrap().client.check_running(&id).await?.process != original.process {
+            return Err("initial adoption reconstruction replaced the writer or first grant".into());
+        }
+        println!("PASS: manager reconstruction recovers the adopted original VM without creating or starting another instance");
         if manager.execute(exec(0, "stale-generation")).await.is_ok() { return Err("bootstrap accepted stale generation".into()); }
         let mut oversized = Control { restore_spec: Some(spec.clone()), max_bytes: 1 << 59, max_expanded_bytes: 1 << 59, ..Default::default() };
         rejected(control(&dispatcher, FIRST, Action::PrepareSnapshot, oversized.clone()).await?, "snapshot_quota_exceeded")?;

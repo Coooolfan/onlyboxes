@@ -47,7 +47,15 @@ impl Rig {
             .install_execution_guard(Some(client.clone()))
             .await
             .unwrap();
-        f.journal.probe(SCOPE, "restored-box").unwrap();
+        let adoption = f
+            .journal
+            .begin_initial_adoption(worker_boxlite::persistence::InitialAdoption {
+                guard: client.identity().clone(),
+                lease: lease.clone(),
+                confirmed: false,
+            })
+            .unwrap();
+        f.journal.confirm_initial_adoption(&adoption).unwrap();
         f.manager
             .install_snapshot_journal(f.journal.clone())
             .await
@@ -306,5 +314,41 @@ async fn guarded_journal_cannot_reopen_without_the_same_companion() {
     assert!(r.f.manager.install_execution_guard(None).await.is_err());
     assert!(r.f.manager.sessions.lock().await.failed);
     m.close_preserving().await;
+    r.close().await;
+}
+
+#[tokio::test]
+async fn guarded_active_root_survives_local_expiry_and_pending_adoption_blocks_execution() {
+    let r = Rig::new().await;
+    {
+        let mut state = r.f.manager.sessions.lock().await;
+        state.get_mut(SCOPE).unwrap().lease_expires_at = SystemTime::UNIX_EPOCH;
+        assert!(state.preserve(SCOPE));
+    }
+    r.f.manager.cleanup_expired_sessions().await;
+    assert!(r.f.backend.removed.lock().await.is_empty());
+    assert_eq!(r.f.manager.active_session_count().await, 1);
+    {
+        let mut state = r.f.manager.sessions.lock().await;
+        state.get_mut(SCOPE).unwrap().lease_expires_at = SystemTime::now() + Duration::from_secs(5);
+        state.pending_adoptions.insert(SCOPE.into());
+    }
+    for generation in [0, 1] {
+        assert!(r
+            .f
+            .manager
+            .execute(request("pending-adoption", generation))
+            .await
+            .is_err());
+        assert!(r
+            .f
+            .manager
+            .claim_proxy(SCOPE, 8080, generation, SystemTime::now())
+            .await
+            .is_err());
+    }
+    assert!(r.f.backend.commands.lock().await.is_empty());
+    assert_eq!(r.f.backend.created.load(Ordering::SeqCst), 0);
+    assert!(r.f.backend.removed.lock().await.is_empty());
     r.close().await;
 }

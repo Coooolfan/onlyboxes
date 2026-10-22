@@ -116,6 +116,7 @@ fn census_state(f: &Fixture) -> crate::persistence::JournalState {
         current: Default::default(),
         operations: Default::default(),
         probes: Default::default(),
+        adoptions: Default::default(),
     }
 }
 
