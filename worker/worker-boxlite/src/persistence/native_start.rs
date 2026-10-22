@@ -350,7 +350,7 @@ fn valid_start_phase(kind: Kind, phase: Phase) -> bool {
         )
     )
 }
-fn now_ms() -> Result<i64> {
+pub(super) fn now_ms() -> Result<i64> {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .ok()

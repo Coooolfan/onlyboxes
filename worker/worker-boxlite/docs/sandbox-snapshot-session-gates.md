@@ -41,7 +41,7 @@ Console 到 Worker 的 `terminalExec`、`terminalLeaseRenew` 和 `terminalResour
 
 管理器重建后，Inspect 只附着已记录且仍运行的原 CID。确认过的记录使用守护器当前有效期限恢复本地状态，未确认的记录保留首次期限等待核对；缺失实例不会创建空白替代根。采纳中的根及已受守护器保护的根保留磁盘和容量：普通 janitor 或命令失败不能删除它们，停止写入与释放 owner 分别由独立租约和显式清理协议负责。
 
-未纳入持久化的 generation `0` 会话继续原有路径。首次 VM 创建前的守护授权、生产启动配置、全局 store/home 配对、回收凭据维护及未知结果协调仍需接入，生产能力保持关闭。
+配置守护器后，首次创建在 SDK start 前固定 `InitialBoot` 并取得独立启动授权，SDK start 完成且 `bind_boot` 确认精确写入者后才发布会话。Console 尚未接管的 generation `0` 会话使用该 owner 的 generation `1` 内部租约完成执行、续租和重连，首次 Inspect 再持久化切换公开代际门禁。管理器重建只附着记录中的运行 CID，并沿用原授权；未确认启动保留容量，不回退到普通创建。未配置守护器时保留原有路径。生产启动配置、全局 store/home 配对、回收凭据维护及未知结果协调仍需接入，生产能力保持关闭。
 
 未绑定本地 session 的 source/target 操作也占用容量。target 从虚拟预留转为 ready 绑定时只计一次，普通清理进行中的容量也不会与同一操作重复相加。只有 journal 中已完成清理的终态才能通过 `detach_snapshot_instance` 释放保留的容量；该方法本身不删除原生实例。控制器必须先完成物理清理及其核对，再写入终态。
 

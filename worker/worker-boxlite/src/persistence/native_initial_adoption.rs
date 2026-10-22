@@ -47,7 +47,16 @@ impl NativeRuntime {
             return Err(NativeError::Conflict);
         }
         if !adoption.confirmed {
-            guard.adopt(adoption.lease.clone()).await.map_err(error)?;
+            let snapshot = journal.snapshot().map_err(error)?;
+            if let Some(boot) = snapshot.initial_boots.get(scope) {
+                // A first boot already obtains its lease through bind_boot.
+                // Never replace that authority with the independent adoption RPC.
+                if guard.boot_status(id).await.map_err(error)? != Some(boot.authorization.clone()) {
+                    return Err(NativeError::Conflict);
+                }
+            } else {
+                guard.adopt(adoption.lease.clone()).await.map_err(error)?;
+            }
         }
         let check = |lease: &ExecutionLease| {
             lease.box_id == *id

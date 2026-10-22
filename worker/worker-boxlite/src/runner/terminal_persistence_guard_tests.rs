@@ -352,3 +352,30 @@ async fn guarded_active_root_survives_local_expiry_and_pending_adoption_blocks_e
     assert!(r.f.backend.removed.lock().await.is_empty());
     r.close().await;
 }
+
+#[tokio::test]
+async fn guarded_creation_failure_retains_capacity_and_never_uses_legacy_creation() {
+    let r = Rig::new().await;
+    let m = manager(r.f.backend.clone(), 2);
+    m.install_execution_guard(Some(r.client.clone()))
+        .await
+        .unwrap();
+    m.install_snapshot_journal(r.f.journal.clone())
+        .await
+        .unwrap();
+    connect(&m, CONNECTION, &[]).await;
+    let scope = "obx:owner:guarded-create";
+    let mut req = request("must-not-run", 0);
+    req.session_id = scope.into();
+    assert!(m.execute(req.clone()).await.is_err());
+    assert!(m.sessions.lock().await.pending_adoptions.contains(scope));
+    assert_eq!(m.active_session_count().await, 2);
+    assert!(m.execute(req).await.is_err());
+    m.cleanup_expired_sessions().await;
+    assert_eq!(m.active_session_count().await, 2);
+    assert_eq!(r.f.backend.created.load(Ordering::SeqCst), 0);
+    assert!(r.f.backend.commands.lock().await.is_empty());
+    assert!(r.f.backend.removed.lock().await.is_empty());
+    m.close_preserving().await;
+    r.close().await;
+}

@@ -268,6 +268,11 @@ impl NativeControlEngine {
                         .await
                         .map_err(terminal_error)?;
                     self.binding(action).await?
+                } else if state
+                    .initial_boots
+                    .contains_key(&action.frame.scoped_session_id)
+                {
+                    return Err(ControlError::Unavailable);
                 } else {
                     return Ok(state_result("missing"));
                 }
@@ -312,6 +317,10 @@ impl NativeControlEngine {
                 if live.expires_unix_ms < deadline {
                     return Err(ControlError::Conflict);
                 }
+                self.journal
+                    .manage_initial_boot(scope)
+                    .map_err(journal_error)?;
+                sessions.initial_roots.remove(scope);
                 sessions.pending_adoptions.remove(scope);
                 let session = sessions.get_mut(scope).ok_or(ControlError::Conflict)?;
                 if session.proxy_cancel.is_cancelled() {

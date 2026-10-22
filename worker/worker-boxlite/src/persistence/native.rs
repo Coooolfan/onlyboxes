@@ -553,3 +553,6 @@ pub(super) use preflight::preflight_home;
 #[path = "native_recovery.rs"]
 mod recovery;
 pub(super) use recovery::reconcile_home;
+
+#[path = "native_initial_boot.rs"]
+mod initial_boot;

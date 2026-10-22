@@ -16,6 +16,12 @@ pub(super) fn scan_home(
     let mut expected = BTreeMap::new();
     let mut known_names = BTreeSet::new();
     let mut markers = BTreeMap::new();
+    for boot in journal.initial_boots.values() {
+        boot.authorization
+            .executable
+            .validate_home(home, &boot.authorization.box_id)
+            .map_err(|_| NativeError::Conflict)?;
+    }
     for adoption in journal.adoptions.values() {
         let process = &adoption.lease.process;
         if process.host_id != host.host_id

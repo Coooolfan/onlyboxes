@@ -43,6 +43,9 @@ impl Journal {
             let scope = &requested.lease.scoped_session_id;
             if requested.guard.worker_id != state.worker_id
                 || state.current.contains_key(scope)
+                || state.initial_boots.get(scope).is_some_and(|boot| {
+                    !boot.matches_adoption(state.adoptions.get(scope).unwrap_or(&requested))
+                })
                 || state
                     .probes
                     .get(scope)

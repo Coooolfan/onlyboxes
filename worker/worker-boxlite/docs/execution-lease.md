@@ -54,7 +54,7 @@ macOS 通过内核 audit token 中的 PID/version 查询可执行路径，Linux 
 
 未绑定启动即使已停止一个发现的进程、发起 Worker 已结束或暂时发现不到进程，也保持未确认状态。`boot_status` 返回持久化意图，不能作为仍有效的执行授权。服务关闭持续等待该结果的明确核对，不把空查询转成关闭成功；当前尚未提供这类未知启动结果的生产协调与释放接口。
 
-这些原语已通过私有 Unix 通道和真实 VM 实验验证。原生启动适配器已接入下述授权/绑定顺序；Worker 启动配置、全局 store/home 配对、首次 VM 创建前授权、完整重连协调及服务监督尚未接入，生产能力保持关闭。
+这些原语已通过私有 Unix 通道和真实 VM 实验验证。原生启动适配器已接入下述授权/绑定顺序；Worker 启动配置、全局 store/home 配对、完整重连协调及服务监督尚未接入，生产能力保持关闭。
 
 ### 原生启动适配器与 journal
 
@@ -89,15 +89,43 @@ sequenceDiagram
 
 源实例始终运行、回滚只需重新开放访问时，不创建启动授权。适配器记录同一服务身份，并要求守护器已有该原实例的有效执行租约；它不会事后自动采纳未知实例。该路径同样禁止降级为无守护器重放。
 
+### 首次 VM 创建与接管前的访问
+
+配置守护器的管理器使用专用创建接口，不能回退到普通后端创建。SDK create 只创建配置；调用方建立该 Box ID 的目录并固定可信 shim，将 `InitialBoot` 与原 CID 写入 journal 后，取得 `prepare_boot` 确认才调用 SDK start。整个 SDK start 任务由调用方持有，不因请求超时而丢弃。启动成功后，`bind_boot` 持久化精确进程和第一份运行租约，`InitialAdoption` 记录相同第一期限并完成只读核验，才发布会话和执行首条用户命令。
+
+```mermaid
+sequenceDiagram
+    participant M as 会话管理器
+    participant N as NativeRuntime / SDK
+    participant J as 生命周期 journal
+    participant G as 独立租约守护器
+    M->>M: 预留容量，关闭创建中的会话入口
+    M->>N: 创建配置，固定 Box ID 和可信 shim
+    N->>J: 持久化 InitialBoot 和原 CID
+    N->>G: prepare_boot（首次绝对期限）
+    G-->>N: 启动授权已持久化
+    N->>N: SDK start，持有任务直到完成
+    N->>G: bind_boot（精确写入者）
+    G-->>N: 第一份运行租约已持久化
+    N->>J: InitialAdoption，确认相同第一期限
+    N->>G: 只读核验当前写入者与有效期限
+    N-->>M: 原 CID 可发布
+    M->>N: 执行首条用户命令
+```
+
+在 Console 首次 Inspect 之前，公开请求仍使用 generation `0`，它们核对和续租的内部 owner 为 generation `1`。重连使用 journal 固定 CID，只附着运行实例，不调用 start；容量只计算一次。首次 Inspect 持久化 `InitialBoot.managed` 后，普通入口切换为 generation `1`，旧公开代际被拒绝。
+
+创建失败或回执不确定时保留 scope、磁盘及容量，关闭普通入口。已有启动记录不能被另一次创建覆盖，过期授权不能通过重试刷新。尚未确认的 SDK 启动需要明确协调，不能仅凭空进程查询确认清理成功。生产配置和 Hello 注册尚未启用该路径。
+
 ### 首次 Inspect 的已有实例采纳
 
 配置了守护器的生命周期引擎在首次 generation `1` Inspect 时自动采纳会话原有的运行 VM。它先关闭该 scope 的普通入口，并在 journal 记录 `InitialAdoption`：固定 scope、Box ID、精确写入者、完整守护器身份及初始绝对期限。守护器确认 adopt、只读核验写入者和有效租约后，journal 才记录 confirmed，再次核验后返回运行状态。
 
 丢失回执后重试沿用原记录，不能生成更远期限。confirmed 后的重试只读核验当前租约，允许它已被正常 CAS 续租，不重复提交 revision 1。管理器重建后只恢复原记录的运行 CID，不创建或启动 VM。守护器 epoch、进程、scope 不匹配或原实例缺失时拒绝开放入口。
 
-这条路径保护从已有 VM 转入持久化管理的边界；generation `0` 首次创建仍走原有路径，尚未获得创建前独立授权。生产配置与能力注册保持关闭。采纳未确认时不允许快照、回滚等管理动作抢占该 scope；可继续 Inspect 核对或提交更高 generation 的永久删除，后者仍须满足精确退出及清理凭据条件，不能把缺失租约当成清理成功。
+这条路径保护从已有 VM 转入持久化管理的边界。配置守护器的首次创建走下述启动前授权路径；未配置时保留普通创建。生产配置与能力注册保持关闭。采纳未确认时不允许快照、回滚等管理动作抢占该 scope；可继续 Inspect 核对或提交更高 generation 的永久删除，后者仍须满足精确退出及清理凭据条件，不能把缺失租约当成清理成功。
 
-原生动作引擎的 ready 查询、运行中回滚和 activate 检查调用只读 `verify_execution_guard`，不把 SDK Running 当成有效执行权。受管理会话的普通执行、显式续租、资源和预览已接入同一客户端；确认顺序与失败门禁见[会话 lease、容量与清理](sandbox-snapshot-session-gates.md#lease容量与清理)。首次会话创建/采纳、生产启动与完整重连协调仍需完成；当前 Worker 不宣告持久化能力。
+原生动作引擎的 ready 查询、运行中回滚和 activate 检查调用只读 `verify_execution_guard`，不把 SDK Running 当成有效执行权。受管理会话的普通执行、显式续租、资源和预览已接入同一客户端；确认顺序与失败门禁见[会话 lease、容量与清理](sandbox-snapshot-session-gates.md#lease容量与清理)。生产启动与完整重连协调仍需完成；当前 Worker 不宣告持久化能力。
 
 ## 原生清理与 owner 释放
 
@@ -169,6 +197,6 @@ cargo run --locked --example boxlite_boot_guard_smoke
 
 `boxlite_boot_guard_smoke` 先采纳真实运行源，通过适配器验证不重启的回滚和服务绑定重放，再停止同一原生根并由适配器完成启动授权、SDK start、进程绑定及就绪探测。错误 epoch 在 SDK start 前被拒绝；受保护操作不能降级为无守护器重放。绑定场景在续租后 SIGKILL 发起进程并移走 `shim.pid`，确认 VM 在旧期限后仍活跃、新期限到期后退出，磁盘保留且守护器可正常排空。未绑定场景在确认进程前丢失发起者，守护器通过内核证据找到并在授权期限停止 VM，保留磁盘；SIGTERM 后仍保持关闭中，不误报未知 SDK 结果已清理。实验仅重建 PID 发布缺口，没有在任意 SDK 启动指令处注入中断，也不证明 Linux 原生 VM、生产 Worker 或跨机器验收。
 
-尚需实现生产进程监督与绑定、Worker 启动路径及首次会话创建/采纳、未知启动结果协调、回收凭据压缩/维护，以及 Worker 配置、采纳/续租/重连门禁和 Hello 注册。当前接口不会凭停止或过期自行释放 scope 供第二个可写实例接管。`boxlite_lifecycle_controls_smoke` 从原始实例的显式采纳开始，对回滚、共享传输、源清理、同 Worker 缓存恢复、撤销、再次冷恢复和永久删除都使用独立守护器。它还按固定 store ID 重启守护器、拒绝旧客户端，核对旧释放凭据在新服务 epoch 中仍可用于历史清理。对象服务与协调方仍为本机 fixture，不能代替真实 Console/S3 或跨机器验收。
+尚需实现生产进程监督与绑定、Worker 启动路径、未知启动结果协调、回收凭据压缩/维护，以及 Worker 配置、完整重连协调和 Hello 注册。当前接口不会凭停止或过期自行释放 scope 供第二个可写实例接管。`boxlite_lifecycle_controls_smoke` 从原始实例的启动前授权、绑定和接管前重连开始，对回滚、共享传输、源清理、同 Worker 缓存恢复、撤销、再次冷恢复和永久删除都使用独立守护器。它还按固定 store ID 重启守护器、拒绝旧客户端，核对旧释放凭据在新服务 epoch 中仍可用于历史清理。对象服务与协调方仍为本机 fixture，不能代替真实 Console/S3 或跨机器验收。
 
 单独账本对象的 `Drop` 仅释放锁；服务级关闭由上述伴随进程负责。

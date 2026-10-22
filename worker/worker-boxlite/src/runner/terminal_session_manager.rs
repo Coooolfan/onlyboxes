@@ -262,6 +262,15 @@ pub(crate) trait TerminalBackend: Send + Sync {
     ) -> Result<String, TerminalOperationError> {
         self.create_session_box(shutdown, deadline_unix_ms).await
     }
+    async fn create_guarded_session_box(
+        &self,
+        _scope: &str,
+        _journal: Arc<worker_boxlite::persistence::Journal>,
+        _guard: worker_boxlite::persistence::LeaseGuardClient,
+        _expires_unix_ms: i64,
+    ) -> Result<String, TerminalOperationError> {
+        Err(persistence::unavailable())
+    }
     async fn recover_session_box(
         &self,
         _session_id: &str,
@@ -578,12 +587,7 @@ impl TerminalSessionManager {
         let box_id = if claimed.created {
             let _creation_guard = PendingCreationGuard { manager: self };
             match self
-                .backend
-                .create_session_box_for_session(
-                    &claimed.session_id,
-                    self.shutdown.clone(),
-                    req.deadline_unix_ms,
-                )
+                .create_claimed_session(&claimed.session_id, req.deadline_unix_ms)
                 .await
             {
                 Ok(box_id) => {
@@ -593,7 +597,9 @@ impl TerminalSessionManager {
                     {
                         // close() may have retired a creation that ignored the
                         // shutdown token. Clean up if it returns later.
-                        self.backend.remove_box(&box_id).await;
+                        if !self.sessions.lock().await.preserve(&claimed.session_id) {
+                            self.backend.remove_box(&box_id).await;
+                        }
                         return Err(TerminalOperationError::ExecutionFailed(
                             TERMINAL_MANAGER_CLOSED_MESSAGE.to_owned(),
                         ));
@@ -1122,6 +1128,7 @@ impl TerminalSessionManager {
                 .get(session_id)
                 .map(|f| f.box_id.clone())
                 .or_else(|| state.bootstrap.get(session_id).cloned())
+                .or_else(|| state.initial_roots.get(session_id).cloned())
         };
         let recovered = if let Some(ref id) = pinned {
             self.backend.recover_pinned_session_box(id).await?
@@ -1650,6 +1657,23 @@ impl TerminalBackend for BoxliteTerminalBackend {
             .map_err(map_boxlite_terminal_error)
     }
 
+    async fn create_guarded_session_box(
+        &self,
+        scope: &str,
+        journal: Arc<worker_boxlite::persistence::Journal>,
+        guard: worker_boxlite::persistence::LeaseGuardClient,
+        expires_unix_ms: i64,
+    ) -> Result<String, TerminalOperationError> {
+        boxlite_runtime::create_guarded_terminal_session_box(
+            &self.cfg,
+            scope,
+            journal,
+            guard,
+            expires_unix_ms,
+        )
+        .await
+        .map_err(map_boxlite_terminal_error)
+    }
     async fn recover_session_box(
         &self,
         session_id: &str,

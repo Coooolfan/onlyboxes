@@ -23,6 +23,8 @@ pub struct JournalState {
     pub probes: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub adoptions: BTreeMap<String, super::InitialAdoption>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub initial_boots: BTreeMap<String, super::InitialBoot>,
 }
 
 impl JournalState {
@@ -71,6 +73,25 @@ impl JournalState {
                 return Err(Error::Unavailable);
             };
             if scope != &op.scoped_session_id {
+                return Err(Error::Unavailable);
+            }
+        }
+        for (scope, boot) in &self.initial_boots {
+            boot.validate().map_err(|_| Error::Unavailable)?;
+            if scope != &boot.authorization.scoped_session_id
+                || boot.guard.worker_id != worker
+                || (boot.managed && !self.adoptions.get(scope).is_some_and(|a| a.confirmed))
+                || self
+                    .adoptions
+                    .get(scope)
+                    .is_some_and(|a| !boot.matches_adoption(a))
+                || !(self.probes.get(scope) == Some(&boot.authorization.box_id)
+                    || self.operations.values().any(|op| {
+                        op.scoped_session_id == *scope
+                            && (op.box_id == boot.authorization.box_id
+                                || op.cleanup_box_ids.contains(&boot.authorization.box_id))
+                    }))
+            {
                 return Err(Error::Unavailable);
             }
         }
@@ -176,6 +197,7 @@ impl Journal {
                 operations: BTreeMap::new(),
                 probes: BTreeMap::new(),
                 adoptions: BTreeMap::new(),
+                initial_boots: BTreeMap::new(),
             };
             persist_state(&root, &state)?;
             state

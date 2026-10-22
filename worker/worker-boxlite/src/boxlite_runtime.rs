@@ -94,6 +94,48 @@ pub(crate) async fn run_python_exec(
     })
 }
 
+pub(crate) async fn create_guarded_terminal_session_box(
+    cfg: &Config,
+    scope: &str,
+    journal: Arc<worker_boxlite::persistence::Journal>,
+    guard: worker_boxlite::persistence::LeaseGuardClient,
+    expires_unix_ms: i64,
+) -> Result<String, BoxliteCommandError> {
+    let owner = HOME_OWNER.get().ok_or_else(|| {
+        BoxliteCommandError::ExecutionFailed(
+            "managed creation requires the protected BoxLite home".into(),
+        )
+    })?;
+    owner
+        .verify(Path::new(&cfg.boxlite_home), &cfg.worker_id)
+        .map_err(|_| {
+            BoxliteCommandError::ExecutionFailed("BoxLite home ownership is unavailable".into())
+        })?;
+    if !Arc::ptr_eq(&owner.journal(), &journal) {
+        return Err(BoxliteCommandError::ExecutionFailed(
+            "BoxLite journal identity conflicts with its home".into(),
+        ));
+    }
+    let native = worker_boxlite::persistence::NativeRuntime::new(
+        Arc::new(runtime(cfg)?.clone()),
+        &cfg.boxlite_home,
+    )
+    .map_err(|e| BoxliteCommandError::ExecutionFailed(e.to_string()))?
+    .with_execution_guard(guard);
+    let instance = native
+        .create_initial_session(
+            &journal,
+            scope,
+            build_terminal_exec_box_options(cfg),
+            expires_unix_ms,
+        )
+        .await
+        .map_err(|e| BoxliteCommandError::ExecutionFailed(e.to_string()))?;
+    recover_pinned_terminal_session_box(cfg, &instance.box_id)
+        .await?
+        .ok_or(BoxliteCommandError::MissingBox)
+}
+
 pub(crate) async fn create_terminal_session_box(
     cfg: &Config,
     box_name: &str,

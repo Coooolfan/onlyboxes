@@ -1465,3 +1465,98 @@ fn initial_adoption_replay_preserves_first_grant_and_requires_exact_confirmation
     let journal = root.open();
     assert!(journal.snapshot().unwrap().adoptions[&record.lease.scoped_session_id].confirmed);
 }
+
+#[test]
+fn initial_boot_reserves_the_root_before_start_and_management_needs_confirmed_adoption() {
+    use crate::persistence::{
+        BootAuthorization, BootExecutable, ExecutionLease, HostProcess, InitialAdoption,
+        InitialBoot, LeaseGuardIdentity,
+    };
+    let root = Root::new();
+    let journal = root.open();
+    let home = root.0.join("native");
+    private_directory(&home).unwrap();
+    private_directory(&home.join("boxes")).unwrap();
+    let source = source();
+    private_directory(&home.join("boxes").join(&source.box_id)).unwrap();
+    let process = HostProcess::current().unwrap();
+    let guard = LeaseGuardIdentity {
+        worker_id: "worker-a".into(),
+        store_id: uuid::Uuid::new_v4().to_string(),
+        epoch_id: uuid::Uuid::new_v4().to_string(),
+        process: process.clone(),
+    };
+    let boot = InitialBoot {
+        guard: guard.clone(),
+        managed: false,
+        authorization: BootAuthorization {
+            operation_id: "initial-create-1".into(),
+            box_id: source.box_id.clone(),
+            scoped_session_id: source.scoped_session_id.clone(),
+            generation: 1,
+            prior_revision: None,
+            expires_unix_ms: 10000,
+            origin: process.clone(),
+            executable: BootExecutable::prepare(
+                &home,
+                &source.box_id,
+                Path::new("/bin/sleep"),
+                true,
+            )
+            .unwrap(),
+        },
+    };
+    journal.begin_initial_boot(boot.clone()).unwrap();
+    journal.begin_initial_boot(boot.clone()).unwrap();
+    assert_eq!(
+        journal.snapshot().unwrap().probes[&source.scoped_session_id],
+        source.box_id
+    );
+    assert!(journal
+        .manage_initial_boot(&source.scoped_session_id)
+        .is_err());
+    let mut changed = boot.clone();
+    changed.authorization.expires_unix_ms += 1;
+    assert!(journal.begin_initial_boot(changed).is_err());
+    let mut adoption = InitialAdoption {
+        guard,
+        confirmed: false,
+        lease: ExecutionLease {
+            box_id: source.box_id.clone(),
+            scoped_session_id: source.scoped_session_id.clone(),
+            generation: 1,
+            revision: 1,
+            expires_unix_ms: 10001,
+            process,
+            revoked: false,
+        },
+    };
+    assert!(journal.begin_initial_adoption(adoption.clone()).is_err());
+    adoption.lease.expires_unix_ms = 10000;
+    journal.begin_initial_adoption(adoption.clone()).unwrap();
+    assert!(journal
+        .manage_initial_boot(&source.scoped_session_id)
+        .is_err());
+    journal.confirm_initial_adoption(&adoption).unwrap();
+    // A subsequent request may carry a later local deadline, but the first
+    // journal grant remains the one acknowledged by prepare_boot/bind_boot.
+    adoption.lease.expires_unix_ms = 20000;
+    assert_eq!(
+        journal
+            .begin_initial_adoption(adoption)
+            .unwrap()
+            .lease
+            .expires_unix_ms,
+        10000
+    );
+    journal
+        .manage_initial_boot(&source.scoped_session_id)
+        .unwrap();
+    journal
+        .manage_initial_boot(&source.scoped_session_id)
+        .unwrap();
+    drop(journal);
+    let journal = root.open();
+    assert!(journal.snapshot().unwrap().initial_boots[&source.scoped_session_id].managed);
+    assert!(journal.begin_initial_boot(boot).is_err());
+}

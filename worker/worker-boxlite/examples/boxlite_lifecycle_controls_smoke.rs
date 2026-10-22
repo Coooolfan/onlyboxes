@@ -170,6 +170,43 @@ async fn main() -> Result<()> {
     );
     let outcome: Result<()> = async {
         manager.execute(exec(0, "python -c \"from pathlib import Path; Path('/source-control-data').write_text('preserved')\"" )).await?;
+        let first_boot = journal.snapshot()?.initial_boots.get(SCOPE).cloned().ok_or("initial creation has no durable boot grant")?;
+        let first_adoption = journal.snapshot()?.adoptions.get(SCOPE).cloned().ok_or("initial creation has no confirmed lease")?;
+        if first_boot.managed || !first_adoption.confirmed
+            || execution_guard.as_ref().unwrap().client.boot_status(&first_boot.authorization.box_id).await? != Some(first_boot.authorization.clone()) {
+            return Err("initial VM was published without its independent pre-boot grant".into());
+        }
+        if manager.execute(exec(0, "cat /source-control-data")).await?.stdout != "preserved" {
+            return Err("generation zero could not use its independently guarded initial VM".into());
+        }
+        let before_manage = execution_guard.as_ref().unwrap().client.check_running(&first_adoption.lease.box_id).await?;
+        if before_manage.revision <= 1 || journal.snapshot()?.adoptions[SCOPE] != first_adoption {
+            return Err("ordinary initial renewal did not retain the first grant".into());
+        }
+        println!("PASS: initial VM creation persists pre-boot authority and binds its writer before the first command; generation-zero execution renews the same owner");
+        dispatcher.close().await.map_err(|_| "initial legacy dispatcher did not drain")?;
+        manager.close_preserving().await;
+        manager = TerminalSessionManager::from_config(&cfg);
+        let engine = NativeControlEngine::new(manager.clone(), journal.clone(), native.clone(), settings.clone()).await
+            .map_err(|_| "initial generation-zero engine reconstruction failed")?;
+        dispatcher = ControlDispatcher::new(engine, 2).map_err(|_| "initial generation-zero dispatcher failed")?;
+        dispatcher.begin_connection(EPOCH).await.map_err(|_| "initial generation-zero connection failed")?;
+        let candidates = [proto::registryv1::TerminalSessionRecoveryCandidate {
+            session_id:SCOPE.into(), generation:0, lease_expires_unix_ms:before_manage.expires_unix_ms,
+        }];
+        manager.protect_persistence_recovery(EPOCH, &candidates, &[]).await?;
+        let recovered = manager.recover_sessions(&candidates).await;
+        if recovered.len()!=1 || recovered[0].status != proto::registryv1::terminal_session_recovery_result::Status::Recovered as i32 {
+            return Err("initial generation-zero route could not recover its exact guarded VM".into());
+        }
+        manager.finish_persistence_recovery(EPOCH).await?;
+        dispatcher.finish_connection(EPOCH).map_err(|_| "initial generation-zero recovery failed")?;
+        if manager.active_session_count().await != 1
+            || manager.execute(exec(0, "cat /source-control-data")).await?.stdout != "preserved"
+            || execution_guard.as_ref().unwrap().client.check_running(&first_adoption.lease.box_id).await?.process != before_manage.process {
+            return Err("initial route reconstruction replaced its VM or doubled capacity".into());
+        }
+        println!("PASS: generation-zero reconnect attaches the recorded running VM, renews its existing guard and reserves capacity exactly once");
         let initial = value(control(&dispatcher, FIRST, Action::Inspect, Control::default()).await?)?;
         if initial.state != "running" { return Err("source inspection failed".into()); }
         let spec = initial.restore_spec.ok_or("spec missing")?;
@@ -177,12 +214,12 @@ async fn main() -> Result<()> {
         let adoption=journal.snapshot()?.adoptions.get(SCOPE).cloned().ok_or("initial inspect did not persist adoption")?;
         let original=execution_guard.as_ref().unwrap().client.check_running(&id).await?;
         if !adoption.confirmed || adoption.lease.box_id!=id || adoption.lease.process!=original.process
-            || original.revision!=1 {return Err("initial inspect did not confirm the original VM's independent lease".into());}
+            || original.revision<1 {return Err("initial inspect did not confirm the original VM's independent lease".into());}
         let replay=value(control(&dispatcher,FIRST,Action::Inspect,Control::default()).await?)?;
         if replay.instance_id!=id || journal.snapshot()?.adoptions[SCOPE]!=adoption {
             return Err("initial inspect replay changed the original writer or first deadline".into());
         }
-        println!("PASS: initial inspect automatically adopts the existing VM, durably confirms its first grant and replays without a new writer or deadline");
+        println!("PASS: initial inspect durably manages the independently guarded VM and replays without a new writer or initial deadline");
         dispatcher.close().await.map_err(|_| "initial dispatcher did not drain")?;
         manager.close_preserving().await;
         manager = TerminalSessionManager::from_config(&cfg);
@@ -463,6 +500,9 @@ async fn main() -> Result<()> {
 
         Ok(())
     }.await;
+    if let Err(error) = &outcome {
+        eprintln!("native acceptance failed: {error}");
+    }
     let _ = dispatcher.close().await;
     manager.close_preserving().await;
     boxlite_runtime::shutdown().await;

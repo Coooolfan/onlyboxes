@@ -22,6 +22,7 @@ pub(super) struct SessionState {
     entries: HashMap<String, TerminalSession>,
     pub(super) fences: HashMap<String, Fence>,
     pub(super) bootstrap: HashMap<String, String>,
+    pub(super) initial_roots: HashMap<String, String>,
     pub(super) pending_adoptions: HashSet<String>,
     pub(super) journal: Option<Arc<Journal>>,
     pub(super) execution_guard: Option<worker_boxlite::persistence::LeaseGuardClient>,
@@ -48,7 +49,7 @@ pub(super) fn conflict() -> TerminalOperationError {
     }
     .into()
 }
-fn unavailable() -> TerminalOperationError {
+pub(super) fn unavailable() -> TerminalOperationError {
     TerminalExecError {
         code: "persistence_unavailable".into(),
         message: "sandbox lifecycle journal is unavailable".into(),
@@ -86,7 +87,9 @@ impl SessionState {
         self.failed
             || self.pending_adoptions.contains(scope)
             || self.execution_guard.is_some()
-                && (self.bootstrap.contains_key(scope) || self.fences.contains_key(scope))
+                && (self.bootstrap.contains_key(scope)
+                    || self.initial_roots.contains_key(scope)
+                    || self.fences.contains_key(scope))
             || self.fences.get(scope).is_some_and(|f| f.held)
     }
     pub(super) fn additional_reservations(&self, retiring: &HashMap<String, u32>) -> u32 {
@@ -104,6 +107,7 @@ impl SessionState {
             .saturating_add(
                 self.bootstrap
                     .iter()
+                    .chain(self.initial_roots.iter())
                     .filter(|(scope, _)| {
                         self.execution_guard.is_some()
                             && !self.fences.contains_key(*scope)
@@ -156,6 +160,16 @@ impl SessionState {
                 }
             }
             None => {
+                if self.initial_roots.contains_key(scope)
+                    && (!self.connected
+                        || self.entries.get(scope).is_none_or(|s| {
+                            s.destroying
+                                || s.persistence_fault
+                                || s.lease_expires_at <= SystemTime::now()
+                        }))
+                {
+                    return Err(conflict());
+                }
                 if self.bootstrap.contains_key(scope) {
                     return Err(conflict());
                 }
@@ -170,7 +184,9 @@ impl SessionState {
         connection: Option<&str>,
     ) -> Result<(), TerminalOperationError> {
         self.check_access(scope, generation)?;
-        if (self.fences.contains_key(scope) || self.bootstrap.contains_key(scope))
+        if (self.fences.contains_key(scope)
+            || self.bootstrap.contains_key(scope)
+            || self.initial_roots.contains_key(scope))
             && (connection.is_none() || connection != self.connection.as_deref())
         {
             return Err(conflict());
@@ -226,7 +242,9 @@ impl SessionState {
         generation: i64,
         extend: Option<SystemTime>,
     ) -> Result<(), TerminalOperationError> {
-        let managed = self.fences.contains_key(scope) || self.bootstrap.contains_key(scope);
+        let managed = self.fences.contains_key(scope)
+            || self.bootstrap.contains_key(scope)
+            || self.initial_roots.contains_key(scope);
         let memory = self
             .entries
             .get(scope)
@@ -256,11 +274,18 @@ impl SessionState {
         generation: i64,
         extend: Option<SystemTime>,
     ) -> Result<(), TerminalOperationError> {
-        let managed = self.fences.contains_key(scope) || self.bootstrap.contains_key(scope);
+        let managed = self.fences.contains_key(scope)
+            || self.bootstrap.contains_key(scope)
+            || self.initial_roots.contains_key(scope);
         if !managed {
             return Ok(());
         }
         let snapshot = self.read_journal()?;
+        let generation = if generation == 0 && self.initial_roots.contains_key(scope) {
+            1
+        } else {
+            generation
+        };
         let op = snapshot
             .current
             .get(scope)
@@ -303,7 +328,11 @@ impl SessionState {
                 return Err(unavailable());
             }
             (
-                self.bootstrap.get(scope).cloned().ok_or_else(conflict)?,
+                self.bootstrap
+                    .get(scope)
+                    .or_else(|| self.initial_roots.get(scope))
+                    .cloned()
+                    .ok_or_else(conflict)?,
                 Some(adoption.lease.process.clone()),
             )
         };
@@ -610,6 +639,16 @@ impl TerminalSessionManager {
                     } else {
                         pending.insert(scope.clone());
                     }
+                } else if let Some(boot) = snapshot.initial_boots.get(scope) {
+                    if state
+                        .execution_guard
+                        .as_ref()
+                        .is_none_or(|g| g.identity() != &boot.guard)
+                    {
+                        state.fail();
+                        return Err(unavailable());
+                    }
+                    pending.insert(scope.clone());
                 } else if state.execution_guard.is_some() {
                     state.fail();
                     return Err(unavailable());
@@ -621,7 +660,22 @@ impl TerminalSessionManager {
             }
             names.insert(terminal_session_resource_name(scope));
         }
-        state.bootstrap = snapshot.probes.into_iter().collect();
+        state.initial_roots = snapshot
+            .probes
+            .iter()
+            .filter(|(scope, _)| {
+                snapshot
+                    .initial_boots
+                    .get(*scope)
+                    .is_some_and(|b| !b.managed)
+            })
+            .map(|(scope, id)| (scope.clone(), id.clone()))
+            .collect();
+        state.bootstrap = snapshot
+            .probes
+            .into_iter()
+            .filter(|(scope, _)| !state.initial_roots.contains_key(scope))
+            .collect();
         state.pending_adoptions = pending;
         state.fences = fences;
         state.protected_names = names;
@@ -646,7 +700,11 @@ impl TerminalSessionManager {
         let snapshot = state.read_journal()?;
         if snapshot.current.contains_key(scope)
             || snapshot.adoptions.get(scope) != Some(adoption)
-            || state.bootstrap.get(scope) != Some(id)
+            || state
+                .bootstrap
+                .get(scope)
+                .or_else(|| state.initial_roots.get(scope))
+                != Some(id)
             || state
                 .execution_guard
                 .as_ref()
@@ -719,7 +777,10 @@ impl TerminalSessionManager {
         let mut state = self.sessions.lock().await;
         state.connected = false;
         for (scope, session) in &state.entries {
-            if state.fences.contains_key(scope) || state.bootstrap.contains_key(scope) {
+            if state.fences.contains_key(scope)
+                || state.bootstrap.contains_key(scope)
+                || state.initial_roots.contains_key(scope)
+            {
                 session.proxy_cancel.cancel();
             }
         }
@@ -834,7 +895,10 @@ impl TerminalSessionManager {
         }
         state.connected = false;
         for (scope, session) in &state.entries {
-            if state.fences.contains_key(scope) {
+            if state.fences.contains_key(scope)
+                || state.bootstrap.contains_key(scope)
+                || state.initial_roots.contains_key(scope)
+            {
                 session.proxy_cancel.cancel();
             }
         }
@@ -1325,3 +1389,6 @@ mod tests;
 #[allow(dead_code)]
 #[path = "snapshot_native_engine.rs"]
 pub(crate) mod native_control;
+
+#[path = "terminal_initial_creation.rs"]
+mod initial_creation;
