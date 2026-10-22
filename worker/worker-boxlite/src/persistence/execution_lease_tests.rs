@@ -329,6 +329,56 @@ mod native {
         child.0.wait().unwrap();
     }
 
+    #[test]
+    fn uncertain_retirement_write_reopens_as_reserved_exit_evidence() {
+        let root = Root::new();
+        let mut child = Child::new();
+        let mut ledger = root.open();
+        let lease = child.lease(10_000);
+        ledger.adopt(lease.clone()).unwrap();
+        child.0.kill().unwrap();
+        child.0.wait().unwrap();
+        let retirement = crate::persistence::LeaseRetirement {
+            operation_id: "cleanup_1".into(),
+            cleanup_generation: 1,
+            box_id: lease.box_id.clone(),
+            scoped_session_id: lease.scoped_session_id,
+            generation: 1,
+            revision: lease.revision,
+            process: lease.process,
+        };
+        ledger.persist = persisted_but_unconfirmed;
+        assert_eq!(
+            ledger.prepare_retirement(retirement.clone()),
+            Err(Error::Unavailable)
+        );
+        assert_eq!(ledger.enforce().unwrap().attempted, 0);
+        let store = ledger.store_id().to_owned();
+        let path = ledger.root.clone();
+        drop(ledger);
+        let ledger = ExecutionLeaseLedger::open_bound(&path, "worker", &store).unwrap();
+        assert!(
+            !ledger
+                .retirement_status(&retirement.box_id)
+                .unwrap()
+                .unwrap()
+                .released
+        );
+        assert_eq!(
+            ledger.prepare_retirement(retirement.clone()).unwrap(),
+            retirement
+        );
+        assert!(ledger.status(&retirement.box_id).unwrap().unwrap().revoked);
+        ledger.finish_retirement(retirement.clone()).unwrap();
+        assert!(
+            ledger
+                .retirement_status(&retirement.box_id)
+                .unwrap()
+                .unwrap()
+                .released
+        );
+    }
+
     fn persisted_but_unconfirmed(root: &Path, state: &State) -> Result<()> {
         persist_state(root, state)?;
         Err(Error::Unavailable)

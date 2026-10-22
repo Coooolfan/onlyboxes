@@ -538,6 +538,8 @@ mod start;
 
 #[path = "native_cleanup.rs"]
 mod cleanup;
+#[path = "native_retirement.rs"]
+mod retirement;
 
 #[path = "native_delete.rs"]
 mod delete;

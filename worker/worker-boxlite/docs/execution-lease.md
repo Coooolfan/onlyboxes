@@ -8,7 +8,7 @@
 
 专用绝对目录必须属于当前用户，权限为 `700`；`guard.lock`、`owner.json` 与 `leases.json` 为私有、单硬链接普通文件，权限为 `600`。目录不能作为沙箱挂载或归档缓存目录。生产集成还必须校验它与 SDK home、生命周期 journal 的分离关系。
 
-`owner.json` 固定 Worker ID、宿主身份、随机 store ID，以及目录的规范路径、设备号和 inode。`leases.json` 携带相同 store ID，最多保留 16,384 条记录，整个 JSON 不超过 64 MiB。记录包含 scope、不可变 Box ID、generation、revision、绝对到期时间及精确宿主写入者身份，不包含 Console secret、恢复规格环境变量或对象存储授权。
+`owner.json` 固定 Worker ID、宿主身份、随机 store ID，以及目录的规范路径、设备号和 inode。`leases.json` 携带相同 store ID，运行租约、启动授权及回收凭据各最多保留 16,384 条，整个 JSON 不超过 64 MiB。回收凭据不会自动淘汰；达到上限时拒绝新增回收，不能删除历史后把旧 scope 当成首次创建。记录包含 scope、不可变 Box ID、generation、revision、绝对到期时间及精确宿主写入者身份，不包含 Console secret、恢复规格环境变量或对象存储授权。
 
 文件通过私有临时文件、文件 sync、原子替换及父目录 sync 提交。失去账本但保留 owner、复制或替换目录、不同 Worker/host、损坏或重定向的文件都拒绝打开。识别到的中断临时文件仅在完整归属与账本校验后清理，未知文件保持不可用。打开期间，控制操作还会核对目录、owner 及独占锁文件身份；原路径被替换时不能跟随到新存储继续写入。
 
@@ -91,6 +91,37 @@ sequenceDiagram
 
 原生动作引擎的 ready 查询、运行中回滚和 activate 检查调用只读 `verify_execution_guard`，不把 SDK Running 当成有效执行权。受管理会话的普通执行、显式续租、资源和预览已接入同一客户端；确认顺序与失败门禁见[会话 lease、容量与清理](sandbox-snapshot-session-gates.md#lease容量与清理)。首次会话创建/采纳、生产启动与完整重连协调仍需完成；当前 Worker 不宣告持久化能力。
 
+## 原生清理与 owner 释放
+
+`prepare_retirement` 与 `finish_retirement` 分开执行。回收凭据固定 cleanup operation/generation、scope、Box ID、运行租约 generation/revision 及完整写入者身份。凭据在请求守护器前先记录到当前操作的 `lease_retirements`，之后不可修改或移除。更高代次的永久删除可以引用同一 scope 历史中的原凭据，journal 同时验证原操作和凭据一致，不能生成另一个清理身份替代原记录。
+
+```mermaid
+sequenceDiagram
+    participant N as 原生清理适配器
+    participant J as 生命周期 journal
+    participant G as 独立守护器
+    participant K as 内核写入者
+    participant D as SDK / 原生磁盘
+    N->>J: 记录清理授权与回收凭据
+    N->>G: prepare_retirement（精确 revision / writer）
+    G->>K: 核对原进程及完整写入子树已退出
+    G->>G: 持久化退出证据，保留 owner
+    G-->>N: 返回同一回收凭据
+    N->>D: 删除固定原生 ID，核对残留并 sync
+    N->>G: finish_retirement（同一凭据）
+    G->>G: 移除运行租约及启动记录，保留 released 凭据
+    G-->>N: owner 已释放
+    N->>J: finalized / canceled / deleted
+```
+
+第一步拒绝活跃写入者、错误 revision、缺失 owner 和尚未绑定的启动。成功后撤销执行权，并停止该旧身份的后续 signal 投递；scope 仍被原 lease/boot 记录占用。单纯到期、PID 消失或空查询不会释放 owner。第二步只能使用已接受的同一凭据，调用方必须已经完成原生数据清理；守护器本身不删除磁盘。原生适配器只有收到第二步确认后才写入最终清理状态并允许释放会话容量。
+
+两步均支持精确重放，回执丢失不更换操作或 revision。守护器重开时保留退出证据，不依赖已经删除的 PID 文件或 cgroup 再次证明同一旧事实。对历史回收凭据，显式绑定到相同 Worker/store/host 的新客户端可以核对同一已持久化凭据并继续清理；不同 store、缺失凭据或字段变化均拒绝。该规则仅适用于不可逆的退出/释放事实，不恢复旧执行租约，也不允许运行中的 boot 绑定静默更换 epoch。
+
+释放后同一 Box ID 永远不能重新采纳或授权；同一 scope 的新 root 必须使用更高 generation。启动、撤销与永久删除都保留原生名称占位和 journal 的 generation/permanent fence。Linux 的完整子树退出证据按原生生命周期保存，已经确认停止的旧 epoch 不会因为后续授权启动重用同一 cgroup 而被误判仍在写入。
+
+原生动作引擎已将这两步用于源最终清理、目标取消/撤销和永久删除。未绑定启动仍不能利用已停止的前驱凭据被当成已清理；这类未知结果的协调接口仍需实现。当前验收不证明 Linux BoxLite VM、宿主重启恢复或生产监督已经完成。
+
 ## 验证与剩余接入
 
 ### 伴随进程与私有控制
@@ -106,7 +137,7 @@ sequenceDiagram
 
 控制目录权限为 `700`，`control.sock` 和 `control.lock` 为 `600`。已有非 socket 文件、异常权限或活跃监听者均保留并拒绝覆盖。仅在独占控制锁下确认连接被拒绝、且前后 inode 一致，才移除残留 socket；关闭只移除本次创建的同一 socket。生产配置仍需校验控制目录与 SDK home、生命周期 journal 的分离关系。
 
-通道提供 `ping`、`status`、`adopt`、`renew`、`prepare_boot`、`bind_boot`、`boot_status` 和 `check_running`，不接受 SDK start/import 或服务退出指令。每条连接一条大端长度前缀 JSON 请求，帧不超过 16 KiB，读取、写入各有覆盖整个操作的一秒期限；客户端连接及交互总预算为三秒。未知字段、错误协议版本和非法请求 ID 被拒绝，普通诊断不作为 missing-record 证据。
+通道提供 `ping`、`status`、`adopt`、`renew`、`prepare_boot`、`bind_boot`、`boot_status`、`check_running`、`prepare_retirement`、`finish_retirement` 和 `retirement_status`，不接受 SDK start/import 或服务退出指令。每条连接一条大端长度前缀 JSON 请求，帧不超过 16 KiB，读取、写入各有覆盖整个操作的一秒期限；客户端连接及交互总预算为三秒。未知字段、错误协议版本和非法请求 ID 被拒绝，普通诊断不作为 missing-record 证据。
 
 客户端验证私有 socket 和内核给出的对端 UID、PID，并核对进程身份、Worker ID、持久 store ID、本次服务的随机 epoch 和请求 ID。只读发现用于初次受控配对；随后所有状态查询和变更携带固定服务身份，重启后的旧客户端不得静默切换 epoch。成功采纳/续租还核对完整回执及未过期时间。
 
@@ -130,4 +161,6 @@ cargo run --locked --example boxlite_boot_guard_smoke
 
 `boxlite_boot_guard_smoke` 先采纳真实运行源，通过适配器验证不重启的回滚和服务绑定重放，再停止同一原生根并由适配器完成启动授权、SDK start、进程绑定及就绪探测。错误 epoch 在 SDK start 前被拒绝；受保护操作不能降级为无守护器重放。绑定场景在续租后 SIGKILL 发起进程并移走 `shim.pid`，确认 VM 在旧期限后仍活跃、新期限到期后退出，磁盘保留且守护器可正常排空。未绑定场景在确认进程前丢失发起者，守护器通过内核证据找到并在授权期限停止 VM，保留磁盘；SIGTERM 后仍保持关闭中，不误报未知 SDK 结果已清理。实验仅重建 PID 发布缺口，没有在任意 SDK 启动指令处注入中断，也不证明 Linux 原生 VM、生产 Worker 或跨机器验收。
 
-尚需实现生产进程监督与绑定、Worker 启动路径及首次会话创建/采纳、未知启动结果协调、原生清理后释放记录，以及 Worker 配置、采纳/续租/重连门禁和 Hello 注册。当前接口不会凭停止或过期自行释放 scope 供第二个可写实例接管。单独账本对象的 `Drop` 仅释放锁；服务级关闭由上述伴随进程负责。
+尚需实现生产进程监督与绑定、Worker 启动路径及首次会话创建/采纳、未知启动结果协调、回收凭据压缩/维护，以及 Worker 配置、采纳/续租/重连门禁和 Hello 注册。当前接口不会凭停止或过期自行释放 scope 供第二个可写实例接管。`boxlite_lifecycle_controls_smoke` 从原始实例的显式采纳开始，对回滚、共享传输、源清理、同 Worker 缓存恢复、撤销、再次冷恢复和永久删除都使用独立守护器。它还按固定 store ID 重启守护器、拒绝旧客户端，核对旧释放凭据在新服务 epoch 中仍可用于历史清理。对象服务与协调方仍为本机 fixture，不能代替真实 Console/S3 或跨机器验收。
+
+单独账本对象的 `Drop` 仅释放锁；服务级关闭由上述伴随进程负责。

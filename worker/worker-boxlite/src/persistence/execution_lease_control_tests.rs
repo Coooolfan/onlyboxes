@@ -210,6 +210,90 @@ mod native {
     }
 
     #[tokio::test]
+    async fn retirement_replies_replay_exact_exit_and_release_receipts() {
+        let root = Root::new();
+        let ledger = root.ledger();
+        let mut child = Child::new();
+        let lease = child.lease(10_000);
+        ledger.adopt(lease.clone()).unwrap();
+        let retirement = LeaseRetirement {
+            operation_id: "cleanup_1".into(),
+            cleanup_generation: 1,
+            box_id: lease.box_id.clone(),
+            scoped_session_id: lease.scoped_session_id.clone(),
+            generation: 1,
+            revision: lease.revision,
+            process: lease.process,
+        };
+        let server = LeaseGuardServer::bind(ledger.clone(), root.0.join("rpc"))
+            .await
+            .unwrap();
+        let identity = server.identity().clone();
+        let shutdown = CancellationToken::new();
+        let task = tokio::spawn(server.run(shutdown.clone()));
+        child.0.kill().unwrap();
+        child.exited().await;
+        let mut stream = UnixStream::connect(root.socket()).await.unwrap();
+        write_frame(
+            &mut stream,
+            &Request {
+                version: VERSION,
+                request_id: uuid::Uuid::new_v4().to_string(),
+                worker_id: "worker".into(),
+                store_id: Some(identity.store_id.clone()),
+                expected: Some(identity.clone()),
+                command: Command::PrepareRetirement {
+                    retirement: retirement.clone(),
+                },
+            },
+        )
+        .await
+        .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while ledger
+            .retirement_status(&retirement.box_id)
+            .unwrap()
+            .is_none()
+        {
+            assert!(std::time::Instant::now() < deadline);
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        drop(stream);
+        let client = LeaseGuardClient::bind(root.socket(), identity);
+        assert_eq!(
+            client.prepare_retirement(retirement.clone()).await,
+            Ok(retirement.clone())
+        );
+        assert!(
+            !client
+                .retirement_status(&retirement.box_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .released
+        );
+        assert_eq!(
+            client.finish_retirement(retirement.clone()).await,
+            Ok(retirement.clone())
+        );
+        assert_eq!(
+            client.finish_retirement(retirement.clone()).await,
+            Ok(retirement.clone())
+        );
+        assert!(client.status(&retirement.box_id).await.unwrap().is_none());
+        assert!(
+            client
+                .retirement_status(&retirement.box_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .released
+        );
+        shutdown.cancel();
+        task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
     async fn running_checks_reject_a_dead_writer_without_erasing_status() {
         let root = Root::new();
         let ledger = root.ledger();

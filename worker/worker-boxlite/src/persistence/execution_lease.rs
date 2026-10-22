@@ -3,7 +3,7 @@
 use super::execution_boot::{BootRecord, BootWatch};
 use super::journal::{check_file, private_directory, private_options, read_private, write_atomic};
 use super::types::{valid_id, valid_scope};
-use super::{Error, HostProcess};
+use super::{Error, HostProcess, RetirementStatus};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
@@ -68,6 +68,8 @@ pub(super) struct State {
     pub(super) leases: BTreeMap<String, ExecutionLease>,
     #[serde(default)]
     pub(super) boots: BTreeMap<String, BootRecord>,
+    #[serde(default)]
+    pub(super) retirements: BTreeMap<String, RetirementStatus>,
 }
 
 #[derive(Clone, Copy)]
@@ -245,6 +247,7 @@ impl ExecutionLeaseLedger {
                 store_id: owner.store_id.clone(),
                 leases: BTreeMap::new(),
                 boots: BTreeMap::new(),
+                retirements: BTreeMap::new(),
             };
             persist_state(&root, &state)?;
             write_atomic(
@@ -254,16 +257,29 @@ impl ExecutionLeaseLedger {
             )?;
             (owner, state)
         };
-        if state.leases.len() > MAX_RECORDS || state.boots.len() > MAX_RECORDS {
+        if state.leases.len() > MAX_RECORDS
+            || state.boots.len() > MAX_RECORDS
+            || state.retirements.len() > MAX_RECORDS
+        {
             return Err(Error::Unavailable);
         }
         let now = Moment::now()?;
+        let mut released_floors = BTreeMap::<&str, i64>::new();
+        for status in state.retirements.values().filter(|status| status.released) {
+            released_floors
+                .entry(status.retirement.scoped_session_id.as_str())
+                .and_modify(|floor| *floor = (*floor).max(status.retirement.cleanup_generation))
+                .or_insert(status.retirement.cleanup_generation);
+        }
         let mut scopes = BTreeSet::new();
         let mut watches = BTreeMap::new();
         for (id, lease) in &state.leases {
             lease.validate().map_err(|_| Error::Unavailable)?;
             if id != &lease.box_id
                 || !scopes.insert(&lease.scoped_session_id)
+                || released_floors
+                    .get(lease.scoped_session_id.as_str())
+                    .is_some_and(|floor| lease.generation <= *floor)
                 || lease.process.host_id != owner.host_id
                 || (lease.process.boot_id == current.boot_id
                     && lease.process.process_namespace != current.process_namespace)
@@ -284,6 +300,9 @@ impl ExecutionLeaseLedger {
             if id != &grant.box_id
                 || !boot_scopes.insert(&grant.scoped_session_id)
                 || !boot_operations.insert(&grant.operation_id)
+                || released_floors
+                    .get(grant.scoped_session_id.as_str())
+                    .is_some_and(|floor| grant.generation <= *floor)
                 || grant.origin.host_id != owner.host_id
                 || (grant.origin.boot_id == current.boot_id
                     && grant.origin.process_namespace != current.process_namespace)
@@ -325,6 +344,40 @@ impl ExecutionLeaseLedger {
                 id.clone(),
                 Arc::new(Mutex::new(BootWatch::new(record, now, true)?)),
             );
+        }
+        for (id, status) in &state.retirements {
+            let retirement = &status.retirement;
+            retirement.validate().map_err(|_| Error::Unavailable)?;
+            if id != &retirement.box_id
+                || retirement.process.host_id != owner.host_id
+                || retirement.process.boot_id == current.boot_id
+                    && retirement.process.process_namespace != current.process_namespace
+            {
+                return Err(Error::Unavailable);
+            }
+            if status.released {
+                if state.leases.contains_key(id) || state.boots.contains_key(id) {
+                    return Err(Error::Unavailable);
+                }
+            } else {
+                if !state
+                    .leases
+                    .get(id)
+                    .is_some_and(|lease| retirement.matches(lease))
+                    || state
+                        .boots
+                        .get(id)
+                        .is_some_and(|boot| boot.bound_process.is_none())
+                {
+                    return Err(Error::Unavailable);
+                }
+                watches
+                    .get(id)
+                    .ok_or(Error::Unavailable)?
+                    .lock()
+                    .map_err(|_| Error::Unavailable)?
+                    .retired = true;
+            }
         }
         // Recognized interrupted atomic writes can be removed only after the
         // complete owner/state pair has passed validation. Unknown files stay.
@@ -395,12 +448,8 @@ impl ExecutionLeaseLedger {
             .cloned()
             .collect();
         for slot in slots {
-            if !slot
-                .lock()
-                .map_err(|_| Error::Unavailable)?
-                .process
-                .writers_exited()?
-            {
+            let watch = slot.lock().map_err(|_| Error::Unavailable)?;
+            if !watch.retired && !watch.process.writers_exited()? {
                 return Ok(false);
             }
         }
@@ -459,6 +508,14 @@ impl ExecutionLeaseLedger {
         lease.process.verify_current_writer(&lease.box_id)?;
         let mut state = self.state.lock().map_err(|_| Error::Unavailable)?;
         self.available()?;
+        if state.retirements.contains_key(&lease.box_id)
+            || state
+                .retirements
+                .values()
+                .any(|status| status.retirement.scoped_session_id == lease.scoped_session_id)
+        {
+            return Err(Error::Conflict);
+        }
         if state.boots.values().any(|record| {
             record.authorization.box_id == lease.box_id
                 || record.authorization.scoped_session_id == lease.scoped_session_id

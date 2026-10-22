@@ -127,7 +127,11 @@ async fn main() -> Result<()> {
     )?);
     let journal = guard.journal();
     let sdk = Arc::new(boxlite_runtime::initialize_guarded(&cfg, guard.clone())?.clone());
-    let native = Arc::new(NativeRuntime::new(sdk.clone(), &home)?);
+    let mut execution_guard = Some(lease_guard::Guard::start(&root, &cfg.worker_id).await?);
+    let mut native = Arc::new(
+        NativeRuntime::new(sdk.clone(), &home)?
+            .with_execution_guard(execution_guard.as_ref().unwrap().client.clone()),
+    );
     let settings = NativeControlConfig {
         max_inflight: 1,
         tmp_quota_bytes: 128 << 30,
@@ -164,9 +168,16 @@ async fn main() -> Result<()> {
         "native management-frame acceptance; root={}",
         root.display()
     );
-    let mut execution_guard = None;
     let outcome: Result<()> = async {
-        manager.execute(exec(0, "python -c \"from pathlib import Path; Path('/source-control-data').write_text('preserved')\"" )).await?;
+        let created=manager.execute(exec(0, "python -c \"from pathlib import Path; Path('/source-control-data').write_text('preserved')\"" )).await?;
+        let original=sdk.get_info(&worker_boxlite::persistence::terminal_name(SCOPE)).await?
+            .ok_or("original root is missing before adoption")?;
+        let writer=native.inspect_writer(SCOPE,original.id.as_str()).await?;
+        execution_guard.as_ref().unwrap().client.adopt(worker_boxlite::persistence::ExecutionLease {
+            box_id:original.id.to_string(),scoped_session_id:SCOPE.into(),generation:1,revision:1,
+            expires_unix_ms:created.lease_expires_unix_ms+1,process:writer,revoked:false,
+        }).await?;
+
         let initial = value(control(&dispatcher, FIRST, Action::Inspect, Control::default()).await?)?;
         if initial.state != "running" { return Err("source inspection failed".into()); }
         let spec = initial.restore_spec.ok_or("spec missing")?;
@@ -268,6 +279,12 @@ async fn main() -> Result<()> {
             return Err("ephemeral transfer grants reached the journal".into());
         }
         println!("PASS: frames upload real archive parts, full-GET verify, require commit authority and finalize with gates closed");
+        if execution_guard.as_ref().unwrap().client.status(&id).await?.is_some()
+            || !execution_guard.as_ref().unwrap().client.retirement_status(&id).await?
+                .is_some_and(|status|status.released) {
+            return Err("finalized source retained its writable-owner reservation".into());
+        }
+        println!("PASS: source cleanup durably confirms writer exit before native deletion and releases the exact lease before same-worker restore");
         let prepare = Control { restore_spec:Some(spec.clone()), archive:Some(archive.clone()),
             max_bytes:archive.size_bytes, max_expanded_bytes:archive.expanded_bytes,
             staging_bytes:archive.size_bytes + archive.expanded_bytes, lease_ttl_sec:300,
@@ -341,7 +358,30 @@ async fn main() -> Result<()> {
             || manager.active_session_count().await != 0 || manager.execute(exec(3, "after-revoke")).await.is_ok() {
             return Err("explicit target revocation retained execution or root".into());
         }
+        if execution_guard.as_ref().unwrap().client.status(&ready.instance_id).await?.is_some()
+            || !execution_guard.as_ref().unwrap().client.retirement_status(&ready.instance_id).await?
+                .is_some_and(|status|status.released) {return Err("revoked target retained its lease reservation".into());}
         println!("PASS: restore frames import verified bytes, preserve inactive readiness across manager reconstruction and require explicit activation/revocation");
+        // Reopen the same pinned ledger after all older writers and roots have
+        // been released. Old receipts remain immutable evidence, not new grants.
+        dispatcher.close().await.map_err(|_|"pre-restart dispatcher did not drain")?;
+        manager.close_preserving().await;
+        let old_client=execution_guard.as_ref().unwrap().client.clone();
+        let store_id=old_client.identity().store_id.clone();
+        execution_guard.as_mut().unwrap().shutdown().await?;
+        execution_guard.take();
+        execution_guard=Some(lease_guard::Guard::reopen(&root,&cfg.worker_id,&store_id).await?);
+        if old_client.status(&ready.instance_id).await.is_ok() {return Err("old guard client survived companion restart".into());}
+        manager=TerminalSessionManager::from_config(&cfg);
+        native=Arc::new(NativeRuntime::new(sdk.clone(),&home)?.with_execution_guard(
+            execution_guard.as_ref().unwrap().client.clone()));
+        let engine=NativeControlEngine::new(manager.clone(),journal.clone(),native.clone(),settings.clone()).await
+            .map_err(|_|"post-guard-restart engine failed")?;
+        dispatcher=ControlDispatcher::new(engine,2).map_err(|_|"post-restart dispatcher failed")?;
+        dispatcher.begin_connection(EPOCH).await.map_err(|_|"post-restart connection failed")?;
+        manager.protect_persistence_recovery(EPOCH,&[],&[]).await?;manager.finish_persistence_recovery(EPOCH).await?;
+        dispatcher.finish_connection(EPOCH).map_err(|_|"post-restart recovery failed")?;
+        println!("PASS: a pinned companion restart retains released ownership receipts and rejects the old client before restoring the same scope again");
         value(control_at(&dispatcher, "permanently-deleted-target", 4, Action::PrepareRestore, prepare.clone()).await?)?;
         let mut corrupted = 0;
         for prior in journal.snapshot()?.operations.values().filter(|op| op.scoped_session_id == SCOPE && op.verified
@@ -357,22 +397,6 @@ async fn main() -> Result<()> {
         let gets_before_cold = store.get_requests.load(std::sync::atomic::Ordering::SeqCst);
         let cold_payload = Control { archive:Some(archive.clone()),
             download:Some(snapshot_store::grant(&store.url, "GET", archive.size_bytes, 0, None)), ..Default::default() };
-        // Enable the companion on this final restored generation. Earlier
-        // fixture phases independently exercise the unguarded native adapters;
-        // production wiring and release of historical guard records are separate.
-        execution_guard = Some(lease_guard::Guard::start(&root, &cfg.worker_id).await?);
-        dispatcher.close().await.map_err(|_| "pre-guard dispatcher did not drain")?;
-        manager.close_preserving().await;
-        manager = TerminalSessionManager::from_config(&cfg);
-        let guarded_native = Arc::new(NativeRuntime::new(sdk.clone(), &home)?.with_execution_guard(
-            execution_guard.as_ref().unwrap().client.clone()));
-        let engine = NativeControlEngine::new(manager.clone(),journal.clone(),guarded_native,settings.clone()).await
-            .map_err(|_| "guarded target engine failed")?;
-        dispatcher = ControlDispatcher::new(engine,2).map_err(|_| "guarded dispatcher failed")?;
-        dispatcher.begin_connection(EPOCH).await.map_err(|_| "guarded connection failed")?;
-        manager.protect_persistence_recovery(EPOCH,&[],&[]).await?;
-        manager.finish_persistence_recovery(EPOCH).await?;
-        dispatcher.finish_connection(EPOCH).map_err(|_| "guarded recovery failed")?;
         let final_ready = value(control_at(&dispatcher, "permanently-deleted-target", 4, Action::Restore, cold_payload).await?)?;
         let guarded_op = journal.snapshot()?.operations["permanently-deleted-target"].clone();
         let guarded_lease = execution_guard.as_ref().unwrap().client.status(&final_ready.instance_id).await?
@@ -415,6 +439,9 @@ async fn main() -> Result<()> {
             return Err("permanent deletion did not remove every root/cache and gate".into());
         }
         rejected(control_at(&dispatcher, "forbidden-future-restore", 6, Action::PrepareRestore, prepare).await?, "session_state_conflict")?;
+        if execution_guard.as_ref().unwrap().client.status(&final_ready.instance_id).await?.is_some()
+            || !execution_guard.as_ref().unwrap().client.retirement_status(&final_ready.instance_id).await?
+                .is_some_and(|status|status.released) {return Err("permanent deletion retained a writable-owner lease".into());}
         println!("PASS: permanent-delete frames remove a running target and all retained session archives; replay is idempotent and future recreation stays fenced");
 
         Ok(())

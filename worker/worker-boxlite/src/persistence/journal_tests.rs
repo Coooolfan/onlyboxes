@@ -59,6 +59,7 @@ fn source() -> Operation {
         cleanup_processes: Default::default(),
         cleanup_box_ids: Default::default(),
         cleanup_names: Default::default(),
+        lease_retirements: Default::default(),
         source_process: None,
         source_stop_confirmed: false,
         start_attempted: false,
@@ -1311,5 +1312,96 @@ fn companion_epoch_and_boot_authority_are_durable_and_immutable() {
     let mut value: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     value["operations"][&id]["boot_guard"]["guard"]["worker_id"] = "different-worker".into();
     fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+    assert!(Journal::open(root.journal(), "worker-a").is_err());
+}
+
+#[test]
+fn cleanup_receipts_are_immutable_and_a_higher_delete_retains_the_original_anchor() {
+    use crate::persistence::{GuardedRetirement, HostProcess, LeaseGuardIdentity, LeaseRetirement};
+    let root = Root::new();
+    let j = root.open();
+    let initial = source();
+    let id = initial.box_id.clone();
+    j.claim(initial).unwrap();
+    freeze(&j);
+    j.update("suspend-1", |op| {
+        op.remote_verified = true;
+        op.snapshot_committed = true;
+        op.phase = Phase::Committed;
+        Ok(())
+    })
+    .unwrap();
+    let op = j.snapshot().unwrap().operations["suspend-1"].clone();
+    let process = op.source_process.unwrap();
+    let mut helper = HostProcess::current().unwrap();
+    helper.host_id = process.host_id.clone();
+    let receipt = GuardedRetirement {
+        guard: LeaseGuardIdentity {
+            worker_id: "worker-a".into(),
+            store_id: uuid::Uuid::new_v4().to_string(),
+            epoch_id: uuid::Uuid::new_v4().to_string(),
+            process: helper,
+        },
+        retirement: LeaseRetirement {
+            operation_id: "suspend-1".into(),
+            cleanup_generation: 1,
+            box_id: id.clone(),
+            scoped_session_id: op.scoped_session_id.clone(),
+            generation: 1,
+            revision: 2,
+            process,
+        },
+    };
+    j.update("suspend-1", |op| {
+        op.cleanup_box_ids.insert(id.clone());
+        op.cleanup_names.insert(
+            id.clone(),
+            crate::persistence::terminal_name(&op.scoped_session_id),
+        );
+        op.lease_retirements.insert(id.clone(), receipt.clone());
+        Ok(())
+    })
+    .unwrap();
+    j.close().unwrap();
+    let j = root.open();
+    assert_eq!(
+        j.snapshot().unwrap().operations["suspend-1"].lease_retirements[&id],
+        receipt
+    );
+    assert_eq!(
+        j.update("suspend-1", |op| {
+            op.lease_retirements.clear();
+            Ok(())
+        }),
+        Err(Error::Conflict)
+    );
+    assert_eq!(
+        j.update("suspend-1", |op| {
+            op.lease_retirements
+                .get_mut(&id)
+                .unwrap()
+                .retirement
+                .revision += 1;
+            Ok(())
+        }),
+        Err(Error::Conflict)
+    );
+    j.claim(deletion()).unwrap();
+    j.update("delete-session", |op| {
+        op.cleanup_box_ids.insert(id.clone());
+        op.lease_retirements.insert(id.clone(), receipt.clone());
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(
+        j.snapshot().unwrap().operations["delete-session"].lease_retirements[&id],
+        receipt
+    );
+    j.close().unwrap();
+    let path = root.journal().join("journal.json");
+    let mut state: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    state["operations"]["delete-session"]["lease_retirements"][&id]["retirement"]["operation_id"] =
+        "unknown-origin".into();
+    fs::write(path, serde_json::to_vec(&state).unwrap()).unwrap();
     assert!(Journal::open(root.journal(), "worker-a").is_err());
 }

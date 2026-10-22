@@ -2,6 +2,7 @@
 //! thread and never depends on a client or an asynchronous control task.
 use super::journal::{check_file, private_directory, private_options};
 use super::{BootAuthorization, Error, ExecutionLease, ExecutionLeaseLedger, HostProcess};
+use super::{LeaseRetirement, RetirementStatus};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
@@ -60,6 +61,15 @@ struct Request {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 enum Command {
+    PrepareRetirement {
+        retirement: LeaseRetirement,
+    },
+    FinishRetirement {
+        retirement: LeaseRetirement,
+    },
+    RetirementStatus {
+        box_id: String,
+    },
     CheckRunning {
         box_id: String,
     },
@@ -101,6 +111,9 @@ struct Response {
     deny_unknown_fields
 )]
 enum Reply {
+    Retired(LeaseRetirement),
+    Released(LeaseRetirement),
+    RetirementStatus(Option<RetirementStatus>),
     Running(ExecutionLease),
     BootPrepared(BootAuthorization),
     BootStatus(Option<BootAuthorization>),
@@ -507,6 +520,15 @@ async fn handle(
         tokio::task::spawn_blocking(move || {
             let _job = job;
             let result = match request.command {
+                Command::PrepareRetirement { retirement } => {
+                    ledger.prepare_retirement(retirement).map(Reply::Retired)
+                }
+                Command::FinishRetirement { retirement } => {
+                    ledger.finish_retirement(retirement).map(Reply::Released)
+                }
+                Command::RetirementStatus { box_id } => ledger
+                    .retirement_status(&box_id)
+                    .map(Reply::RetirementStatus),
                 Command::CheckRunning { box_id } => {
                     ledger.check_running(&box_id).map(Reply::Running)
                 }
@@ -686,6 +708,47 @@ impl LeaseGuardClient {
                 }
                 Ok(lease)
             }
+            _ => Err(Error::Unavailable),
+        }
+    }
+    pub async fn retirement_status(&self, id: &str) -> Result<Option<RetirementStatus>> {
+        match self
+            .call(Command::RetirementStatus { box_id: id.into() })
+            .await?
+        {
+            Reply::RetirementStatus(status) => {
+                if let Some(status) = &status {
+                    status.retirement.validate()?;
+                    if status.retirement.box_id != id {
+                        return Err(Error::Unavailable);
+                    }
+                }
+                Ok(status)
+            }
+            _ => Err(Error::Unavailable),
+        }
+    }
+    pub async fn prepare_retirement(&self, retirement: LeaseRetirement) -> Result<LeaseRetirement> {
+        retirement.validate()?;
+        match self
+            .call(Command::PrepareRetirement {
+                retirement: retirement.clone(),
+            })
+            .await?
+        {
+            Reply::Retired(receipt) if receipt == retirement => Ok(receipt),
+            _ => Err(Error::Unavailable),
+        }
+    }
+    pub async fn finish_retirement(&self, retirement: LeaseRetirement) -> Result<LeaseRetirement> {
+        retirement.validate()?;
+        match self
+            .call(Command::FinishRetirement {
+                retirement: retirement.clone(),
+            })
+            .await?
+        {
+            Reply::Released(receipt) if receipt == retirement => Ok(receipt),
             _ => Err(Error::Unavailable),
         }
     }

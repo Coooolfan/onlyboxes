@@ -16,6 +16,12 @@ pub struct Guard {
 }
 impl Guard {
     pub async fn start(root: &Path, worker: &str) -> Result<Self> {
+        Self::start_inner(root, worker, None).await
+    }
+    pub async fn reopen(root: &Path, worker: &str, store: &str) -> Result<Self> {
+        Self::start_inner(root, worker, Some(store)).await
+    }
+    async fn start_inner(root: &Path, worker: &str, store: Option<&str>) -> Result<Self> {
         let helper = std::env::var_os("BOXLITE_LEASE_GUARD_BINARY")
             .map(PathBuf::from)
             .unwrap_or_else(|| {
@@ -34,14 +40,18 @@ impl Guard {
             .join(format!("obx-lc-{}", &uuid::Uuid::new_v4().to_string()[..8]));
         fs::create_dir(&control)?;
         fs::set_permissions(&control, fs::Permissions::from_mode(0o700))?;
-        let mut process = Command::new(helper)
+        let mut command = Command::new(helper);
+        command
             .arg("--state-dir")
             .arg(root.join("execution-leases"))
             .arg("--socket-dir")
             .arg(&control)
             .arg("--worker-id")
-            .arg(worker)
-            .spawn()?;
+            .arg(worker);
+        if let Some(store) = store {
+            command.arg("--store-id").arg(store);
+        }
+        let mut process = command.spawn()?;
         let deadline = Instant::now() + Duration::from_secs(10);
         let identity = loop {
             if process.try_wait()?.is_some() || Instant::now() > deadline {
@@ -51,7 +61,7 @@ impl Guard {
                 return Err("owned guardian did not become ready".into());
             }
             if let Ok(identity) =
-                LeaseGuardClient::discover(control.join("control.sock"), worker, None).await
+                LeaseGuardClient::discover(control.join("control.sock"), worker, store).await
             {
                 break identity;
             }

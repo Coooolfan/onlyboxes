@@ -39,6 +39,21 @@ impl JournalState {
             {
                 return Err(Error::Unavailable);
             }
+            for (box_id, receipt) in &op.lease_retirements {
+                if receipt.guard.worker_id != worker {
+                    return Err(Error::Unavailable);
+                }
+                let original = self
+                    .operations
+                    .get(&receipt.retirement.operation_id)
+                    .ok_or(Error::Unavailable)?;
+                if original.scoped_session_id != op.scoped_session_id
+                    || original.generation != receipt.retirement.cleanup_generation
+                    || original.lease_retirements.get(box_id) != Some(receipt)
+                {
+                    return Err(Error::Unavailable);
+                }
+            }
             let current = self
                 .operations
                 .get(&self.current[&op.scoped_session_id])
@@ -339,6 +354,7 @@ impl Journal {
                 cleanup_processes: Default::default(),
                 cleanup_box_ids: Default::default(),
                 cleanup_names: Default::default(),
+                lease_retirements: Default::default(),
                 source_process: None,
                 source_stop_confirmed: false,
                 start_attempted: false,

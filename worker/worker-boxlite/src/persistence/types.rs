@@ -171,6 +171,39 @@ impl GuardedBoot {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GuardedRetirement {
+    pub guard: super::LeaseGuardIdentity,
+    pub retirement: super::LeaseRetirement,
+}
+impl GuardedRetirement {
+    fn validate(&self, id: &str, op: &Operation) -> Result<()> {
+        self.guard.validate()?;
+        self.retirement.validate()?;
+        let receipt = &self.retirement;
+        if receipt.box_id != id
+            || receipt.scoped_session_id != op.scoped_session_id
+            || receipt.generation > op.generation
+            || receipt.cleanup_generation > op.generation
+            || self.guard.process.host_id != receipt.process.host_id
+            || !(receipt.operation_id == op.operation_id
+                && receipt.cleanup_generation == op.generation
+                || op.kind == Kind::Delete && receipt.cleanup_generation < op.generation)
+            || !op.cleanup_box_ids.contains(id)
+            || !matches!(
+                (op.kind, op.phase),
+                (Kind::Source, Phase::Committed | Phase::Finalized)
+                    | (Kind::Target, Phase::Canceling | Phase::Canceled)
+                    | (Kind::Delete, Phase::Deleting | Phase::Deleted)
+            )
+        {
+            return Err(Error::Conflict);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Operation {
@@ -197,6 +230,8 @@ pub struct Operation {
     pub cleanup_box_ids: std::collections::BTreeSet<String>,
     #[serde(default)]
     pub cleanup_names: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub lease_retirements: BTreeMap<String, GuardedRetirement>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_process: Option<HostProcess>,
     #[serde(default)]
@@ -285,6 +320,9 @@ impl Operation {
             if !self.cleanup_box_ids.contains(id) || !valid_id(name) {
                 return Err(Error::Conflict);
             }
+        }
+        for (id, receipt) in &self.lease_retirements {
+            receipt.validate(id, self)?;
         }
         for (id, process) in &self.cleanup_processes {
             if !valid_id(id) || !self.cleanup_box_ids.contains(id) {
@@ -455,6 +493,10 @@ impl Operation {
             && (self.started_process.is_none() || self.started_process == next.started_process)
             && (self.boot_executable.is_none() || self.boot_executable == next.boot_executable)
             && (self.boot_guard.is_none() || self.boot_guard == next.boot_guard)
+            && self
+                .lease_retirements
+                .iter()
+                .all(|(id, receipt)| next.lease_retirements.get(id) == Some(receipt))
             && self.staging_bytes == next.staging_bytes
             && self.lease_ttl_sec == next.lease_ttl_sec
             && (self.box_id.is_empty() || self.box_id == next.box_id)

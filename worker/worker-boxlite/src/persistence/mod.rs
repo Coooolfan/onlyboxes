@@ -6,6 +6,7 @@ mod cgroup;
 mod execution_boot;
 mod execution_lease;
 mod execution_lease_control;
+mod execution_retirement;
 mod home;
 mod host_process;
 mod host_signal;
@@ -23,6 +24,7 @@ pub use cgroup::WriterCgroup;
 pub use execution_boot::BootAuthorization;
 pub use execution_lease::{ExecutionLease, ExecutionLeaseLedger, LeaseEnforcement};
 pub use execution_lease_control::{LeaseGuardClient, LeaseGuardIdentity, LeaseGuardServer};
+pub use execution_retirement::{LeaseRetirement, RetirementStatus};
 pub use home::RuntimeHomeGuard;
 pub use host_process::HostProcess;
 pub use journal::{Journal, JournalState};
@@ -34,5 +36,6 @@ pub use transfer::{
     CompletedPart, Downloaded, Transfer, TransferError, TransferGrant, UploadPart, VerifiedSource,
 };
 pub use types::{
-    artifact_name, Archive, Error, GuardedBoot, Kind, Operation, Phase, RestoreSpec, ARCHIVE_FORMAT,
+    artifact_name, Archive, Error, GuardedBoot, GuardedRetirement, Kind, Operation, Phase,
+    RestoreSpec, ARCHIVE_FORMAT,
 };

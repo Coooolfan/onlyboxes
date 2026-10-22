@@ -109,6 +109,14 @@ impl ExecutionLeaseLedger {
         }
         let mut state = self.state.lock().map_err(|_| Error::Unavailable)?;
         self.available()?;
+        if state.retirements.contains_key(&authorization.box_id)
+            || state.retirements.values().any(|status| {
+                status.retirement.scoped_session_id == authorization.scoped_session_id
+                    && authorization.generation <= status.retirement.cleanup_generation
+            })
+        {
+            return Err(Error::Conflict);
+        }
         if let Some(prior) = state.boots.get(&authorization.box_id) {
             if prior.authorization == authorization {
                 let slot = self.boot_watch(&authorization.box_id)?;

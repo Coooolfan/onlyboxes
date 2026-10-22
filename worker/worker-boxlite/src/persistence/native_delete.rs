@@ -121,6 +121,18 @@ impl NativeRuntime {
         for (id, process) in &deletion.cleanup_processes {
             proofs.entry(id.clone()).or_default().push(process.clone());
         }
+        journal
+            .update(operation, |current| {
+                for (id, name) in &ids {
+                    current.cleanup_box_ids.insert(id.clone());
+                    current.cleanup_names.insert(id.clone(), name.clone());
+                }
+                for (name, id) in &markers {
+                    current.name_fences.insert(name.clone(), id.clone());
+                }
+                Ok(())
+            })
+            .map_err(journal_error)?;
         // Confirm every older recorded writer has exited before its disk can be
         // removed. The one live selected lifecycle is stopped by cleanup_named.
         for (id, name) in &ids {
@@ -148,28 +160,36 @@ impl NativeRuntime {
             } else {
                 None
             };
+            let retirement = if running.is_none() {
+                self.retire_native_lease(&journal, operation, id).await?
+            } else {
+                None
+            };
+            let retired_process = retirement
+                .as_ref()
+                .map(|receipt| &receipt.retirement.process);
             let recorded = proofs.get(id).map(Vec::as_slice).unwrap_or_default();
-            if running.is_none() && needs_proof.contains(id) && recorded.is_empty() {
+            if running.is_none()
+                && needs_proof.contains(id)
+                && recorded.is_empty()
+                && retirement.is_none()
+            {
                 return Err(NativeError::Conflict);
             }
             for process in recorded {
-                if running.as_ref() != Some(process) {
+                if running.as_ref() != Some(process)
+                    && retired_process != Some(process)
+                    && !super::retirement::stopped_epoch(
+                        &state,
+                        &deletion.scoped_session_id,
+                        id,
+                        process,
+                    )
+                {
                     require_exited(process).await?;
                 }
             }
         }
-        journal
-            .update(operation, |current| {
-                for (id, name) in &ids {
-                    current.cleanup_box_ids.insert(id.clone());
-                    current.cleanup_names.insert(id.clone(), name.clone());
-                }
-                for (name, id) in &markers {
-                    current.name_fences.insert(name.clone(), id.clone());
-                }
-                Ok(())
-            })
-            .map_err(journal_error)?;
         for name in names {
             let (_, current) = cleanup_operation(&journal, operation)?;
             self.cleanup_named(&journal, &current, &name).await?;

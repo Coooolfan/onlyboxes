@@ -18,7 +18,16 @@ impl NativeRuntime {
         {
             return Err(NativeError::Conflict);
         }
-        require_exited(op.source_process.as_ref().ok_or(NativeError::Conflict)?).await?;
+        let process = op.source_process.as_ref().ok_or(NativeError::Conflict)?;
+        let retired = if op.lease_retirements.contains_key(&op.box_id) {
+            self.retire_native_lease(journal, operation, &op.box_id)
+                .await?
+        } else {
+            None
+        };
+        if retired.as_ref().map(|receipt| &receipt.retirement.process) != Some(process) {
+            require_exited(process).await?;
+        }
         let name = source_name(&state, &op)?;
         self.cleanup_named(journal, &op, &name).await?;
         journal
@@ -214,17 +223,29 @@ impl NativeRuntime {
                 native.stop().await.map_err(|_| NativeError::Unavailable)?;
             }
         }
+        let retirement = self
+            .retire_native_lease(journal, &op.operation_id, id)
+            .await?;
         let (_, current) = cleanup_operation(journal, &op.operation_id)?;
+        let retired_process = retirement
+            .as_ref()
+            .map(|receipt| &receipt.retirement.process);
         if let Some(process) = current.cleanup_processes.get(id) {
-            require_exited(process).await?;
+            if retired_process != Some(process) {
+                require_exited(process).await?;
+            }
         } else if id == current.box_id {
             if let Some(process) = &current.started_process {
-                require_exited(process).await?;
-            } else if current.start_attempted {
+                if retired_process != Some(process) {
+                    require_exited(process).await?;
+                }
+            } else if current.start_attempted && retirement.is_none() {
                 // Startup may have created a writer before its response was lost.
                 return Err(NativeError::Conflict);
             } else if let Some(process) = &current.source_process {
-                require_exited(process).await?;
+                if retired_process != Some(process) {
+                    require_exited(process).await?;
+                }
             }
         }
         if info.is_some() {
@@ -259,7 +280,7 @@ impl NativeRuntime {
         tokio::task::spawn_blocking(move || remove_native_home(&home, &id))
             .await
             .map_err(|_| NativeError::Unavailable)??;
-        Ok(())
+        self.release_native_lease(retirement).await
     }
 
     pub(super) fn inspect_name_fence(
