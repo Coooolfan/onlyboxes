@@ -64,6 +64,7 @@ fn source() -> Operation {
         start_attempted: false,
         started_process: None,
         boot_executable: None,
+        boot_guard: None,
         lease_expires_unix_ms: 10000,
         staging_bytes: 1 << 20,
         snapshot_committed: false,
@@ -1205,4 +1206,110 @@ fn boot_executable_is_durable_and_cannot_be_removed_or_rebound() {
         }),
         Err(Error::Conflict)
     );
+}
+
+#[test]
+fn companion_epoch_and_boot_authority_are_durable_and_immutable() {
+    use crate::persistence::{
+        BootAuthorization, BootExecutable, GuardedBoot, HostProcess, LeaseGuardIdentity,
+    };
+    let root = Root::new();
+    let home = root.0.join("native");
+    private_directory(&home).unwrap();
+    private_directory(&home.join("boxes")).unwrap();
+    let mut op = source();
+    private_directory(&home.join("boxes").join(&op.box_id)).unwrap();
+    let executable =
+        BootExecutable::prepare(&home, &op.box_id, Path::new("/bin/sleep"), true).unwrap();
+    let identity = LeaseGuardIdentity {
+        worker_id: "worker-a".into(),
+        store_id: uuid::Uuid::new_v4().to_string(),
+        epoch_id: uuid::Uuid::new_v4().to_string(),
+        process: HostProcess::current().unwrap(),
+    };
+    let binding = GuardedBoot {
+        guard: identity,
+        authorization: Some(BootAuthorization {
+            operation_id: op.operation_id.clone(),
+            box_id: op.box_id.clone(),
+            scoped_session_id: op.scoped_session_id.clone(),
+            generation: op.generation,
+            prior_revision: None,
+            expires_unix_ms: op.lease_expires_unix_ms,
+            origin: HostProcess::current().unwrap(),
+            executable: executable.clone(),
+        }),
+    };
+    op.phase = Phase::RollingBack;
+    op.start_attempted = true;
+    op.boot_executable = Some(executable);
+    op.boot_guard = Some(binding.clone());
+    let id = op.operation_id.clone();
+    let j = root.open();
+    j.claim(source()).unwrap();
+    j.update(&id, |current| {
+        *current = op.clone();
+        Ok(())
+    })
+    .unwrap();
+    j.close().unwrap();
+    let j = root.open();
+    assert_eq!(
+        j.snapshot().unwrap().operations[&id].boot_guard,
+        Some(binding.clone())
+    );
+    assert_eq!(
+        j.update(&id, |op| {
+            op.boot_guard = None;
+            Ok(())
+        }),
+        Err(Error::Conflict)
+    );
+    let mut changed = binding.clone();
+    changed.guard.epoch_id = uuid::Uuid::new_v4().to_string();
+    assert_eq!(
+        j.update(&id, |op| {
+            op.boot_guard = Some(changed);
+            Ok(())
+        }),
+        Err(Error::Conflict)
+    );
+    let mut changed = binding.clone();
+    changed.authorization.as_mut().unwrap().origin.start_time += 1;
+    assert_eq!(
+        j.update(&id, |op| {
+            op.boot_guard = Some(changed);
+            Ok(())
+        }),
+        Err(Error::Conflict)
+    );
+    let mut changed = binding.clone();
+    changed.authorization.as_mut().unwrap().scoped_session_id = "obx:other:scope".into();
+    assert_eq!(
+        j.update(&id, |op| {
+            op.boot_guard = Some(changed);
+            Ok(())
+        }),
+        Err(Error::Conflict)
+    );
+    let mut changed = binding.clone();
+    changed.guard.worker_id = "different-worker".into();
+    assert!(j
+        .update(&id, |op| {
+            op.boot_guard = Some(changed);
+            Ok(())
+        })
+        .is_err());
+    j.claim(source()).unwrap();
+    assert_eq!(
+        j.snapshot().unwrap().operations[&id].boot_guard,
+        Some(binding)
+    );
+    j.close().unwrap();
+    // A valid-looking companion from another Worker cannot pass journal load.
+    let path = root.journal().join("journal.json");
+    let mut value: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    value["operations"][&id]["boot_guard"]["guard"]["worker_id"] = "different-worker".into();
+    fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+    assert!(Journal::open(root.journal(), "worker-a").is_err());
 }

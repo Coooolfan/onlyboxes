@@ -205,6 +205,7 @@ async fn phase(phase: &str, root: &Path, image: &str) -> Result<()> {
             start_attempted: false,
             started_process: None,
             boot_executable: None,
+        boot_guard: None,
                 lease_expires_unix_ms: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)?
                     .as_millis() as i64
@@ -424,6 +425,7 @@ async fn phase(phase: &str, root: &Path, image: &str) -> Result<()> {
             start_attempted: false,
             started_process: None,
             boot_executable: None,
+        boot_guard: None,
                 lease_expires_unix_ms: 0,
                 staging_bytes: 65 << 30,
                 snapshot_committed: false,

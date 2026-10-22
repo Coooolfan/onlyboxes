@@ -45,16 +45,21 @@ Console 的恢复 ACK 到达、会话恢复完成后，才开放新连接的动�
 暂存额度和空闲空间查询属于准入估算，不是操作系统配额。SDK 临时文件、未登记孤儿和长期缓存的回收、硬磁盘配额与生产容量验收仍需完成。同节点恢复优先完整校验匹配的共享快照缓存；缓存丢失、过期或字节损坏时，下载同一个已提交引用。
 
 ```bash
+cargo build --locked --bin boxlite-lease-guard
 cargo run --locked --example boxlite_lifecycle_controls_smoke
 ```
 
 该验收在临时私有 home 中运行真实会话管理器、原生动作引擎与 BoxLite VM，直接交付 protobuf 管理帧。覆盖预算拒绝后源仍可执行、缺少 claim 的源回滚、排空期间执行超时后的数据保留、冻结后重建管理器/引擎并重试、原 CID 回滚与重放、分片 HTTP 上传、完整回读、未验证/未提交时禁止清理，以及清理后容量归零与入口关闭。恢复端覆盖准备后取消、拒绝延迟准备、HTTP 下载及导入、ready 后重建管理器、固定 CID/进程/绝对 lease 的重试、显式激活、旧 generation 拒绝、普通取消不能删除 active 目标、显式撤销，以及运行中永久删除和禁止重建。测试协调方负责完成分片和授予提交标志；不模拟真实 S3 条件 manifest 或 Console 数据库事务。管理器重建不等同于 Worker SIGKILL、跨机器或独立 lease 验收。
+
+验收中的最后一次冷恢复使用实际独立守护器和配置了 `with_execution_guard` 的原生适配器，核对管理帧触发的启动前授权、精确进程绑定和 inactive ready，并执行显式激活与永久删除。此前阶段分别验证原生动作和门禁；该实验不代表全部操作已接入守护器。普通请求续租、历史租约释放、未知启动协调、生产监督与启动配置仍需完成。
 
 ## 目标恢复、撤销与永久删除
 
 同一个 `NativeControlEngine` 处理 prepare_restore、restore、activate 以及 target cancel，和源动作共享准入锁、操作额度、暂存统计及 I/O 槽。prepare_restore 核对精确 runtime 版本、guest 平台、固定镜像与归档身份；本地计算下载归档、规范化归档、SDK 导入工作区和展开磁盘的预算，加上余量。Console 的 staging_bytes 是调度估算，不会降低本地预算。会话容量与 durable target 意图先于下载和 SDK 导入保留，普通命令不能在其间创建空白根。
 
 restore 通过完整 GET 校验归档，再核对格式、scope、规格、展开预算和独立磁盘身份。导入只选择当前操作/generation 派生名称对应的实例，不替换已记录 CID。绝对 lease 和启动意图先写 journal，再启动并探测 Python/sh 就绪。已接受的 import/start 始终等待 SDK 返回；连接断开后不开放入口。重试已启动目标使用原来的绝对 lease，不因重放而续期或重新启动曾经 ready 的停止实例。
+
+配置守护器的原生适配器在 SDK start 前持久化服务身份和启动授权，并在就绪确认、ready 查询及激活时核对独立执行租约。服务 epoch 不匹配、租约撤销或守护器不可用时拒绝开放；调用顺序见[原生启动适配器与 journal](execution-lease.md#原生启动适配器与-journal)。
 
 ready 仅表示实例已经就绪，执行与预览入口仍关闭。activate 核对实际运行进程与未过期 lease，记录 active 后在当前已恢复连接上显式绑定和开放。重复 activate 保留健康的在途工作。普通 cancel 只清理未激活目标；Console 的 delete=true 撤销授权允许先关闭 active 目标入口，排空已接受工作，再停止和移除该实例。撤销保留 session 的可恢复性，与永久删除不同。
 

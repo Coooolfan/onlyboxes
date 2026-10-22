@@ -741,6 +741,10 @@ impl NativeControlEngine {
         {
             return Err(ControlError::Conflict);
         }
+        self.native
+            .verify_execution_guard(&self.journal, &op.operation_id)
+            .await
+            .map_err(native_error)?;
         Ok(())
     }
     async fn active_binding(&self, op: &Operation) -> bool {

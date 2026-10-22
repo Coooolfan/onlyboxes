@@ -52,7 +52,42 @@ macOS 通过内核 audit token 中的 PID/version 查询可执行路径，Linux 
 
 未绑定启动即使已停止一个发现的进程、发起 Worker 已结束或暂时发现不到进程，也保持未确认状态。`boot_status` 返回持久化意图，不能作为仍有效的执行授权。服务关闭持续等待该结果的明确核对，不把空查询转成关闭成功；当前尚未提供这类未知启动结果的生产协调与释放接口。
 
-这些原语已通过私有 Unix 通道和真实 VM 实验验证。生命周期引擎的自动授权/绑定、授权与配对 journal 的生产绑定、Worker 重连及服务监督尚未接入，生产能力保持关闭。
+这些原语已通过私有 Unix 通道和真实 VM 实验验证。原生启动适配器已接入下述授权/绑定顺序；Worker 启动配置、全局 store/home 配对、普通会话采纳/续租、重连及服务监督尚未接入，生产能力保持关闭。
+
+### 原生启动适配器与 journal
+
+`NativeRuntime::with_execution_guard` 为该适配器的 `start_target` 和 `rollback_source` 固定客户端。SDK start 前，journal 将 `boot_guard`、可执行文件证据、绝对 lease 和启动意图一同落盘。`boot_guard` 保存完整守护器身份和本次授权，之后不可替换或移除；journal 加载时也核对 Worker。未配置守护器的适配器不能重放已有受保护操作。
+
+```mermaid
+sequenceDiagram
+    participant C as 生命周期引擎
+    participant N as NativeRuntime
+    participant J as 生命周期 journal
+    participant G as 独立守护器
+    participant V as BoxLite SDK / VM
+    C->>N: start_target / rollback_source
+    N->>G: 查询前驱租约（固定服务身份）
+    N->>J: 持久化 boot_guard、lease、启动意图
+    N->>G: prepare_boot
+    G-->>N: 授权已持久化
+    N->>V: SDK start，拥有任务直到结束
+    V-->>N: 实际原生实例
+    N->>G: bind_boot（精确写入者身份）
+    G-->>N: 普通执行租约已持久化
+    N->>J: 记录启动进程
+    N->>V: Python / sh 就绪探测
+    N->>G: 只读核对有效租约
+    N->>J: ready / rolled_back
+    N->>G: 提交后再次核对有效租约
+    N-->>C: 返回仍受门禁保护的实例
+    C->>N: inspect / activate 时再次核对租约
+```
+
+重试运行中的实例时，只核对 journal 固定的守护器、scope、generation 和精确进程，不重复 SDK start。有效租约已绑定时直接查询；尚未完成绑定时，仅原授权仍有效且原生 start 已结束，才提交相同绑定。回滚需要延长已有运行租约时，使用明确传入的绝对期限执行 CAS 续租，不靠重放生成新期限。守护器重启或 epoch 被替换时不能静默更换绑定。
+
+源实例始终运行、回滚只需重新开放访问时，不创建启动授权。适配器记录同一服务身份，并要求守护器已有该原实例的有效执行租约；它不会事后自动采纳未知实例。该路径同样禁止降级为无守护器重放。
+
+原生动作引擎的 ready 查询、运行中回滚和 activate 检查调用只读 `verify_execution_guard`，不把 SDK Running 当成有效执行权。普通执行、资源、预览、续租和 Worker 重连的全面接入仍需完成；当前 Worker 不宣告持久化能力。
 
 ## 验证与剩余接入
 
@@ -91,6 +126,6 @@ cargo run --locked --example boxlite_boot_guard_smoke
 
 原生实验还在真实 VM 的 `shim.pid` 暂时移走时，通过固定可执行文件和内核进程身份识别同一写入者。实验通过实际守护器二进制与 Unix 控制通道确认采纳及续租，再 SIGKILL SDK 宿主。独立守护进程持续运行；新 SDK 进程验证相同 VM PID、数据及仍持续增长的后台写入，旧期限后实例仍活跃，新期限到期后确认写入者退出及 guest 磁盘保留。守护器完成 SIGTERM 关闭后，才由 SDK 完成授权清理和残留恢复。该实验不等同于实际 Worker `Run`、Linux BoxLite VM、受监督服务、真实 Console/S3 或跨机器验收。
 
-`boxlite_boot_guard_smoke` 在停止的同一原生根上固定启动证据，通过实际二进制确认授权，再执行 SDK start。绑定场景在续租后 SIGKILL 发起进程并移走 `shim.pid`，确认 VM 在旧期限后仍活跃、新期限到期后退出，磁盘保留且守护器可正常排空。未绑定场景在确认进程前丢失发起者，守护器通过内核证据找到并在授权期限停止 VM，保留磁盘；SIGTERM 后仍保持关闭中，不误报未知 SDK 结果已清理。实验仅重建 PID 发布缺口，没有在任意 SDK 启动指令处注入中断，也不证明 Linux 原生 VM、生产 Worker 或跨机器验收。
+`boxlite_boot_guard_smoke` 先采纳真实运行源，通过适配器验证不重启的回滚和服务绑定重放，再停止同一原生根并由适配器完成启动授权、SDK start、进程绑定及就绪探测。错误 epoch 在 SDK start 前被拒绝；受保护操作不能降级为无守护器重放。绑定场景在续租后 SIGKILL 发起进程并移走 `shim.pid`，确认 VM 在旧期限后仍活跃、新期限到期后退出，磁盘保留且守护器可正常排空。未绑定场景在确认进程前丢失发起者，守护器通过内核证据找到并在授权期限停止 VM，保留磁盘；SIGTERM 后仍保持关闭中，不误报未知 SDK 结果已清理。实验仅重建 PID 发布缺口，没有在任意 SDK 启动指令处注入中断，也不证明 Linux 原生 VM、生产 Worker 或跨机器验收。
 
-尚需实现生产进程监督与绑定、受控 start/import 的授权/绑定接入、未知启动结果协调、原生清理后释放记录，以及 Worker 配置、采纳/续租/重连门禁和 Hello 注册。当前接口不会凭停止或过期自行释放 scope 供第二个可写实例接管。单独账本对象的 `Drop` 仅释放锁；服务级关闭由上述伴随进程负责。
+尚需实现生产进程监督与绑定、Worker 启动路径及普通请求的租约接入、未知启动结果协调、原生清理后释放记录，以及 Worker 配置、采纳/续租/重连门禁和 Hello 注册。当前接口不会凭停止或过期自行释放 scope 供第二个可写实例接管。单独账本对象的 `Drop` 仅释放锁；服务级关闭由上述伴随进程负责。

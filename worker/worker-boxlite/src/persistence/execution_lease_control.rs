@@ -29,7 +29,7 @@ pub struct LeaseGuardIdentity {
     pub process: HostProcess,
 }
 impl LeaseGuardIdentity {
-    fn validate(&self) -> Result<()> {
+    pub(super) fn validate(&self) -> Result<()> {
         if self.worker_id.trim().is_empty()
             || self.worker_id.len() > 256
             || self.worker_id.trim() != self.worker_id

@@ -29,7 +29,11 @@ impl JournalState {
             return Err(Error::Unavailable);
         }
         for (id, op) in &self.operations {
-            if id != &op.operation_id
+            if op
+                .boot_guard
+                .as_ref()
+                .is_some_and(|binding| binding.guard.worker_id != worker)
+                || id != &op.operation_id
                 || op.validate().is_err()
                 || !self.current.contains_key(&op.scoped_session_id)
             {
@@ -238,6 +242,7 @@ impl Journal {
                     || prior.lease_ttl_sec != op.lease_ttl_sec
                     || (op.source_process.is_some() && prior.source_process != op.source_process)
                     || (op.boot_executable.is_some() && prior.boot_executable != op.boot_executable)
+                    || (op.boot_guard.is_some() && prior.boot_guard != op.boot_guard)
                     || (op.source_stop_confirmed && !prior.source_stop_confirmed)
                     || (op.kind == Kind::Target && prior.archive != op.archive)
                     || (!op.box_id.is_empty() && prior.box_id != op.box_id)
@@ -339,6 +344,7 @@ impl Journal {
                 start_attempted: false,
                 started_process: None,
                 boot_executable: None,
+                boot_guard: None,
                 lease_expires_unix_ms: 0,
                 staging_bytes: 0,
                 snapshot_committed: false,

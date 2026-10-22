@@ -34,5 +34,5 @@ pub use transfer::{
     CompletedPart, Downloaded, Transfer, TransferError, TransferGrant, UploadPart, VerifiedSource,
 };
 pub use types::{
-    artifact_name, Archive, Error, Kind, Operation, Phase, RestoreSpec, ARCHIVE_FORMAT,
+    artifact_name, Archive, Error, GuardedBoot, Kind, Operation, Phase, RestoreSpec, ARCHIVE_FORMAT,
 };

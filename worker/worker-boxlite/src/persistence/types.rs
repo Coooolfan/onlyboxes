@@ -126,6 +126,51 @@ pub enum Phase {
     Deleted,
 }
 
+/// Immutable companion binding for a controlled native boot. This contains no
+/// socket address or credentials; every RPC uses the retained service epoch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GuardedBoot {
+    pub authorization: Option<super::BootAuthorization>,
+    pub guard: super::LeaseGuardIdentity,
+}
+impl GuardedBoot {
+    pub(super) fn validate(&self, operation: &Operation) -> Result<()> {
+        self.guard.validate()?;
+        if !operation.start_attempted || !matches!(operation.kind, Kind::Source | Kind::Target) {
+            return Err(Error::Conflict);
+        }
+        let Some(authorization) = &self.authorization else {
+            return if operation.kind == Kind::Source
+                && !operation.source_stop_confirmed
+                && operation.boot_executable.is_none()
+                && operation.started_process.as_ref().is_some_and(|process| {
+                    process.host_id == self.guard.process.host_id
+                        && process.boot_id == self.guard.process.boot_id
+                        && process.process_namespace == self.guard.process.process_namespace
+                }) {
+                Ok(())
+            } else {
+                Err(Error::Conflict)
+            };
+        };
+        authorization.validate()?;
+        if authorization.operation_id != operation.operation_id
+            || authorization.box_id != operation.box_id
+            || authorization.scoped_session_id != operation.scoped_session_id
+            || authorization.generation != operation.generation
+            || authorization.expires_unix_ms > operation.lease_expires_unix_ms
+            || operation.boot_executable.as_ref() != Some(&authorization.executable)
+            || self.guard.process.host_id != authorization.origin.host_id
+            || self.guard.process.boot_id != authorization.origin.boot_id
+            || self.guard.process.process_namespace != authorization.origin.process_namespace
+        {
+            return Err(Error::Conflict);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Operation {
@@ -164,6 +209,8 @@ pub struct Operation {
     pub started_process: Option<HostProcess>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub boot_executable: Option<super::BootExecutable>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boot_guard: Option<GuardedBoot>,
     #[serde(default)]
     pub lease_expires_unix_ms: i64,
     #[serde(default)]
@@ -247,6 +294,9 @@ impl Operation {
         }
         if let Some(process) = &self.started_process {
             process.validate_native_id(&self.box_id)?;
+        }
+        if let Some(binding) = &self.boot_guard {
+            binding.validate(self)?;
         }
         if let Some(executable) = &self.boot_executable {
             executable.validate_metadata(&self.box_id)?;
@@ -404,6 +454,7 @@ impl Operation {
             && (!self.start_attempted || next.start_attempted)
             && (self.started_process.is_none() || self.started_process == next.started_process)
             && (self.boot_executable.is_none() || self.boot_executable == next.boot_executable)
+            && (self.boot_guard.is_none() || self.boot_guard == next.boot_guard)
             && self.staging_bytes == next.staging_bytes
             && self.lease_ttl_sec == next.lease_ttl_sec
             && (self.box_id.is_empty() || self.box_id == next.box_id)

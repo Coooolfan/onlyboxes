@@ -46,10 +46,18 @@ pub struct NativeInstance {
 
 pub struct NativeRuntime {
     runtime: Arc<BoxliteRuntime>,
+    execution_guard: Option<super::LeaseGuardClient>,
     home: PathBuf,
 }
 
 impl NativeRuntime {
+    /// Bind the independent companion for every controlled boot and replay.
+    /// The paired journal fixes the Worker and each accepted service epoch.
+    pub fn with_execution_guard(mut self, guard: super::LeaseGuardClient) -> Self {
+        self.execution_guard = Some(guard);
+        self
+    }
+
     fn boot_executable(&self, box_id: &str, create: bool) -> Result<super::BootExecutable> {
         let config = read_config(&self.home, box_id)?;
         if !config.options.advanced.security.jailer_enabled
@@ -93,7 +101,11 @@ impl NativeRuntime {
             return Err(NativeError::Unsupported);
         }
         let home = fs::canonicalize(home).map_err(|_| NativeError::Unavailable)?;
-        Ok(Self { runtime, home })
+        Ok(Self {
+            runtime,
+            home,
+            execution_guard: None,
+        })
     }
 
     /// Available capacity in the dedicated SDK home, before accepting staging.
@@ -515,6 +527,8 @@ mod import;
 #[path = "native_stop.rs"]
 pub(super) mod stop;
 
+#[path = "native_boot_guard.rs"]
+mod boot_guard;
 #[path = "native_start.rs"]
 mod start;
 

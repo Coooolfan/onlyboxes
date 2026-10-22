@@ -81,64 +81,194 @@ async fn sdk_child(root: &Path, mode: &str) -> Result<()> {
     let native = NativeRuntime::new(sdk.clone(), &home)?;
     let instance = native.inspect(SCOPE, &id).await?;
     journal.probe(SCOPE, &id)?;
-    journal.claim(serde_json::from_value(serde_json::json!({
-        "operation_id": OPERATION, "scoped_session_id": SCOPE, "generation":1,
-        "kind":"source", "phase":"preparing", "box_id":id,
-        "restore_spec":instance.spec, "lease_expires_unix_ms":0, "staging_bytes":1
-    }))?)?;
-    native.stop_source(&journal, OPERATION).await?;
-    let executable = native.prepare_boot_executable(&journal, OPERATION).await?;
-    let grant = BootAuthorization {
-        operation_id: OPERATION.into(),
-        box_id: id.clone(),
-        scoped_session_id: SCOPE.into(),
-        generation: 1,
-        prior_revision: None,
-        expires_unix_ms: now_ms() + 8000,
-        origin: HostProcess::current()?,
-        executable,
+    let first_operation = if mode == "bound" {
+        "running-source-rollback"
+    } else {
+        OPERATION
     };
-    // Durable lifecycle intent precedes the guardian grant and first SDK writer.
-    journal.update(OPERATION, |op| {
-        op.phase = Phase::RollingBack;
-        op.start_attempted = true;
-        op.boot_executable = Some(grant.executable.clone());
-        op.lease_expires_unix_ms = grant.expires_unix_ms;
-        Ok(())
-    })?;
+    journal.claim(serde_json::from_value(serde_json::json!({
+        "operation_id":first_operation,"scoped_session_id":SCOPE,"generation":1,
+        "kind":"source","phase":"preparing","box_id":id,
+        "restore_spec":instance.spec,"lease_expires_unix_ms":0,"staging_bytes":1
+    }))?)?;
+    let identity =
+        LeaseGuardClient::discover(root.join("control/control.sock"), WORKER, None).await?;
+    let client = LeaseGuardClient::bind(root.join("control/control.sock"), identity.clone());
+    if mode == "bound" {
+        let original = native.inspect_writer(SCOPE, &id).await?;
+        client
+            .adopt(ExecutionLease {
+                box_id: id.clone(),
+                scoped_session_id: SCOPE.into(),
+                generation: 1,
+                revision: 1,
+                expires_unix_ms: now_ms() + 60_000,
+                process: original.clone(),
+                revoked: false,
+            })
+            .await?;
+        let guarded = NativeRuntime::new(sdk.clone(), &home)?.with_execution_guard(client.clone());
+        let reuse_expiry = now_ms() + 20_000;
+        guarded
+            .rollback_source(
+                &journal,
+                first_operation,
+                reuse_expiry,
+                Duration::from_secs(3),
+            )
+            .await?;
+        guarded
+            .rollback_source(
+                &journal,
+                first_operation,
+                reuse_expiry,
+                Duration::from_secs(3),
+            )
+            .await?;
+        let reused = journal.snapshot()?.operations[first_operation].clone();
+        if reused
+            .boot_guard
+            .as_ref()
+            .is_none_or(|binding| binding.authorization.is_some())
+            || reused.started_process.as_ref() != Some(&original)
+            || reused.source_stop_confirmed
+            || native.inspect_writer(SCOPE, &id).await? != original
+            || native
+                .rollback_source(
+                    &journal,
+                    first_operation,
+                    reuse_expiry,
+                    Duration::from_secs(3),
+                )
+                .await
+                .is_ok()
+        {
+            return Err(
+                "running-source rollback rebooted or lost its immutable companion binding".into(),
+            );
+        }
+        journal.claim(serde_json::from_value(serde_json::json!({
+            "operation_id":OPERATION,"scoped_session_id":SCOPE,"generation":1,
+            "kind":"source","phase":"preparing","box_id":id,
+            "restore_spec":instance.spec,"lease_expires_unix_ms":0,"staging_bytes":1
+        }))?)?;
+        println!("PASS: a running source rollback retains the adopted VM and exact guardian epoch without minting a boot grant or rebooting; replay remains guarded");
+    }
+    native.stop_source(&journal, OPERATION).await?;
+    let expiry = now_ms() + 8000;
+    let (grant, writer, lease) = if mode == "bound" {
+        let mut stale = identity.clone();
+        stale.epoch_id = uuid::Uuid::new_v4().to_string();
+        let stale = NativeRuntime::new(sdk.clone(), &home)?.with_execution_guard(
+            LeaseGuardClient::bind(root.join("control/control.sock"), stale),
+        );
+        if stale
+            .rollback_source(&journal, OPERATION, expiry, Duration::from_secs(3))
+            .await
+            .is_ok()
+            || journal.snapshot()?.operations[OPERATION].start_attempted
+            || native.inspect(SCOPE, &id).await?.status != boxlite::BoxStatus::Stopped
+        {
+            return Err("unavailable guardian permitted an SDK boot or modified its intent".into());
+        }
+        let guarded = NativeRuntime::new(sdk.clone(), &home)?.with_execution_guard(client.clone());
+        guarded
+            .rollback_source(&journal, OPERATION, expiry, Duration::from_secs(3))
+            .await?;
+        let operation = journal.snapshot()?.operations[OPERATION].clone();
+        let binding = operation
+            .boot_guard
+            .ok_or("runtime did not persist its guard binding")?;
+        let grant = binding
+            .authorization
+            .ok_or("runtime did not persist its boot authorization")?;
+        let writer = operation
+            .started_process
+            .ok_or("runtime did not retain its native writer")?;
+        if operation.phase != Phase::RolledBack || binding.guard != identity {
+            return Err(
+                "runtime acknowledged rollback without durable readiness and guard binding".into(),
+            );
+        }
+        // Reconstruct the native adapter and replay without another SDK start.
+        NativeRuntime::new(sdk.clone(), &home)?
+            .with_execution_guard(client.clone())
+            .rollback_source(&journal, OPERATION, expiry, Duration::from_secs(3))
+            .await?;
+        if native
+            .rollback_source(&journal, OPERATION, expiry, Duration::from_secs(3))
+            .await
+            .is_ok()
+            || stale
+                .rollback_source(&journal, OPERATION, expiry, Duration::from_secs(3))
+                .await
+                .is_ok()
+            || native.inspect_writer(SCOPE, &id).await? != writer
+        {
+            return Err(
+                "guarded rollback permitted downgrade, epoch replacement or a new writer".into(),
+            );
+        }
+        guarded.verify_execution_guard(&journal, OPERATION).await?;
+        if native
+            .verify_execution_guard(&journal, OPERATION)
+            .await
+            .is_ok()
+            || stale
+                .verify_execution_guard(&journal, OPERATION)
+                .await
+                .is_ok()
+        {
+            return Err("readiness or activation accepted a missing or replaced guardian".into());
+        }
+        let lease = client
+            .status(&id)
+            .await?
+            .ok_or("runtime did not bind an execution lease")?;
+        let renewed = client
+            .renew(
+                lease.revision,
+                ExecutionLease {
+                    revision: lease.revision + 1,
+                    expires_unix_ms: lease.expires_unix_ms + 3000,
+                    ..lease
+                },
+            )
+            .await?;
+        println!("PASS: the real rollback adapter requires its guardian before SDK start, durably binds the writer before readiness, replays after reconstruction and rejects missing or replaced guard epochs");
+        (grant, writer, Some(renewed))
+    } else {
+        let grant = BootAuthorization {
+            operation_id: OPERATION.into(),
+            box_id: id.clone(),
+            scoped_session_id: SCOPE.into(),
+            generation: 1,
+            prior_revision: None,
+            expires_unix_ms: expiry,
+            origin: HostProcess::current()?,
+            executable: native.prepare_boot_executable(&journal, OPERATION).await?,
+        };
+        // Fault fixture: durably hold a boot intent but omit binding after start.
+        journal.update(OPERATION, |op| {
+            op.phase = Phase::RollingBack;
+            op.start_attempted = true;
+            op.boot_executable = Some(grant.executable.clone());
+            op.lease_expires_unix_ms = expiry;
+            op.boot_guard = Some(worker_boxlite::persistence::GuardedBoot {
+                guard: identity,
+                authorization: Some(grant.clone()),
+            });
+            Ok(())
+        })?;
+        client.prepare_boot(grant.clone()).await?;
+        let vm = sdk.get(&id).await?.ok_or("stopped source disappeared")?;
+        vm.start().await?;
+        let writer = native.inspect_writer(SCOPE, &id).await?;
+        (grant, writer, None)
+    };
     fs::write(root.join("boot-intent.json"), serde_json::to_vec(&grant)?)?;
     fs::File::open(root.join("boot-intent.json"))?.sync_all()?;
     fs::File::open(root)?.sync_all()?;
-    let identity =
-        LeaseGuardClient::discover(root.join("control/control.sock"), WORKER, None).await?;
-    let client = LeaseGuardClient::bind(root.join("control/control.sock"), identity);
-    client
-        .prepare_boot(grant.clone())
-        .await
-        .map_err(|error| format!("prepare native boot: {error}"))?;
-    let vm = sdk.get(&id).await?.ok_or("stopped source disappeared")?;
-    vm.start().await?;
-    let writer = native.inspect_writer(SCOPE, &id).await?;
-    let lease = if mode == "bound" {
-        let lease = client
-            .bind_boot(grant.clone(), writer.clone())
-            .await
-            .map_err(|error| format!("bind native boot: {error}"))?;
-        Some(
-            client
-                .renew(
-                    lease.revision,
-                    ExecutionLease {
-                        revision: lease.revision + 1,
-                        expires_unix_ms: lease.expires_unix_ms + 3000,
-                        ..lease
-                    },
-                )
-                .await?,
-        )
-    } else {
-        None
-    };
     // Reconstruct the SDK's publication gap without altering executable bytes.
     fs::rename(
         home.join("boxes").join(&id).join("shim.pid"),

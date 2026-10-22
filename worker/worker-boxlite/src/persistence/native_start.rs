@@ -103,6 +103,9 @@ impl NativeRuntime {
         } else {
             None
         };
+        let binding = self
+            .boot_guard_binding(journal, &op, executable.as_ref(), lease)
+            .await?;
         let running = if action == BootAction::Reuse {
             let process = read_shim_process(
                 &self.home,
@@ -145,6 +148,9 @@ impl NativeRuntime {
                 if let Some(executable) = &executable {
                     current.boot_executable = Some(executable.clone());
                 }
+                if let Some(binding) = &binding {
+                    current.boot_guard = Some(binding.clone());
+                }
                 if let Some(process) = &running {
                     current.started_process = Some(process.clone());
                 }
@@ -162,6 +168,14 @@ impl NativeRuntime {
             // An uncertain result leaves the durable intent and exact ID held.
             if lease <= now_ms()? {
                 return Err(NativeError::Conflict);
+            }
+            if let Some(binding) = &binding {
+                self.execution_guard
+                    .as_ref()
+                    .ok_or(NativeError::Conflict)?
+                    .prepare_boot(binding.authorization.clone().ok_or(NativeError::Conflict)?)
+                    .await
+                    .map_err(|_| NativeError::Unavailable)?;
             }
             native.start().await.map_err(|_| NativeError::Unavailable)?;
         }
@@ -192,6 +206,8 @@ impl NativeRuntime {
                 return Err(NativeError::Conflict);
             }
         }
+        self.guard_boot_writer(&op, binding.as_ref(), &process, lease, true)
+            .await?;
         journal
             .update(operation, |current| {
                 if !same_operation(&op, current)
@@ -240,6 +256,8 @@ impl NativeRuntime {
         {
             return Err(NativeError::Conflict);
         }
+        self.guard_boot_writer(&op, binding.as_ref(), &process, lease, false)
+            .await?;
         journal
             .update(operation, |current| {
                 if !same_operation(&op, current)
@@ -256,6 +274,8 @@ impl NativeRuntime {
                 Ok(())
             })
             .map_err(journal_error)?;
+        self.guard_boot_writer(&op, binding.as_ref(), &process, lease, false)
+            .await?;
         Ok(ready)
     }
 

@@ -9,6 +9,8 @@ mod buildinfo;
 mod config;
 #[path = "../src/config_source.rs"]
 mod config_source;
+#[path = "support/lease_guard.rs"]
+mod lease_guard;
 #[path = "../src/proto.rs"]
 mod proto;
 #[path = "../src/runner/mod.rs"]
@@ -162,6 +164,7 @@ async fn main() -> Result<()> {
         "native management-frame acceptance; root={}",
         root.display()
     );
+    let mut execution_guard = None;
     let outcome: Result<()> = async {
         manager.execute(exec(0, "python -c \"from pathlib import Path; Path('/source-control-data').write_text('preserved')\"" )).await?;
         let initial = value(control(&dispatcher, FIRST, Action::Inspect, Control::default()).await?)?;
@@ -354,7 +357,32 @@ async fn main() -> Result<()> {
         let gets_before_cold = store.get_requests.load(std::sync::atomic::Ordering::SeqCst);
         let cold_payload = Control { archive:Some(archive.clone()),
             download:Some(snapshot_store::grant(&store.url, "GET", archive.size_bytes, 0, None)), ..Default::default() };
+        // Enable the companion on this final restored generation. Earlier
+        // fixture phases independently exercise the unguarded native adapters;
+        // production wiring and release of historical guard records are separate.
+        execution_guard = Some(lease_guard::Guard::start(&root, &cfg.worker_id).await?);
+        dispatcher.close().await.map_err(|_| "pre-guard dispatcher did not drain")?;
+        manager.close_preserving().await;
+        manager = TerminalSessionManager::from_config(&cfg);
+        let guarded_native = Arc::new(NativeRuntime::new(sdk.clone(), &home)?.with_execution_guard(
+            execution_guard.as_ref().unwrap().client.clone()));
+        let engine = NativeControlEngine::new(manager.clone(),journal.clone(),guarded_native,settings.clone()).await
+            .map_err(|_| "guarded target engine failed")?;
+        dispatcher = ControlDispatcher::new(engine,2).map_err(|_| "guarded dispatcher failed")?;
+        dispatcher.begin_connection(EPOCH).await.map_err(|_| "guarded connection failed")?;
+        manager.protect_persistence_recovery(EPOCH,&[],&[]).await?;
+        manager.finish_persistence_recovery(EPOCH).await?;
+        dispatcher.finish_connection(EPOCH).map_err(|_| "guarded recovery failed")?;
         let final_ready = value(control_at(&dispatcher, "permanently-deleted-target", 4, Action::Restore, cold_payload).await?)?;
+        let guarded_op = journal.snapshot()?.operations["permanently-deleted-target"].clone();
+        let guarded_lease = execution_guard.as_ref().unwrap().client.status(&final_ready.instance_id).await?
+            .ok_or("guarded target has no independent execution lease")?;
+        if guarded_op.boot_guard.is_none() || guarded_op.started_process.as_ref() != Some(&guarded_lease.process)
+            || guarded_lease.generation != 4 || guarded_lease.revoked
+            || guarded_lease.expires_unix_ms < guarded_op.lease_expires_unix_ms {
+            return Err("target became ready without a durable independent grant".into());
+        }
+        println!("PASS: actual restore frames persist companion authority before SDK start and bind the exact target writer before inactive readiness and activation");
         if store.get_requests.load(std::sync::atomic::Ordering::SeqCst) != gets_before_cold+1 {
             return Err("corrupt caches did not fall back to exactly one complete shared GET".into());
         }
@@ -380,6 +408,9 @@ async fn main() -> Result<()> {
     let _ = dispatcher.close().await;
     manager.close_preserving().await;
     boxlite_runtime::shutdown().await;
+    if let Some(companion) = &mut execution_guard {
+        companion.shutdown().await?;
+    }
     if outcome.is_ok() {
         // Audit the retained configured name fences only after every SDK task
         // has joined; no VM or concurrent metadata mutation remains.
