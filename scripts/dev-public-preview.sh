@@ -4,7 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-STATE_DIR="$SCRIPT_DIR/.dev"
+STATE_DIR="${ONLYBOXES_DEV_STATE_DIR:-$SCRIPT_DIR/.dev}"
 DEV_ENV="${ONLYBOXES_DEV_ENV:-$SCRIPT_DIR/dev.env}"
 PUBLIC_ENV="$SCRIPT_DIR/public-preview.env"
 CREDS_FILE="$STATE_DIR/console-creds.json"

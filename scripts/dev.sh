@@ -6,14 +6,15 @@ set -euo pipefail
 SESSION="${ONLYBOXES_DEV_SESSION:-onlyboxes-dev}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-LOG_DIR="$SCRIPT_DIR/.dev"
+LOG_DIR="${ONLYBOXES_DEV_STATE_DIR:-$SCRIPT_DIR/.dev}"
 CREDS_FILE="$LOG_DIR/console-creds.json"
 PREVIEW_HELPER="$SCRIPT_DIR/dev-public-preview.sh"
+SANDBOX_HELPER="$SCRIPT_DIR/dev-sandbox.py"
 # tmux server 不继承调用方的自定义环境变量，因此额外配置统一走这个文件
 ENV_FILE="${ONLYBOXES_DEV_ENV:-$SCRIPT_DIR/dev.env}"
 
 DEFAULT_SERVICES=(console web website)
-ALL_SERVICES=(console web website worker-docker nginx)
+ALL_SERVICES=(snapshot-store console web website worker-docker worker-boxlite-lease worker-boxlite worker-boxlite-peer-lease worker-boxlite-peer nginx)
 
 svc_dir() {
     case "$1" in
@@ -21,6 +22,7 @@ svc_dir() {
         web) echo "$ROOT_DIR/web" ;;
         website) echo "$ROOT_DIR/website" ;;
         worker-docker) echo "$ROOT_DIR/worker/worker-docker" ;;
+        snapshot-store | worker-boxlite*) echo "$ROOT_DIR/worker/worker-boxlite" ;;
         *) return 1 ;;
     esac
 }
@@ -28,7 +30,10 @@ svc_dir() {
 svc_cmd() {
     case "$1" in
         # console 默认 JSON 日志，无需处理 ANSI；两个前端关闭彩色输出，避免日志混入转义序列
-        console) echo "go run ./cmd/console" ;;
+        console) printf 'if [ "${ONLYBOXES_DEV_SNAPSHOT_STORE:-false}" = true ]; then python3 %q console; else go run ./cmd/console; fi\n' "$SANDBOX_HELPER" ;;
+        snapshot-store) printf 'python3 %q store\n' "$SANDBOX_HELPER" ;;
+        worker-boxlite | worker-boxlite-peer) printf 'python3 %q worker %q\n' "$SANDBOX_HELPER" "$1" ;;
+        worker-boxlite-lease | worker-boxlite-peer-lease) printf 'python3 %q lease %q\n' "$SANDBOX_HELPER" "${1%-lease}" ;;
         web) echo "NO_COLOR=1 yarn dev" ;;
         website) echo "NO_COLOR=1 yarn dev" ;;
         worker-docker) echo "go run ./cmd/worker-docker" ;;
@@ -68,6 +73,7 @@ svc_port() {
         web) echo 5178 ;;
         website) echo 5173 ;;
         worker-docker | nginx) "$PREVIEW_HELPER" port "$1" ;;
+        snapshot-store) configured_port ONLYBOXES_DEV_SNAPSHOT_PORT 19000 ;;
         *) echo "" ;;
     esac
 }
@@ -84,15 +90,17 @@ svc_extra_ports() {
 # 前置 source dev.env：tmux server 环境与调用方隔离，配置只能在窗口内加载。
 #
 # 显式走 bash：tmux 用 default-shell 执行窗口命令，若开发者用的是 fish 之类的
-# 非 POSIX shell，下面的 set -a / . file 会失效。内层只用双引号，整体才能安全地
-# 被单引号包住，交给任意 shell 解析都是同一个字面量。
+# 非 POSIX shell，窗口命令仍由 bash 解释；路径通过 printf %q 转义。
 wrapped_cmd() {
-    local svc="$1" inner extra_env=""
+    local svc="$1" inner extra_env="" state_env env_arg log_arg
+    printf -v env_arg '%q' "$ENV_FILE"
+    printf -v log_arg '%q' "$LOG_DIR/$svc.log"
+    printf -v state_env 'export ONLYBOXES_DEV_STATE_DIR=%q ONLYBOXES_DEV_ENV=%q ONLYBOXES_DEV_SESSION=%q;' "$LOG_DIR" "$ENV_FILE" "$SESSION"
     if [ "$svc" = "worker-docker" ]; then
-        extra_env="; worker_env=\"\$(\"$PREVIEW_HELPER\" worker-env)\"; [ -f \"\$worker_env\" ] && . \"\$worker_env\""
+        printf -v extra_env '; worker_env="$(%q worker-env)"; [ -f "$worker_env" ] && . "$worker_env"' "$PREVIEW_HELPER"
     fi
-    inner="set -a; [ -f \"$ENV_FILE\" ] && . \"$ENV_FILE\"$extra_env; set +a; $(svc_cmd "$svc") 2>&1 | tee \"$LOG_DIR/$svc.log\""
-    echo "bash -c '$inner'"
+    inner="$state_env set -a; [ -f $env_arg ] && . $env_arg$extra_env; set +a; $state_env $(svc_cmd "$svc") 2>&1 | tee $log_arg"
+    printf 'bash -c %q\n' "$inner"
 }
 
 die() {
@@ -118,7 +126,7 @@ worker_runner() {
 
 is_tmux_service() {
     case "$1" in
-        console | web | website) return 0 ;;
+        console | web | website | snapshot-store | worker-boxlite*) return 0 ;;
         worker-docker) [ "$(worker_runner)" = "native" ] ;;
         *) return 1 ;;
     esac
@@ -138,11 +146,15 @@ resolve_services() {
         requested="$*"
     fi
     for svc in $requested; do
+        case "$svc" in
+            sandbox-persistence) expanded+=" snapshot-store console worker-boxlite-lease worker-boxlite worker-boxlite-peer-lease worker-boxlite-peer"; continue ;;
+            worker-boxlite | worker-boxlite-peer) expanded+=" $svc-lease $svc"; continue ;;
+        esac
         if [ "$svc" = "public-preview" ]; then
             expanded+=" console worker-docker nginx"
             continue
         fi
-        is_valid_service "$svc" || die "未知服务 '$svc'（可选：${ALL_SERVICES[*]} public-preview）"
+        is_valid_service "$svc" || die "未知服务 '$svc'（可选：${ALL_SERVICES[*]} public-preview sandbox-persistence）"
         expanded+=" $svc"
     done
     # 固定依赖顺序并去重。
@@ -261,7 +273,7 @@ start_service() {
             # 进程已退出（窗口因 remain-on-exit 残留），原位复活
             : >"$log"
             tmux respawn-window -k -t "$SESSION:$svc" -c "$dir" "$(wrapped_cmd "$svc")"
-            echo "• $svc 进程已退出，已在原窗口重启（端口 $(svc_port "$svc")，日志 scripts/.dev/$svc.log）"
+            echo "• $svc 进程已退出，已在原窗口重启（端口 $(svc_port "$svc")，日志 $LOG_DIR/$svc.log）"
         else
             echo "• $svc 已在运行，跳过"
         fi
@@ -273,7 +285,8 @@ start_service() {
         echo "• 警告：端口 $port 已被其他进程占用，$svc 可能启动失败" >&2
     fi
 
-    mkdir -p "$LOG_DIR"
+    (umask 077; mkdir -p "$LOG_DIR")
+    if [ "$LOG_DIR" = "$SCRIPT_DIR/.dev" ]; then chmod 700 "$LOG_DIR"; fi
     : >"$log"
 
     # 服务命令直接作为窗口进程运行：进程退出即 pane 死亡，status 能准确反映状态。
@@ -282,12 +295,19 @@ start_service() {
     tmux new-window -t "$SESSION" -n "$svc" -c "$dir" "$(wrapped_cmd "$svc")"
     # 进程退出后保留 pane，便于 status 显示「已退出」并支持原位复活
     tmux set-window-option -t "$SESSION:$svc" remain-on-exit on
-    echo "• ${svc} 启动中（端口 ${port}，日志 scripts/.dev/$svc.log）"
+    echo "• ${svc} 启动中（端口 ${port}，日志 $LOG_DIR/$svc.log）"
 }
 
 stop_service() {
     local svc="$1" owned
 
+    if [ "$svc" = "snapshot-store" ]; then
+        if ! window_exists "$svc" && [ ! -f "$LOG_DIR/snapshot-store.env" ]; then
+            echo "• snapshot-store 未在运行"
+            return
+        fi
+        ONLYBOXES_DEV_STATE_DIR="$LOG_DIR" python3 "$SANDBOX_HELPER" stop-store
+    fi
     if [ "$svc" = "nginx" ]; then
         "$PREVIEW_HELPER" stop-nginx
         return
@@ -318,7 +338,7 @@ cmd_start() {
     done <<<"$services"
     cleanup_bootstrap
     echo
-    echo "已就绪。状态：scripts/dev.sh status ｜ 日志：scripts/dev.sh logs <svc> ｜ 控制台账号：scripts/dev.sh creds"
+    echo "启动指令已提交。状态：scripts/dev.sh status ｜ 日志：scripts/dev.sh logs <svc> ｜ 控制台账号：scripts/dev.sh creds"
 }
 
 cmd_stop() {
@@ -366,6 +386,7 @@ cmd_status() {
         ports="$port${extra:+/$extra}"
 
         all_listening=1
+        [ -n "$port$extra" ] || all_listening=0
         for p in $port $extra; do
             port_listening "$p" || all_listening=0
         done
@@ -496,7 +517,9 @@ Onlyboxes 本地开发服务编排（tmux + Docker/OrbStack）
 
 服务：console（:8089 HTTP，:50051 gRPC）web（:5178）website（:5173）
       worker-docker（:8091）nginx（:80）
+      worker-boxlite / worker-boxlite-peer（各自独立守护器）snapshot-store（本地 S3）
 组合：public-preview = console + worker-docker + nginx
+      sandbox-persistence = snapshot-store + console + 两个 BoxLite Worker
 
 示例：
   scripts/dev.sh start              # 三个全起
@@ -509,6 +532,7 @@ Onlyboxes 本地开发服务编排（tmux + Docker/OrbStack）
 环境变量：
   ONLYBOXES_DEV_SESSION  自定义 tmux 会话名（默认 onlyboxes-dev）
   ONLYBOXES_DEV_ENV      自定义配置文件路径（默认 scripts/dev.env）
+  ONLYBOXES_DEV_STATE_DIR 自定义私有状态目录（默认 scripts/.dev，必须为绝对路径）
   ONLYBOXES_WORKER_DOCKER_RUNNER  worker-docker 运行方式（orb 或 native）
 
 配置：tmux 不继承当前 shell 的自定义环境变量，服务所需配置请写入
@@ -518,6 +542,8 @@ EOF
 }
 
 main() {
+    case "$LOG_DIR" in /*) ;; *) die "ONLYBOXES_DEV_STATE_DIR 必须为绝对路径" ;; esac
+    export ONLYBOXES_DEV_STATE_DIR="$LOG_DIR" ONLYBOXES_DEV_ENV="$ENV_FILE" ONLYBOXES_DEV_SESSION="$SESSION"
     local cmd="${1:-}"
     [ "$#" -gt 0 ] && shift || true
     case "$cmd" in
