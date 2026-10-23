@@ -88,6 +88,18 @@ Worker 在 journal 的 `execution-store.json` 固定 home/journal 配对、store
 
 两个 Worker 仍在同一物理宿主，不能据此声称跨物理机器或 Linux BoxLite VM 验收通过。宿主重启和未知启动结果的协调、未登记孤儿扫描及账本维护也仍需完成。
 
+### Console 在途操作重启
+
+从仓库根目录运行：
+
+```bash
+python3 scripts/tests/snapshot_e2e.py --scenario console-restart
+```
+
+真实 Console / S3 与 BoxLite VM 已通过两个重启窗口：源进程退出且原生导出意图已登记、快照尚未提交；目标 Box ID 和启动意图已登记、恢复尚未完成。Console 停止后只读核对 SQLite 中原操作仍为 pending/running，再启动原 Console，确认同一 operation ID 完成，原先选定的 Box ID 保持不变。重启后同幂等键及相同参数重放复用原操作，同键不同参数返回 409；恢复后的 SHA-256、权限与符号链接检查通过，最终清理积压归零。
+
+测试通过本机 journal 观察动作已进入指定阶段；若操作先完成或未命中窗口会明确失败。它不要求固定导出/启动耗时，不能用于吞吐或 SLO 评估。Worker 及独立守护器在这两个场景中持续运行；宿主重启、Worker 故障和未知启动结果仍需分别验收。
+
 ### BoxLite 0.10.7 的原生导出边界
 
 原生 SDK 在“导出 → 导入 → 新增文件 → 再导出”中可能报 `storage error: flatten: data read: failed to fill whole buffer`。独立复现不依赖 Console、S3、Worker journal 或调度：

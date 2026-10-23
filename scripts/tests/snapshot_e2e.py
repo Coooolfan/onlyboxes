@@ -4,6 +4,8 @@ import importlib.util
 import atexit
 import argparse
 import shlex
+import hashlib
+import sqlite3
 import json
 import os
 from pathlib import Path
@@ -20,7 +22,7 @@ SPEC.loader.exec_module(dev)
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--scenario", choices=("cycle", "same-worker", "no-worker"), default="cycle")
+    parser.add_argument("--scenario", choices=("cycle", "same-worker", "no-worker", "console-restart"), default="cycle")
     scenario = parser.parse_args().scenario
     config = Path(os.environ.get("ONLYBOXES_DEV_ENV", dev.ROOT / "scripts/dev.env"))
     os.environ.update(dev.env_file(config))
@@ -92,9 +94,56 @@ def main():
                 return
             time.sleep(1)
         raise RuntimeError("physical cleanup backlog did not drain; retained evidence requires inspection")
+    restarted = {}
+    def native_operation(operation_id):
+        for node, service in nodes.items():
+            root = dev.STATE / service / hashlib.sha256(node.encode()).hexdigest()[:32]
+            path = root / "journal/journal.json"
+            if path.exists():
+                state = json.loads(path.read_text())
+                operation = state.get("operations", {}).get(operation_id)
+                if operation:
+                    return node, operation
+        return None, None
+    def restart_during_native_action(kind, operation_id, parameters, request_key):
+        node, native = native_operation(operation_id)
+        if not native or kind in restarted:
+            return
+        eligible = (kind == "suspend" and native.get("phase") == "preparing" and native.get("source_stop_confirmed")) or (kind == "resume" and native.get("phase") == "importing" and native.get("start_attempted") and native.get("box_id"))
+        if not eligible:
+            return
+        services("stop", "console")
+        try:
+            database = Path(os.environ.get("CONSOLE_DB_PATH", "./db/onlyboxes-console.db"))
+            if not database.is_absolute():
+                database = dev.ROOT / "console" / database
+            with sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True) as connection:
+                status, phase = connection.execute("SELECT status,phase FROM sandbox_persistence_operations WHERE operation_id=?", (operation_id,)).fetchone()
+            _, observed = native_operation(operation_id)
+            record("console-stopped-during-" + kind, operation_id=operation_id, status=status, phase=phase,
+                worker_id=node, instance_id=native["box_id"], native_phase=observed.get("phase") if observed else None)
+        finally:
+            services("start", "console")
+        dev.console_auth()
+        dev.request_json(opener, "POST", "/api/v1/auth/login", {"username": fields["username"], "password": fields["password"]})
+        if status not in ("pending", "running"):
+            raise RuntimeError("operation completed before Console interruption; fault window was not exercised")
+        replay_status, replay = api("POST", base + "/" + kind + query, parameters, request_key)
+        if replay_status == 202:
+            if replay.get("operation_id") != operation_id:
+                raise RuntimeError("idempotent replay after Console restart created another operation")
+        elif replay_status != 200 or replay.get("lifecycle_state") != ("suspended" if kind == "suspend" else "running"):
+            raise RuntimeError("idempotent replay after Console restart failed")
+        conflicting = {key: value + 1 for key, value in parameters.items()}
+        conflict_status, _ = api("POST", base + "/" + kind + query, conflicting, request_key)
+        if conflict_status != 409:
+            raise RuntimeError("same idempotency key with different parameters was accepted after restart")
+        record("restart-idempotency-" + kind, operation_id=operation_id, replay_status=replay_status, conflicting_status=conflict_status)
+        restarted[kind] = (operation_id, native["box_id"])
     def lifecycle(kind):
-        status, result = api("POST", base + "/" + kind + query,
-            {"retention_ttl_sec": 3600} if kind == "suspend" else {"lease_ttl_sec": 900}, str(uuid.uuid4()))
+        parameters = {"retention_ttl_sec": 3600} if kind == "suspend" else {"lease_ttl_sec": 900}
+        request_key = str(uuid.uuid4())
+        status, result = api("POST", base + "/" + kind + query, parameters, request_key)
         require(status, result, 202)
         path = base + "/operations/" + result["operation_id"] + query
         deadline = time.monotonic() + 600
@@ -104,12 +153,21 @@ def main():
             if operation.get("phase") != phase:
                 phase = operation.get("phase")
                 print(kind + " phase=" + str(phase), flush=True)
+            if scenario == "console-restart" and operation["status"] not in ("succeeded", "failed", "canceled"):
+                restart_during_native_action(kind, result["operation_id"], parameters, request_key)
             if operation["status"] in ("succeeded", "failed", "canceled"):
                 record(kind, status=operation["status"], error=operation.get("error"))
                 if operation["status"] != "succeeded":
                     raise RuntimeError("lifecycle operation failed; evidence retained")
+                if scenario == "console-restart":
+                    if kind not in restarted:
+                        raise RuntimeError("operation completed without exercising the intended restart window")
+                    _, native = native_operation(result["operation_id"])
+                    if not native or native["box_id"] != restarted[kind][1]:
+                        raise RuntimeError("Console restart replaced the selected native instance")
+                    record("restart-reconciled-" + kind, operation_id=result["operation_id"], instance_id=native["box_id"])
                 return
-            time.sleep(1)
+            time.sleep(0.05 if scenario == "console-restart" and kind not in restarted else 1)
         raise RuntimeError("operation still unresolved; preserve session and inspect operation")
     def services(action, *names):
         subprocess.run([str(dev.ROOT / "scripts/dev.sh"), action, *names], check=True)
@@ -143,7 +201,7 @@ def main():
     suspended = session()
     if suspended["lifecycle_state"] != "suspended" or suspended["worker_id"] is not None or not suspended["persistence"]["latest_snapshot"]:
         raise RuntimeError("snapshot was not durably suspended")
-    if scenario == "same-worker":
+    if scenario in ("same-worker", "console-restart"):
         lifecycle("resume")
         verify("same-worker", source)
         require(*api("DELETE", base + query), expected=204)

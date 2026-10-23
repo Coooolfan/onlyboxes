@@ -87,7 +87,7 @@ scripts/dev.sh stop sandbox-persistence
 
 验收脚本通过 Console API 创建会话、写入文件，检查跨 Worker 恢复、同 Worker 恢复、无 Worker 时的 `no_worker`（同步拒绝为 503；异步接受后在操作结果中报告）和重新上线后的恢复，最后删除测试会话并等待该独立验收账号的物理清理积压归零。文件验证包含 SHA-256、权限和符号链接。失败时保留会话与私有 `snapshot-e2e-<scenario>-result.json`，不将未知操作视为成功。脚本需要 `dev.sh` 缓存的本机管理员登录凭据，以创建短期测试执行 token。不要在有其他工作负载的 Worker 上运行此验收。
 
-可用 `--scenario same-worker` 或 `--scenario no-worker` 分别验证首次同节点恢复和无 Worker 后的恢复；默认 `cycle` 保留完整循环检查。
+可用 `--scenario same-worker` 或 `--scenario no-worker` 分别验证首次同节点恢复和无 Worker 后的恢复；默认 `cycle` 保留完整循环检查。 `--scenario console-restart` 在源停止后导出中、目标已登记原生启动意图时分别停止并重新启动 Console，验证原 operation/实例继续完成、重启后幂等重放及参数冲突。此场景只读检查本机 Worker journal 与停止期间的 SQLite；没有实际命中在途窗口会失败，不把完成后的普通重启记作故障恢复通过。
 
 当前 macOS / BoxLite 0.10.7 已通过真实 S3 的完整多轮检查，包括恢复后新增、修改、删除文件再快照，以及无 Worker 后重新上线恢复和最终清理。Worker 对自包含磁盘直接封装，原生 SDK 的再次 flatten 短读边界仍可独立复现；见 [BoxLite 导出策略](../worker/worker-boxlite/docs/sandbox-snapshot-deployment.md#boxlite-0107-的原生导出边界)。跨物理宿主和 Linux VM 需单独验收。
 
