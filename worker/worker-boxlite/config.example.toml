@@ -68,3 +68,24 @@ log_add_source = false
 [labels]
 # region = "cn"
 # owner = "team-a"
+
+# Filesystem snapshot lifecycle (opt-in). The external lease companion must
+# already be running for this worker ID and its provisioned store ID.
+[persistence]
+enabled = false
+# All five homes/directories must be absolute, separate and non-nested.
+# Set boxlite_home above to a private dedicated terminal SDK home.
+journal_dir = ""
+lease_state_dir = ""
+lease_socket_dir = ""
+lease_store_id = ""
+python_home = ""
+max_inflight = 2
+# Logical reservation ceiling; admission also checks actual free disk space.
+tmp_quota_bytes = 68719476736
+cache_max_bytes = 4294967296
+cache_ttl_sec = 3600
+drain_timeout_sec = 30
+readiness_timeout_sec = 30
+transfer_concurrency = 4
+transfer_idle_sec = 30

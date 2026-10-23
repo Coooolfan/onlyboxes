@@ -1,6 +1,6 @@
 # BoxLite 原生归档与恢复
 
-Worker 固定依赖 BoxLite `0.10.7`，使用原生 `.boxlite` 归档验证同 runtime 的文件系统恢复。当前 Worker 尚未声明 `sandbox_persistence` 能力，生产启动路径尚未注册生命周期引擎；原生管理帧适配已覆盖源端快照和回滚、目标恢复和激活，以及撤销和永久删除；生产启动配置与独立 lease 约束仍需完成。
+Worker 固定依赖 BoxLite `0.10.7`，使用原生 `.boxlite` 归档验证同 runtime 的文件系统恢复。Worker 通过[显式生产配置](sandbox-snapshot-deployment.md)注册 `sandbox_persistence` 能力，原生管理帧适配覆盖源端快照和回滚、目标恢复和激活，以及撤销和永久删除。启动配置绑定独立 lease 守护器和专用 home；未知结果、异常宿主恢复及跨机器验收仍待完成。
 
 ## 原生验收
 
@@ -59,7 +59,7 @@ SDK 的 `BoxArchive::new` 采用可信本地归档策略，会保留归档携带
 
 ## 持久化 journal
 
-`worker_boxlite::persistence` 提供 BoxLite Worker 的私有恢复规格、归档描述与操作 journal。会话管理器已提供 journal 安装、执行门禁与恢复握手的接入点；生产 Worker 尚未加载持久化配置或运行生命周期控制器，journal 测试通过不代表已支持持久化管理 API。
+`worker_boxlite::persistence` 提供 BoxLite Worker 的私有恢复规格、归档描述与操作 journal。会话管理器及生产启动路径安装同一 journal、执行门禁与恢复握手，原生生命周期控制器处理 Console 管理帧。单独 journal 测试不代替真实 Console/S3 或跨机器验收。
 
 journal 目录使用独立绝对路径，按 Worker identity 绑定。目录及 artifacts 子目录必须属于当前用户且仅当前用户可访问，文件必须为私有普通文件、单硬链接。进程独占锁覆盖 journal 句柄的整个有效期；相同目录不能同时被另一个进程或句柄打开。显式 close 先解锁再关闭描述符，并使原句柄失效；并发 fork 在 exec 前短暂继承的描述符不能延迟这次所有权释放，旧描述符随后关闭也不能解除新所有者的锁。符号链接、FIFO、异常权限、损坏 JSON、未知字段和超限文件都会拒绝加载。
 
@@ -102,9 +102,11 @@ Linux detached 模式的 SDK PID 可能只是外层 launcher，其退出后内�
 
 源操作的冻结、提交和完成记录必须包含停止确认与原进程身份。Worker 在 SDK 已停止、停止确认尚未写入时退出，重开 journal 后仍可用原身份补齐确认，不依赖 SDK 可能已经删除的 PID 文件。已冻结归档重放也要求这项身份记录和退出证据。未确认的停止保留原实例、磁盘和操作记录，由生命周期恢复流程继续核对。
 
-这些原语要求本地 SDK home 与 journal 由同一宿主独占，不共享或复制到另一台宿主运行。Linux 需要宿主唯一且可读的 `/etc/machine-id`、`/proc/sys/kernel/random/boot_id` 、`/proc/self/ns/pid` 及进程启动时间；容器部署须提供正确的宿主身份，不能使用预烘焙的重复 machine-id。macOS 使用 `gethostuuid`、`kern.bootsessionuuid` 和内核进程启动时间。身份读取不可用时停止原语报错。Worker 的持久化能力启用仍需在 SDK 初始化与恢复之前检查宿主、namespace 和本地 home 的归属，独立 lease 强制执行与异常 shim 回收尚未接入。
+这些原语要求本地 SDK home 与 journal 由同一宿主独占，不共享或复制到另一台宿主运行。Linux 需要宿主唯一且可读的 `/etc/machine-id`、`/proc/sys/kernel/random/boot_id` 、`/proc/self/ns/pid` 及进程启动时间；容器部署须提供正确的宿主身份，不能使用预烘焙的重复 machine-id。macOS 使用 `gethostuuid`、`kern.bootsessionuuid` 和内核进程启动时间。身份读取不可用时停止原语报错。持久化启动在 SDK 初始化与恢复前检查宿主、namespace、本地 home/journal 和外部 lease store 归属；独立守护器持续执行到期停止。异常宿主和未知启动结果保持关闭并等待明确协调。
 
 [Linux 写入者测试](../tests/linux-writer-evidence/README.md)直接编译生产 cgroup 模块，不链接 VM SDK。本机 Linux/arm64 容器已验证 launcher 被杀死并回收后，活跃后代仍会阻止退出确认；整组停止后才确认空组，同时拒绝 inode 变化、缺失或重建的同名组。该测试未启动真实 Linux BoxLite VM，不代替 SDK 放置、独立 execution lease 或跨机器验收。
+
+进程退出查询也识别尚未被父进程回收的僵尸状态。Linux 从 `/proc/<pid>/stat` 同次读取状态与启动时间；macOS 通过 `PROC_PIDTBSDINFO` 的包含僵尸查询读取状态和启动时间，只有内核明确返回僵尸状态才作为该 PID 已结束的证据。[XNU 的进程信息实现](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/proc_info.c)定义了这项查询。读取失败、权限错误或单纯 PID 文件缺失仍不是退出证据；Linux 仍额外要求原 cgroup 的全部后代为空。
 
 ### 独立停止原语
 
@@ -114,11 +116,11 @@ Linux 使用已固定设备号和 inode 的 cgroup 目录描述符打开 `cgroup
 
 macOS 单元测试验证错误版本无法停止仍活着的自有子进程，精确版本可停止，缺少版本及跨宿主/namespace 会拒绝。原生 `boxlite_home_guard_smoke` 由未初始化 SDK 的独立守护子进程执行租约；SDK 宿主被 SIGKILL 后，同一 VM 继续通过重连、后台写入和 orphan 保留检查，随后在续租期限到期时停止，确认进程退出及 guest 磁盘仍在，再由 SDK 完成授权删除。Linux 内核测试直接使用同一 cgroup 停止实现，覆盖后代退出和 inode 不匹配拒绝。
 
-这些原语供[持久租约账本与到期执行](execution-lease.md)使用，原生实验已有独立子进程的续租与到期停止。生产私有控制协议、监督、启动、采纳、受控启动前授权、续租和重连仍须接入同一个守护器后，才能声明完整的独立 execution lease 能力。
+这些原语供[持久租约账本与到期执行](execution-lease.md)使用，原生实验已有独立子进程的续租与到期停止。生产私有控制协议、启动、采纳、受控启动前授权、续租和普通重连接入同一个外部监督的守护器；异常宿主与未知结果仍需明确协调。
 
-原生 smoke 验证正常退出的进程证据、SDK 停止后丢失确认的重试，以及无先前进程证据时拒绝采纳停止状态。无 VM 测试使用真实子进程验证 Worker 被 SIGKILL 后仍保留身份、活跃写入者不能确认停止、退出后才能冻结，以及确认不可撤销。它不等同于在真实 SDK 无法附着且 shim 仍活着的分支注入故障。另在 Linux/arm64 的临时 Rust 容器中复用同一进程身份模块源码和固定 SDK 的进程查询实现，7 项进程身份测试通过；容器提供独立的测试 machine-id。这只验证 Linux 内核查询与身份判断分支，不验证 Linux 上的 BoxLite VM 或完整 Worker 生命周期。
+原生 smoke 验证正常退出的进程证据、SDK 停止后丢失确认的重试，以及无先前进程证据时拒绝采纳停止状态。无 VM 测试使用真实子进程验证 Worker 被 SIGKILL 后仍保留身份、活跃写入者不能确认停止、退出后才能冻结，以及确认不可撤销。它不等同于在真实 SDK 无法附着且 shim 仍活着的分支注入故障。另在 Linux/arm64 的临时 Rust 容器中复用同一进程身份模块源码和固定 SDK 的进程查询实现，进程身份测试通过；容器提供独立的测试 machine-id，当前可通过 Linux 写入者证据 harness 复验。这只验证 Linux 内核查询与身份判断分支，不验证 Linux 上的 BoxLite VM 或完整 Worker 生命周期。
 
-原生操作尚未由生命周期控制器接入 Worker 管理帧，也不会使 `sandbox_persistence` 声明自动启用。[session 门禁](sandbox-snapshot-session-gates.md)已有 generation、控制连接、source 保留和 ready 绑定的检查与入口。归档处理原语已实现固定镜像、规格、字节上限和完整性校验；后续仍需接入运行中的 Worker，并完成全局磁盘预算、传输协议编排、激活、恢复握手及回收链路。
+原生操作由生命周期控制器接入 Worker 管理帧，`sandbox_persistence` 声明需显式配置和归属检查通过。[session 门禁](sandbox-snapshot-session-gates.md)已有 generation、控制连接、source 保留和 ready 绑定的检查与入口。归档处理原语已实现固定镜像、规格、字节上限和完整性校验；运行中的 Worker 已接入全局暂存预留、传输编排、显式激活、恢复握手及已授权回收；未登记孤儿巡检、账本维护和完整跨机器验收仍待完成。
 
 
 ## 受控导出与归档校验
@@ -219,7 +221,7 @@ BoxLite 删除按数据库优先执行，目录删除失败可能只记录日志
 
 `Journal::purge_session_artifacts` 仅回收从该 scope 的 source/target 历史计算出的归档、partial、描述临时文件和 UUID 工作目录。它先取得对应下载锁并验证全部待删路径，再删除与 sync 父目录。仍有下载者持锁时返回冲突，不清理其数据；空锁文件保留原 inode，避免迟到等待者与新请求形成两套锁。允许同一已发布文件与其 partial 的双硬链接，拒绝重定向根、异常权限和其他硬链接；目录中的符号链接不被递归跟随。其他 scope 的缓存和原生资源不参与回收。
 
-该链路只处理权威 journal 已登记的本地资源，不操作共享存储对象。Console 的共享对象引用核对和 GC 独立执行。初始化前的归属 Guard 和资源清单已接入原生验收；未登记孤儿巡检、生产配置与管理帧注册、boot/namespace 变化的核对、独立 lease 强制执行仍需完成；当前 Worker 不声明 `sandbox_persistence` 能力。
+该链路只处理权威 journal 已登记的本地资源，不操作共享存储对象。Console 的共享对象引用核对和 GC 独立执行。初始化前的归属 Guard 和资源清单已接入原生验收；生产配置、管理帧注册与独立 lease 强制执行已接入；未登记孤儿巡检、boot/namespace 变化的明确协调及完整跨机器验收仍待完成。
 
 原生会话 smoke 覆盖永久删除的完整本地历史回收、删除意图之后完成的 SDK 启动、旧名称占位复用、重复删除、已确认占位丢失时拒绝重建，以及其他 scope 的缓存和原生资源保留。归档回收单测覆盖持锁拒绝、锁 inode 保留、partial 双硬链接、临时文件/工作目录清理和符号链接拒绝。
 

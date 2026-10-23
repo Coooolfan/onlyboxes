@@ -19,6 +19,7 @@ const TERMINAL_EXEC_IDLE_COMMAND: &str = "while true; do sleep 3600; done";
 const TERMINAL_SESSION_CREATE_CANCELLED_MESSAGE: &str = "terminal session manager is closed";
 
 static RUNTIME: OnceLock<Result<BoxliteRuntime, String>> = OnceLock::new();
+static PYTHON_RUNTIME: OnceLock<Result<BoxliteRuntime, String>> = OnceLock::new();
 static RUNTIME_INIT: Mutex<()> = Mutex::new(());
 static HOME_OWNER: OnceLock<Arc<worker_boxlite::persistence::RuntimeHomeGuard>> = OnceLock::new();
 // Keep terminal session handles alive so the first exec can reuse the
@@ -54,7 +55,7 @@ pub(crate) async fn run_python_exec(
     code: &str,
     deadline_unix_ms: i64,
 ) -> Result<PythonExecRunResult, BoxliteCommandError> {
-    let runtime = runtime(cfg)?;
+    let runtime = python_runtime(cfg)?;
     let litebox = runtime
         .create(build_python_exec_box_options(cfg), None)
         .await
@@ -64,7 +65,7 @@ pub(crate) async fn run_python_exec(
 
     let box_id = litebox.id().as_str().to_owned();
     if let Err(err) = litebox.start().await {
-        remove_box(cfg, &box_id).await;
+        remove_runtime_box(runtime, &box_id).await;
         return Err(BoxliteCommandError::ExecutionFailed(format!(
             "pythonExec start failed: {err}"
         )));
@@ -85,7 +86,7 @@ pub(crate) async fn run_python_exec(
         )),
         Err(err) => Err(err),
     };
-    remove_box(cfg, &box_id).await;
+    remove_runtime_box(runtime, &box_id).await;
 
     execution_result.map(|output| PythonExecRunResult {
         output: output.stdout,
@@ -441,6 +442,10 @@ pub(crate) async fn remove_box(cfg: &Config, box_id: &str) {
         return;
     };
 
+    remove_runtime_box(runtime, box_id).await;
+}
+
+async fn remove_runtime_box(runtime: &BoxliteRuntime, box_id: &str) {
     match tokio::time::timeout(BOX_CLEANUP_TIMEOUT, runtime.remove(box_id, true)).await {
         Ok(Ok(())) => {}
         Ok(Err(err)) => {
@@ -454,17 +459,42 @@ pub(crate) async fn remove_box(cfg: &Config, box_id: &str) {
 
 pub(crate) async fn shutdown() {
     clear_terminal_session_boxes();
+    for runtime in [RUNTIME.get(), PYTHON_RUNTIME.get()]
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
+        if let Err(err) = runtime.shutdown(None).await {
+            tracing::warn!(error = %err, "boxlite runtime shutdown failed");
+        }
+    }
+}
 
-    let Some(runtime_state) = RUNTIME.get() else {
-        return;
-    };
-
-    let Ok(runtime) = runtime_state else {
-        return;
-    };
-
-    if let Err(err) = runtime.shutdown(None).await {
-        tracing::warn!(error = %err, "boxlite runtime shutdown failed");
+fn python_runtime(cfg: &Config) -> Result<&'static BoxliteRuntime, BoxliteCommandError> {
+    if !cfg.persistence.enabled {
+        return runtime(cfg);
+    }
+    if HOME_OWNER.get().is_none() {
+        return Err(BoxliteCommandError::ExecutionFailed(
+            "persistent runtime startup has not completed".into(),
+        ));
+    }
+    match PYTHON_RUNTIME.get_or_init(|| {
+        cfg.persistence.validate(&cfg.boxlite_home)?;
+        for marker in [".onlyboxes-owner.json", ".onlyboxes-owner.lock"] {
+            match std::fs::symlink_metadata(Path::new(&cfg.persistence.python_home).join(marker)) {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+                _ => return Err("pythonExec home belongs to a persistent runtime".into()),
+            }
+        }
+        BoxliteRuntime::new(BoxliteOptions {
+            home_dir: PathBuf::from(&cfg.persistence.python_home),
+            ..Default::default()
+        })
+        .map_err(|err| format!("initialize pythonExec runtime: {err}"))
+    }) {
+        Ok(runtime) => Ok(runtime),
+        Err(error) => Err(BoxliteCommandError::ExecutionFailed(error.clone())),
     }
 }
 
@@ -505,6 +535,11 @@ pub(crate) fn initialize_guarded(
 }
 
 fn runtime_owned(cfg: &Config) -> Result<&'static BoxliteRuntime, BoxliteCommandError> {
+    if cfg.persistence.enabled && HOME_OWNER.get().is_none() {
+        return Err(BoxliteCommandError::ExecutionFailed(
+            "persistent BoxLite home requires startup ownership".into(),
+        ));
+    }
     if let Some(owner) = HOME_OWNER.get() {
         owner
             .verify(Path::new(&cfg.boxlite_home), &cfg.worker_id)
@@ -520,6 +555,24 @@ fn runtime_owned(cfg: &Config) -> Result<&'static BoxliteRuntime, BoxliteCommand
     }
 }
 
+pub(crate) fn validate_unmanaged_home(cfg: &Config) -> Result<(), BoxliteCommandError> {
+    let home = if cfg.boxlite_home.trim().is_empty() {
+        BoxliteOptions::default().home_dir
+    } else {
+        PathBuf::from(cfg.boxlite_home.trim())
+    };
+    check_unmanaged_home(&home).map_err(BoxliteCommandError::ExecutionFailed)
+}
+fn check_unmanaged_home(home: &Path) -> Result<(), String> {
+    for marker in [".onlyboxes-owner.json", ".onlyboxes-owner.lock"] {
+        match std::fs::symlink_metadata(home.join(marker)) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            _ => return Err("Boxlite home requires guarded journal ownership".into()),
+        }
+    }
+    Ok(())
+}
+
 fn init_runtime(cfg: &Config) -> Result<BoxliteRuntime, String> {
     let mut options = BoxliteOptions::default();
     if !cfg.boxlite_home.trim().is_empty() {
@@ -527,12 +580,7 @@ fn init_runtime(cfg: &Config) -> Result<BoxliteRuntime, String> {
     }
 
     if HOME_OWNER.get().is_none() {
-        for marker in [".onlyboxes-owner.json", ".onlyboxes-owner.lock"] {
-            match std::fs::symlink_metadata(options.home_dir.join(marker)) {
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
-                _ => return Err("Boxlite home requires guarded journal ownership".into()),
-            }
-        }
+        check_unmanaged_home(&options.home_dir)?;
     }
     BoxliteRuntime::new(options).map_err(|err| format!("initialize Boxlite runtime: {err}"))
 }
@@ -871,6 +919,7 @@ mod tests {
             executor_kind: "boxlite".to_owned(),
             labels: Default::default(),
             boxlite_home: String::new(),
+            persistence: Default::default(),
             python_exec_image: "ghcr.io/astral-sh/uv:python3.12-bookworm-slim".to_owned(),
             python_exec_memory_mib: 256,
             python_exec_cpus: 1,
@@ -928,6 +977,7 @@ mod tests {
             executor_kind: "boxlite".to_owned(),
             labels: Default::default(),
             boxlite_home: String::new(),
+            persistence: Default::default(),
             python_exec_image: "ghcr.io/astral-sh/uv:python3.12-bookworm-slim".to_owned(),
             python_exec_memory_mib: 256,
             python_exec_cpus: 1,
@@ -982,5 +1032,23 @@ mod tests {
         assert!(debug.contains("\"/workspace/a.png\""));
         assert!(debug.contains("\"--max-read-bytes\""));
         assert!(debug.contains("\"123\""));
+    }
+}
+
+#[cfg(test)]
+mod ownership_startup_tests {
+    use super::*;
+    #[test]
+    fn disabled_persistence_cannot_register_around_a_protected_home() {
+        let root =
+            std::env::temp_dir().join(format!("onlyboxes-disabled-home-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let mut cfg = Config::load();
+        cfg.boxlite_home = root.to_str().unwrap().into();
+        validate_unmanaged_home(&cfg).unwrap();
+        std::fs::write(root.join(".onlyboxes-owner.lock"), []).unwrap();
+        assert!(validate_unmanaged_home(&cfg).is_err());
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

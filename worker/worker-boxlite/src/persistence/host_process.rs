@@ -242,8 +242,8 @@ fn classify(
     }
 }
 fn observe(pid: u32) -> Observation {
-    if let Some(start) = boxlite::util::process_start_time(pid) {
-        return Observation::Present(start);
+    if let Some(observed) = native_observation(pid) {
+        return observed;
     }
     // SAFETY: PID is validated positive and representable; signal 0 only queries
     // existence. Permission errors and unavailable start-time reads fail closed.
@@ -254,6 +254,64 @@ fn observe(pid: u32) -> Observation {
         Observation::Unavailable
     }
 }
+#[cfg(target_os = "macos")]
+fn native_observation(pid: u32) -> Option<Observation> {
+    let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
+    let size = std::mem::size_of::<libc::proc_bsdinfo>();
+    // SAFETY: libproc receives an exactly sized writable BSD-info buffer.
+    // arg=1 includes unreaped zombies; XNU proc_pidinfo otherwise omits them.
+    let read = unsafe {
+        libc::proc_pidinfo(
+            pid as i32,
+            libc::PROC_PIDTBSDINFO,
+            1,
+            info.as_mut_ptr().cast(),
+            size as i32,
+        )
+    };
+    if read != size as i32 {
+        return None;
+    }
+    // SAFETY: the kernel returned the complete initialized structure above.
+    let info = unsafe { info.assume_init() };
+    if info.pbi_pid != pid {
+        return None;
+    }
+    let start = info
+        .pbi_start_tvsec
+        .checked_mul(1_000_000)?
+        .checked_add(info.pbi_start_tvusec)?;
+    if start == 0 {
+        return None;
+    }
+    Some(if info.pbi_status == libc::SZOMB {
+        Observation::Gone
+    } else {
+        Observation::Present(start)
+    })
+}
+#[cfg(target_os = "linux")]
+fn native_observation(pid: u32) -> Option<Observation> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let tail = stat.get(stat.rfind(')')? + 1..)?;
+    let mut fields = tail.split_whitespace();
+    let state = fields.next()?;
+    // State is field 3; starttime is field 22, after 18 intervening fields.
+    let start = fields.nth(18)?.parse::<u64>().ok()?;
+    if start == 0 {
+        return None;
+    }
+    Some(if matches!(state, "Z" | "X") {
+        Observation::Gone
+    } else {
+        Observation::Present(start)
+    })
+}
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn native_observation(pid: u32) -> Option<Observation> {
+    boxlite::util::process_start_time(pid).map(Observation::Present)
+}
+
 fn valid_namespace(value: &str) -> bool {
     if value == "host" {
         return true;

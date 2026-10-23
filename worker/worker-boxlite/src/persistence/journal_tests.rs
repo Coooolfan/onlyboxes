@@ -1560,3 +1560,38 @@ fn initial_boot_reserves_the_root_before_start_and_management_needs_confirmed_ad
     assert!(journal.snapshot().unwrap().initial_boots[&source.scoped_session_id].managed);
     assert!(journal.begin_initial_boot(boot).is_err());
 }
+
+#[test]
+fn held_staging_usage_survives_reopen_and_releases_only_on_completed_lifecycle() {
+    let root = Root::new();
+    let journal = root.open();
+    let source = source();
+    journal.claim(source.clone()).unwrap();
+    assert_eq!(
+        journal.retained_staging_bytes().unwrap(),
+        source.staging_bytes
+    );
+    drop(journal);
+    let journal = root.open();
+    assert_eq!(
+        journal.retained_staging_bytes().unwrap(),
+        source.staging_bytes
+    );
+    journal
+        .update(&source.operation_id, |op| {
+            op.phase = Phase::RollingBack;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        journal.retained_staging_bytes().unwrap(),
+        source.staging_bytes
+    );
+    journal
+        .update(&source.operation_id, |op| {
+            op.phase = Phase::RolledBack;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(journal.retained_staging_bytes().unwrap(), 0);
+}

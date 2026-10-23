@@ -431,6 +431,19 @@ impl Journal {
         })
     }
 
+    /// Budgets retained by current held operations survive Worker reconstruction.
+    /// Read only this projection rather than cloning the complete journal history.
+    pub fn retained_staging_bytes(&self) -> Result<i64> {
+        self.with_state(|state| {
+            state
+                .current
+                .values()
+                .map(|id| &state.operations[id])
+                .filter(|op| op.held())
+                .fold(0_i64, |sum, op| sum.saturating_add(op.staging_bytes))
+        })
+    }
+
     pub fn available_artifact_bytes(&self) -> Result<u64> {
         let _inner = self.inner()?;
         super::space::available(&self.root.join("artifacts")).map_err(|_| Error::Unavailable)

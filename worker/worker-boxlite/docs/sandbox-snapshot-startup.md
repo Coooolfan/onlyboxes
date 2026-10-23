@@ -2,7 +2,7 @@
 
 BoxLite `0.10.7` 初始化时会更新恢复状态、回收没有数据库记录的 Box 目录，并处理原生本地 snapshot 的 pending 标记。持久化 Worker 必须先核对 home/journal 归属和原生资源清单，再允许 SDK 打开 home。会话恢复握手和执行门禁不能代替这个顺序。
 
-当前提供 `RuntimeHomeGuard` 和 Worker 内部的 `boxlite_runtime::initialize_guarded`，原生生命周期验收已使用该入口。生产启动配置、生命周期引擎注册和独立 execution lease 尚未完成，Worker 仍不声明 `sandbox_persistence`。这份说明不代表跨 Worker 或真实 Console/S3 验收已经完成。
+当前提供 `RuntimeHomeGuard` 和 Worker 内部的 `boxlite_runtime::initialize_guarded`，原生生命周期验收已使用该入口。生产启动通过[显式配置](sandbox-snapshot-deployment.md)绑定专用 home/journal 与独立 execution lease，再注册生命周期引擎和 `sandbox_persistence`。默认关闭。这份说明不代表跨 Worker 或真实 Console/S3 验收已经完成。
 
 ## home 与 journal 的绑定
 
@@ -39,7 +39,7 @@ BoxLite `0.10.7` 初始化时会更新恢复状态、回收没有数据库记录
 
 清单证明资源属于可核对的本地状态，不授予执行权。SDK 打开后，恢复动作仍要检查完整规格、实际进程身份、generation、有效 lease、连接恢复 ACK 和显式激活；不会因为清单通过而启动停止实例或创建替代根。
 
-普通 SDK 初始化入口若发现受保护 home 的归属标记或锁文件，会明确拒绝，不能通过漏装 Guard 绕过校验。生产持久化配置接入仍须强制使用受保护入口；不能把删除全部归属信息后改用普通启动当作恢复方案。
+普通 SDK 初始化入口若发现受保护 home 的归属标记或锁文件，会明确拒绝，不能通过漏装 Guard 绕过校验。生产持久化配置开启后强制使用受保护入口，并在 journal 固定外部守护器 store 与账本目录身份；不能把删除全部归属信息后改用普通启动当作恢复方案。
 
 ## 数据库先删的已知清理残留
 

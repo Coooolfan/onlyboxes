@@ -866,6 +866,7 @@ mod tests {
             executor_kind: "boxlite".to_owned(),
             labels: Default::default(),
             boxlite_home: String::new(),
+            persistence: Default::default(),
             python_exec_image: "ghcr.io/astral-sh/uv:python3.12-bookworm-slim".to_owned(),
             python_exec_memory_mib: 256,
             python_exec_cpus: 1,

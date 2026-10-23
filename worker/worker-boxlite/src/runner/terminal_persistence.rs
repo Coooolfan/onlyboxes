@@ -768,6 +768,11 @@ impl TerminalSessionManager {
         Ok(())
     }
 
+    pub(crate) async fn fail_persistence(&self) {
+        self.sessions.lock().await.fail();
+        self.persistence_changed.notify_waiters();
+    }
+
     pub(crate) async fn protect_persistence_recovery(
         &self,
         connection: &str,

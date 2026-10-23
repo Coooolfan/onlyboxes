@@ -444,7 +444,7 @@ async fn heartbeat_loop(
 
         let heartbeat = ConnectRequest {
             payload: Some(connect_request::Payload::Heartbeat(HeartbeatFrame {
-                sandbox_persistence: None,
+                sandbox_persistence: super::persistence_startup::usage(cfg)?,
                 node_id: cfg.worker_id.clone(),
                 session_id: session_id.clone(),
                 active_session_count: shared_active_session_count().await,
@@ -900,6 +900,7 @@ mod tests {
             node_name: "worker-boxlite-test".to_owned(),
             executor_kind: "boxlite".to_owned(),
             labels: BTreeMap::new(),
+            persistence: Default::default(),
             boxlite_home: std::env::temp_dir()
                 .join(format!(
                     "onlyboxes-worker-boxlite-session-client-tests-{}",

@@ -150,6 +150,24 @@ impl ControlDispatcher {
         }))
     }
 
+    pub(crate) fn inflight(&self) -> Result<i32, ControlError> {
+        let state = self.state.lock().map_err(|_| ControlError::Unavailable)?;
+        if state.closed || state.failed {
+            return Err(ControlError::Unavailable);
+        }
+        i32::try_from(state.actions.len()).map_err(|_| ControlError::Unavailable)
+    }
+    pub(crate) fn fail_closed(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.failed = true;
+            for action in state.actions.values() {
+                action.cancel.cancel();
+            }
+        }
+        self.engine.fail_closed();
+        self.idle.notify_waiters();
+    }
+
     /// Reconnect cannot race accepted old SDK work. New actions stay closed
     /// until all previous actions finish and Console recovery is acknowledged.
     pub(crate) async fn begin_connection(&self, connection: &str) -> Result<(), ControlError> {

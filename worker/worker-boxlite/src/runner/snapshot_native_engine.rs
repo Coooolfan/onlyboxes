@@ -90,6 +90,38 @@ impl NativeControlEngine {
         }))
     }
 
+    pub(crate) fn available_staging_bytes(&self) -> Outcome<i64> {
+        if self.failed.load(Ordering::SeqCst) {
+            return Err(ControlError::Unavailable);
+        }
+        let reserved = self
+            .reservations
+            .lock()
+            .map_err(|_| ControlError::Unavailable)?
+            .values()
+            .fold(0_i64, |sum, entry| sum.saturating_add(entry.bytes));
+        let reserved = reserved.saturating_add(
+            self.journal
+                .retained_staging_bytes()
+                .map_err(journal_error)?,
+        );
+        let free = self
+            .native
+            .available_staging_bytes()
+            .map_err(native_error)?
+            .min(
+                self.journal
+                    .available_artifact_bytes()
+                    .map_err(journal_error)?,
+            );
+        Ok(self
+            .config
+            .tmp_quota_bytes
+            .min(i64::try_from(free).unwrap_or(i64::MAX))
+            .saturating_sub(reserved)
+            .max(0))
+    }
+
     async fn run(&self, action: &ActionContext) -> Outcome<ResultPayload> {
         self.authorize(action).await?;
         let state = self.journal.snapshot().map_err(journal_error)?;

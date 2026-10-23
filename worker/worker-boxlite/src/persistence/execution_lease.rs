@@ -414,6 +414,38 @@ impl ExecutionLeaseLedger {
         })
     }
 
+    /// Read-only verification of an externally supervised, already provisioned
+    /// store. This neither takes its live service lock nor creates a ledger.
+    pub fn verify_external_store(root: &Path, worker: &str, store_id: &str) -> Result<()> {
+        let directory = fs::symlink_metadata(root).map_err(|_| Error::Unavailable)?;
+        if !root.is_absolute()
+            || !directory.is_dir()
+            || directory.mode() & 0o077 != 0
+            || directory.uid() != unsafe { libc::geteuid() }
+        {
+            return Err(Error::Unavailable);
+        }
+        let root = fs::canonicalize(root).map_err(|_| Error::Unavailable)?;
+        let owner: Owner = serde_json::from_slice(
+            &read_private(&root.join("owner.json"), 64 << 10)?.ok_or(Error::Unavailable)?,
+        )
+        .map_err(|_| Error::Unavailable)?;
+        let id = uuid::Uuid::parse_str(store_id).map_err(|_| Error::Unavailable)?;
+        if id.is_nil()
+            || id.to_string() != store_id
+            || owner.version != 1
+            || owner.worker_id != worker
+            || owner.store_id != store_id
+            || owner.host_id != HostProcess::current()?.host_id
+            || owner.root != root
+            || owner.device != directory.dev()
+            || owner.inode != directory.ino()
+        {
+            return Err(Error::Unavailable);
+        }
+        Ok(())
+    }
+
     pub fn store_id(&self) -> &str {
         &self.owner.store_id
     }

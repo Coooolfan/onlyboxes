@@ -216,3 +216,38 @@ fn changing_pid_namespace_cannot_make_an_unobserved_writer_disappear() {
         Err(Error::Unavailable)
     );
 }
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[test]
+fn an_unreaped_terminated_child_is_positive_exit_evidence() {
+    let mut child = Sleeper::new();
+    let process = HostProcess::capture(child.0.id()).unwrap();
+    #[cfg(target_os = "macos")]
+    let process = {
+        let mut process = process;
+        process.bind_writer_group("unreaped_fixture").unwrap();
+        process
+    };
+    assert_eq!(process.has_exited(), Ok(false));
+    child.0.kill().unwrap();
+    let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
+    // SAFETY: waitid observes only this unreaped owned child. WNOWAIT retains
+    // its PID and lets the Child owner perform the eventual reap below.
+    assert_eq!(
+        unsafe {
+            libc::waitid(
+                libc::P_PID,
+                child.0.id(),
+                info.as_mut_ptr(),
+                libc::WEXITED | libc::WNOWAIT,
+            )
+        },
+        0
+    );
+    assert_eq!(process.has_exited(), Ok(true));
+    #[cfg(target_os = "macos")]
+    assert_eq!(process.writers_exited(), Ok(true));
+    #[cfg(target_os = "linux")]
+    assert_eq!(process.writers_exited(), Err(Error::Unavailable));
+    child.0.wait().unwrap();
+}

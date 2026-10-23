@@ -2,6 +2,9 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use crate::config_source::Source;
+#[path = "persistence_config.rs"]
+mod persistence;
+pub use persistence::PersistenceConfig;
 
 const DEFAULT_CONSOLE_TARGET: &str = "127.0.0.1:50051";
 const DEFAULT_HEARTBEAT_INTERVAL_SEC: u64 = 5;
@@ -44,6 +47,7 @@ pub struct Config {
     pub executor_kind: String,
     pub labels: BTreeMap<String, String>,
     pub boxlite_home: String,
+    pub persistence: PersistenceConfig,
     pub python_exec_image: String,
     pub python_exec_memory_mib: u32,
     pub python_exec_cpus: u32,
@@ -123,6 +127,7 @@ impl Config {
             executor_kind: DEFAULT_EXECUTOR_KIND.to_owned(),
             labels: parse_labels(&src.get("WORKER_LABELS")),
             boxlite_home: src.get("WORKER_BOXLITE_HOME"),
+            persistence: PersistenceConfig::load(&src),
             python_exec_image: src.string_value(
                 "WORKER_PYTHON_EXEC_BOXLITE_IMAGE",
                 DEFAULT_PYTHON_EXEC_IMAGE,

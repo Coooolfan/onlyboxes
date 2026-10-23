@@ -1,5 +1,6 @@
 mod capability_executor;
 mod hello_builder;
+pub(crate) mod persistence_startup;
 mod sandbox_proxy;
 mod session_client;
 #[allow(dead_code)]
@@ -60,15 +61,27 @@ impl RunnerError {
 }
 
 pub async fn run(shutdown: CancellationToken, cfg: Config) -> Result<(), RunnerError> {
-    if cfg.worker_id.trim().is_empty() {
-        return Err(RunnerError::Message("WORKER_ID is required".to_owned()));
-    }
-    if cfg.worker_secret.trim().is_empty() {
-        return Err(RunnerError::Message("WORKER_SECRET is required".to_owned()));
+    if cfg.worker_id.trim().is_empty() || cfg.worker_secret.trim().is_empty() {
+        return Err(RunnerError::Message(
+            "WORKER_ID and WORKER_SECRET are required".into(),
+        ));
     }
     validate_terminal_max_active_sessions(cfg.terminal_max_active_sessions)?;
     sandbox_proxy::validate_config(&cfg)?;
+    let manager = terminal_session_manager::shared_terminal_session_manager(&cfg);
+    let persistence = persistence_startup::initialize(&cfg, manager).await?;
+    tokio::select! {
+        result = run_connected(shutdown, cfg) => result,
+        error = async {
+            match persistence {
+                Some(context) => context.monitor().await,
+                None => std::future::pending().await,
+            }
+        } => Err(error),
+    }
+}
 
+async fn run_connected(shutdown: CancellationToken, cfg: Config) -> Result<(), RunnerError> {
     let terminal_manager = terminal_session_manager::shared_terminal_session_manager(&cfg);
     let mut proxy_task = if cfg.proxy_enabled {
         let shutdown = shutdown.clone();
@@ -145,6 +158,9 @@ pub async fn shutdown() {
         }
     }
     shutdown_shared_terminal_sessions().await;
+    // A drained SDK start may have completed after the first emergency scan.
+    // Retained journal/executable evidence still selects its exact writer.
+    persistence_startup::request_shutdown_writer_stops();
 }
 
 pub(crate) fn validate_terminal_max_active_sessions(

@@ -1,6 +1,6 @@
 # Linux writer subtree evidence
 
-This small Cargo harness compiles the production `src/persistence/cgroup.rs` directly, without linking the BoxLite SDK or requiring KVM. The harness supplies only the two domain error variants used by that module. It does not replace the module with a simulated cgroup implementation.
+This small Cargo harness compiles production `src/persistence/cgroup.rs` and, on Linux, `host_process.rs` directly, without linking the BoxLite SDK or requiring KVM. It supplies the two domain errors and Box ID syntax at the module boundary. Kernel process birth, namespace, zombie/exit observation and cgroup evidence use the production implementations. The process tests require a valid test `/etc/machine-id`, readable boot ID and PID namespace; give containers their own test machine ID.
 
 ```sh
 cargo test --locked --manifest-path tests/linux-writer-evidence/Cargo.toml

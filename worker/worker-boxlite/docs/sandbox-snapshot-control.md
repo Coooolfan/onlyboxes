@@ -2,7 +2,7 @@
 
 BoxLite Worker 在普通命令与心跳所在的 gRPC `Connect` 流中接收 `SandboxPersistenceControl`，通过 `ControlDispatcher` 为生命周期动作保留独立任务。它不使用普通 `terminalExec` 的结果缓存或并发槽。
 
-当前阶段已接入控制帧分派、连接恢复屏障、后台任务所有权与报告发送。原生动作引擎尚未在生产启动路径中注册，Worker 不声明 `sandbox_persistence`；未注册时所有管理帧继续返回 `persistence_unavailable`。gRPC 传输测试使用可控引擎；下述原生验收使用真实 BoxLite VM 和临时 HTTP 对象服务，但不代表真实 Console/S3 已经贯通。
+当前阶段已接入控制帧分派、连接恢复屏障、后台任务所有权与报告发送。原生动作引擎在[持久化配置](sandbox-snapshot-deployment.md)显式开启且目录/守护器绑定通过后注册，随后 Worker 才声明 `sandbox_persistence`；默认关闭，未注册时管理帧返回 `persistence_unavailable`。gRPC 传输测试使用可控引擎；下述原生验收使用真实 BoxLite VM 和临时 HTTP 对象服务，但不代表真实 Console/S3 已经贯通。
 
 ## 准入与私有数据
 
@@ -26,7 +26,7 @@ BoxLite Worker 在普通命令与心跳所在的 gRPC `Connect` 流中接收 `Sa
 
 Console 的恢复 ACK 到达、会话恢复完成后，才开放新连接的动作准入。旧连接的控制帧被拒绝，旧连接随后触发的 disconnect 不会关闭新连接。每个 receiver 使用握手时固定的调度器引用；中途注册或更换对象不能绕过恢复屏障。
 
-退出先取消并等待生命周期任务，再关闭会话管理器和 SDK。这个进程内屏障不能替代 Worker 被 SIGKILL 后的独立 lease 强制执行；独立约束、生产配置接入，以及 boot/namespace 变化的启动核对仍需完成。[SDK 初始化前的归属 Guard 与只读清单](sandbox-snapshot-startup.md)已接入原生验收，并能在 SDK 初始化前继续有授权和退出证据的数据库先删残留清理。
+退出先取消并等待生命周期任务，再关闭会话管理器和 SDK。这个进程内屏障不能替代 Worker 被 SIGKILL 后的独立 lease 强制执行；生产配置已接入独立守护器；boot/namespace 变化和未知结果仍需明确协调。[SDK 初始化前的归属 Guard 与只读清单](sandbox-snapshot-startup.md)已接入原生验收，并能在 SDK 初始化前继续有授权和退出证据的数据库先删残留清理。
 
 ## 验证
 
@@ -51,7 +51,7 @@ cargo run --locked --example boxlite_lifecycle_controls_smoke
 
 该验收在临时私有 home 中运行真实会话管理器、原生动作引擎与 BoxLite VM，直接交付 protobuf 管理帧。覆盖预算拒绝后源仍可执行、缺少 claim 的源回滚、排空期间执行超时后的数据保留、冻结后重建管理器/引擎并重试、原 CID 回滚与重放、分片 HTTP 上传、完整回读、未验证/未提交时禁止清理，以及清理后容量归零与入口关闭。恢复端覆盖准备后取消、拒绝延迟准备、HTTP 下载及导入、ready 后重建管理器、固定 CID/进程/绝对 lease 的重试、显式激活、旧 generation 拒绝、普通取消不能删除 active 目标、显式撤销，以及运行中永久删除和禁止重建。测试协调方负责完成分片和授予提交标志；不模拟真实 S3 条件 manifest 或 Console 数据库事务。管理器重建不等同于 Worker SIGKILL、跨机器或独立 lease 验收。
 
-验收从首次 VM 创建前的独立授权开始，全程使用独立守护器和配置了 `with_execution_guard` 的原生适配器。覆盖不重启的源回滚、停止后的同 CID 回滚、共享提交后的退出确认/磁盘清理/owner 释放、同 Worker 缓存恢复、目标撤销后的再次恢复、普通执行/续租/资源读取及永久删除。守护器按固定 store ID 重开后，旧客户端被拒绝，旧释放凭据继续作为历史退出事实核对；新运行租约仍需新授权。首次 Inspect 还验证原始授权精确重放与管理器重建后的原 CID 附着，不调用 start。接管前 generation `0` 的执行、续租及管理器重建也使用同一原生 owner，不创建替代 VM。未知启动协调、生产启动路径、监督和配置仍需完成。
+验收从首次 VM 创建前的独立授权开始，全程使用独立守护器和配置了 `with_execution_guard` 的原生适配器。覆盖不重启的源回滚、停止后的同 CID 回滚、共享提交后的退出确认/磁盘清理/owner 释放、同 Worker 缓存恢复、目标撤销后的再次恢复、普通执行/续租/资源读取及永久删除。守护器按固定 store ID 重开后，旧客户端被拒绝，旧释放凭据继续作为历史退出事实核对；新运行租约仍需新授权。首次 Inspect 还验证原始授权精确重放与管理器重建后的原 CID 附着，不调用 start。接管前 generation `0` 的执行、续租及管理器重建也使用同一原生 owner，不创建替代 VM。生产配置、原生注册和外部守护器绑定已接入；未知启动及异常宿主协调仍需完成。
 
 配置守护器时，原生适配器在删除 guest 磁盘之前记录并确认精确回收凭据，实际清理成功后再确认 owner 释放；最终阶段和容量释放在这两个确认之后。协议和重放约束见[原生清理与 owner 释放](execution-lease.md#原生清理与-owner-释放)。
 
@@ -69,7 +69,7 @@ purge_session 使用更高 generation 的 Delete 意图永久封锁 scope。该�
 
 ## 同节点归档缓存
 
-缓存是可淘汰的共享快照副本，不保留旧 VM 作为恢复入口。`NativeControlConfig.cache_max_bytes` 控制预算，`0` 禁用跨操作复用，并在准入、源清理和目标激活/取消时淘汰可回收缓存；`cache_ttl` 控制源最终清理或目标就绪后的保留期限。重复 ACK 不会延长该期限。生产环境变量与配置文件入口尚未接入，不能据此启用持久化能力。
+缓存是可淘汰的共享快照副本，不保留旧 VM 作为恢复入口。`NativeControlConfig.cache_max_bytes` 控制预算，`0` 禁用跨操作复用，并在准入、源清理和目标激活/取消时淘汰可回收缓存；`cache_ttl` 控制源最终清理或目标就绪后的保留期限。重复 ACK 不会延长该期限。生产环境变量与配置文件入口见[部署配置](sandbox-snapshot-deployment.md)，额度在注册前校验。
 
 候选必须匹配账号作用域 session、完整归档描述（snapshot ID、格式、大小、完整 SHA-256、展开大小）及完整恢复规格，并在保留期内。源候选必须已经共享提交、远端完整回读和原实例清理完成；目标候选必须已经验证且处于 active/canceled。未提交源、prepared/importing/ready 目标及其暂存文件均不参与普通缓存淘汰。
 

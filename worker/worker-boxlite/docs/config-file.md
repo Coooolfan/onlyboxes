@@ -26,7 +26,7 @@ Validation is identical to the environment variable path: an invalid value norma
 
 The loaded config file path is reported once at startup via the `config file loaded` log line.
 
-Public preview is opt-in. Set `WORKER_PROXY_ENABLED=true`, a fixed `WORKER_PROXY_LISTEN_ADDR`, the Nginx-reachable `WORKER_PROXY_ADVERTISE_ADDR` using the same port, and a comma-separated `WORKER_PROXY_SANDBOX_PORTS` list. Boxlite port mappings are fixed when each microVM is created, so routes can only target listed ports. The worker binds every VM mapping to a random loopback port and exposes only its token-protected fixed proxy listener.
+Public preview is opt-in. Set `WORKER_PROXY_ENABLED=true`, a fixed `WORKER_PROXY_LISTEN_ADDR`, the Nginx-reachable `WORKER_PROXY_ADVERTISE_ADDR` using the same port, and a comma-separated `WORKER_PROXY_SANDBOX_PORTS` list. The allowlist controls guest ports reachable through SDK tunnels. The worker exposes its token-protected proxy listener; guest connections do not require persistent host port mappings.
 
 See `config.example.toml` in the worker root for a full annotated template.
 
@@ -48,3 +48,5 @@ log_level = "info"
 [labels]
 region = "cn"
 ```
+
+Filesystem persistence is opt-in through `[persistence] enabled = true` / `WORKER_PERSISTENCE_ENABLED=true`. It requires a dedicated `boxlite_home`, separate journal, already provisioned external lease state/control directories, a pinned store UUID, and a separate pythonExec home. Malformed persistence values fail startup. See [persistence configuration and deployment](sandbox-snapshot-deployment.md) for the complete field table, storage budget calculation, companion provisioning and remaining acceptance boundaries. `config.example.toml` includes all defaults.

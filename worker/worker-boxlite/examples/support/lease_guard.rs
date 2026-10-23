@@ -73,6 +73,14 @@ impl Guard {
             control,
         })
     }
+    pub fn socket_directory(&self) -> &Path {
+        &self.control
+    }
+    pub fn stop_abruptly(&mut self) -> Result<()> {
+        self.process.kill()?;
+        self.process.wait()?;
+        Ok(())
+    }
     pub async fn shutdown(&mut self) -> Result<()> {
         if self.process.try_wait()?.is_some() {
             return Err("owned guardian exited before shutdown".into());

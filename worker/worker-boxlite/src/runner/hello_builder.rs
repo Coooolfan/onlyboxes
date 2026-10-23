@@ -70,7 +70,7 @@ pub(crate) fn build_hello(
             },
         ],
         worker_secret: cfg.worker_secret.clone(),
-        sandbox_persistence: None,
+        sandbox_persistence: super::persistence_startup::capabilities(cfg)?,
         terminal_session_capacity: Some(TerminalSessionCapacity {
             max_active_sessions: cfg.terminal_max_active_sessions as i32,
             active_session_count,
@@ -98,6 +98,7 @@ mod tests {
             executor_kind: "boxlite".to_owned(),
             labels: Default::default(),
             boxlite_home: String::new(),
+            persistence: Default::default(),
             python_exec_image: "ghcr.io/astral-sh/uv:python3.12-bookworm-slim".to_owned(),
             python_exec_memory_mib: 256,
             python_exec_cpus: 1,

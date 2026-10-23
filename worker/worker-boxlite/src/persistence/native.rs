@@ -556,3 +556,6 @@ pub(super) use recovery::reconcile_home;
 
 #[path = "native_initial_boot.rs"]
 mod initial_boot;
+
+#[path = "native_emergency_stop.rs"]
+mod emergency_stop;
