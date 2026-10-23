@@ -100,6 +100,14 @@ python3 scripts/tests/snapshot_e2e.py --scenario console-restart
 
 测试通过本机 journal 观察动作已进入指定阶段；若操作先完成或未命中窗口会明确失败。它不要求固定导出/启动耗时，不能用于吞吐或 SLO 评估。Worker 及独立守护器在这两个场景中持续运行；宿主重启、Worker 故障和未知启动结果仍需分别验收。
 
+### Worker SIGKILL 验收
+
+本机 `scripts/dev.sh crash worker-boxlite` 通过私有管理端点，只终止该管理进程直接托管的 Worker 子进程。SIGKILL 回执来自子进程 wait 结果，不按名称、PID 文件或进程组发送信号；管理器与租约守护器分别持有独立子进程。
+
+真实 Console/S3 的 `--scenario worker-restart` 已在源停止并登记导出意图后杀死 Worker，核对守护器完整身份、epoch 均不变化，再启动相同 Worker 身份。原 operation ID 和源 Box ID 保持不变，快照提交、后续恢复、文件 SHA-256/权限/符号链接及最终清理积压检查通过。
+
+`--scenario worker-start-restart` 捕获了更早的启动结果窗口：目标 Box ID、启动授权、shim PID 均已出现，但 journal 尚无 `started_process`。当前新 Worker 可以重连，恢复操作报告可重试 `persistence_unavailable`；取消已进入 `canceling`，原共享快照仍被引用。守护器的授权仍为未绑定，现有退出协议要求先有已绑定 writer，因此不能完成确认和释放。该场景的自动协调尚未实现，故障实例、快照和授权应继续保留。需要以明确的进程证据协调未绑定启动，不能把空扫描、Worker 退出或请求超时当作无写入者的证明。
+
 ### BoxLite 0.10.7 的原生导出边界
 
 原生 SDK 在“导出 → 导入 → 新增文件 → 再导出”中可能报 `storage error: flatten: data read: failed to fill whole buffer`。独立复现不依赖 Console、S3、Worker journal 或调度：

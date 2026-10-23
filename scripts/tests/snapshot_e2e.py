@@ -6,6 +6,7 @@ import argparse
 import shlex
 import hashlib
 import sqlite3
+import socket
 import json
 import os
 from pathlib import Path
@@ -22,7 +23,7 @@ SPEC.loader.exec_module(dev)
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--scenario", choices=("cycle", "same-worker", "no-worker", "console-restart"), default="cycle")
+    parser.add_argument("--scenario", choices=("cycle", "same-worker", "no-worker", "console-restart", "worker-restart", "worker-start-restart"), default="cycle")
     scenario = parser.parse_args().scenario
     config = Path(os.environ.get("ONLYBOXES_DEV_ENV", dev.ROOT / "scripts/dev.env"))
     os.environ.update(dev.env_file(config))
@@ -105,6 +106,85 @@ def main():
                 if operation:
                     return node, operation
         return None, None
+    def lease_identity(node):
+        values = dev.env_file(dev.STATE / (nodes[node] + ".env"))
+        _root, control = dev.node_paths(nodes[node], values)
+        request_id = str(uuid.uuid4())
+        frame = json.dumps({"version": 1, "request_id": request_id, "worker_id": node,
+            "store_id": values["WORKER_PERSISTENCE_LEASE_STORE_ID"], "expected": None,
+            "command": {"action": "ping"}}).encode()
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(3)
+            client.connect(str(control / "control.sock"))
+            client.sendall(len(frame).to_bytes(4, "big") + frame)
+            with client.makefile("rb") as stream:
+                size = int.from_bytes(stream.read(4), "big")
+                if not 0 < size <= 16384:
+                    raise RuntimeError("invalid independent guard discovery frame")
+                reply = json.loads(stream.read(size))
+        identity = reply.get("identity", {})
+        if reply.get("request_id") != request_id or reply.get("reply", {}).get("type") != "ready" or identity.get("worker_id") != node or identity.get("store_id") != values["WORKER_PERSISTENCE_LEASE_STORE_ID"]:
+            raise RuntimeError("independent guard identity query was rejected")
+        return identity
+    def restart_worker_during_action(kind, operation_id):
+        node, native = native_operation(operation_id)
+        if kind in restarted or not native:
+            return
+        writer_pid = None
+        if kind == "suspend":
+            if native.get("phase") != "preparing" or not native.get("source_stop_confirmed"):
+                return
+        else:
+            if native.get("phase") != "importing" or not native.get("start_attempted") or native.get("started_process") or not native.get("boot_guard", {}).get("authorization"):
+                return
+            root = dev.STATE / nodes[node] / hashlib.sha256(node.encode()).hexdigest()[:32]
+            box = root / "sdk-home/boxes" / native["box_id"]
+            try:
+                writer_pid = int((box / "shim.pid").read_text().splitlines()[0])
+            except (OSError, ValueError, IndexError):
+                return
+            if os.uname().sysname == "Darwin":
+                observed = subprocess.run(["ps", "-p", str(writer_pid), "-o", "comm="], capture_output=True, text=True)
+                if observed.returncode != 0 or observed.stdout.strip() != str(box / "bin/boxlite-shim"):
+                    return
+            elif Path("/proc", str(writer_pid), "exe").resolve() != box / "bin/boxlite-shim":
+                return
+        guardian = lease_identity(node)
+        services("crash", nodes[node])
+        if lease_identity(node) != guardian:
+            raise RuntimeError("Worker crash also replaced the independent guard")
+        _, killed = native_operation(operation_id)
+        if kind == "resume" and (not killed or killed.get("started_process")):
+            raise RuntimeError("writer binding completed before SIGKILL; unknown-start window was not exercised")
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            pane = subprocess.run(["tmux", "display-message", "-p", "-t", os.environ.get("ONLYBOXES_DEV_SESSION", "onlyboxes-dev") + ":" + nodes[node], "#{pane_dead}"], capture_output=True, text=True)
+            if pane.returncode != 0 or pane.stdout.strip() == "1":
+                break
+            time.sleep(0.05)
+        else:
+            raise RuntimeError("Worker supervisor did not finish after confirmed child death")
+        offline(node)
+        record("worker-crashed-during-" + kind, operation_id=operation_id, worker_id=node,
+            instance_id=native["box_id"], guard_epoch_id=guardian["epoch_id"], writer_pid=writer_pid,
+            writer_recorded=native.get("started_process") is not None)
+        services("start", nodes[node])
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            workers = require(*api("GET", "/api/v1/workers?status=all"))["items"]
+            if any(w["node_id"] == node and w["status"] == "online" for w in workers):
+                # A stale pre-crash online heartbeat is insufficient: the new
+                # process must have re-established its supervisor endpoint too.
+                values = dev.env_file(dev.STATE / (nodes[node] + ".env"))
+                _root, control = dev.node_paths(nodes[node], values)
+                if (control / "worker.sock").is_socket():
+                    break
+            time.sleep(0.2)
+        else:
+            raise RuntimeError("crashed Worker did not reconnect; preserve its native roots")
+        if lease_identity(node) != guardian:
+            raise RuntimeError("Worker restart replaced the independent guard")
+        restarted[kind] = (operation_id, native["box_id"])
     def restart_during_native_action(kind, operation_id, parameters, request_key):
         node, native = native_operation(operation_id)
         if not native or kind in restarted:
@@ -153,21 +233,25 @@ def main():
             if operation.get("phase") != phase:
                 phase = operation.get("phase")
                 print(kind + " phase=" + str(phase), flush=True)
-            if scenario == "console-restart" and operation["status"] not in ("succeeded", "failed", "canceled"):
-                restart_during_native_action(kind, result["operation_id"], parameters, request_key)
+            fault_expected = scenario == "console-restart" or (scenario == "worker-restart" and kind == "suspend") or (scenario == "worker-start-restart" and kind == "resume")
+            if fault_expected and operation["status"] not in ("succeeded", "failed", "canceled"):
+                if scenario in ("worker-restart", "worker-start-restart"):
+                    restart_worker_during_action(kind, result["operation_id"])
+                else:
+                    restart_during_native_action(kind, result["operation_id"], parameters, request_key)
             if operation["status"] in ("succeeded", "failed", "canceled"):
                 record(kind, status=operation["status"], error=operation.get("error"))
                 if operation["status"] != "succeeded":
                     raise RuntimeError("lifecycle operation failed; evidence retained")
-                if scenario == "console-restart":
+                if fault_expected:
                     if kind not in restarted:
                         raise RuntimeError("operation completed without exercising the intended restart window")
                     _, native = native_operation(result["operation_id"])
                     if not native or native["box_id"] != restarted[kind][1]:
-                        raise RuntimeError("Console restart replaced the selected native instance")
+                        raise RuntimeError("recovery replaced the selected native instance")
                     record("restart-reconciled-" + kind, operation_id=result["operation_id"], instance_id=native["box_id"])
                 return
-            time.sleep(0.05 if scenario == "console-restart" and kind not in restarted else 1)
+            time.sleep(0.05 if fault_expected and kind not in restarted else 1)
         raise RuntimeError("operation still unresolved; preserve session and inspect operation")
     def services(action, *names):
         subprocess.run([str(dev.ROOT / "scripts/dev.sh"), action, *names], check=True)
@@ -201,7 +285,7 @@ def main():
     suspended = session()
     if suspended["lifecycle_state"] != "suspended" or suspended["worker_id"] is not None or not suspended["persistence"]["latest_snapshot"]:
         raise RuntimeError("snapshot was not durably suspended")
-    if scenario in ("same-worker", "console-restart"):
+    if scenario in ("same-worker", "console-restart", "worker-restart", "worker-start-restart"):
         lifecycle("resume")
         verify("same-worker", source)
         require(*api("DELETE", base + query), expected=204)

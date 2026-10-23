@@ -527,6 +527,7 @@ Onlyboxes 本地开发服务编排（tmux + Docker/OrbStack）
   scripts/dev.sh start public-preview # 一键启动本地公共预览栈
   scripts/dev.sh logs console       # 查看控制节点最近日志
   scripts/dev.sh restart web        # 重启前端
+  scripts/dev.sh crash worker-boxlite # 仅 SIGKILL 此 Worker，保留独立守护器
   scripts/dev.sh stop               # 全部停止
 
 环境变量：
@@ -550,6 +551,11 @@ main() {
         start) cmd_start "$@" ;;
         stop) cmd_stop "$@" ;;
         restart) cmd_restart "$@" ;;
+        crash)
+            [ "$#" -eq 1 ] || die "用法：scripts/dev.sh crash worker-boxlite|worker-boxlite-peer"
+            case "$1" in worker-boxlite | worker-boxlite-peer) ;; *) die "故障注入仅支持本机 BoxLite Worker" ;; esac
+            python3 "$SANDBOX_HELPER" crash "$1"
+            ;;
         status) cmd_status "$@" ;;
         logs) cmd_logs "$@" ;;
         creds) cmd_creds "$@" ;;

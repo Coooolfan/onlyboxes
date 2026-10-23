@@ -13,6 +13,7 @@ from pathlib import Path
 import secrets
 import shlex
 import signal
+import socket
 import stat
 import subprocess
 import sys
@@ -276,7 +277,93 @@ def worker(service):
         "WORKER_PERSISTENCE_PYTHON_HOME": str(root / "python-home"),
     })
     print(f"• {service} 启动（独立 home / journal / lease store）", flush=True)
-    os.execve(binaries / "worker-boxlite", [str(binaries / "worker-boxlite")], environment)
+    return supervise_worker([str(binaries / "worker-boxlite")], environment, root, control)
+
+
+def supervise_worker(command, environment, root, control):
+    """Retain the direct-child handle so fault injection never signals a PID lookup."""
+    private_dir(control)
+    lock_path = root / "worker-supervisor.lock"
+    read_private(lock_path)
+    with lock_path.open("a+") as lock:
+        os.chmod(lock.name, 0o600)
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            fail("当前 Worker 已有本机管理进程")
+        endpoint = control / "worker.sock"
+        if endpoint.exists() or endpoint.is_symlink():
+            info = endpoint.lstat()
+            if not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.geteuid():
+                fail("拒绝替换非本机 Worker 的控制端点")
+            endpoint.unlink()
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        child = None
+        previous = {}
+        try:
+            server.bind(str(endpoint))
+            os.chmod(endpoint, 0o600)
+            server.listen(4)
+            server.settimeout(0.2)
+            child = subprocess.Popen(command, env=environment, start_new_session=True)
+            def stop(_signal, _frame):
+                if child.poll() is None:
+                    child.terminate()
+            for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+                previous[sig] = signal.signal(sig, stop)
+            while child.poll() is None:
+                try:
+                    connection, _ = server.accept()
+                except socket.timeout:
+                    continue
+                with connection:
+                    connection.settimeout(1)
+                    try:
+                        with connection.makefile("rb") as stream:
+                            request = stream.readline(17)
+                        if request != b"kill\n":
+                            connection.sendall(b"rejected\n")
+                            continue
+                        # An unreaped direct child cannot have its PID recycled.
+                        # The command never targets a group, shim or lease guard.
+                        child.kill()
+                        result = child.wait()
+                        connection.sendall(json.dumps({"pid": child.pid, "returncode": result}).encode() + b"\n")
+                    except (OSError, subprocess.SubprocessError):
+                        continue
+            return child.wait()
+        finally:
+            if child is not None and child.poll() is None:
+                child.terminate()
+                child.wait()
+            for sig, handler in previous.items():
+                signal.signal(sig, handler)
+            server.close()
+            endpoint.unlink(missing_ok=True)
+
+
+def crash_worker(service):
+    values = env_file(STATE / (service + ".env"))
+    if not values.get("WORKER_ID"):
+        fail("当前状态目录没有此 Worker 的本机身份")
+    _root, control = node_paths(service, values)
+    private_dir(control)
+    endpoint = control / "worker.sock"
+    info = endpoint.lstat()
+    if not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+        fail("Worker 本机控制端点权限或归属异常")
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.settimeout(5)
+        client.connect(str(endpoint))
+        client.sendall(b"kill\n")
+        with client.makefile("rb") as stream:
+            response = stream.readline(257)
+    if len(response) > 256:
+        fail("Worker 本机控制回执超出限制")
+    receipt = json.loads(response)
+    if receipt.get("returncode") != -signal.SIGKILL:
+        fail("Worker 未确认以 SIGKILL 退出")
+    print(f"• {service} 已确认 SIGKILL 退出", flush=True)
 
 
 def docker_owned():
@@ -438,16 +525,18 @@ def console():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("lease", "worker", "store", "console", "stop-store"))
+    parser.add_argument("command", choices=("lease", "worker", "crash", "store", "console", "stop-store"))
     parser.add_argument("service", nargs="?", choices=SERVICES)
     args = parser.parse_args()
-    if args.command in ("lease", "worker") and not args.service:
+    if args.command in ("lease", "worker", "crash") and not args.service:
         parser.error("BoxLite service is required")
     private_dir(STATE)
     if args.command == "lease":
         return lease(args.service)
     if args.command == "worker":
         return worker(args.service)
+    if args.command == "crash":
+        return crash_worker(args.service)
     if args.command == "console":
         return console()
     if args.command == "stop-store":

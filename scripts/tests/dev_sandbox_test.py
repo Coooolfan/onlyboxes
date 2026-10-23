@@ -6,6 +6,10 @@ import json
 import os
 from pathlib import Path
 import stat
+import subprocess
+import sys
+import signal
+import time
 import tempfile
 import threading
 import unittest
@@ -58,6 +62,34 @@ class AdapterTests(unittest.TestCase):
         with patch.object(dev.urllib.request, "urlopen", side_effect=[http.client.RemoteDisconnected(), Ready()]) as request, patch.object(dev.time, "sleep"):
             dev.wait_store({"CONSOLE_SNAPSHOT_STORE_ENDPOINT": "http://127.0.0.1:19000"})
         self.assertEqual(request.call_count, 2)
+
+    def test_crash_kills_only_the_supervised_direct_child(self):
+        service = "worker-boxlite"
+        dev.write_env(self.state / (service + ".env"), {"WORKER_ID": "fixture-worker"})
+        root, control = dev.node_paths(service, {"WORKER_ID": "fixture-worker"})
+        # Use a short owned /tmp path so the real AF_UNIX ABI is exercised.
+        script = "import importlib.util,os,sys; from pathlib import Path; s=importlib.util.spec_from_file_location('dev',sys.argv[1]); d=importlib.util.module_from_spec(s); s.loader.exec_module(d); sys.exit(d.supervise_worker([sys.executable,'-c','import time; time.sleep(60)'],dict(os.environ),Path(sys.argv[2]),Path(sys.argv[3])))"
+        guard = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        supervisor = subprocess.Popen([sys.executable, "-c", script, str(Path(dev.__file__).resolve()), str(root), str(control)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            deadline = time.monotonic() + 10
+            while not (control / "worker.sock").is_socket():
+                if supervisor.poll() is not None or time.monotonic() >= deadline:
+                    self.fail("owned test supervisor did not become ready")
+                time.sleep(0.02)
+            with contextlib.redirect_stdout(io.StringIO()):
+                dev.crash_worker(service)
+            self.assertEqual(supervisor.wait(timeout=5), (-signal.SIGKILL) % 256)
+            self.assertIsNone(guard.poll(), "independent lease-guard stand-in was killed")
+            self.assertFalse((control / "worker.sock").exists())
+        finally:
+            if supervisor.poll() is None:
+                supervisor.terminate()
+                supervisor.wait(timeout=5)
+            guard.terminate()
+            guard.wait(timeout=5)
+            if control.exists():
+                control.rmdir()
 
     def test_valid_worker_reuses_credentials_and_database_rebuild_retains_old_home(self):
         workers = []
