@@ -67,3 +67,18 @@ func TestSnapshotProbeRequiresConditionalArchiveWritesAndListing(t *testing.T) {
 		})
 	}
 }
+
+func TestSnapshotProbeSupportsExactObjectMultipartListing(t *testing.T) {
+	fake, store := newSnapshotS3(t)
+	fake.exactMultipartPrefix = true
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := store.Probe(ctx); err != nil {
+		t.Fatal(err)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if len(fake.objects) != 0 || len(fake.uploads) != 0 {
+		t.Fatal("probe leaked resources")
+	}
+}

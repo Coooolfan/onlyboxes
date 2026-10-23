@@ -26,6 +26,7 @@ type snapshotS3 struct {
 	rejectArchiveGet       bool
 	ignoreArchiveCondition bool
 	rejectListing          bool
+	exactMultipartPrefix   bool
 	archiveGets            int
 	objects                map[string][]byte
 	uploads                map[string]map[int][]byte
@@ -89,7 +90,7 @@ func (s *snapshotS3) serve(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "<ListMultipartUploadsResult><IsTruncated>false</IsTruncated>")
 		for id := range s.uploads {
 			name := strings.TrimPrefix(s.uploadKeys[id], "/snapshots/")
-			if strings.HasPrefix(name, q.Get("prefix")) {
+			if strings.HasPrefix(name, q.Get("prefix")) && (!s.exactMultipartPrefix || name == q.Get("prefix")) {
 				fmt.Fprintf(w, "<Upload><Key>%s</Key><UploadId>%s</UploadId></Upload>", name, id)
 			}
 		}

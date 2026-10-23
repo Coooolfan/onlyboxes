@@ -203,7 +203,9 @@ func (s *SnapshotStore) Probe(ctx context.Context) (result error) {
 		return errors.New("snapshot store probe abort setup failed")
 	}
 	uploads = append(uploads, abortUpload)
-	pending, err := clientS3.ListMultipartUploads(ctx, &s3.ListMultipartUploadsInput{Bucket: aws.String(cfg.BucketName), Prefix: aws.String(cfg.Prefix + "/")})
+	// Reconciliation queries known object identities; some S3-compatible stores
+	// support multipart listing only when Prefix is the complete object key.
+	pending, err := clientS3.ListMultipartUploads(ctx, &s3.ListMultipartUploadsInput{Bucket: aws.String(cfg.BucketName), Prefix: aws.String(abortObject.Key)})
 	if err != nil {
 		return errors.New("snapshot store probe multipart listing failed")
 	}
