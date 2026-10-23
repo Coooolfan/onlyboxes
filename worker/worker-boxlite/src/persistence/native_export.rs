@@ -1,8 +1,8 @@
 use super::*;
-use crate::persistence::archive::{canonicalize_named_export, describe_archive};
+use crate::persistence::archive::{canonicalize_named_export, describe_archive, standalone_export};
 use crate::persistence::{verify_archive, Archive, ArchiveError, ArchiveLimits, Journal};
 use std::fs::{File, OpenOptions};
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
 
 impl NativeRuntime {
     /// Caller reserves scratch space and serializes/drains native operations.
@@ -87,29 +87,15 @@ impl NativeRuntime {
                 .and_then(|p| p.to_str())
                 .ok_or(NativeError::Conflict)?,
         )?;
-        let raw = workspace.0.join("raw.boxlite");
-        let native = self
-            .runtime
-            .get(&op.box_id)
-            .await
-            .map_err(|_| NativeError::Unavailable)?
-            .ok_or(NativeError::Missing)?;
-        native
-            .export(boxlite::ExportOptions::default(), &raw)
-            .await
-            .map_err(|error| {
-                tracing::warn!(%error, "BoxLite native archive export failed");
-                NativeError::Unavailable
-            })?;
         let output = workspace.0.join("canonical.boxlite");
         let output_path = output.clone();
         let home = self.home.clone();
         let captured = op.clone();
         let id = operation.to_owned();
         let target_spec = spec.clone();
-        let archive = blocking(move || {
+        let standalone = blocking(move || {
             let config = read_config(&home, &captured.box_id)?;
-            let mut input = open_archive(&raw)?;
+            let mut disk = stopped_disk(&home, &captured.box_id)?;
             let mut file = OpenOptions::new()
                 .read(true)
                 .write(true)
@@ -117,19 +103,64 @@ impl NativeRuntime {
                 .mode(0o600)
                 .open(&output_path)
                 .map_err(|_| NativeError::Unavailable)?;
-            canonicalize_named_export(
-                &mut input,
+            standalone_export(
+                &mut disk,
                 &mut file,
                 &target_spec,
                 &captured.scoped_session_id,
                 &config.options,
-                &stopped_source.box_name,
                 &id,
                 limits,
             )
             .map_err(archive_error)
         })
         .await?;
+        let archive = if let Some(archive) = standalone {
+            archive
+        } else {
+            let raw = workspace.0.join("raw.boxlite");
+            let native = self
+                .runtime
+                .get(&op.box_id)
+                .await
+                .map_err(|_| NativeError::Unavailable)?
+                .ok_or(NativeError::Missing)?;
+            native
+                .export(boxlite::ExportOptions::default(), &raw)
+                .await
+                .map_err(|error| {
+                    tracing::warn!(%error, "BoxLite native archive export failed");
+                    NativeError::Unavailable
+                })?;
+            let output_path = output.clone();
+            let home = self.home.clone();
+            let captured = op.clone();
+            let id = operation.to_owned();
+            let target_spec = spec.clone();
+            blocking(move || {
+                let config = read_config(&home, &captured.box_id)?;
+                let mut input = open_archive(&raw)?;
+                let mut file = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .truncate(true)
+                    .mode(0o600)
+                    .open(&output_path)
+                    .map_err(|_| NativeError::Unavailable)?;
+                canonicalize_named_export(
+                    &mut input,
+                    &mut file,
+                    &target_spec,
+                    &captured.scoped_session_id,
+                    &config.options,
+                    &stopped_source.box_name,
+                    &id,
+                    limits,
+                )
+                .map_err(archive_error)
+            })
+            .await?
+        };
         let stopped = self.inspect_source(&journal, operation).await?;
         if stopped.status != BoxStatus::Stopped || Some(&stopped.spec) != op.restore_spec.as_ref() {
             return Err(NativeError::Conflict);
@@ -193,6 +224,25 @@ pub(super) fn archive_error(error: ArchiveError) -> NativeError {
         ArchiveError::Invalid => NativeError::ArchiveInvalid,
         ArchiveError::Io => NativeError::Unavailable,
     }
+}
+fn stopped_disk(home: &Path, id: &str) -> Result<File> {
+    let directory = home.join("boxes").join(id).join("disks");
+    let info = fs::symlink_metadata(&directory).map_err(|_| NativeError::Unavailable)?;
+    // SAFETY: geteuid reads the current process identity.
+    let uid = unsafe { libc::geteuid() };
+    if !info.is_dir() || info.uid() != uid || info.mode() & 0o022 != 0 {
+        return Err(NativeError::Unsupported);
+    }
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(directory.join("disk.qcow2"))
+        .map_err(|_| NativeError::Unavailable)?;
+    let info = file.metadata().map_err(|_| NativeError::Unavailable)?;
+    if !info.is_file() || info.uid() != uid || info.nlink() != 1 || info.mode() & 0o022 != 0 {
+        return Err(NativeError::Unsupported);
+    }
+    Ok(file)
 }
 fn open_archive(path: &Path) -> Result<File> {
     OpenOptions::new()

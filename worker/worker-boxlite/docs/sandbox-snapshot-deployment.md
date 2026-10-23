@@ -82,18 +82,22 @@ Worker 在 journal 的 `execution-store.json` 固定 home/journal 配对、store
 
 永久删除使用 `purge_session`，完成及重放回执为 `deleted`；`canceled` 仅用于撤销恢复动作。Console 收到原生删除确认后才回收共享归档与描述对象。管理 API 的 204 仅表示逻辑删除已接受，验收还应等待清理积压归零。
 
-### 真实 Console / S3 验收与循环快照阻断
+### 真实 Console / S3 验收与循环快照
 
-2026-10-23 在 macOS arm64、BoxLite 0.10.7、真实 Console、MinIO 和两个独立 Worker 进程上验证，两个方向的首次跨 Worker 恢复均成功。快照完成并清理源实例后停止源 Worker 及其守护器，另一 Worker 从共享归档创建新实例，保持同一 session ID，文件 SHA-256、640 权限和符号链接均一致。两个 Worker 仍在同一物理宿主，不代表跨物理机器或 Linux VM 验收通过。复现入口见 [scripts 本机验收](../../../scripts/README.md#本地沙箱持久化验收)。同节点首次恢复也已通过相同数据检查；两个 Worker 都离线时，唤醒操作以 `no_worker` 失败并保持 suspended 和原快照，重新上线后可用新操作键成功恢复。此场景的管理请求先返回 202，错误通过异步操作结果报告。
+2026-10-23 在 macOS arm64、BoxLite 0.10.7、真实 Console、MinIO 和两个独立 Worker 进程上完成多轮快照/恢复。首次快照完成并清理源实例后停止源 Worker 及其守护器，另一 Worker 从共享归档创建新实例，保持同一 session ID，文件 SHA-256、640 权限和符号链接一致。恢复后新增文件、修改内容和删除文件，再次快照及同节点恢复保留这些变化；第三轮挂起时停止所有 Worker，异步操作报告 `no_worker` 并保留原快照，重新上线后恢复成功。永久删除后的会话、Worker 和快照清理积压归零。复现入口见 [scripts 本机验收](../../../scripts/README.md#本地沙箱持久化验收)。
 
-**循环快照尚未通过，不应将 BoxLite 持久化视为生产验收完成。** 恢复后的实例再次快照时，原生导出报 `storage error: flatten: data read: failed to fill whole buffer`。Console 将操作报告为可重试 `persistence_unavailable`，回滚运行实例，保留此前已提交快照；不提交不完整的新快照。
+两个 Worker 仍在同一物理宿主，不能据此声称跨物理机器或 Linux BoxLite VM 验收通过。宿主重启和未知启动结果的协调、未登记孤儿扫描及账本维护也仍需完成。
 
-最小复现不依赖 Console、S3、Worker journal 或调度：
+### BoxLite 0.10.7 的原生导出边界
+
+原生 SDK 在“导出 → 导入 → 新增文件 → 再导出”中可能报 `storage error: flatten: data read: failed to fill whole buffer`。独立复现不依赖 Console、S3、Worker journal 或调度：
 
 ```bash
 cargo run --locked --example boxlite_resnapshot_smoke
 ```
 
-它在专用临时 home 创建 VM，写文件后停止并原生导出，在另一个 home 导入并启动，新增文件后停止并再次导出。0.10.7 的第一次导出成功，第二次导出出现上述错误；只覆盖原有文件的较小用例曾通过，因此只验证一次导入或覆盖写入不足以覆盖此边界。失败保留私有目录，退出前关闭本次创建的 runtime。BoxLite 的 [QCOW2 flatten 实现](https://github.com/boxlite-ai/boxlite/blob/e140b56b4c6195292cbcf26de76c406e71ab56f4/src/boxlite/src/disk/qcow2.rs)对 data cluster 使用整块 `read_exact`；本机失败磁盘中有已分配 cluster 的尾部超出物理 EOF 的现象。该现象及具体错误已确认，但尚未确定适合生产的修复方案。不能通过将短读一律补零来掩盖可能的截断或损坏，也不能跳过完整性校验后提交。
+该命令用于复现 SDK 边界，当前不是 Worker 生命周期验收入口。失败保留专用私有目录，退出前关闭本次创建的 runtime。只覆盖原有文件的较小用例曾通过，因此单次导入和覆盖写入不足以覆盖此边界。BoxLite 的 [QCOW2 flatten 实现](https://github.com/boxlite-ai/boxlite/blob/e140b56b4c6195292cbcf26de76c406e71ab56f4/src/boxlite/src/disk/qcow2.rs)对 data cluster 使用整块 `read_exact`；本机失败磁盘有已分配 cluster 的尾部超出物理 EOF 的现象。
 
-上线前必须修复或替换该导出路径，并使恢复后新增、修改和删除文件的多轮快照测试通过。宿主重启和未知启动结果的协调、未登记孤儿扫描、账本维护及跨物理机器验收仍各自保留。
+Worker 对有 backing file 的初始磁盘使用 SDK flatten；对已经自包含、没有 backing file 的停止磁盘，直接流式封装其全部文件字节，生成相同原生归档格式。此路径要求精确 writer 已退出，校验源目录/文件归属、单链接和权限，拒绝外部磁盘特性、内部快照和未支持的状态；导出前后核对文件元数据与两次完整磁盘 SHA-256，再完整校验产物。不会对短读补零、修改源盘或修复磁盘元数据。物理文件长度、虚拟容量、manifest 和压缩归档分别受展开/归档额度约束；空间不足在提交新快照前失败。源运行配置仍按相同允许范围校验并生成规范 manifest，临时授权不写入归档。
+
+这条路径保存当前 QCOW2 文件，包含其中的空洞和已释放 cluster，不能用压缩后归档大小估算暂存空间，也不承诺磁盘压缩/整理效果。源实例只有在共享提交和所有权释放流程完成后才删除。

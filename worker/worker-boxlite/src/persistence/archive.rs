@@ -11,6 +11,10 @@ use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::MetadataExt;
 
+#[path = "archive_standalone.rs"]
+mod standalone;
+pub(crate) use standalone::standalone_export;
+
 const MANIFEST_LIMIT: u64 = 64 << 10;
 const TAR_OVERHEAD: u64 = 4 << 20;
 const SPARSE_EXTENSIONS: usize = 1024;

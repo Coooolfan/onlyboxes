@@ -57,11 +57,19 @@ def main():
 
     account = require(*api("GET", "/api/v1/auth/session"))["account"]["account_id"]
     nodes = {dev.env_file(dev.STATE / (service + ".env"))["WORKER_ID"]: service for service in dev.SERVICES}
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        workers = require(*api("GET", "/api/v1/workers?status=all"))["items"]
+        if all(any(w["node_id"] == node and w["status"] == "online" for w in workers) for node in nodes):
+            break
+        time.sleep(1)
+    else:
+        raise RuntimeError("both isolated workers must be online before acceptance")
     token = uuid.uuid4().hex
     command = "python3 -c " + shlex.quote(
         "from pathlib import Path; import os,hashlib; p=Path('/root/snapshot-e2e'); p.mkdir(); "
         f"b=bytes(range(256))*4096+{token!r}.encode(); (p/'payload').write_bytes(b); "
-        "os.chmod(p/'payload',0o640); (p/'link').symlink_to('payload'); os.sync(); print(hashlib.sha256(b).hexdigest())")
+        "os.chmod(p/'payload',0o640); (p/'link').symlink_to('payload'); (p/'remove-me').write_text('delete after restore'); (p/'modified-file').write_text('first version'); os.sync(); print(hashlib.sha256(b).hexdigest())")
     first = require(*api("POST", "/api/v1/commands/terminal", {"command": command, "lease_ttl_sec": 900, "timeout_ms": 150000}))
     if first.get("exit_code") != 0:
         raise RuntimeError("initial command failed")
@@ -113,6 +121,7 @@ def main():
                 return
             time.sleep(1)
         raise RuntimeError("source worker did not become offline")
+    mutated = False
     def verify(label, expected_worker=None):
         current = session()
         if current["lifecycle_state"] != "running" or (expected_worker and current["worker_id"] != expected_worker):
@@ -120,7 +129,8 @@ def main():
         check = "python3 -c " + shlex.quote(
             "from pathlib import Path; import hashlib,stat; p=Path('/root/snapshot-e2e'); "
             "assert stat.S_IMODE((p/'payload').stat().st_mode)==0o640; assert (p/'link').readlink()==Path('payload'); "
-            "print(hashlib.sha256((p/'link').read_bytes()).hexdigest())")
+            + ("assert not (p/'remove-me').exists(); assert (p/'new-file').read_bytes()==b'created after restore'; assert (p/'modified-file').read_text()=='second version'; " if mutated else "assert (p/'remove-me').exists(); assert (p/'modified-file').read_text()=='first version'; ")
+            + "print(hashlib.sha256((p/'link').read_bytes()).hexdigest())")
         result = require(*api("POST", "/api/v1/commands/terminal", {"command": check, "session_id": sid, "lease_ttl_sec": 900, "timeout_ms": 60000}))
         if result.get("exit_code") != 0 or result.get("stdout", "").strip() != digest or result.get("created"):
             raise RuntimeError("restored file/hash/mode/symlink/session identity check failed")
@@ -145,6 +155,12 @@ def main():
         offline(source)
         lifecycle("resume")
         target = verify("cross-worker", next(node for node in nodes if node != source))
+        mutation = "python3 -c " + shlex.quote("from pathlib import Path; import os; p=Path('/root/snapshot-e2e'); (p/'new-file').write_bytes(b'created after restore'); (p/'modified-file').write_text('second version'); (p/'remove-me').unlink(); os.sync()")
+        result = require(*api("POST", "/api/v1/commands/terminal", {"command": mutation, "session_id": sid, "lease_ttl_sec": 900, "timeout_ms": 60000}))
+        if result.get("exit_code") != 0:
+            raise RuntimeError("restored filesystem mutation failed")
+        mutated = True
+        record("mutated-restored-files", created=True, modified=True, deleted=True)
         lifecycle("suspend")
         lifecycle("resume")
         verify("same-worker", target)

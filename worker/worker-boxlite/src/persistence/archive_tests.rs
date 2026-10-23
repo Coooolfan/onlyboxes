@@ -669,3 +669,133 @@ fn validated_import_identity_is_the_complete_standalone_disk() {
     assert_eq!(size, fixture.disk.len() as u64);
     assert_eq!(hash, format!("sha256:{:x}", Sha256::digest(&fixture.disk)));
 }
+
+#[test]
+fn standalone_export_preserves_every_disk_byte_including_a_partial_tail() {
+    let mut f = Fixture::new();
+    f.disk
+        .extend_from_slice(b"non-cluster-aligned-tail-preserved");
+    let mut disk = f.file("standalone-disk");
+    disk.write_all(&f.disk).unwrap();
+    let mut output = f.file("standalone-archive");
+    let descriptor = standalone_export(
+        &mut disk,
+        &mut output,
+        &f.spec,
+        SCOPE,
+        &f.original,
+        "standalone-snapshot",
+        limits(),
+    )
+    .unwrap()
+    .unwrap();
+    verify_archive(&mut output, &f.spec, SCOPE, &descriptor, limits()).unwrap();
+    output.seek(SeekFrom::Start(0)).unwrap();
+    let mut archive = tar::Archive::new(zstd::Decoder::new(&mut output).unwrap());
+    let mut copied = None;
+    for entry in archive.entries().unwrap() {
+        let mut entry = entry.unwrap();
+        if entry.path_bytes().as_ref() == DISK {
+            let mut bytes = Vec::new();
+            entry.read_to_end(&mut bytes).unwrap();
+            copied = Some(bytes);
+        }
+    }
+    assert_eq!(copied.as_deref(), Some(f.disk.as_slice()));
+    disk.seek(SeekFrom::Start(0)).unwrap();
+    let mut unchanged = Vec::new();
+    disk.read_to_end(&mut unchanged).unwrap();
+    assert_eq!(unchanged, f.disk);
+}
+
+#[test]
+fn standalone_export_rejects_external_state_and_budget_excess() {
+    for field in [60, 72, 80, 88] {
+        let mut f = Fixture::new();
+        f.disk[field] = 1;
+        let mut disk = f.file("disk");
+        disk.write_all(&f.disk).unwrap();
+        let mut output = f.file("output");
+        assert!(matches!(
+            standalone_export(
+                &mut disk,
+                &mut output,
+                &f.spec,
+                SCOPE,
+                &f.original,
+                "snapshot",
+                limits()
+            ),
+            Err(ArchiveError::Invalid)
+        ));
+    }
+    let f = Fixture::new();
+    let mut disk = f.file("disk");
+    disk.write_all(&f.disk).unwrap();
+    let mut output = f.file("output");
+    assert!(matches!(
+        standalone_export(
+            &mut disk,
+            &mut output,
+            &f.spec,
+            SCOPE,
+            &f.original,
+            "snapshot",
+            ArchiveLimits {
+                max_bytes: 8 << 20,
+                max_expanded_bytes: 1 << 20
+            }
+        ),
+        Err(ArchiveError::Budget)
+    ));
+    disk.seek(SeekFrom::Start(8)).unwrap();
+    disk.write_all(&512u64.to_be_bytes()).unwrap();
+    assert!(standalone_export(
+        &mut disk,
+        &mut output,
+        &f.spec,
+        SCOPE,
+        &f.original,
+        "snapshot",
+        limits()
+    )
+    .unwrap()
+    .is_none());
+}
+
+#[test]
+fn standalone_export_bounds_output_and_refuses_to_overwrite_the_source() {
+    let f = Fixture::new();
+    let mut disk = f.file("disk");
+    disk.write_all(&f.disk).unwrap();
+    let mut alias = disk.try_clone().unwrap();
+    assert!(matches!(
+        standalone_export(
+            &mut disk,
+            &mut alias,
+            &f.spec,
+            SCOPE,
+            &f.original,
+            "snapshot",
+            limits()
+        ),
+        Err(ArchiveError::Invalid)
+    ));
+    assert_eq!(disk.metadata().unwrap().len(), f.disk.len() as u64);
+    let mut output = f.file("small-output");
+    assert!(matches!(
+        standalone_export(
+            &mut disk,
+            &mut output,
+            &f.spec,
+            SCOPE,
+            &f.original,
+            "snapshot",
+            ArchiveLimits {
+                max_bytes: 64,
+                ..limits()
+            }
+        ),
+        Err(ArchiveError::Budget)
+    ));
+}

@@ -2,7 +2,7 @@
 
 ## 状态与范围
 
-本文补充[持久化与跨 Worker 唤醒时序](sandbox-session-persistence-lifecycle.zh-CN.md)，定义共享存储的职责、首期部署目标以及需要新增或调整的 API、配置和内部协议。本文描述首期完整设计，不表示所有验收项均已完成。已接入的接口与配置以[统一 API](../API.zh-CN.md#75-挂起--唤醒-session)、[Console 配置](../../console/docs/config-file.md#sandbox-persistence)及 [Docker 生命周期说明](../../worker/worker-docker/docs/sandbox-snapshot-controller.md)为准。Docker 已接入独立 lease 守护器，并通过实际 Worker 进程 SIGKILL 后到期停止、保留可写层的本机测试；BoxLite 已接入生产 runner 与独立 lease，真实 Console/S3 的本机跨 Worker 首次恢复已通过；循环快照、未登记孤儿资源扫描与跨物理机器验收仍需完成。
+本文补充[持久化与跨 Worker 唤醒时序](sandbox-session-persistence-lifecycle.zh-CN.md)，定义共享存储的职责、首期部署目标以及需要新增或调整的 API、配置和内部协议。本文描述首期完整设计，不表示所有验收项均已完成。已接入的接口与配置以[统一 API](../API.zh-CN.md#75-挂起--唤醒-session)、[Console 配置](../../console/docs/config-file.md#sandbox-persistence)及 [Docker 生命周期说明](../../worker/worker-docker/docs/sandbox-snapshot-controller.md)为准。Docker 已接入独立 lease 守护器，并通过实际 Worker 进程 SIGKILL 后到期停止、保留可写层的本机测试；BoxLite 已接入生产 runner 与独立 lease，真实 Console/S3 的本机跨 Worker 恢复、循环快照、无 Worker 后恢复与最终回收已通过；未登记孤儿资源扫描、异常协调和跨物理机器验收仍需完成。
 
 首期仅支持 Docker → Docker、BoxLite → BoxLite，恢复为新启动的执行实例。共享存储保存约定的文件系统归档；Console 数据库保存会话、快照引用和所有权。共享对象存储不承担会话调度、分布式锁或运行中沙箱的文件读写。
 
