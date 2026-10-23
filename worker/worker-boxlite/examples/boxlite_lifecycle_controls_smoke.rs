@@ -484,7 +484,7 @@ async fn main() -> Result<()> {
         let purge = Control { purge_session:true, restore_spec:Some(spec.clone()), ..Default::default() };
         let deleted = value(control_at(&dispatcher, "permanent-session-deletion", 5, Action::Cancel, purge.clone()).await?)?;
         let replay = value(control_at(&dispatcher, "permanent-session-deletion", 5, Action::Cancel, purge).await?)?;
-        if deleted.state != "canceled" || replay.state != "canceled"
+        if deleted.state != "deleted" || replay.state != "deleted"
             || sdk.get_info(&final_ready.instance_id).await?.is_some() || manager.active_session_count().await != 0
             || manager.execute(exec(5, "after-permanent-delete")).await.is_ok()
             || journal.artifact_path(SCOPE, SECOND, 1)?.exists()

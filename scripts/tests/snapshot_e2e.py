@@ -75,6 +75,15 @@ def main():
         print(label + ": " + json.dumps(values), flush=True)
     def session():
         return require(*api("GET", base + query))
+    def wait_cleanup():
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            stats = require(*api("GET", "/api/v1/persistence/stats" + query))
+            if all(stats.get(field) == 0 for field in ("pending_sessions", "pending_workers", "pending_snapshots")):
+                record("cleanup-drained", pending_sessions=0, pending_workers=0, pending_snapshots=0)
+                return
+            time.sleep(1)
+        raise RuntimeError("physical cleanup backlog did not drain; retained evidence requires inspection")
     def lifecycle(kind):
         status, result = api("POST", base + "/" + kind + query,
             {"retention_ttl_sec": 3600} if kind == "suspend" else {"lease_ttl_sec": 900}, str(uuid.uuid4()))
@@ -129,6 +138,7 @@ def main():
         verify("same-worker", source)
         require(*api("DELETE", base + query), expected=204)
         record("deleted", status=204)
+        wait_cleanup()
         return
     if scenario == "cycle":
         services("stop", nodes[source])
@@ -177,6 +187,7 @@ def main():
     verify("resume-after-no-worker")
     require(*api("DELETE", base + query), expected=204)
     record("deleted", status=204)
+    wait_cleanup()
     require(*api("DELETE", "/api/v1/tokens/" + execution["id"]), expected=204)
 
 

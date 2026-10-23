@@ -80,6 +80,8 @@ Worker 在 journal 的 `execution-store.json` 固定 home/journal 配对、store
 
 `cargo run --locked --example boxlite_worker_persistence_smoke` 使用真实 `runner::run`、本机 gRPC 注册服务夹具、实际守护器和 BoxLite VM，验证启动后 Hello/心跳、初始创建、独立 pythonExec home、控制帧快照与回滚、generation 1 执行，以及守护器故障后的关闭和磁盘保留。先执行 `cargo build --locked --bin boxlite-lease-guard`。注册服务为夹具，不能替代真实 Console/S3 事务、Linux VM 或两台物理 Worker 的验收。
 
+永久删除使用 `purge_session`，完成及重放回执为 `deleted`；`canceled` 仅用于撤销恢复动作。Console 收到原生删除确认后才回收共享归档与描述对象。管理 API 的 204 仅表示逻辑删除已接受，验收还应等待清理积压归零。
+
 ### 真实 Console / S3 验收与循环快照阻断
 
 2026-10-23 在 macOS arm64、BoxLite 0.10.7、真实 Console、MinIO 和两个独立 Worker 进程上验证，两个方向的首次跨 Worker 恢复均成功。快照完成并清理源实例后停止源 Worker 及其守护器，另一 Worker 从共享归档创建新实例，保持同一 session ID，文件 SHA-256、640 权限和符号链接均一致。两个 Worker 仍在同一物理宿主，不代表跨物理机器或 Linux VM 验收通过。复现入口见 [scripts 本机验收](../../../scripts/README.md#本地沙箱持久化验收)。同节点首次恢复也已通过相同数据检查；两个 Worker 都离线时，唤醒操作以 `no_worker` 失败并保持 suspended 和原快照，重新上线后可用新操作键成功恢复。此场景的管理请求先返回 202，错误通过异步操作结果报告。

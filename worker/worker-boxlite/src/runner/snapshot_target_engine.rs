@@ -526,7 +526,7 @@ impl NativeControlEngine {
             .detach_snapshot_instance(&op.scoped_session_id, &op.operation_id, op.generation)
             .await
             .map_err(terminal_error)?;
-        Ok(target_result(&op, "canceled"))
+        Ok(target_result(&op, "deleted"))
     }
 }
 
