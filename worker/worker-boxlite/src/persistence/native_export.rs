@@ -97,7 +97,10 @@ impl NativeRuntime {
         native
             .export(boxlite::ExportOptions::default(), &raw)
             .await
-            .map_err(|_| NativeError::Unavailable)?;
+            .map_err(|error| {
+                tracing::warn!(%error, "BoxLite native archive export failed");
+                NativeError::Unavailable
+            })?;
         let output = workspace.0.join("canonical.boxlite");
         let output_path = output.clone();
         let home = self.home.clone();

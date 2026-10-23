@@ -79,3 +79,19 @@ Worker 在 journal 的 `execution-store.json` 固定 home/journal 配对、store
 `cargo test --locked` 覆盖严格配置、目录别名/嵌套拒绝、运行中账本的只读核对、跨 store 重新绑定和丢失绑定拒绝，以及原有控制、代际、租约、传输和清理约束。
 
 `cargo run --locked --example boxlite_worker_persistence_smoke` 使用真实 `runner::run`、本机 gRPC 注册服务夹具、实际守护器和 BoxLite VM，验证启动后 Hello/心跳、初始创建、独立 pythonExec home、控制帧快照与回滚、generation 1 执行，以及守护器故障后的关闭和磁盘保留。先执行 `cargo build --locked --bin boxlite-lease-guard`。注册服务为夹具，不能替代真实 Console/S3 事务、Linux VM 或两台物理 Worker 的验收。
+
+### 真实 Console / S3 验收与循环快照阻断
+
+2026-10-23 在 macOS arm64、BoxLite 0.10.7、真实 Console、MinIO 和两个独立 Worker 进程上验证，两个方向的首次跨 Worker 恢复均成功。快照完成并清理源实例后停止源 Worker 及其守护器，另一 Worker 从共享归档创建新实例，保持同一 session ID，文件 SHA-256、640 权限和符号链接均一致。两个 Worker 仍在同一物理宿主，不代表跨物理机器或 Linux VM 验收通过。复现入口见 [scripts 本机验收](../../../scripts/README.md#本地沙箱持久化验收)。
+
+**循环快照尚未通过，不应将 BoxLite 持久化视为生产验收完成。** 恢复后的实例再次快照时，原生导出报 `storage error: flatten: data read: failed to fill whole buffer`。Console 将操作报告为可重试 `persistence_unavailable`，回滚运行实例，保留此前已提交快照；不提交不完整的新快照。
+
+最小复现不依赖 Console、S3、Worker journal 或调度：
+
+```bash
+cargo run --locked --example boxlite_resnapshot_smoke
+```
+
+它在专用临时 home 创建 VM，写文件后停止并原生导出，在另一个 home 导入并启动，新增文件后停止并再次导出。0.10.7 的第一次导出成功，第二次导出出现上述错误；只覆盖原有文件的较小用例曾通过，因此只验证一次导入或覆盖写入不足以覆盖此边界。失败保留私有目录，退出前关闭本次创建的 runtime。BoxLite 的 [QCOW2 flatten 实现](https://github.com/boxlite-ai/boxlite/blob/e140b56b4c6195292cbcf26de76c406e71ab56f4/src/boxlite/src/disk/qcow2.rs)对 data cluster 使用整块 `read_exact`；本机失败磁盘中有已分配 cluster 的尾部超出物理 EOF 的现象。该现象及具体错误已确认，但尚未确定适合生产的修复方案。不能通过将短读一律补零来掩盖可能的截断或损坏，也不能跳过完整性校验后提交。
+
+上线前必须修复或替换该导出路径，并使恢复后新增、修改和删除文件的多轮快照测试通过。宿主重启和未知启动结果的协调、未登记孤儿扫描、账本维护及跨物理机器验收仍各自保留。
