@@ -214,6 +214,8 @@ impl NativeRuntime {
                 if read_shim_process(&self.home, id, process.pid)? != process {
                     return Err(NativeError::Conflict);
                 }
+                self.revoke_orphan_boot_for_cleanup(journal, &op.operation_id, id, &process)
+                    .await?;
                 let native = self
                     .runtime
                     .get(id)

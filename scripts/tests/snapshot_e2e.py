@@ -59,7 +59,15 @@ def main():
         return body
 
     account = require(*api("GET", "/api/v1/auth/session"))["account"]["account_id"]
-    nodes = {dev.env_file(dev.STATE / (service + ".env"))["WORKER_ID"]: service for service in dev.SERVICES}
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        credentials = {service: dev.env_file(dev.STATE / (service + ".env")) for service in dev.SERVICES}
+        if all(values.get("WORKER_ID") for values in credentials.values()):
+            break
+        time.sleep(0.2)
+    else:
+        raise RuntimeError("isolated Worker credentials were not provisioned")
+    nodes = {values["WORKER_ID"]: service for service, values in credentials.items()}
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
         workers = require(*api("GET", "/api/v1/workers?status=all"))["items"]
@@ -106,13 +114,13 @@ def main():
                 if operation:
                     return node, operation
         return None, None
-    def lease_identity(node):
+    def guard_exchange(node, command, expected=None):
         values = dev.env_file(dev.STATE / (nodes[node] + ".env"))
         _root, control = dev.node_paths(nodes[node], values)
         request_id = str(uuid.uuid4())
-        frame = json.dumps({"version": 1, "request_id": request_id, "worker_id": node,
-            "store_id": values["WORKER_PERSISTENCE_LEASE_STORE_ID"], "expected": None,
-            "command": {"action": "ping"}}).encode()
+        frame = json.dumps({"version": 2, "request_id": request_id, "worker_id": node,
+            "store_id": values["WORKER_PERSISTENCE_LEASE_STORE_ID"], "expected": expected,
+            "command": command}).encode()
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
             client.settimeout(3)
             client.connect(str(control / "control.sock"))
@@ -123,9 +131,48 @@ def main():
                     raise RuntimeError("invalid independent guard discovery frame")
                 reply = json.loads(stream.read(size))
         identity = reply.get("identity", {})
-        if reply.get("request_id") != request_id or reply.get("reply", {}).get("type") != "ready" or identity.get("worker_id") != node or identity.get("store_id") != values["WORKER_PERSISTENCE_LEASE_STORE_ID"]:
+        if reply.get("request_id") != request_id or identity.get("worker_id") != node or identity.get("store_id") != values["WORKER_PERSISTENCE_LEASE_STORE_ID"]:
             raise RuntimeError("independent guard identity query was rejected")
-        return identity
+        return reply
+    def lease_identity(node):
+        reply = guard_exchange(node, {"action": "ping"})
+        if reply.get("reply", {}).get("type") != "ready":
+            raise RuntimeError("independent guard is unavailable")
+        return reply["identity"]
+    def finish_failed_start(operation, operation_id):
+        if not (operation.get("error") or {}).get("retryable"):
+            raise RuntimeError("unknown-start failure was not reported as retryable")
+        node, native = native_operation(operation_id)
+        expected_id = restarted["resume"][1]
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            current = session()
+            if current["lifecycle_state"] == "suspended" and not current.get("current_operation_id"):
+                break
+            time.sleep(0.2)
+        else:
+            raise RuntimeError("failed-start cancellation did not release ownership")
+        if current["persistence"]["latest_snapshot"] != suspended["persistence"]["latest_snapshot"]:
+            raise RuntimeError("failed start changed the committed snapshot")
+        _, native = native_operation(operation_id)
+        if not native or native["phase"] != "canceled" or native["box_id"] != expected_id:
+            raise RuntimeError("failed start lost native cancellation evidence")
+        identity = lease_identity(node)
+        response = guard_exchange(node, {"action": "retirement_status", "box_id": expected_id}, identity)
+        receipt = response.get("reply", {})
+        if receipt.get("type") != "retirement_status" or not (receipt.get("value") or {}).get("released"):
+            raise RuntimeError("failed start lacks the independent exit/cleanup receipt")
+        record("unknown-start-canceled", operation_id=operation_id, instance_id=expected_id,
+            released=True, snapshot_retained=True)
+        fresh = lifecycle("resume", recovery_retry=True)
+        if fresh["operation_id"] == operation_id or fresh["generation"] <= operation["generation"]:
+            raise RuntimeError("retry reused the failed restore operation or generation")
+        _, selected = native_operation(fresh["operation_id"])
+        if not selected or selected["box_id"] == expected_id:
+            raise RuntimeError("retry reused the retired native instance")
+        if session()["lifecycle_state"] != "running":
+            raise RuntimeError("new resume attempt did not become running")
+        record("resume-after-start-failure", failed_generation=operation["generation"], generation=fresh["generation"], fresh_operation=True, fresh_instance=True)
     def restart_worker_during_action(kind, operation_id):
         node, native = native_operation(operation_id)
         if kind in restarted or not native:
@@ -156,6 +203,11 @@ def main():
         _, killed = native_operation(operation_id)
         if kind == "resume" and (not killed or killed.get("started_process")):
             raise RuntimeError("writer binding completed before SIGKILL; unknown-start window was not exercised")
+        if kind == "resume":
+            status = guard_exchange(node, {"action": "status", "box_id": native["box_id"]}, guardian).get("reply", {})
+            boot = guard_exchange(node, {"action": "boot_status", "box_id": native["box_id"]}, guardian).get("reply", {})
+            if status.get("type") != "status" or status.get("value") is not None or boot.get("type") != "boot_status" or not boot.get("value"):
+                raise RuntimeError("guard binding completed before SIGKILL; unbound-boot window was not exercised")
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             pane = subprocess.run(["tmux", "display-message", "-p", "-t", os.environ.get("ONLYBOXES_DEV_SESSION", "onlyboxes-dev") + ":" + nodes[node], "#{pane_dead}"], capture_output=True, text=True)
@@ -220,7 +272,7 @@ def main():
             raise RuntimeError("same idempotency key with different parameters was accepted after restart")
         record("restart-idempotency-" + kind, operation_id=operation_id, replay_status=replay_status, conflicting_status=conflict_status)
         restarted[kind] = (operation_id, native["box_id"])
-    def lifecycle(kind):
+    def lifecycle(kind, recovery_retry=False):
         parameters = {"retention_ttl_sec": 3600} if kind == "suspend" else {"lease_ttl_sec": 900}
         request_key = str(uuid.uuid4())
         status, result = api("POST", base + "/" + kind + query, parameters, request_key)
@@ -233,7 +285,7 @@ def main():
             if operation.get("phase") != phase:
                 phase = operation.get("phase")
                 print(kind + " phase=" + str(phase), flush=True)
-            fault_expected = scenario == "console-restart" or (scenario == "worker-restart" and kind == "suspend") or (scenario == "worker-start-restart" and kind == "resume")
+            fault_expected = not recovery_retry and (scenario == "console-restart" or (scenario == "worker-restart" and kind == "suspend") or (scenario == "worker-start-restart" and kind == "resume"))
             if fault_expected and operation["status"] not in ("succeeded", "failed", "canceled"):
                 if scenario in ("worker-restart", "worker-start-restart"):
                     restart_worker_during_action(kind, result["operation_id"])
@@ -242,6 +294,9 @@ def main():
             if operation["status"] in ("succeeded", "failed", "canceled"):
                 record(kind, status=operation["status"], error=operation.get("error"))
                 if operation["status"] != "succeeded":
+                    if scenario == "worker-start-restart" and kind == "resume" and not recovery_retry and "resume" in restarted:
+                        finish_failed_start(operation, result["operation_id"])
+                        return
                     raise RuntimeError("lifecycle operation failed; evidence retained")
                 if fault_expected:
                     if kind not in restarted:
@@ -250,7 +305,7 @@ def main():
                     if not native or native["box_id"] != restarted[kind][1]:
                         raise RuntimeError("recovery replaced the selected native instance")
                     record("restart-reconciled-" + kind, operation_id=result["operation_id"], instance_id=native["box_id"])
-                return
+                return operation
             time.sleep(0.05 if fault_expected and kind not in restarted else 1)
         raise RuntimeError("operation still unresolved; preserve session and inspect operation")
     def services(action, *names):

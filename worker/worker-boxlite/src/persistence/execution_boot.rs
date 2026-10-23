@@ -1,6 +1,7 @@
 //! Pre-boot grants retain unknown outcomes; only an exact live writer can bind
 //! them into the ordinary renewable execution lease. Discovery is positive
-//! evidence and runs separately from the known-writer expiry thread.
+//! evidence and runs separately from the known-writer expiry thread. Orphan
+//! cleanup can register positive writer evidence only as a revoked lease.
 use super::execution_lease::*;
 use super::types::{valid_id, valid_scope};
 use super::{BootExecutable, Error, ExecutionLease, ExecutionLeaseLedger, HostProcess};
@@ -277,6 +278,99 @@ impl ExecutionLeaseLedger {
             running.revoked = true;
             return Err(Error::Unavailable);
         }
+        boot.bound = true;
+        Ok(lease)
+    }
+
+    /// Resolve a spent boot only into a revoked cleanup record. The publisher
+    /// must be gone and the exact writer must have positive executable evidence.
+    /// This never grants execution, renews a deadline, or treats absence as exit.
+    pub fn revoke_boot_writer(
+        &self,
+        authorization: BootAuthorization,
+        process: HostProcess,
+    ) -> Result<ExecutionLease> {
+        authorization.validate()?;
+        process.validate_native_id(&authorization.box_id)?;
+        if process.host_id != authorization.origin.host_id
+            || process.boot_id != authorization.origin.boot_id
+            || process.process_namespace != authorization.origin.process_namespace
+            || !authorization.origin.has_exited()?
+        {
+            return Err(Error::Conflict);
+        }
+        let discovered = authorization.executable.discover()?;
+        if discovered
+            .iter()
+            .any(|writer| !same_writer(writer, &process))
+        {
+            return Err(Error::Conflict);
+        }
+        let mut lease = authorization.lease(process.clone());
+        lease.revoked = true;
+        lease.validate()?;
+        let mut state = self.state.lock().map_err(|_| Error::Unavailable)?;
+        self.available()?;
+        let record = state
+            .boots
+            .get(&authorization.box_id)
+            .ok_or(Error::Conflict)?;
+        if record.authorization != authorization {
+            return Err(Error::Conflict);
+        }
+        let slot = self.boot_watch(&authorization.box_id)?;
+        if let Some(bound) = &record.bound_process {
+            return if bound == &process && state.leases.get(&authorization.box_id) == Some(&lease) {
+                Ok(lease)
+            } else {
+                Err(Error::Conflict)
+            };
+        }
+        {
+            let boot = slot.lock().map_err(|_| Error::Unavailable)?;
+            let observed = discovered
+                .iter()
+                .any(|writer| same_writer(writer, &process))
+                || boot
+                    .known
+                    .iter()
+                    .any(|writer| same_writer(writer, &process));
+            if !observed
+                || boot
+                    .known
+                    .iter()
+                    .any(|writer| !same_writer(writer, &process))
+            {
+                return Err(Error::Conflict);
+            }
+        }
+        match state.leases.get(&authorization.box_id) {
+            Some(prior)
+                if authorization.prior_revision == Some(prior.revision)
+                    && prior.scoped_session_id == authorization.scoped_session_id
+                    && prior.generation == authorization.generation
+                    // The persisted pre-boot CAS already confirmed full exit
+                    // before this writer could reuse the same Linux cgroup.
+                    && prior.process.has_exited()? => {}
+            None if authorization.prior_revision.is_none() => {}
+            _ => return Err(Error::Conflict),
+        }
+        let revoked = Arc::new(Mutex::new(Watch::initial(&lease, Moment::now()?, true)?));
+        let mut next = state.clone();
+        next.boots
+            .get_mut(&authorization.box_id)
+            .ok_or(Error::Unavailable)?
+            .bound_process = Some(process);
+        next.leases
+            .insert(authorization.box_id.clone(), lease.clone());
+        // Publish a deny-only watch before durable I/O, as for ordinary binding.
+        self.watches
+            .write()
+            .map_err(|_| Error::Unavailable)?
+            .insert(authorization.box_id.clone(), revoked);
+        self.commit(&mut state, next)?;
+        let mut boot = slot.lock().map_err(|_| Error::Unavailable)?;
+        boot.clock.revoked = true;
         boot.bound = true;
         Ok(lease)
     }

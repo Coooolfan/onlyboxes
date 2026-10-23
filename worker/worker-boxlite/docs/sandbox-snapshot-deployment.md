@@ -72,7 +72,7 @@ Worker 在 journal 的 `execution-store.json` 固定 home/journal 配对、store
 
 运行中每秒检查一次守护器和 store/home 绑定。失败时调度器拒绝新动作、取消新副作用授权，会话入口关闭，`run` 返回错误；Worker 先对 journal 中已固定的 writer 发出精确内核停止请求；主程序随后等待已接受动作，关闭会话管理器，并再次扫描未确认启动的可执行文件证据以覆盖迟到启动，再关闭 SDK、保留持久根。停止不依赖 SDK 的活跃句柄缓存，信号投递也不代替退出或清理确认。正常命令也独立核对精确 writer 和有效执行租约。退出或超时不代表旧 writer 已停止；Console 必须等待明确的退出和清理凭据，才能转移可写 owner。
 
-守护器重启会撤销旧租约。未知启动结果、宿主 boot/PID namespace 变化及不一致历史保留并拒绝开放，不通过创建空白根恢复服务。这些异常的自动协调、账本维护/压缩和完整跨机器验收仍待完成；不能把此配置入口视为已经覆盖所有故障恢复。
+守护器重启会撤销旧租约。没有正向 writer 证据的未知启动结果、宿主 boot/PID namespace 变化及不一致历史保留并拒绝开放，不通过创建空白根恢复服务。这些异常的自动协调、账本维护/压缩和完整跨机器验收仍待完成；不能把此配置入口视为已经覆盖所有故障恢复。
 
 ## 验证范围
 
@@ -106,7 +106,11 @@ python3 scripts/tests/snapshot_e2e.py --scenario console-restart
 
 真实 Console/S3 的 `--scenario worker-restart` 已在源停止并登记导出意图后杀死 Worker，核对守护器完整身份、epoch 均不变化，再启动相同 Worker 身份。原 operation ID 和源 Box ID 保持不变，快照提交、后续恢复、文件 SHA-256/权限/符号链接及最终清理积压检查通过。
 
-`--scenario worker-start-restart` 捕获了更早的启动结果窗口：目标 Box ID、启动授权、shim PID 均已出现，但 journal 尚无 `started_process`。当前新 Worker 可以重连，恢复操作报告可重试 `persistence_unavailable`；取消已进入 `canceling`，原共享快照仍被引用。守护器的授权仍为未绑定，现有退出协议要求先有已绑定 writer，因此不能完成确认和释放。该场景的自动协调尚未实现，故障实例、快照和授权应继续保留。需要以明确的进程证据协调未绑定启动，不能把空扫描、Worker 退出或请求超时当作无写入者的证明。
+`--scenario worker-start-restart` 验证目标 Box ID、启动授权和实际 shim 已出现，而 journal 和守护器均尚未绑定 writer 时杀死 Worker。2026-10-24 的真实 Console/S3、双 Worker 验收通过：原恢复操作报告可重试失败；重连后确认并取消旧 writer，取得独立退出/物理清理回执，回到 SUSPENDED 且保留同一快照。使用新幂等键后，以新 operation ID、新 generation 和新实例恢复，SHA-256/权限/符号链接及最终清理积压检查通过。旧失败操作不会被改写成成功。
+
+守护器控制协议为 v2，Worker 和 `boxlite-lease-guard` 必须配套部署；握手版本不匹配会在 Connect 前拒绝启用。新增 `revoke_boot_writer` 只在原启动者已退出，且 guard 对该专用 shim 有当前或同 epoch 已观察到的明确进程证据时，将原授权登记为**已撤销**的清理记录；保留原 generation、绝对截止时间和前驱 revision 关系。它不授予执行、不允许续租，也不立即释放所有权。SDK 停止、精确 writer 退出、退出回执持久化、物理根删除和独立完成回执仍分别核对。前驱已在原生启动前确认退出的 epoch 不因 Linux cgroup 被新实例复用而重新查询旧组人口。
+
+没有明确 writer 证据、多个不一致 writer、启动者仍在运行、跨 host/boot/namespace 或授权不匹配均拒绝这条回收路径。空扫描、Worker 退出和请求超时不构成无写入者证明。升级前应完成在途动作与所有权释放；旧协议的未绑定现场不能通过更换 owner 标识或删除账本强行释放。
 
 ### BoxLite 0.10.7 的原生导出边界
 

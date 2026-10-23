@@ -91,7 +91,7 @@ scripts/dev.sh stop sandbox-persistence
 
 `scripts/dev.sh crash worker-boxlite`（或 `worker-boxlite-peer`）仅向本机管理进程直接托管的 Worker 子进程发送 SIGKILL，并等待该子进程退出回执；命令不接受 PID 或进程组。Worker 的本机管理端点位于私有 Unix 目录，独立租约守护器使用另一端点和进程。正常 `stop` 仍执行 Worker/守护器的依赖停止顺序。
 
-`--scenario worker-restart` 已通过源停止后导出中途 SIGKILL 的真实验收：守护器完整身份与 epoch 不变，新 Worker 继续原 operation 和原 Box ID，完成快照、恢复及最终回收。`--scenario worker-start-restart` 用于复现目标已进入 shim 启动、Worker 尚未登记 writer 的窗口；当前能重连，但未绑定启动授权的取消/退出协调未完成，测试会失败并保留快照及故障现场，不能据此声称该窗口已经恢复。
+`--scenario worker-restart` 已通过源停止后导出中途 SIGKILL 的真实验收：守护器完整身份与 epoch 不变，新 Worker 继续原 operation 和原 Box ID，完成快照、恢复及最终回收。`--scenario worker-start-restart` 已通过目标 shim 已启动、Worker 与守护器尚未绑定 writer 的故障窗口：原恢复失败后确认取消与所有权释放，保留快照，再以新 operation、新 generation 和新实例恢复，最终回收积压归零。该场景要求配套的守护器协议 v2；没有实际命中未绑定窗口会明确失败。
 
 当前 macOS / BoxLite 0.10.7 已通过真实 S3 的完整多轮检查，包括恢复后新增、修改、删除文件再快照，以及无 Worker 后重新上线恢复和最终清理。Worker 对自包含磁盘直接封装，原生 SDK 的再次 flatten 短读边界仍可独立复现；见 [BoxLite 导出策略](../worker/worker-boxlite/docs/sandbox-snapshot-deployment.md#boxlite-0107-的原生导出边界)。跨物理宿主和 Linux VM 需单独验收。
 

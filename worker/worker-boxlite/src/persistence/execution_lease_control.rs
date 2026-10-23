@@ -16,7 +16,7 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
 type Result<T> = std::result::Result<T, Error>;
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 const MAX_FRAME: usize = 16 << 10;
 const MAX_HANDLERS: usize = 8;
 const IO_TIMEOUT: Duration = Duration::from_secs(1);
@@ -80,6 +80,10 @@ enum Command {
         authorization: BootAuthorization,
         process: HostProcess,
     },
+    RevokeBootWriter {
+        authorization: BootAuthorization,
+        process: HostProcess,
+    },
     BootStatus {
         box_id: String,
     },
@@ -117,6 +121,7 @@ enum Reply {
     Running(ExecutionLease),
     BootPrepared(BootAuthorization),
     BootStatus(Option<BootAuthorization>),
+    BootWriterRevoked(ExecutionLease),
     Ready,
     Status(Option<ExecutionLease>),
     Granted(ExecutionLease),
@@ -539,6 +544,12 @@ async fn handle(
                     authorization,
                     process,
                 } => ledger.bind_boot(authorization, process).map(Reply::Granted),
+                Command::RevokeBootWriter {
+                    authorization,
+                    process,
+                } => ledger
+                    .revoke_boot_writer(authorization, process)
+                    .map(Reply::BootWriterRevoked),
                 Command::BootStatus { box_id } => {
                     ledger.boot_status(&box_id).map(Reply::BootStatus)
                 }
@@ -725,6 +736,33 @@ impl LeaseGuardClient {
                 }
                 Ok(status)
             }
+            _ => Err(Error::Unavailable),
+        }
+    }
+    pub async fn revoke_boot_writer(
+        &self,
+        authorization: BootAuthorization,
+        process: HostProcess,
+    ) -> Result<ExecutionLease> {
+        authorization.validate()?;
+        process.validate_native_id(&authorization.box_id)?;
+        let wanted = ExecutionLease {
+            box_id: authorization.box_id.clone(),
+            scoped_session_id: authorization.scoped_session_id.clone(),
+            generation: authorization.generation,
+            revision: authorization.prior_revision.unwrap_or(0) + 1,
+            expires_unix_ms: authorization.expires_unix_ms,
+            process: process.clone(),
+            revoked: true,
+        };
+        match self
+            .call(Command::RevokeBootWriter {
+                authorization,
+                process,
+            })
+            .await?
+        {
+            Reply::BootWriterRevoked(lease) if lease == wanted => Ok(lease),
             _ => Err(Error::Unavailable),
         }
     }

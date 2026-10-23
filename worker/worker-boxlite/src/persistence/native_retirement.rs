@@ -5,6 +5,59 @@ use super::*;
 use crate::persistence::{GuardedRetirement, LeaseRetirement};
 
 impl NativeRuntime {
+    /// Turn positive orphan-writer evidence into a deny-only ledger entry.
+    /// Called before SDK stop so the guard can inspect the live executable; a
+    /// retry may instead use an observation retained by that exact guard epoch.
+    pub(super) async fn revoke_orphan_boot_for_cleanup(
+        &self,
+        journal: &Journal,
+        operation: &str,
+        id: &str,
+        process: &crate::persistence::HostProcess,
+    ) -> Result<()> {
+        let Some(guard) = &self.execution_guard else {
+            return Ok(());
+        };
+        let (state, op) = cleanup_operation(journal, operation)?;
+        if guard.identity().worker_id != state.worker_id {
+            return Err(NativeError::Conflict);
+        }
+        if guard
+            .status(id)
+            .await
+            .map_err(guard_error)?
+            .is_some_and(|lease| {
+                lease.process == *process
+                    && lease.scoped_session_id == op.scoped_session_id
+                    && lease.generation <= op.generation
+                    && (op.kind == Kind::Delete || lease.generation == op.generation)
+            })
+        {
+            return Ok(());
+        }
+        let Some(authorization) = guard.boot_status(id).await.map_err(guard_error)? else {
+            return Ok(());
+        };
+        let recognized = state.operations.values().any(|old| {
+            old.scoped_session_id == op.scoped_session_id
+                && old.box_id == id
+                && old.generation == authorization.generation
+                && old.generation <= op.generation
+                && old.boot_guard.as_ref().is_some_and(|binding| {
+                    same_store(&binding.guard, guard.identity())
+                        && binding.authorization.as_ref() == Some(&authorization)
+                })
+        });
+        if !recognized {
+            return Err(NativeError::Conflict);
+        }
+        guard
+            .revoke_boot_writer(authorization, process.clone())
+            .await
+            .map_err(guard_error)?;
+        Ok(())
+    }
+
     pub(super) async fn retire_native_lease(
         &self,
         journal: &Journal,
@@ -43,6 +96,14 @@ impl NativeRuntime {
         };
         if guard.identity().worker_id != state.worker_id {
             return Err(NativeError::Conflict);
+        }
+        if let Some(process) = op.cleanup_processes.get(id).or_else(|| {
+            (op.box_id == id)
+                .then_some(op.started_process.as_ref())
+                .flatten()
+        }) {
+            self.revoke_orphan_boot_for_cleanup(journal, operation, id, process)
+                .await?;
         }
         let receipt = if let Some(saved) = saved {
             if &saved.guard != guard.identity()

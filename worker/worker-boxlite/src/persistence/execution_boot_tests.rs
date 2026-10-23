@@ -269,3 +269,210 @@ fn bound_boot_restart_revokes_future_deadline_and_rejects_rebinding() {
     child.stopped();
     assert!(ledger.writers_stopped().unwrap());
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn orphan_boot_writer_can_only_be_registered_revoked_then_retired() {
+    let root = Root::new();
+    let ledger = root.ledger();
+    let mut origin = Child(
+        std::process::Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .unwrap(),
+    );
+    let mut grant = root.grant();
+    grant.origin = HostProcess::capture(origin.0.id()).unwrap();
+    ledger.prepare_boot(grant.clone()).unwrap();
+    let mut writer = root.spawn();
+    let process = writer.process();
+    assert_eq!(
+        ledger.revoke_boot_writer(grant.clone(), process.clone()),
+        Err(Error::Conflict)
+    );
+    origin.0.kill().unwrap();
+    origin.0.wait().unwrap();
+    let mut wrong_boot = process.clone();
+    wrong_boot.boot_id = uuid::Uuid::new_v4().to_string();
+    assert_eq!(
+        ledger.revoke_boot_writer(grant.clone(), wrong_boot),
+        Err(Error::Conflict)
+    );
+    let revoked = ledger
+        .revoke_boot_writer(grant.clone(), process.clone())
+        .unwrap();
+    assert!(revoked.revoked);
+    assert_eq!(revoked.expires_unix_ms, grant.expires_unix_ms);
+    assert_eq!(revoked.revision, 1);
+    assert_eq!(
+        ledger
+            .revoke_boot_writer(grant.clone(), process.clone())
+            .unwrap(),
+        revoked
+    );
+    assert!(ledger.check_running("owned_box").is_err());
+    assert!(ledger.bind_boot(grant.clone(), process.clone()).is_err());
+    assert!(ledger
+        .renew(
+            1,
+            ExecutionLease {
+                revision: 2,
+                revoked: false,
+                expires_unix_ms: revoked.expires_unix_ms + 1000,
+                ..revoked.clone()
+            }
+        )
+        .is_err());
+    let store_id = ledger.store_id().to_owned();
+    drop(ledger);
+    let ledger =
+        ExecutionLeaseLedger::open_bound(root.0.join("ledger"), "worker", &store_id).unwrap();
+    assert!(ledger.status("owned_box").unwrap().unwrap().revoked);
+    assert!(ledger.check_running("owned_box").is_err());
+    ledger.enforce().unwrap();
+    writer.stopped();
+    let retirement = crate::persistence::LeaseRetirement {
+        operation_id: "cancel_restore".into(),
+        cleanup_generation: 4,
+        box_id: grant.box_id,
+        scoped_session_id: grant.scoped_session_id,
+        generation: revoked.generation,
+        revision: revoked.revision,
+        process,
+    };
+    ledger.prepare_retirement(retirement.clone()).unwrap();
+    assert!(
+        !ledger
+            .retirement_status("owned_box")
+            .unwrap()
+            .unwrap()
+            .released
+    );
+    ledger.finish_retirement(retirement).unwrap();
+    assert!(ledger.writers_stopped().unwrap());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn orphan_boot_cleanup_uses_positive_history_but_not_empty_discovery() {
+    let root = Root::new();
+    let ledger = root.ledger();
+    let mut origin = Child(
+        std::process::Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .unwrap(),
+    );
+    let mut grant = root.grant();
+    grant.origin = HostProcess::capture(origin.0.id()).unwrap();
+    ledger.prepare_boot(grant.clone()).unwrap();
+    let mut writer = root.spawn();
+    let process = writer.process();
+    ledger.enforce_boots().unwrap();
+    origin.0.kill().unwrap();
+    origin.0.wait().unwrap();
+    writer.0.kill().unwrap();
+    writer.0.wait().unwrap();
+    assert!(ledger.revoke_boot_writer(grant, process).unwrap().revoked);
+
+    let empty = Root::new();
+    let ledger = empty.ledger();
+    let mut origin = Child(
+        std::process::Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .unwrap(),
+    );
+    let mut grant = empty.grant();
+    grant.origin = HostProcess::capture(origin.0.id()).unwrap();
+    ledger.prepare_boot(grant.clone()).unwrap();
+    let mut unrelated = Child(
+        std::process::Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .unwrap(),
+    );
+    let false_pin = unrelated.process();
+    unrelated.0.kill().unwrap();
+    unrelated.0.wait().unwrap();
+    origin.0.kill().unwrap();
+    origin.0.wait().unwrap();
+    assert_eq!(
+        ledger.revoke_boot_writer(grant, false_pin),
+        Err(Error::Conflict)
+    );
+    assert!(!ledger.writers_stopped().unwrap());
+    assert!(ledger.status("owned_box").unwrap().is_none());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn orphan_boot_cleanup_rejects_ambiguous_writers() {
+    let root = Root::new();
+    let ledger = root.ledger();
+    let mut origin = Child(
+        std::process::Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .unwrap(),
+    );
+    let mut grant = root.grant();
+    grant.origin = HostProcess::capture(origin.0.id()).unwrap();
+    ledger.prepare_boot(grant.clone()).unwrap();
+    let first = root.spawn();
+    let _second = root.spawn();
+    let process = first.process();
+    origin.0.kill().unwrap();
+    origin.0.wait().unwrap();
+    assert_eq!(
+        ledger.revoke_boot_writer(grant, process),
+        Err(Error::Conflict)
+    );
+    assert!(ledger.status("owned_box").unwrap().is_none());
+    assert!(!ledger.writers_stopped().unwrap());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn orphan_boot_cleanup_preserves_the_predecessor_revision_barrier() {
+    let root = Root::new();
+    let ledger = root.ledger();
+    let mut grant = root.grant();
+    grant.generation = 1;
+    let mut original = root.spawn();
+    ledger
+        .adopt(ExecutionLease {
+            box_id: grant.box_id.clone(),
+            scoped_session_id: grant.scoped_session_id.clone(),
+            generation: grant.generation,
+            revision: 1,
+            expires_unix_ms: grant.expires_unix_ms,
+            process: original.process(),
+            revoked: false,
+        })
+        .unwrap();
+    original.0.kill().unwrap();
+    original.stopped();
+    let mut origin = Child(
+        std::process::Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .unwrap(),
+    );
+    grant.origin = HostProcess::capture(origin.0.id()).unwrap();
+    grant.prior_revision = Some(1);
+    ledger.prepare_boot(grant.clone()).unwrap();
+    let mut writer = root.spawn();
+    let process = writer.process();
+    assert_eq!(ledger.enforce().unwrap().attempted, 0);
+    origin.0.kill().unwrap();
+    origin.0.wait().unwrap();
+    let revoked = ledger
+        .revoke_boot_writer(grant.clone(), process.clone())
+        .unwrap();
+    assert_eq!(revoked.revision, 2);
+    assert!(revoked.revoked);
+    assert_eq!(revoked.expires_unix_ms, grant.expires_unix_ms);
+    ledger.enforce().unwrap();
+    writer.stopped();
+}
