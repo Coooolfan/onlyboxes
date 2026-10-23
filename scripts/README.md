@@ -85,9 +85,11 @@ python3 scripts/tests/snapshot_e2e.py
 scripts/dev.sh stop sandbox-persistence
 ```
 
-验收脚本通过 Console API 创建会话、写入文件，检查跨 Worker 恢复、同 Worker 恢复、无 Worker 时的 `no_worker`（同步拒绝为 503；异步接受后在操作结果中报告） 和重新上线后的恢复，最后删除测试会话。文件验证包含 SHA-256、权限和符号链接。失败时保留会话与私有 `snapshot-e2e-result.json`，不将未知操作视为成功。脚本需要 `dev.sh` 缓存的本机管理员登录凭据，以创建短期测试执行 token。不要在有其他工作负载的 Worker 上运行此验收。
+验收脚本通过 Console API 创建会话、写入文件，检查跨 Worker 恢复、同 Worker 恢复、无 Worker 时的 `no_worker`（同步拒绝为 503；异步接受后在操作结果中报告）和重新上线后的恢复，最后删除测试会话。文件验证包含 SHA-256、权限和符号链接。失败时保留会话与私有 `snapshot-e2e-<scenario>-result.json`，不将未知操作视为成功。脚本需要 `dev.sh` 缓存的本机管理员登录凭据，以创建短期测试执行 token。不要在有其他工作负载的 Worker 上运行此验收。
 
-当前 macOS / BoxLite 0.10.7 的真实链路已验证首次跨 Worker 恢复；恢复后再次快照的回归失败仍在定位。上述脚本保留这一检查，完整成功前不能视为循环持久化验收通过。
+可用 `--scenario same-worker` 或 `--scenario no-worker` 分别验证首次同节点恢复和无 Worker 后的恢复；默认 `cycle` 保留完整循环检查。
+
+当前 macOS / BoxLite 0.10.7 的真实链路已验证首次跨 Worker、同 Worker 恢复，以及无 Worker 失败后重新上线恢复；恢复后新增文件再快照会触发原生 QCOW2 flatten 短读错误，见 [BoxLite 验收边界](../worker/worker-boxlite/docs/sandbox-snapshot-deployment.md#真实-console--s3-验收与循环快照阻断)。上述脚本保留这一检查，完整成功前不能视为循环持久化验收通过。
 
 单独 `stop worker-boxlite` 或 `stop worker-boxlite-peer` 会依次停止该 Worker 和其守护器，Console 与对象存储继续运行。再次 `start` 复用相同 Worker 身份和持久目录。Console 数据库重建后创建新身份，旧 SDK home 和账本保留，不会交给新 Worker 使用。
 

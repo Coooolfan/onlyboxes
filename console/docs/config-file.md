@@ -63,7 +63,7 @@ description = "Execute python code in a sandbox."
 
 ## Sandbox persistence
 
-`CONSOLE_PERSISTENCE_ENABLED` defaults to `false`. When enabled, Console starts the asynchronous lifecycle coordinator and accepts management-authenticated suspend/resume requests. Workers independently opt in and advertise exact runtime/version/platform/format support. The Docker Worker has an adapter; BoxLite lifecycle integration remains pending.
+`CONSOLE_PERSISTENCE_ENABLED` defaults to `false`. When enabled, Console starts the asynchronous lifecycle coordinator and accepts management-authenticated suspend/resume requests. Workers independently opt in and advertise exact runtime/version/platform/format support. Docker and BoxLite have opt-in lifecycle adapters; see the [BoxLite deployment and acceptance limits](../../worker/worker-boxlite/docs/sandbox-snapshot-deployment.md).
 
 Snapshot settings are strict: invalid booleans, limits or duration values fail startup. Environment values override TOML values. Flat keys remove `CONSOLE_` and use lowercase; grouped tables such as `[snapshot.store] endpoint = "..."` and `[persistence] enabled = true` are equivalent.
 

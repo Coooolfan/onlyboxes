@@ -2,6 +2,7 @@
 """Exercise real Console/S3 snapshot APIs on dev.sh's two BoxLite workers."""
 import importlib.util
 import atexit
+import argparse
 import shlex
 import json
 import os
@@ -18,6 +19,9 @@ SPEC.loader.exec_module(dev)
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--scenario", choices=("cycle", "same-worker", "no-worker"), default="cycle")
+    scenario = parser.parse_args().scenario
     config = Path(os.environ.get("ONLYBOXES_DEV_ENV", dev.ROOT / "scripts/dev.env"))
     os.environ.update(dev.env_file(config))
     opener, headers = dev.console_auth()
@@ -37,7 +41,7 @@ def main():
 
     def api(method, path, value=None, key=None):
         request = urllib.request.Request(dev.console_base() + path, data=None if value is None else json.dumps(value).encode(),
-            headers={**({"Authorization": "Bearer " + execution["token"]} if path.startswith("/api/v1/commands/") else headers), "Content-Type": "application/json", **({"Idempotency-Key": key} if key else {})}, method=method)
+            headers={**({"Authorization": "Bearer " + execution["token"]} if path.startswith("/api/v1/commands/") else ({} if path.startswith("/api/v1/tokens/") else headers)), "Content-Type": "application/json", **({"Idempotency-Key": key} if key else {})}, method=method)
         try:
             with opener.open(request, timeout=180) as response:
                 return response.status, None if response.status == 204 else json.load(response)
@@ -67,7 +71,7 @@ def main():
     evidence = {"session_id": sid, "account_id": account, "sha256": digest, "checks": []}
     def record(label, **values):
         evidence["checks"].append({"check": label, **values})
-        dev.atomic_private(dev.STATE / "snapshot-e2e-result.json", json.dumps(evidence, indent=2) + "\n")
+        dev.atomic_private(dev.STATE / ("snapshot-e2e-" + scenario + "-result.json"), json.dumps(evidence, indent=2) + "\n")
         print(label + ": " + json.dumps(values), flush=True)
     def session():
         return require(*api("GET", base + query))
@@ -120,33 +124,46 @@ def main():
     suspended = session()
     if suspended["lifecycle_state"] != "suspended" or suspended["worker_id"] is not None or not suspended["persistence"]["latest_snapshot"]:
         raise RuntimeError("snapshot was not durably suspended")
-    services("stop", nodes[source])
-    offline(source)
-    lifecycle("resume")
-    target = verify("cross-worker", next(node for node in nodes if node != source))
-    lifecycle("suspend")
-    lifecycle("resume")
-    verify("same-worker", target)
-    lifecycle("suspend")
-    services("stop", nodes[target])
-    offline(target)
+    if scenario == "same-worker":
+        lifecycle("resume")
+        verify("same-worker", source)
+        require(*api("DELETE", base + query), expected=204)
+        record("deleted", status=204)
+        return
+    if scenario == "cycle":
+        services("stop", nodes[source])
+        offline(source)
+        lifecycle("resume")
+        target = verify("cross-worker", next(node for node in nodes if node != source))
+        lifecycle("suspend")
+        lifecycle("resume")
+        verify("same-worker", target)
+        lifecycle("suspend")
+        services("stop", nodes[target])
+        offline(target)
+    else:
+        services("stop", *dev.SERVICES)
+        for node in nodes:
+            offline(node)
     status, body = api("POST", base + "/resume" + query, {"lease_ttl_sec": 900}, str(uuid.uuid4()))
+    submission_status = status
+    outcome_code = body.get("code")
     if status == 202:
         path = base + "/operations/" + body["operation_id"] + query
         deadline = time.monotonic() + 60
         while time.monotonic() < deadline:
             operation = require(*api("GET", path))
             if operation["status"] == "failed" and operation.get("error", {}).get("code") == "no_worker":
-                status, body = 503, {"code": "no_worker"}
+                outcome_code = "no_worker"
                 break
             if operation["status"] in ("succeeded", "canceled", "failed"):
                 raise RuntimeError("unexpected no-worker operation result")
             time.sleep(1)
-    if status != 503 or body.get("code") != "no_worker":
-        raise RuntimeError("no-worker response differs from expected 503 no_worker: status=" + str(status) + " keys=" + str(list(body)))
+    if submission_status not in (202, 503) or outcome_code != "no_worker":
+        raise RuntimeError("no-worker result differs from expected contract: HTTP " + str(submission_status))
     if session()["lifecycle_state"] != "suspended":
         raise RuntimeError("no-worker attempt changed suspended state")
-    record("no-worker", status=status, code=body["code"])
+    record("no-worker", submission_status=submission_status, code=outcome_code, asynchronous=submission_status == 202)
     services("start", *dev.SERVICES)
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:

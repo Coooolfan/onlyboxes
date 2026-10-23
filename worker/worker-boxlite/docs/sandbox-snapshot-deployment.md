@@ -82,7 +82,7 @@ Worker 在 journal 的 `execution-store.json` 固定 home/journal 配对、store
 
 ### 真实 Console / S3 验收与循环快照阻断
 
-2026-10-23 在 macOS arm64、BoxLite 0.10.7、真实 Console、MinIO 和两个独立 Worker 进程上验证，两个方向的首次跨 Worker 恢复均成功。快照完成并清理源实例后停止源 Worker 及其守护器，另一 Worker 从共享归档创建新实例，保持同一 session ID，文件 SHA-256、640 权限和符号链接均一致。两个 Worker 仍在同一物理宿主，不代表跨物理机器或 Linux VM 验收通过。复现入口见 [scripts 本机验收](../../../scripts/README.md#本地沙箱持久化验收)。
+2026-10-23 在 macOS arm64、BoxLite 0.10.7、真实 Console、MinIO 和两个独立 Worker 进程上验证，两个方向的首次跨 Worker 恢复均成功。快照完成并清理源实例后停止源 Worker 及其守护器，另一 Worker 从共享归档创建新实例，保持同一 session ID，文件 SHA-256、640 权限和符号链接均一致。两个 Worker 仍在同一物理宿主，不代表跨物理机器或 Linux VM 验收通过。复现入口见 [scripts 本机验收](../../../scripts/README.md#本地沙箱持久化验收)。同节点首次恢复也已通过相同数据检查；两个 Worker 都离线时，唤醒操作以 `no_worker` 失败并保持 suspended 和原快照，重新上线后可用新操作键成功恢复。此场景的管理请求先返回 202，错误通过异步操作结果报告。
 
 **循环快照尚未通过，不应将 BoxLite 持久化视为生产验收完成。** 恢复后的实例再次快照时，原生导出报 `storage error: flatten: data read: failed to fill whole buffer`。Console 将操作报告为可重试 `persistence_unavailable`，回滚运行实例，保留此前已提交快照；不提交不完整的新快照。
 

@@ -2,7 +2,7 @@
 
 ## 状态与范围
 
-本文补充[持久化与跨 Worker 唤醒时序](sandbox-session-persistence-lifecycle.zh-CN.md)，定义共享存储的职责、首期部署目标以及需要新增或调整的 API、配置和内部协议。本文描述首期完整设计，不表示所有验收项均已完成。已接入的接口与配置以[统一 API](../API.zh-CN.md#75-挂起--唤醒-session)、[Console 配置](../../console/docs/config-file.md#sandbox-persistence)及 [Docker 生命周期说明](../../worker/worker-docker/docs/sandbox-snapshot-controller.md)为准。Docker 已接入独立 lease 守护器，并通过实际 Worker 进程 SIGKILL 后到期停止、保留可写层的本机测试；BoxLite 生产接入及独立 lease、未登记孤儿资源扫描、真实 Console/S3 与跨机器验收仍需完成。
+本文补充[持久化与跨 Worker 唤醒时序](sandbox-session-persistence-lifecycle.zh-CN.md)，定义共享存储的职责、首期部署目标以及需要新增或调整的 API、配置和内部协议。本文描述首期完整设计，不表示所有验收项均已完成。已接入的接口与配置以[统一 API](../API.zh-CN.md#75-挂起--唤醒-session)、[Console 配置](../../console/docs/config-file.md#sandbox-persistence)及 [Docker 生命周期说明](../../worker/worker-docker/docs/sandbox-snapshot-controller.md)为准。Docker 已接入独立 lease 守护器，并通过实际 Worker 进程 SIGKILL 后到期停止、保留可写层的本机测试；BoxLite 已接入生产 runner 与独立 lease，真实 Console/S3 的本机跨 Worker 首次恢复已通过；循环快照、未登记孤儿资源扫描与跨物理机器验收仍需完成。
 
 首期仅支持 Docker → Docker、BoxLite → BoxLite，恢复为新启动的执行实例。共享存储保存约定的文件系统归档；Console 数据库保存会话、快照引用和所有权。共享对象存储不承担会话调度、分布式锁或运行中沙箱的文件读写。
 
@@ -16,7 +16,7 @@
 | --- | --- | --- |
 | 对象读写 | `PutObject`、`GetObject`、`HeadObject` | 小型快照描述、归档读取和提交前检查 |
 | 分段上传 | Create / UploadPart / Complete / Abort Multipart Upload | 大归档并发上传、按 part 重试、中断清理 |
-| 上传核对 | ListParts、ListMultipartUploads | Console 重启后核对进行中的上传和清理遗留 part |
+| 上传核对 | ListParts、按已知对象完整键查询的 ListMultipartUploads | 核对已登记上传及遗留 part；不要求 bucket 级未完成上传扫描 |
 | 随机范围读取 | HTTP Range GET | 下载失败后从已验证的位置重试；最终仍校验完整归档 |
 | 删除与清理 | DeleteObject；可分页 ListObjectsV2 | 删除已回收快照、巡检无引用对象；LIST 不参与选择最新快照 |
 | 对象可见性 | 完成 PUT/Complete 后，同一对象的 HEAD/GET 立即可读到完整内容 | 防止元数据已提交、目标却读不到归档 |
@@ -297,6 +297,8 @@ ConnectHello 已有 `executor_kind` 与普通 Worker 版本，但不足以判定
 
 GC 先根据数据库确认对象没有有效会话引用、没有进行中的恢复/上传引用，并超过宽限期；再用条件事务将 snapshot 标记为 deleting，禁止建立新引用，之后才删除对象。恢复预留必须与该状态互斥，不能在 GC 检查之后又引用即将删除的对象。建议当前有效快照与上一代短期保留；额外历史 snapshot 不必对外提供回滚 API。过期挂起会话按策略逻辑删除，再回收对象。bucket lifecycle **不能按对象年龄自动删除所有快照**，否则仍被会话引用的数据可能先消失。
 
+MinIO 的 multipart 列举按完整对象键查询；启动探针据此验证已知 upload ID，不据此声称支持整个前缀的未完成上传扫描。未登记上传应配置 bucket 生命周期兜底，不能只依赖当前 Console 的已登记操作清理。[MinIO 实现](https://github.com/minio/minio/blob/RELEASE.2025-10-15T17-29-55Z/cmd/erasure-multipart.go)
+
 可为“未完成 multipart”配置 24 小时后的中断回收；它应显著大于操作 deadline。无引用的已完成对象由 Console GC 处理。GC 错误和权限错误必须有可观察的积压指标，不能只记录一次日志。
 
 ### 现有实现可复用的部分
@@ -364,7 +366,7 @@ GC 先根据数据库确认对象没有有效会话引用、没有进行中的�
 
 运行实例 lease 仍由现有会话配置管理；不能把 30 分钟快照 deadline 直接当作沙箱 execution lease 或数据保留期。操作期间的源实例/目标预留需由持久化协议持有，避免现有 lease janitor 在快照提交前删掉唯一磁盘。
 
-Docker 的两个 lease guard 配置已实现，配置文件键为 `[snapshot].lease_guard_image` 和 `[snapshot].lease_guard_docker_socket`。守护器的容器与持久卷独立于 Worker 进程存活；Worker 在 Hello 前核对 daemon、镜像、容器、卷和 lease store 身份，并连续观察进程稳定运行十秒。原始绑定丢失或资源被替换时拒绝启动，不能初始化空 ledger 后继续恢复。首次采纳先记录原容器 ID 与绝对 lease，取得守护器确认后才返回成功；恢复及回滚在 native start 前取得确认，续租在持久化意图后取得精确回执。完整部署约束和已验证边界见[独立执行租约](../../worker/worker-docker/docs/runtime-lease-guard.md)。这些 Docker 配置不表示 BoxLite 已具备同等能力。
+Docker 的两个 lease guard 配置已实现，配置文件键为 `[snapshot].lease_guard_image` 和 `[snapshot].lease_guard_docker_socket`。守护器的容器与持久卷独立于 Worker 进程存活；Worker 在 Hello 前核对 daemon、镜像、容器、卷和 lease store 身份，并连续观察进程稳定运行十秒。原始绑定丢失或资源被替换时拒绝启动，不能初始化空 ledger 后继续恢复。首次采纳先记录原容器 ID 与绝对 lease，取得守护器确认后才返回成功；恢复及回滚在 native start 前取得确认，续租在持久化意图后取得精确回执。完整部署约束和已验证边界见[独立执行租约](../../worker/worker-docker/docs/runtime-lease-guard.md)。BoxLite 使用独立进程与私有 Unix socket，配置和验证边界见[BoxLite 部署说明](../../worker/worker-boxlite/docs/sandbox-snapshot-deployment.md)。
 
 ## 首期验收清单
 

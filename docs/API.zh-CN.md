@@ -888,7 +888,7 @@ Content-Type: application/json
 
 鉴权、账号选择与查询单个 Session 相同；执行 token 不能调用。两个接口均要求 `Idempotency-Key`（1–256 字节）。JSON 请求体最多 4096 字节，必须为对象，拒绝未知字段。挂起保留期可省略并使用 Console 默认值，显式提供时必须为正整数且不超过配置上限。唤醒 lease 必填，必须为正整数、不超过 `2147483647`，并满足目标 Worker 的配置范围。调用方不能指定镜像、runtime、Worker、外部归档地址或历史快照。
 
-需启用 `CONSOLE_PERSISTENCE_ENABLED=true`、配置 S3 存储，并有启用持久化的兼容 Worker。目前 Docker 已有生命周期适配器，BoxLite 接入尚待完成。唤醒使用最新已提交快照创建新的同 runtime 实例；优先选择兼容的原 Worker，并可复用完整校验通过的本地归档缓存。没有候选时不创建空白沙箱。
+需启用 `CONSOLE_PERSISTENCE_ENABLED=true`、配置 S3 存储，并有启用持久化的兼容 Worker。Docker 与 BoxLite 均有显式开启的生命周期适配器；BoxLite 的部署要求及验收边界见[部署说明](../worker/worker-boxlite/docs/sandbox-snapshot-deployment.md)。唤醒使用最新已提交快照创建新的同 runtime 实例；优先选择兼容的原 Worker，并可复用完整校验通过的本地归档缓存。没有候选时不创建空白沙箱。
 
 成功接受返回 `202 Accepted`，`Location` 指向账号作用域下的操作查询地址，响应体为下节的操作对象。HTTP 断开不会取消已接受操作。会话已处于请求的稳定状态时可返回 `200` 会话对象。
 

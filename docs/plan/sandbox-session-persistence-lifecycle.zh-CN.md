@@ -206,7 +206,7 @@ sequenceDiagram
     Note over G,R: 后续仍监视已撤销 ID，抑制延迟启动
 ```
 
-本机已用实际 Worker `Run` 子进程验证首次采纳、普通续租、后台写入、Worker SIGKILL、独立到期停止和可写层保留；协调端是注册服务夹具，尚不等同于真实 Console/S3 或跨机器验收。守护器依赖 Docker daemon 可响应，不能承诺 daemon 故障时的停止时限。其重启会先撤销旧 lease；不能凭墙钟经过或 Worker 不可达就认定旧写入者已停止并转移所有权。BoxLite 的独立执行租约尚未生产接入。详见[守护器部署和验收边界](../../worker/worker-docker/docs/runtime-lease-guard.md)。
+本机已用实际 Worker `Run` 子进程验证首次采纳、普通续租、后台写入、Worker SIGKILL、独立到期停止和可写层保留；协调端是注册服务夹具，尚不等同于真实 Console/S3 或跨机器验收。守护器依赖 Docker daemon 可响应，不能承诺 daemon 故障时的停止时限。其重启会先撤销旧 lease；不能凭墙钟经过或 Worker 不可达就认定旧写入者已停止并转移所有权。BoxLite 已接入独立执行租约，实际 runner 与守护器故障检查见[BoxLite 部署及验收边界](../../worker/worker-boxlite/docs/sandbox-snapshot-deployment.md)。详见[守护器部署和验收边界](../../worker/worker-docker/docs/runtime-lease-guard.md)。
 
 ```mermaid
 sequenceDiagram
