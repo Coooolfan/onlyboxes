@@ -47,6 +47,16 @@ struct Owner {
     journal: Directory,
 }
 
+// Release the OFD lock on every return path, including identity/census errors.
+// Closing this descriptor alone may leave an inherited CLOEXEC alias locked
+// until a concurrently spawned child finishes exec.
+struct HomeLock(File);
+impl Drop for HomeLock {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
+}
+
 /// Kept alive alongside the SDK runtime and its journal. This guard never
 /// creates a Box, signals a process or repairs an inconsistent SDK database.
 /// Boot/namespace changes currently require offline reconciliation; they are
@@ -54,7 +64,7 @@ struct Owner {
 pub struct RuntimeHomeGuard {
     owner: Owner,
     journal: Arc<Journal>,
-    lock: File,
+    _lock: HomeLock,
 }
 impl RuntimeHomeGuard {
     pub fn open(
@@ -88,6 +98,7 @@ impl RuntimeHomeGuard {
             .map_err(|_| Error::Unavailable)?;
         check_file(&lock, 0)?;
         lock.try_lock().map_err(|_| Error::Unavailable)?;
+        let lock = HomeLock(lock);
         let process = HostProcess::capture(std::process::id())?;
         let saved = read_private(&home.path.join(OWNER), 8192)?;
         let (owner, journal) = if let Some(bytes) = saved {
@@ -161,7 +172,7 @@ impl RuntimeHomeGuard {
         Ok(Self {
             owner,
             journal,
-            lock,
+            _lock: lock,
         })
     }
 
@@ -210,10 +221,8 @@ impl RuntimeHomeGuard {
 }
 impl Drop for RuntimeHomeGuard {
     fn drop(&mut self) {
-        // Release immediately even if a concurrent fork briefly inherited a
-        // CLOEXEC alias of this open file description.
         let _ = self.journal.close();
-        let _ = self.lock.unlock();
+        // HomeLock also unlocks explicitly on early construction errors.
     }
 }
 
@@ -336,10 +345,35 @@ mod tests {
         );
     }
     #[test]
+    fn failed_home_construction_unlocks_an_inherited_description() {
+        let root = Root::new();
+        drop(root.open().unwrap());
+        fn rejected(root: &Root, alias: &mut Option<File>) -> Result<()> {
+            let file = private_options()
+                .read(true)
+                .write(true)
+                .open(root.home().join(LOCK))
+                .map_err(|_| Error::Unavailable)?;
+            file.try_lock().map_err(|_| Error::Unavailable)?;
+            let held = HomeLock(file);
+            *alias = Some(held.0.try_clone().map_err(|_| Error::Unavailable)?);
+            // Mirrors an identity/census rejection after lock acquisition.
+            Err(Error::Unavailable)
+        }
+        let mut inherited = None;
+        assert!(rejected(&root, &mut inherited).is_err());
+        let replacement = root.open().unwrap();
+        assert!(inherited.as_ref().unwrap().try_lock().is_err());
+        drop(inherited);
+        assert!(root.open().is_err());
+        drop(replacement);
+        assert!(root.open().is_ok());
+    }
+    #[test]
     fn explicit_home_unlock_is_not_delayed_by_an_inherited_description() {
         let root = Root::new();
         let guard = root.open().unwrap();
-        let alias = guard.lock.try_clone().unwrap();
+        let alias = guard._lock.0.try_clone().unwrap();
         drop(guard);
         let replacement = root.open().unwrap();
         assert!(alias.try_lock().is_err());
