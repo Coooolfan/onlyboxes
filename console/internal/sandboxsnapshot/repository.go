@@ -247,6 +247,13 @@ func (r *Repository) ReserveUpload(ctx context.Context, op Operation, upload obj
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
+		var fenced bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sandbox_snapshot_storage_orphans WHERE snapshot_id=? AND status!='observing')`, object.SnapshotID).Scan(&fenced); err != nil {
+			return err
+		}
+		if fenced {
+			return ErrConflict
+		}
 		var used int64
 		if err = tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(size_bytes),0) FROM sandbox_snapshots WHERE owner_id=? AND status!='deleted'`, op.OwnerID).Scan(&used); err != nil {
 			return err
@@ -257,6 +264,9 @@ func (r *Repository) ReserveUpload(ctx context.Context, op Operation, upload obj
 		now := r.now().UnixMilli()
 		_, err = tx.ExecContext(ctx, `INSERT INTO sandbox_snapshots (snapshot_id,owner_id,session_id,operation_id,generation,status,size_bytes,upload_json,created_at_unix_ms,updated_at_unix_ms) VALUES (?,?,?,?,?,'uploading',?,?,?,?)`, object.SnapshotID, op.OwnerID, op.SessionID, op.ID, op.Generation, object.Size, string(encoded), now, now)
 		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM sandbox_snapshot_storage_orphans WHERE snapshot_id=? AND status='observing'`, object.SnapshotID); err != nil {
 			return err
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE sandbox_persistence_operations SET status='running',phase='uploading',updated_at_unix_ms=? WHERE operation_id=?`, now, op.ID)

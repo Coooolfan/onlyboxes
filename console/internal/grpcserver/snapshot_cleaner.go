@@ -19,20 +19,28 @@ type SnapshotCleanupObjects interface {
 	AbortAndConfirmSnapshotUpload(context.Context, objectstore.SnapshotUpload) error
 	PurgeSnapshot(context.Context, objectstore.SnapshotObject, string) error
 }
+type snapshotOrphanObjects interface {
+	ListSnapshotOrphans(context.Context, string) ([]objectstore.SnapshotOrphanEntry, string, error)
+	PurgeSnapshotOrphan(context.Context, objectstore.SnapshotOrphan) error
+}
+
+var _ snapshotOrphanObjects = (*objectstore.SnapshotStore)(nil)
+
 type SnapshotCleanerConfig struct {
 	Interval, Grace, RetryInterval, CallTimeout time.Duration
 	MaxJobs                                     int
 }
 type SnapshotCleaner struct {
-	service    *RegistryService
-	repository *sandboxsnapshot.Repository
-	objects    SnapshotCleanupObjects
-	config     SnapshotCleanerConfig
-	mu         sync.Mutex
-	jobs       map[string]bool
-	cancel     context.CancelFunc
-	done       chan struct{}
-	wg         sync.WaitGroup
+	service      *RegistryService
+	repository   *sandboxsnapshot.Repository
+	objects      SnapshotCleanupObjects
+	config       SnapshotCleanerConfig
+	mu           sync.Mutex
+	jobs         map[string]bool
+	cancel       context.CancelFunc
+	done         chan struct{}
+	wg           sync.WaitGroup
+	orphanCursor string // Owned by the single snapshot-gc job.
 }
 
 func NewSnapshotCleaner(service *RegistryService, objects SnapshotCleanupObjects, cfg SnapshotCleanerConfig) (*SnapshotCleaner, error) {
@@ -225,5 +233,49 @@ func (c *SnapshotCleaner) sweep(ctx context.Context, now time.Time) error {
 			return err
 		}
 	}
-	return c.collect(ctx, now, "", "")
+	return errors.Join(c.collect(ctx, now, "", ""), c.collectStorageOrphans(ctx, now))
+}
+
+func (c *SnapshotCleaner) collectStorageOrphans(ctx context.Context, now time.Time) error {
+	objects, ok := c.objects.(snapshotOrphanObjects)
+	if !ok {
+		return nil
+	}
+	run, stop := context.WithTimeout(ctx, c.config.CallTimeout)
+	entries, next, listErr := objects.ListSnapshotOrphans(run, c.orphanCursor)
+	stop()
+	if listErr == nil {
+		for _, entry := range entries {
+			if err := c.repository.ObserveStorageOrphan(ctx, entry, now); err != nil {
+				// A concurrently published object can have a provider timestamp
+				// later than the sweep start. Keep it for a later enumeration;
+				// it must not stall this page or already-fenced retry work.
+				if errors.Is(err, sandboxsnapshot.ErrConflict) {
+					continue
+				}
+				return err
+			}
+		}
+		c.orphanCursor = next
+	} else {
+		// Tokens can expire. Restart enumeration without discarding durable work.
+		c.orphanCursor = ""
+	}
+	candidates, err := c.repository.ClaimStorageOrphans(ctx, now, c.config.Grace, c.config.MaxJobs)
+	if err != nil {
+		return errors.Join(listErr, err)
+	}
+	failures := []error{listErr}
+	for _, candidate := range candidates {
+		run, stop := context.WithTimeout(ctx, c.config.CallTimeout)
+		err := objects.PurgeSnapshotOrphan(run, candidate)
+		stop()
+		if err != nil {
+			failures = append(failures, err)
+		}
+		if finish := c.repository.FinishStorageOrphan(ctx, candidate, err == nil, now.Add(c.config.RetryInterval)); finish != nil {
+			failures = append(failures, finish)
+		}
+	}
+	return errors.Join(failures...)
 }

@@ -51,6 +51,11 @@ func (b *purgeBucket) serve(w http.ResponseWriter, r *http.Request) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	key := strings.TrimPrefix(r.URL.Path, "/bucket/")
+	if r.Method == http.MethodGet && r.URL.Query().Has("uploads") {
+		w.Header().Set("Content-Type", "application/xml")
+		fmt.Fprint(w, "<ListMultipartUploadsResult><IsTruncated>false</IsTruncated></ListMultipartUploadsResult>")
+		return
+	}
 	switch r.Method {
 	case http.MethodHead, http.MethodGet:
 		id := r.URL.Query().Get("versionId")

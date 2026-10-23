@@ -1,6 +1,6 @@
 # Sandbox snapshot storage foundation
 
-`internal/sandboxsnapshot` provides durable metadata, filesystem snapshot publication and atomic terminal route transitions. `internal/objectstore.SnapshotStore` supplies a separate S3-compatible snapshot namespace. The internal `grpcserver.SnapshotCoordinator` executes and reconciles lifecycle controls using these primitives. Management suspend/resume and operation polling endpoints are wired to the coordinator behind `CONSOLE_PERSISTENCE_ENABLED` (default false). Startup validates the separate S3 namespace and probes its required capabilities before enabling admission. See [configuration](config-file.md#sandbox-persistence). The Docker Worker supplies a native adapter; BoxLite integration remains pending.
+`internal/sandboxsnapshot` provides durable metadata, filesystem snapshot publication and atomic terminal route transitions. `internal/objectstore.SnapshotStore` supplies a separate S3-compatible snapshot namespace. The internal `grpcserver.SnapshotCoordinator` executes and reconciles lifecycle controls using these primitives. Management suspend/resume and operation polling endpoints are wired to the coordinator behind `CONSOLE_PERSISTENCE_ENABLED` (default false). Startup validates the separate S3 namespace and probes its required capabilities before enabling admission. See [configuration](config-file.md#sandbox-persistence). Docker and BoxLite supply native adapters and independent execution lease guards; their deployment and acceptance boundaries remain runtime-specific.
 
 ## Publication contract
 
@@ -56,7 +56,7 @@ Storage identity incorporates endpoint, region, bucket and prefix. Altering thos
 
 The store accepts an explicit Go `SnapshotConfig`: independent endpoint, signing region, bucket, prefix, credentials, path-style setting, maximum new archive size, multipart part size and presign TTL. It checks these values before generating any grants. It supports HTTP for local storage tests and HTTPS deployments.
 
-The existing `CONSOLE_EXPORT_FILE_*` configuration and `exportFile` behavior remain unchanged. The planned `CONSOLE_PERSISTENCE_*` / `CONSOLE_SNAPSHOT_*` environment settings and suspend/resume APIs are not activated by this foundation. They should be wired together with the worker protocol and lifecycle coordinator so incomplete behavior cannot be exposed as a working persistence service.
+The existing `CONSOLE_EXPORT_FILE_*` configuration and `exportFile` behavior remain unchanged. `CONSOLE_PERSISTENCE_*` / `CONSOLE_SNAPSHOT_*` settings and suspend/resume APIs are wired through the worker protocol and lifecycle coordinator, with admission disabled by default.
 
 ## Validation
 
@@ -71,7 +71,7 @@ go test ./...
 
 The overall target behavior and planned APIs are documented in [the lifecycle design](../../docs/plan/sandbox-session-persistence-lifecycle.zh-CN.md) and [the storage/API design](../../docs/plan/sandbox-session-persistence-storage-api.zh-CN.md).
 
-The separate [worker protocol and restore placement](sandbox-snapshot-worker-protocol.md) implementation provides bounded controls and connection-scoped capacity reservations. BoxLite lifecycle integration, unregistered storage/runtime orphan GC, independent runtime lease enforcement and real cross-machine acceptance are still required before the persistence feature is complete.
+The separate [worker protocol and restore placement](sandbox-snapshot-worker-protocol.md) implementation provides bounded controls and connection-scoped capacity reservations. Runtime orphan reconciliation, journal maintenance, broader failure recovery, performance budgets and real cross-machine acceptance remain required before the persistence feature is complete.
 
 
 ## Asynchronous lifecycle executor
@@ -98,4 +98,10 @@ Suspend/resume require management cookie, API key or Dashboard JIT authenticatio
 
 `SnapshotCleaner` processes the durable deletion queue and retention policy independently of new-operation admission. Required current owners must confirm purge before shared references are cleared; historical cache holders are tracked separately. Failed storage deletion retains quota state and version identities for retry. Deleted and old unreferenced snapshots are tombstoned transactionally before storage work; active restore/upload references prevent collection.
 
-Archive/manifest keys are atomically replaced with small deletion markers. These markers retain the old version IDs before version deletion, so a lost reply or restart cannot discard the identities needed for physical cleanup. Conditional writes cannot recreate those keys after deletion. The account-scoped cleanup stats endpoint exposes durable backlog/failure/retry counters. Unregistered storage orphans, unregistered runtime debris and journal compaction remain separate cleanup work.
+Archive/manifest keys are atomically replaced with small deletion markers. These markers retain the old version IDs before version deletion, so a lost reply or restart cannot discard the identities needed for physical cleanup. Conditional writes cannot recreate those keys after deletion. The account-scoped cleanup stats endpoint exposes durable backlog/failure/retry counters for registered resources; storage-orphan candidates have no inferred account identity and are kept in a separate database queue.
+
+The same cleaner now discovers unregistered completed storage objects through bounded paginated LIST. Durable observations must pass the configured local and object-age grace. A transaction then confirms the snapshot ID remains absent from registered metadata and permanently fences new admission before any storage mutation. `ReserveUpload` and a database trigger enforce that fence. Registered uploads and snapshots always win if admitted before collection; current recovery points cannot be collected by this path. Failed purges retry from the durable queue even when LIST is unavailable. See [storage-orphan configuration and provider requirements](config-file.md#unregistered-storage-objects), including the mandatory lifecycle fallback for incomplete uploads with no discoverable object and the separate treatment of externally created historical versions.
+
+The opt-in `TestSnapshotOrphansRealS3` test mutates only a fresh random `snapshot-orphan-tests/<UUID>` prefix and deletes its own fixtures afterward. It requires `ONLYBOXES_TEST_SNAPSHOT_ENDPOINT`, `ONLYBOXES_TEST_SNAPSHOT_REGION`, `ONLYBOXES_TEST_SNAPSHOT_BUCKET`, `ONLYBOXES_TEST_SNAPSHOT_AK` and `ONLYBOXES_TEST_SNAPSHOT_SK` in the process environment; pass credentials through the private local environment, not command arguments or committed files. Run `go test -count=1 -v ./internal/objectstore -run '^TestSnapshotOrphansRealS3$'` against an isolated test bucket.
+
+With `ONLYBOXES_TEST_SNAPSHOT_VERSIONED=true`, the same test creates a fresh `onlyboxes-orphan-<UUID>` bucket, enables versioning, verifies old data versions are removed and deletes the test bucket afterward. This mode requires bucket creation, versioning and deletion permissions in the isolated test service; it does not change versioning on the configured existing bucket.
