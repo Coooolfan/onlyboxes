@@ -1,0 +1,52 @@
+{
+  "date_asia_shanghai": "2026-10-25",
+  "scope": "local Console/MinIO and two Docker Workers",
+  "conditions": {
+    "source_image": "python@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258",
+    "base_image_cache": "preloaded on shared daemon",
+    "target_archive_cache": "new session restored on a different Worker",
+    "integrity_mode": "readback",
+    "multipart_part_size_bytes": 67108864,
+    "archive_limit_bytes": 2147483648,
+    "expanded_limit_bytes": 3221225472,
+    "required_headroom_bytes": 19327352832,
+    "poll_interval_seconds": 1,
+    "timing": "before API submission through observed terminal status; excludes seeding, offline wait, post-restore file check and final deletion"
+  },
+  "samples": [
+    {
+      "runtime": "docker",
+      "payload_bytes": 1073741824,
+      "archive_bytes": 1226086400,
+      "archive_sha256": "342ce4a71492d3fde213c26740c1cf4d80bc709bc1e172e2011c521854423150",
+      "payload_sha256": "9bdd166c6642dcfb08057f7aafd0d9b36b0f3394be523d0acbe40c57304f6b4f",
+      "suspend_observed_seconds": 27.2731185,
+      "resume_observed_seconds": 22.150256375000005,
+      "placement": "different Worker identity on the same physical host and daemon",
+      "cleanup_backlog": {
+        "pending_sessions": 0,
+        "pending_workers": 0,
+        "pending_snapshots": 0
+      }
+    },
+    {
+      "runtime": "docker",
+      "payload_bytes": 1073741824,
+      "archive_bytes": 1226086400,
+      "archive_sha256": "eb5ad872572be0b999ce1857d2f07516cc06de0b7c62c379d76c7a59ee89ea06",
+      "payload_sha256": "3fae78e429cde731be9e8211c12b0a5df4b0b2e286da7e3495ff2a8c829b4ac3",
+      "suspend_observed_seconds": 27.280696583,
+      "resume_observed_seconds": 22.143693167000002,
+      "placement": "different Worker identity on the same physical host and daemon",
+      "cleanup_backlog": {
+        "pending_sessions": 0,
+        "pending_workers": 0,
+        "pending_snapshots": 0
+      },
+      "committed_multipart": {
+        "parts": 19,
+        "size_bytes": 1226086400
+      }
+    }
+  ]
+}

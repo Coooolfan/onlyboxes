@@ -91,6 +91,16 @@ scripts/dev.sh stop sandbox-persistence
 
 验收脚本通过 Console API 创建会话、写入文件，检查跨 Worker 恢复、同 Worker 恢复、无 Worker 时的 `no_worker`（同步拒绝为 503；异步接受后在操作结果中报告）和重新上线后的恢复，最后删除测试会话并等待该独立验收账号的物理清理积压归零。文件验证包含 SHA-256、权限和符号链接。失败时保留会话与私有 `snapshot-e2e-<scenario>-result.json`，不将未知操作视为成功。脚本需要 `dev.sh` 缓存的本机管理员登录凭据，以创建短期测试执行 token。不要在有其他工作负载的 Worker 上运行此验收。
 
+`--scenario cross-worker` 运行单次完整挂起、源 Worker 离线、另一 Worker 从共享存储恢复、内容验证及删除清理，适合测量一次共享存储恢复。`--payload-mib` 默认为 1，可显式指定 1–10240 MiB；文件由独立随机字节生成并同步，生成和完整 SHA-256 校验均使用至多 1 MiB 的数据块，避免大文件校验占满 guest 内存。默认完整 `cycle` 仍检查恢复后的修改、再次快照和无 Worker 后恢复。
+
+大于 1 MiB 的运行要求配置明确的 `CONSOLE_SNAPSHOT_MAX_BYTES` 和 `CONSOLE_SNAPSHOT_MAX_EXPANDED_BYTES`，两者均须高于 payload；归档还包含基础文件系统和元数据，实际展开预算须根据 runtime 选择。创建会话前分别检查主机与本机 S3/Docker daemon 文件系统，要求空闲量至少为 `8 × payload + 2 × 配置的最大展开预算 + 4 GiB`。此检查是保守预检，实际 Worker 准入、磁盘变化、操作 deadline 与命令超时仍生效。缺少预算或空间不足会在认证、创建 token/会话前拒绝；预检不自动修改服务配置或清理其他资源。
+
+例如在独立 Docker 验收配置中设置 2 GiB 归档上限、3 GiB 展开上限，并预留至少 18 GiB 空闲空间后，执行 `python3 scripts/tests/snapshot_e2e.py --runtime docker --scenario cross-worker --payload-mib 1024`。两个 Worker 和 Console/S3 必须使用同一独立配置启动；较大的数据量需要同时提高归档/展开预算和真实可用空间。
+
+私有结果增加 `payload_bytes`、提交后的实际归档描述和每次挂起/唤醒的 `seconds`。大文件运行还只读核对本机 Console SQLite 中的持久化 multipart 回执，分段大小总和必须覆盖整个提交归档。计时从 API 提交前至轮询观察到操作终态，包含控制、原生处理、传输、校验、提交及相应清理/激活，普通场景采用约一秒轮询；它不拆分这些内部阶段，也不包含准备测试数据、等待 Worker 离线、恢复后文件校验或最终删除的耗时。
+
+2026-10-25 在本机真实 Console/MinIO、Docker 29.4.0 / OrbStack arm64 的两个独立 Worker 上，1 GiB 随机数据的单次跨 Worker 运行两次通过。实际归档均为 1,226,086,400 字节，挂起观察耗时 27.27 / 27.28 秒，恢复观察耗时 22.15 / 22.14 秒。最终入口核对了 19 个持久化分段回执，完整文件 SHA-256、权限、符号链接与删除清理均通过。使用 `readback` 提交校验；目标 Worker 没有该新会话的归档缓存，两个 Worker 共享 daemon 中已预加载的基础镜像。[脱敏样本记录](tests/snapshot-e2e-samples-2026-10-25.json)保留完整观察计时与配置条件。该样本不代表跨物理机器、冷镜像、内部阶段吞吐或端到端百分位；完整性能矩阵仍需另行验收。
+
 Docker 使用独立组合 `sandbox-persistence-docker`，不复用公共预览的 Worker、容器名或端口。先按同一模板配置 `WORKER_TERMINAL_EXEC_DOCKER_IMAGE` 为固定 digest，再运行：
 
 ```bash
@@ -101,7 +111,7 @@ scripts/dev.sh stop sandbox-persistence-docker
 
 `worker-docker-snapshot` 和 `worker-docker-snapshot-peer` 分别拥有 Worker 凭据、journal 和生产独立租约守护器。Linux Worker 二进制和静态守护器由 `dev.sh` 自动编译；守护器镜像按二进制 SHA-256 固定标签，避免重复构建替换正在使用的镜像索引。Linux 使用原生 Worker 进程和本机私有 journal；macOS 要求 OrbStack 已安装且已启动，Worker 通过 Docker CLI 镜像运行在当前 Linux daemon 网络中，各自使用独立 journal 卷。可用 `ONLYBOXES_DEV_DOCKER_WORKER_IMAGE` 指定已有 CLI 镜像；运行时固定为其实际 image ID。Console 连接主机默认 macOS 为 `host.docker.internal`、Linux 为 `127.0.0.1`，可用 `ONLYBOXES_DEV_DOCKER_CONSOLE_HOST` 覆盖。不要将该入口指向远程 daemon：本机二进制挂载、同机 Console/S3 网络和 daemon 本机卷是这一开发入口的部署前提。
 
-Docker 验收支持 `cycle`、`same-worker`、`no-worker`、`console-restart`、源导出中的 `worker-restart`、目标启动后的 `worker-start-restart`，以及 `cache-corrupt`、`cache-miss`。Docker 结果写入私有 `snapshot-e2e-docker-<scenario>-result.json`。两个 runtime 的验收应使用各自独立会话、配置与状态目录；脚本在创建沙盒前拒绝所选两个 Worker 之外仍有在线 Worker 的 Console。
+Docker 验收支持 `cycle`、`cross-worker`、`same-worker`、`no-worker`、`console-restart`、源导出中的 `worker-restart`、目标启动后的 `worker-start-restart`，以及 `cache-corrupt`、`cache-miss`。Docker 结果写入私有 `snapshot-e2e-docker-<scenario>-result.json`。两个 runtime 的验收应使用各自独立会话、配置与状态目录；脚本在创建沙盒前拒绝所选两个 Worker 之外仍有在线 Worker 的 Console。
 
 `python3 scripts/tests/snapshot_e2e.py --runtime docker --scenario worker-restart` 要求命中真实导出窗口：journal 中原 source 仍为 `preparing`，原不可变容器已经 paused，且带同一 source/operation 标签的导出 helper 正在运行。随后仅终止 Worker，核对其实际退出回执，确认冻结源和 journal 仍在原操作上、独立 guard 的完整绑定摘要/实例/状态卷身份不变，再重启同一 Worker。原 operation ID 与源容器 ID 必须完成挂起；同节点唤醒后校验文件内容、权限和符号链接，永久删除后等待积压归零，并只读检查原源容器、该操作的归档/导出临时文件和导出 helper 已移除。窗口已经错过会失败，不能把普通完成后的重启记作中断恢复通过。
 

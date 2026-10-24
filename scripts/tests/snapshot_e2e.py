@@ -26,9 +26,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime", choices=("boxlite", "docker"), default="boxlite")
     parser.add_argument("--return-to-source", action="store_true", help="after cross-worker mutation and no-worker failure, restore onto the original worker with its older cache")
-    parser.add_argument("--scenario", choices=("cycle", "same-worker", "no-worker", "console-restart", "worker-restart", "worker-start-restart", "cache-corrupt", "cache-miss"), default="cycle")
+    parser.add_argument("--scenario", choices=("cycle", "cross-worker", "same-worker", "no-worker", "console-restart", "worker-restart", "worker-start-restart", "cache-corrupt", "cache-miss"), default="cycle")
+    parser.add_argument("--payload-mib", type=int, default=1, help="1..10240 MiB of independent random guest data; large runs require explicit snapshot and disk budgets")
     args = parser.parse_args()
     scenario = args.scenario
+    if not 1 <= args.payload_mib <= 10240:
+        parser.error("--payload-mib requires 1..10240")
     if args.return_to_source and scenario != "cycle":
         parser.error("--return-to-source requires --scenario cycle")
     if args.runtime == "docker":
@@ -38,6 +41,23 @@ def main():
         spec.loader.exec_module(docker)
     config = Path(os.environ.get("ONLYBOXES_DEV_ENV", dev.ROOT / "scripts/dev.env"))
     os.environ.update(dev.env_file(config))
+    payload_bytes = args.payload_mib * 1024 * 1024
+    if args.payload_mib > 1:
+        archive_limit = int(os.environ.get("CONSOLE_SNAPSHOT_MAX_BYTES", "0"))
+        expanded_limit = int(os.environ.get("CONSOLE_SNAPSHOT_MAX_EXPANDED_BYTES", "0"))
+        if archive_limit <= payload_bytes or expanded_limit <= payload_bytes:
+            raise RuntimeError("large payload requires explicit archive/expanded limits above the payload size")
+        required = 8 * payload_bytes + 2 * expanded_limit + (4 << 30)
+        space = os.statvfs(dev.STATE)
+        if space.f_bavail * space.f_frsize < required:
+            raise RuntimeError(f"large fixture host filesystem requires {required} free bytes before session creation")
+        image = os.environ.get("WORKER_TERMINAL_EXEC_DOCKER_IMAGE", "")
+        if "@sha256:" not in image:
+            raise RuntimeError("large fixture requires a pinned Docker image for storage headroom inspection")
+        free = dev.run(["docker", "run", "--rm", "--read-only", "--network", "none", "--entrypoint", "stat", image, "-f", "-c", "%a %S", "/"]).split()
+        if len(free) != 2 or int(free[0]) * int(free[1]) < required:
+            raise RuntimeError(f"large fixture daemon filesystem requires {required} free bytes before session creation")
+        print("large-fixture-headroom: " + json.dumps({"required_free_bytes":required}), flush=True)
     opener, headers = dev.console_auth()
     fields = dev.credential_fields()
     if not fields.get("password"):
@@ -89,18 +109,15 @@ def main():
         time.sleep(1)
     else:
         raise RuntimeError("both isolated workers must be online before acceptance")
-    token = uuid.uuid4().hex
-    command = "python3 -c " + shlex.quote(
-        "from pathlib import Path; import os,hashlib; p=Path('/root/snapshot-e2e'); p.mkdir(); "
-        f"b=bytes(range(256))*4096+{token!r}.encode(); (p/'payload').write_bytes(b); "
-        "os.chmod(p/'payload',0o640); (p/'link').symlink_to('payload'); (p/'remove-me').write_text('delete after restore'); (p/'modified-file').write_text('first version'); os.sync(); print(hashlib.sha256(b).hexdigest())")
+    payload_code = Path(__file__).with_name("snapshot_payload.py").read_text()
+    command = "python3 -c " + shlex.quote(payload_code) + " seed " + str(payload_bytes)
     first = require(*api("POST", "/api/v1/commands/terminal", {"command": command, "lease_ttl_sec": 900, "timeout_ms": 150000}))
     if first.get("exit_code") != 0:
         raise RuntimeError("initial command failed")
     sid, digest = first["session_id"], first["stdout"].strip()
     base = "/api/v1/sessions/" + sid
     query = "?account_id=" + account
-    evidence = {"runtime": args.runtime, "return_to_source": args.return_to_source, "session_id": sid, "account_id": account, "sha256": digest, "checks": []}
+    evidence = {"runtime": args.runtime, "return_to_source": args.return_to_source, "payload_bytes":payload_bytes, "session_id": sid, "account_id": account, "sha256": digest, "checks": []}
     result_name = ("docker-" if args.runtime == "docker" else "") + scenario + ("-return-to-source" if args.return_to_source else "")
     def record(label, **values):
         evidence["checks"].append({"check": label, **values})
@@ -427,6 +444,7 @@ def main():
         watch_target = args.runtime == "docker" and scenario == "worker-start-restart" and kind == "resume" and not recovery_retry
         if watch_target:
             target_guard = lease_identity(source)
+        started = time.monotonic()
         status, result = api("POST", base + "/" + kind + query, parameters, request_key)
         require(status, result, 202)
         if watch_target:
@@ -447,7 +465,7 @@ def main():
                 else:
                     restart_during_native_action(kind, result["operation_id"], parameters, request_key)
             if operation["status"] in ("succeeded", "failed", "canceled"):
-                record(kind, status=operation["status"], error=operation.get("error"))
+                record(kind, status=operation["status"], error=operation.get("error"), seconds=time.monotonic()-started, operation_id=result["operation_id"])
                 if operation["status"] != "succeeded":
                     error = operation.get("error") or {}
                     if kind == "resume" and scenario in ("cycle", "same-worker", "no-worker") and error.get("code") == "no_capacity" and error.get("retryable") and capacity_retry < 3:
@@ -522,11 +540,7 @@ print(json.dumps({'snapshot_id':archive['snapshot_id'],'sha256':digest.hexdigest
         current = session()
         if current["lifecycle_state"] != "running" or (expected_worker and current["worker_id"] != expected_worker):
             raise RuntimeError("unexpected restored session route")
-        check = "python3 -c " + shlex.quote(
-            "from pathlib import Path; import hashlib,stat; p=Path('/root/snapshot-e2e'); "
-            "assert stat.S_IMODE((p/'payload').stat().st_mode)==0o640; assert (p/'link').readlink()==Path('payload'); "
-            + ("assert not (p/'remove-me').exists(); assert (p/'new-file').read_bytes()==b'created after restore'; assert (p/'modified-file').read_text()=='second version'; " if mutated else "assert (p/'remove-me').exists(); assert (p/'modified-file').read_text()=='first version'; ")
-            + "print(hashlib.sha256((p/'link').read_bytes()).hexdigest())")
+        check = "python3 -c " + shlex.quote(payload_code) + " verify " + str(payload_bytes) + (" --mutated" if mutated else "")
         result = require(*api("POST", "/api/v1/commands/terminal", {"command": check, "session_id": sid, "lease_ttl_sec": 900, "timeout_ms": 60000}))
         if result.get("exit_code") != 0 or result.get("stdout", "").strip() != digest or result.get("created"):
             raise RuntimeError("restored file/hash/mode/symlink/session identity check failed")
@@ -539,6 +553,26 @@ print(json.dumps({'snapshot_id':archive['snapshot_id'],'sha256':digest.hexdigest
     suspended = session()
     if suspended["lifecycle_state"] != "suspended" or suspended["worker_id"] is not None or not suspended["persistence"]["latest_snapshot"]:
         raise RuntimeError("snapshot was not durably suspended")
+    record("committed-archive", **suspended["persistence"]["latest_snapshot"])
+    if args.payload_mib > 1:
+        database = Path(os.environ.get("CONSOLE_DB_PATH", "./db/onlyboxes-console.db"))
+        if not database.is_absolute():
+            database = dev.ROOT / "console" / database
+        with sqlite3.connect(database.resolve().as_uri()+"?mode=ro",uri=True) as connection:
+            parts, size = connection.execute("SELECT COUNT(*),COALESCE(SUM(p.size_bytes),0) FROM sandbox_snapshot_parts p JOIN sandbox_snapshots s USING(snapshot_id) WHERE s.snapshot_id=? AND s.owner_id=? AND s.session_id=?", (suspended["persistence"]["latest_snapshot"]["snapshot_id"],account,sid)).fetchone()
+        if parts < 1 or size != suspended["persistence"]["latest_snapshot"]["size_bytes"]:
+            raise RuntimeError("committed multipart receipts do not cover the full archive")
+        record("committed-multipart", parts=parts, size_bytes=size)
+    if scenario == "cross-worker":
+        services("stop", nodes[source])
+        offline(source)
+        lifecycle("resume")
+        verify("cross-worker", next(node for node in nodes if node != source))
+        services("start", nodes[source])
+        require(*api("DELETE", base + query), expected=204)
+        record("deleted", status=204)
+        wait_cleanup()
+        return
     if scenario in ("same-worker", "console-restart", "worker-restart", "worker-start-restart", "cache-corrupt", "cache-miss"):
         stopped_peer = None
         cache_fault = scenario in ("cache-corrupt", "cache-miss")
