@@ -32,9 +32,12 @@ def main():
     if args.return_to_source and scenario != "cycle":
         parser.error("--return-to-source requires --scenario cycle")
     if args.runtime == "docker":
-        if scenario not in ("cycle", "same-worker", "no-worker"):
-            parser.error("Docker currently supports cycle, same-worker and no-worker acceptance")
+        if scenario not in ("cycle", "same-worker", "no-worker", "worker-restart"):
+            parser.error("Docker currently supports cycle, same-worker, no-worker and source worker-restart acceptance")
         dev.SERVICES = ("worker-docker-snapshot", "worker-docker-snapshot-peer")
+        spec = importlib.util.spec_from_file_location("docker_acceptance", Path(dev.__file__).with_name("dev-docker-snapshot.py"))
+        docker = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(docker)
     config = Path(os.environ.get("ONLYBOXES_DEV_ENV", dev.ROOT / "scripts/dev.env"))
     os.environ.update(dev.env_file(config))
     opener, headers = dev.console_auth()
@@ -119,6 +122,11 @@ def main():
     restarted = {}
     def native_operation(operation_id):
         for node, service in nodes.items():
+            if args.runtime == "docker":
+                observed = docker.snapshot_evidence(service, {"WORKER_ID":node}, operation_id)
+                if observed["operation"]:
+                    return node, observed["operation"]
+                continue
             root = dev.STATE / service / hashlib.sha256(node.encode()).hexdigest()[:32]
             path = root / "journal/journal.json"
             if path.exists():
@@ -148,6 +156,14 @@ def main():
             raise RuntimeError("independent guard identity query was rejected")
         return reply
     def lease_identity(node):
+        if args.runtime == "docker":
+            observed = docker.snapshot_evidence(nodes[node], {"WORKER_ID":node}, "guard-evidence")["guard"]
+            if not observed or not observed.get("state_id") or not observed.get("helper_id"):
+                raise RuntimeError("Docker independent guard lacks durable identity")
+            helper = docker.inspect("container", observed["helper_id"])
+            if not helper or not helper.get("State", {}).get("Running") or helper.get("Image") != observed["image_id"]:
+                raise RuntimeError("Docker independent guard is not running with its pinned image")
+            return observed
         reply = guard_exchange(node, {"action": "ping"})
         if reply.get("reply", {}).get("type") != "ready":
             raise RuntimeError("independent guard is unavailable")
@@ -190,6 +206,8 @@ def main():
         node, native = native_operation(operation_id)
         if kind in restarted or not native:
             return
+        if args.runtime == "docker":
+            return restart_docker_source(node, native, operation_id)
         writer_pid = None
         if kind == "suspend":
             if native.get("phase") != "preparing" or not native.get("source_stop_confirmed"):
@@ -250,6 +268,50 @@ def main():
         if lease_identity(node) != guardian:
             raise RuntimeError("Worker restart replaced the independent guard")
         restarted[kind] = (operation_id, native["box_id"])
+    def restart_docker_source(node, native, operation_id):
+        if native.get("kind") != "source" or native.get("phase") != "preparing" or not native.get("box_id"):
+            return
+        source = docker.inspect("container", native["box_id"])
+        if not source or not source.get("State", {}).get("Paused"):
+            return
+        helpers = dev.run(["docker", "ps", "--no-trunc", "--filter", "label=onlyboxes.snapshot.export_source=" + native["box_id"],
+                           "--filter", "label=onlyboxes.snapshot.export_operation=" + operation_id, "--format", "{{.ID}}"])
+        if len(helpers.splitlines()) != 1:
+            return
+        helper = docker.inspect("container", helpers.strip())
+        if not helper or not helper.get("State", {}).get("Running"):
+            return
+        guardian = lease_identity(node)
+        services("crash", nodes[node])
+        if lease_identity(node) != guardian:
+            raise RuntimeError("Docker Worker SIGKILL replaced its independent guard")
+        _, killed = native_operation(operation_id)
+        retained = docker.inspect("container", native["box_id"])
+        if not killed or killed["phase"] != "preparing" or killed["box_id"] != native["box_id"] or not retained or not retained.get("State", {}).get("Paused"):
+            raise RuntimeError("Docker export completed before SIGKILL or lost the frozen source; fault window was not exercised")
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            pane = subprocess.run(["tmux", "display-message", "-p", "-t", os.environ.get("ONLYBOXES_DEV_SESSION", "onlyboxes-dev") + ":" + nodes[node], "#{pane_dead}"], capture_output=True, text=True)
+            if pane.returncode != 0 or pane.stdout.strip() == "1":
+                break
+            time.sleep(.05)
+        else:
+            raise RuntimeError("Docker Worker supervisor did not confirm exit")
+        offline(node)
+        record("worker-crashed-during-suspend", operation_id=operation_id, worker_id=node,
+               instance_id=native["box_id"], export_helper_id=helpers.strip(), guard_binding_sha256=guardian["binding_sha256"], frozen=True)
+        services("start", nodes[node])
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            workers = require(*api("GET", "/api/v1/workers?status=all"))["items"]
+            if any(w["node_id"] == node and w["status"] == "online" for w in workers):
+                break
+            time.sleep(.2)
+        else:
+            raise RuntimeError("Docker Worker did not reconnect after SIGKILL; retain source and journal")
+        if lease_identity(node) != guardian:
+            raise RuntimeError("Docker Worker restart replaced the independent guard or store")
+        restarted["suspend"] = (operation_id, native["box_id"])
     def restart_during_native_action(kind, operation_id, parameters, request_key):
         node, native = native_operation(operation_id)
         if not native or kind in restarted:
@@ -401,6 +463,16 @@ print(json.dumps({'snapshot_id':archive['snapshot_id'],'sha256':digest.hexdigest
         require(*api("DELETE", base + query), expected=204)
         record("deleted", status=204)
         wait_cleanup()
+        if args.runtime == "docker" and scenario == "worker-restart":
+            _, cleaned = native_operation(original_suspend["operation_id"])
+            roots = dev.run(["docker", "ps", "-a", "--no-trunc", "--filter", "id=" + restarted["suspend"][1], "--format", "{{.ID}}"])
+            if not cleaned or cleaned["known_artifact_count"] != 0 or roots:
+                raise RuntimeError("Docker crash source or its known archive/temp files remain after deletion acknowledgement")
+            remaining = dev.run(["docker", "ps", "-a", "--no-trunc", "--filter", "label=onlyboxes.snapshot.export_source=" + restarted["suspend"][1],
+                                 "--filter", "label=onlyboxes.snapshot.export_operation=" + original_suspend["operation_id"], "--format", "{{.ID}}"])
+            if remaining:
+                raise RuntimeError("Docker crash export helper remains after deletion acknowledgement")
+            record("crash-resource-cleanup", source_removed=True, known_artifacts=0, export_helpers=0)
         return
     if scenario == "cycle":
         services("stop", nodes[source])

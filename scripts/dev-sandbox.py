@@ -433,12 +433,15 @@ def supervise_requests(server, child):
             try:
                 with connection.makefile("rb") as stream:
                     request = stream.readline(17)
-                if request != b"kill\n":
+                if request not in (b"kill\n", b"wait\n"):
                     connection.sendall(b"rejected\n")
                     continue
                 # An unreaped direct child cannot have its PID recycled.
                 # The command never targets a group, shim or lease guard.
-                child.kill()
+                if request == b"kill\n":
+                    child.kill()
+                else:
+                    connection.sendall(b"waiting\n")
                 result = child.wait()
                 connection.sendall(json.dumps({"pid": child.pid, "returncode": result}).encode() + b"\n")
             except (OSError, subprocess.SubprocessError):

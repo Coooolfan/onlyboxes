@@ -101,7 +101,11 @@ scripts/dev.sh stop sandbox-persistence-docker
 
 `worker-docker-snapshot` 和 `worker-docker-snapshot-peer` 分别拥有 Worker 凭据、journal 和生产独立租约守护器。Linux Worker 二进制和静态守护器由 `dev.sh` 自动编译；守护器镜像按二进制 SHA-256 固定标签，避免重复构建替换正在使用的镜像索引。Linux 使用原生 Worker 进程和本机私有 journal；macOS 要求 OrbStack 已安装且已启动，Worker 通过 Docker CLI 镜像运行在当前 Linux daemon 网络中，各自使用独立 journal 卷。可用 `ONLYBOXES_DEV_DOCKER_WORKER_IMAGE` 指定已有 CLI 镜像；运行时固定为其实际 image ID。Console 连接主机默认 macOS 为 `host.docker.internal`、Linux 为 `127.0.0.1`，可用 `ONLYBOXES_DEV_DOCKER_CONSOLE_HOST` 覆盖。不要将该入口指向远程 daemon：本机二进制挂载、同机 Console/S3 网络和 daemon 本机卷是这一开发入口的部署前提。
 
-Docker 验收支持 `cycle`、`same-worker` 和 `no-worker`，尚未接入此脚本的 Console/Worker 故障注入场景会直接拒绝。Docker 结果写入私有 `snapshot-e2e-docker-<scenario>-result.json`。两个 runtime 的验收应使用各自独立会话、配置与状态目录；脚本在创建沙盒前拒绝所选两个 Worker 之外仍有在线 Worker 的 Console。
+Docker 验收支持 `cycle`、`same-worker`、`no-worker` 和源导出中的 `worker-restart`。尚未接入此脚本的 Docker Console 重启及目标启动中断场景会直接拒绝。Docker 结果写入私有 `snapshot-e2e-docker-<scenario>-result.json`。两个 runtime 的验收应使用各自独立会话、配置与状态目录；脚本在创建沙盒前拒绝所选两个 Worker 之外仍有在线 Worker 的 Console。
+
+`python3 scripts/tests/snapshot_e2e.py --runtime docker --scenario worker-restart` 要求命中真实导出窗口：journal 中原 source 仍为 `preparing`，原不可变容器已经 paused，且带同一 source/operation 标签的导出 helper 正在运行。随后仅终止 Worker，核对其实际退出回执，确认冻结源和 journal 仍在原操作上、独立 guard 的完整绑定摘要/实例/状态卷身份不变，再重启同一 Worker。原 operation ID 与源容器 ID 必须完成挂起；同节点唤醒后校验文件内容、权限和符号链接，永久删除后等待积压归零，并只读检查原源容器、该操作的归档/导出临时文件和导出 helper 已移除。窗口已经错过会失败，不能把普通完成后的重启记作中断恢复通过。
+
+该场景在 macOS arm64、OrbStack / Docker 29.4.0、真实 Console/MinIO 与两个独立 Worker 上通过，两个 Worker 分别作为源均命中了 SIGKILL 导出窗口；采用含物理清理检查的入口也已通过。Linux 原生 Worker 复用持有直接子进程句柄的故障注入路径，仍需在目标 Linux 部署验证；这些结果不证明跨物理机器或目标导入/启动中断验收通过。
 
 `--return-to-source` 可与任一 runtime 的 `cycle` 组合：源 A 首次快照后离线，B 从共享存储恢复并新增、修改、删除文件，随后再次快照；无 Worker 报错后，先只读核对 A 的旧缓存文件仍存在、完整 SHA-256 匹配首次快照且 snapshot ID 不同于最新快照，再只启动 A，验证 A 使用最新快照恢复，旧缓存不会遮蔽 B 的修改，最后启动 B 并等待清理。例如 `python3 scripts/tests/snapshot_e2e.py --runtime docker --return-to-source`。缓存已淘汰或关闭时会明确失败，不能据此声称覆盖了旧缓存窗口。该结果文件增加 `-return-to-source` 后缀。
 
@@ -112,6 +116,8 @@ Docker 验收支持 `cycle`、`same-worker` 和 `no-worker`，尚未接入此脚
 可用 `--scenario same-worker` 或 `--scenario no-worker` 分别验证首次同节点恢复和无 Worker 后的恢复；默认 `cycle` 保留完整循环检查。 `--scenario console-restart` 在源停止后导出中、目标已登记原生启动意图时分别停止并重新启动 Console，验证原 operation/实例继续完成、重启后幂等重放及参数冲突。此场景只读检查本机 Worker journal 与停止期间的 SQLite；没有实际命中在途窗口会失败，不把完成后的普通重启记作故障恢复通过。
 
 `scripts/dev.sh crash worker-boxlite`（或 `worker-boxlite-peer`）仅向本机管理进程直接托管的 Worker 子进程发送 SIGKILL，并等待该子进程退出回执；命令不接受 PID 或进程组。Worker 的本机管理端点位于私有 Unix 目录，独立租约守护器使用另一端点和进程。正常 `stop` 仍执行 Worker/守护器的依赖停止顺序。
+
+Docker 使用 `scripts/dev.sh crash worker-docker-snapshot` 或 `worker-docker-snapshot-peer`。macOS 路径先核对已固定 journal 卷、Worker 容器的 namespace/service/Worker 标签、入口与挂载归属，再让本机管理进程接管退出等待；收到等待确认后才向该不可变 Worker 容器 ID 发送 KILL。管理进程保持 `docker run` 客户端存活直到容器退出，回执必须为 `137`，不会把杀死客户端当作 Worker 已退出。独立 guard、源沙箱及持久卷不属于该命令的终止目标。Linux 路径直接使用本机管理进程持有的原生 Worker 子进程句柄。只读 journal 证据不输出环境、恢复规格或 guard token，guard 绑定以摘要比对。
 
 `--scenario worker-restart` 已通过源停止后导出中途 SIGKILL 的真实验收：守护器完整身份与 epoch 不变，新 Worker 继续原 operation 和原 Box ID，完成快照、恢复及最终回收。`--scenario worker-start-restart` 已通过目标 shim 已启动、Worker 与守护器尚未绑定 writer 的故障窗口：原恢复失败后确认取消与所有权释放，保留快照，再以新 operation、新 generation 和新实例恢复，最终回收积压归零。该场景要求配套的守护器协议 v2；没有实际命中未绑定窗口会明确失败。
 

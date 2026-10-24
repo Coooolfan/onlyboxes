@@ -532,6 +532,7 @@ Onlyboxes 本地开发服务编排（tmux + Docker/OrbStack）
   scripts/dev.sh logs console       # 查看控制节点最近日志
   scripts/dev.sh restart web        # 重启前端
   scripts/dev.sh crash worker-boxlite # 仅 SIGKILL 此 Worker，保留独立守护器
+  scripts/dev.sh crash worker-docker-snapshot # 仅终止独立 Docker 验收 Worker
   scripts/dev.sh stop               # 全部停止
 
 环境变量：
@@ -556,9 +557,12 @@ main() {
         stop) cmd_stop "$@" ;;
         restart) cmd_restart "$@" ;;
         crash)
-            [ "$#" -eq 1 ] || die "用法：scripts/dev.sh crash worker-boxlite|worker-boxlite-peer"
-            case "$1" in worker-boxlite | worker-boxlite-peer) ;; *) die "故障注入仅支持本机 BoxLite Worker" ;; esac
-            python3 "$SANDBOX_HELPER" crash "$1"
+            [ "$#" -eq 1 ] || die "用法：scripts/dev.sh crash <持久化验收 Worker>"
+            case "$1" in
+                worker-boxlite | worker-boxlite-peer) python3 "$SANDBOX_HELPER" crash "$1" ;;
+                worker-docker-snapshot | worker-docker-snapshot-peer) python3 "$SCRIPT_DIR/dev-docker-snapshot.py" crash "$1" ;;
+                *) die "故障注入仅支持本机持久化验收 Worker" ;;
+            esac
             ;;
         status) cmd_status "$@" ;;
         logs) cmd_logs "$@" ;;

@@ -9,6 +9,7 @@ import stat
 import subprocess
 import sys
 import signal
+import socket
 import time
 import tempfile
 import threading
@@ -88,6 +89,36 @@ class AdapterTests(unittest.TestCase):
                 supervisor.wait(timeout=5)
             guard.terminate()
             guard.wait(timeout=5)
+            if control.exists():
+                control.rmdir()
+
+    def test_wait_receipt_does_not_kill_the_owned_child_and_confirms_its_actual_exit(self):
+        root, control = dev.node_paths("worker-boxlite", {"WORKER_ID":"wait-fixture"})
+        ready, trigger = root/"child-ready", root/"child-stop"
+        child_code = "import os,signal,sys,time; from pathlib import Path; Path(sys.argv[1]).write_text('ready');\nwhile not Path(sys.argv[2]).exists(): time.sleep(.01)\nos.kill(os.getpid(),signal.SIGKILL)"
+        script = "import importlib.util,os,sys; from pathlib import Path; s=importlib.util.spec_from_file_location('dev',sys.argv[1]); d=importlib.util.module_from_spec(s); s.loader.exec_module(d); sys.exit(d.supervise_worker([sys.executable,'-c',sys.argv[4],sys.argv[5],sys.argv[6]],dict(os.environ),Path(sys.argv[2]),Path(sys.argv[3])))"
+        supervisor = subprocess.Popen([sys.executable,"-c",script,str(Path(dev.__file__).resolve()),str(root),str(control),child_code,str(ready),str(trigger)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        try:
+            deadline = time.monotonic()+5
+            while not ready.exists() or not (control/"worker.sock").is_socket():
+                self.assertIsNone(supervisor.poll())
+                self.assertLess(time.monotonic(),deadline)
+                time.sleep(.01)
+            with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as client:
+                client.settimeout(3)
+                client.connect(str(control/"worker.sock"))
+                client.sendall(b"wait\n")
+                with client.makefile("rb") as stream:
+                    self.assertEqual(stream.readline(17),b"waiting\n")
+                    self.assertIsNone(supervisor.poll())
+                    trigger.write_text("stop-owned-fixture")
+                    receipt=json.loads(stream.readline(4097))
+            self.assertEqual(receipt["returncode"],-signal.SIGKILL)
+            self.assertGreater(receipt["pid"],1)
+            self.assertEqual(supervisor.wait(timeout=5),(-signal.SIGKILL)%256)
+        finally:
+            if supervisor.poll() is None:
+                supervisor.terminate(); supervisor.wait(timeout=5)
             if control.exists():
                 control.rmdir()
 
