@@ -31,8 +31,6 @@ def main():
     scenario = args.scenario
     if args.return_to_source and scenario != "cycle":
         parser.error("--return-to-source requires --scenario cycle")
-    if scenario.startswith("cache-") and args.runtime != "docker":
-        parser.error("cache-corrupt/cache-miss currently require --runtime docker")
     if args.runtime == "docker":
         dev.SERVICES = ("worker-docker-snapshot", "worker-docker-snapshot-peer")
         spec = importlib.util.spec_from_file_location("docker_acceptance", Path(dev.__file__).with_name("dev-docker-snapshot.py"))
@@ -544,7 +542,7 @@ print(json.dumps({'snapshot_id':archive['snapshot_id'],'sha256':digest.hexdigest
     if scenario in ("same-worker", "console-restart", "worker-restart", "worker-start-restart", "cache-corrupt", "cache-miss"):
         stopped_peer = None
         cache_fault = scenario in ("cache-corrupt", "cache-miss")
-        if args.runtime == "docker" and (scenario == "worker-start-restart" or cache_fault):
+        if (args.runtime == "docker" and scenario == "worker-start-restart") or cache_fault:
             stopped_peer = next(node for node in nodes if node != source)
             services("stop", nodes[stopped_peer])
             offline(stopped_peer)
@@ -552,12 +550,29 @@ print(json.dumps({'snapshot_id':archive['snapshot_id'],'sha256':digest.hexdigest
             _, native = native_operation(original_suspend["operation_id"])
             if not native or native.get("phase") != "finalized" or not native.get("box_id"):
                 raise RuntimeError("cache fault requires the exact finalized source operation")
-            roots = dev.run(["docker", "ps", "-a", "--no-trunc", "--filter", "id=" + native["box_id"], "--format", "{{.ID}}"])
-            if roots:
-                raise RuntimeError("source container still exists; refusing cache fault injection")
+            if args.runtime == "docker":
+                roots = dev.run(["docker", "ps", "-a", "--no-trunc", "--filter", "id=" + native["box_id"], "--format", "{{.ID}}"])
+                if roots:
+                    raise RuntimeError("source container still exists; refusing cache fault injection")
+            else:
+                root = dev.STATE / nodes[source] / hashlib.sha256(source.encode()).hexdigest()[:32]
+                box_id = native["box_id"]
+                if Path(box_id).name != box_id or box_id in (".", ".."):
+                    raise RuntimeError("invalid source native identity")
+                box = root / "sdk-home/boxes" / box_id
+                receipt = guard_exchange(source, {"action":"retirement_status", "box_id":box_id}, lease_identity(source)).get("reply", {})
+                value = receipt.get("value") or {}
+                retired = value.get("retirement") or {}
+                if box.exists() or box.is_symlink() or receipt.get("type") != "retirement_status" or not value.get("released") or retired.get("box_id") != box_id or retired.get("scoped_session_id") != native["scoped_session_id"] or retired.get("cleanup_generation") != native["generation"]:
+                    raise RuntimeError("source native removal and independent ownership release were not confirmed")
             latest = suspended["persistence"]["latest_snapshot"]
             def cache_probe(operation_id, action):
-                return docker.cache_probe(nodes[source], {"WORKER_ID":source}, operation_id, action, latest["snapshot_id"], latest["sha256"])
+                if args.runtime == "docker":
+                    return docker.cache_probe(nodes[source], {"WORKER_ID":source}, operation_id, action, latest["snapshot_id"], latest["sha256"])
+                result = subprocess.run([sys.executable, str(Path(__file__).with_name("snapshot_cache_fixture.py")), str(root / "journal"), operation_id, source, action, latest["snapshot_id"], latest["sha256"], "--runtime", "boxlite"], capture_output=True, text=True, timeout=120)
+                if result.returncode:
+                    raise RuntimeError("BoxLite operation-scoped cache acceptance failed; preserve state")
+                return json.loads(result.stdout)
             injected = cache_probe(original_suspend["operation_id"], "corrupt" if scenario == "cache-corrupt" else "evict")
             if scenario == "cache-corrupt" and injected.get("valid") is not False:
                 raise RuntimeError("source cache corruption was not confirmed")

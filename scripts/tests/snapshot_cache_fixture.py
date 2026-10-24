@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Internal, operation-scoped cache fault fixture for snapshot acceptance."""
 import argparse
+from contextlib import ExitStack
+import fcntl
 import hashlib
 import json
 import os
@@ -9,7 +11,13 @@ import stat
 import time
 
 
-def probe(root, operation, worker, action, snapshot, expected):
+def probe(root, operation, worker, action, snapshot, expected, runtime="docker"):
+    with ExitStack() as stack:
+        return probe_locked(root, operation, worker, action, snapshot, expected, runtime, stack)
+
+
+def probe_locked(root, operation, worker, action, snapshot, expected, runtime, stack):
+    assert runtime in ("docker", "boxlite")
     assert action in ("corrupt", "evict", "source-corrupt", "source-missing", "target-valid")
     root = Path(root)
     info = root.lstat()
@@ -36,6 +44,13 @@ def probe(root, operation, worker, action, snapshot, expected):
     info = artifacts.lstat()
     assert stat.S_ISDIR(info.st_mode) and info.st_mode & 0o077 == 0
     path = artifacts / name
+    if runtime == "boxlite":
+        identity = json.dumps([op["scoped_session_id"], operation, op["generation"]], ensure_ascii=False, separators=(",", ":")).encode()
+        assert name == hashlib.sha256(identity).hexdigest() + ".boxlite"
+        lock = stack.enter_context(os.fdopen(os.open(str(path)+".lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600), "r+b"))
+        info = os.fstat(lock.fileno())
+        assert stat.S_ISREG(info.st_mode) and info.st_mode & 0o077 == 0 and info.st_uid == os.geteuid() and info.st_nlink == 1 and info.st_size == 0
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     if action == "source-missing":
         assert not path.exists() and not path.is_symlink()
         return {"present": False, "snapshot_id": snapshot}
@@ -90,8 +105,9 @@ def main():
     parser.add_argument("action", choices=("corrupt", "evict", "source-corrupt", "source-missing", "target-valid"))
     parser.add_argument("snapshot")
     parser.add_argument("sha256")
+    parser.add_argument("--runtime", choices=("docker", "boxlite"), default="docker")
     args = parser.parse_args()
-    print(json.dumps(probe(args.root, args.operation, args.worker, args.action, args.snapshot, args.sha256)))
+    print(json.dumps(probe(args.root, args.operation, args.worker, args.action, args.snapshot, args.sha256, args.runtime)))
 
 
 if __name__ == "__main__":

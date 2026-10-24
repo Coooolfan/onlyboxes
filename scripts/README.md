@@ -113,11 +113,13 @@ Docker 在启动前已登记 guard 租约；此场景验证带有效租约的已
 
 该 Docker 目标中断场景已在 macOS arm64、OrbStack / Docker 29.4.0 与真实 Console/MinIO 上通过，两个 Worker 分别作为目标均命中已启动且仍为 `importing` 的窗口；包含容器、归档与 guard 租约清理检查的入口也已通过。Linux 原生 Worker 与跨物理机器仍需独立部署验收。
 
-`python3 scripts/tests/snapshot_e2e.py --runtime docker --scenario cache-corrupt` 在共享快照已提交、源操作已 `finalized`、原容器已移除后，校验本地归档完整 SHA-256，再只翻转该归档的一个字节并保持大小不变。`--scenario cache-miss` 在相同前提下移除这一可选缓存。两个场景均先让另一 Worker 离线，再要求原节点恢复；目标归档必须重新匹配共享快照的 SHA-256、大小和 snapshot ID，会话的最新快照引用保持不变，文件内容、权限与符号链接校验通过，最后删除并等待清理积压归零。BoxLite 尚未接入这两个入口，会在创建会话前拒绝。
+`python3 scripts/tests/snapshot_e2e.py --runtime docker --scenario cache-corrupt` 在共享快照已提交、源操作已 `finalized`、原容器已移除后，校验本地归档完整 SHA-256，再只翻转该归档的一个字节并保持大小不变。`--scenario cache-miss` 在相同前提下移除这一可选缓存。两个场景均先让另一 Worker 离线，再要求原节点恢复；目标归档必须重新匹配共享快照的 SHA-256、大小和 snapshot ID，会话的最新快照引用保持不变，文件内容、权限与符号链接校验通过，最后删除并等待清理积压归零。
 
-缓存故障工具只接受已远程校验、已提交、缓存尚未到期的精确源操作，拒绝未提交/冻结源、错误 Worker/快照、符号链接、路径越界或多链接文件。macOS 上先核对绑定的卷身份，journal 以只读卷挂载，只有归档子目录可写；工具不修改 journal、恢复规格、共享对象或 guard 记录。缓存未保留、已损坏或源容器仍存在时，不能把故障未命中的运行计为通过。
+BoxLite 使用 `python3 scripts/tests/snapshot_e2e.py --scenario cache-corrupt` 或 `--scenario cache-miss`。注入前须确认原 VM 目录已移除，独立 guard 已返回匹配原 Box ID、scope 与 cleanup generation 的所有权释放回执。工具按 BoxLite 的 scope/operation/generation 核对归档文件名，并取得原有空锁文件的排他锁，锁被占用时拒绝操作，结束后保留同一锁 inode；锁文件尚不存在时仅创建这一私有空锁文件。Python 故障工具与 Rust `File::try_lock` 的互斥已通过实际跨进程验证。
 
-两个缓存故障场景已在 macOS arm64、OrbStack / Docker 29.4.0 与真实 Console/MinIO 上通过，同节点恢复后的归档与文件校验通过，删除后清理积压归零。该结果不证明 BoxLite、Linux 原生 Worker 或恢复期间缓存淘汰竞争的验收通过。
+缓存故障工具只接受已远程校验、已提交、缓存尚未到期的精确源操作，拒绝未提交/冻结源、错误 Worker/快照、符号链接、路径越界或多链接文件。macOS Docker 上先核对绑定的卷身份，journal 以只读卷挂载，只有归档子目录可写；工具不修改 journal、恢复规格、共享对象或 guard 记录。缓存未保留、已损坏或原生源仍存在时，不能把故障未命中的运行计为通过。
+
+两个缓存故障场景已分别在 macOS arm64 的 Docker 29.4.0（OrbStack）与项目固定的 BoxLite 0.10.7 上通过，均使用真实 Console/MinIO。同节点恢复后的归档与文件校验通过，删除后清理积压归零。该结果不证明 Linux Worker、跨物理机器或恢复期间缓存淘汰竞争的验收通过。
 
 `--return-to-source` 可与任一 runtime 的 `cycle` 组合：源 A 首次快照后离线，B 从共享存储恢复并新增、修改、删除文件，随后再次快照；无 Worker 报错后，先只读核对 A 的旧缓存文件仍存在、完整 SHA-256 匹配首次快照且 snapshot ID 不同于最新快照，再只启动 A，验证 A 使用最新快照恢复，旧缓存不会遮蔽 B 的修改，最后启动 B 并等待清理。例如 `python3 scripts/tests/snapshot_e2e.py --runtime docker --return-to-source`。缓存已淘汰或关闭时会明确失败，不能据此声称覆盖了旧缓存窗口。该结果文件增加 `-return-to-source` 后缀。
 

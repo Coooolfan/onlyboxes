@@ -1,8 +1,12 @@
 import importlib.util
 import hashlib
+import fcntl
 import json
 import os
 from pathlib import Path
+import select
+import shutil
+import subprocess
 import tempfile
 import time
 import unittest
@@ -85,6 +89,75 @@ class CacheFaultFixtureTests(unittest.TestCase):
         self.op["artifact"] = "../outside"; self.save()
         with self.assertRaises(AssertionError): self.probe("corrupt")
         self.assertEqual(outside.read_bytes(),self.data)
+
+    def boxlite(self):
+        self.op.update(scoped_session_id="obx:owner:session", generation=1)
+        identity = json.dumps([self.op["scoped_session_id"],"op",1],separators=(",", ":")).encode()
+        self.op["artifact"] = hashlib.sha256(identity).hexdigest()+".boxlite"
+        path = self.root/"artifacts"/self.op["artifact"]
+        self.file.rename(path); self.file = path; self.save()
+
+    def test_boxlite_cache_lock_is_retained_and_busy_cache_is_not_modified(self):
+        self.boxlite()
+        lock_path = Path(str(self.file)+".lock")
+        lock_path.touch(mode=0o600)
+        inode = lock_path.stat().st_ino
+        with lock_path.open("r+b") as lock:
+            fcntl.flock(lock,fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with self.assertRaises(BlockingIOError):
+                fixture.probe(self.root,"op","worker","corrupt","snapshot",self.sha,"boxlite")
+            self.assertEqual(self.file.read_bytes(),self.data)
+        result = fixture.probe(self.root,"op","worker","corrupt","snapshot",self.sha,"boxlite")
+        self.assertFalse(result["valid"])
+        self.assertEqual(lock_path.stat().st_ino,inode)
+        self.assertEqual(lock_path.read_bytes(),b"")
+
+    def test_boxlite_rejects_noncanonical_archive_and_invalid_lock(self):
+        self.boxlite()
+        self.op["generation"] = 2; self.save()
+        with self.assertRaises(AssertionError):
+            fixture.probe(self.root,"op","worker","evict","snapshot",self.sha,"boxlite")
+        self.op["generation"] = 1; self.save()
+        lock_path = Path(str(self.file)+".lock")
+        lock_path.write_bytes(b"foreign-state"); lock_path.chmod(0o600)
+        with self.assertRaises(AssertionError):
+            fixture.probe(self.root,"op","worker","evict","snapshot",self.sha,"boxlite")
+        self.assertEqual(self.file.read_bytes(),self.data)
+        self.assertEqual(lock_path.read_bytes(),b"foreign-state")
+
+    @unittest.skipUnless(shutil.which("rustc"), "Rust compiler required for cross-process cache lock interoperability")
+    def test_rust_owned_lock_blocks_python_fault_until_release(self):
+        self.boxlite()
+        lock_path = Path(str(self.file)+".lock")
+        lock_path.touch(mode=0o600)
+        inode = lock_path.stat().st_ino
+        source = self.root/"lock.rs"
+        source.write_text('''use std::{fs::OpenOptions,io::{self,Read,Write}};
+fn main(){
+    let path=std::env::args().nth(1).unwrap();
+    let file=OpenOptions::new().read(true).write(true).open(path).unwrap();
+    file.try_lock().unwrap();
+    println!("ready"); io::stdout().flush().unwrap();
+    let mut byte=[0]; io::stdin().read_exact(&mut byte).unwrap();
+    drop(file);
+}
+''')
+        binary = self.root/"lock"
+        subprocess.run(["rustc",str(source),"-o",str(binary)],check=True,capture_output=True,timeout=30)
+        child = subprocess.Popen([str(binary),str(lock_path)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        try:
+            self.assertTrue(select.select([child.stdout],[],[],5)[0],"Rust lock holder did not become ready")
+            self.assertEqual(child.stdout.readline(),b"ready\n")
+            with self.assertRaises(BlockingIOError):
+                fixture.probe(self.root,"op","worker","corrupt","snapshot",self.sha,"boxlite")
+            self.assertEqual(self.file.read_bytes(),self.data)
+        finally:
+            child.communicate(input=b"x",timeout=10)
+        self.assertEqual(child.returncode,0)
+        result = fixture.probe(self.root,"op","worker","evict","snapshot",self.sha,"boxlite")
+        self.assertFalse(result["present"])
+        self.assertEqual(lock_path.stat().st_ino,inode)
+        self.assertEqual(lock_path.read_bytes(),b"")
 
 
 if __name__ == "__main__":
