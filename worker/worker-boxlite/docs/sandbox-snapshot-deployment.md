@@ -76,11 +76,15 @@ Worker 在 journal 的 `execution-store.json` 固定 home/journal 配对、store
 
 守护器重启会撤销旧租约。没有正向 writer 证据的未知启动结果、宿主 boot/PID namespace 变化及不一致历史保留并拒绝开放，不通过创建空白根恢复服务。这些异常的自动协调、账本维护/压缩和完整跨机器验收仍待完成；不能把此配置入口视为已经覆盖所有故障恢复。
 
+守护器内部执行错误以非零状态退出，并保留首个固定故障类别；正常信号关闭不会掩盖同时发生的内部错误。诊断在停止线程结束后输出，不占用到期执行线程，也不包含私有参数。启动端应核对实际 ready 和进程退出状态，不能把“启动指令已提交”或空 stderr 当作启动成功。含义与验证见[退出状态与固定诊断](execution-lease.md#退出状态与固定诊断)。
+
 ## 验证范围
 
 `cargo test --locked` 覆盖严格配置、目录别名/嵌套拒绝、运行中账本的只读核对、跨 store 重新绑定和丢失绑定拒绝，以及原有控制、代际、租约、传输和清理约束。
 
 `cargo run --locked --example boxlite_worker_persistence_smoke` 使用真实 `runner::run`、本机 gRPC 注册服务夹具、实际守护器和 BoxLite VM，验证启动后 Hello/心跳、初始创建、独立 pythonExec home、控制帧快照与回滚、generation 1 执行，以及守护器故障后的关闭和磁盘保留。先执行 `cargo build --locked --bin boxlite-lease-guard`。注册服务为夹具，不能替代真实 Console/S3 事务、Linux VM 或两台物理 Worker 的验收。
+
+内部错误退出状态另有启动前/运行中故障注入、macOS 自有写入进程停止与在途任务等待，以及真实守护器 SIGTERM/拒绝启动诊断测试。采用这些退出语义的生产路径已通过真实 Console/S3 的双 Worker `--return-to-source` 循环和最终零清理积压检查；该验收不等同于复现任意一次启动退出的触发原因。
 
 永久删除使用 `purge_session`，完成及重放回执为 `deleted`；`canceled` 仅用于撤销恢复动作。Console 收到原生删除确认后才回收共享归档与描述对象。管理 API 的 204 仅表示逻辑删除已接受，验收还应等待清理积压归零。
 

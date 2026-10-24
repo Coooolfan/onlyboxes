@@ -22,6 +22,69 @@ impl Drop for Root {
 }
 
 #[tokio::test]
+async fn enforcement_errors_before_readiness_and_while_serving_are_never_successful_exits() {
+    for before_ready in [true, false] {
+        for fail_boot in [true, false] {
+            let root = Root::new();
+            let ledger = root.ledger();
+            let server = LeaseGuardServer::bind(ledger.clone(), root.0.join("rpc"))
+                .await
+                .unwrap();
+            let original = fs::read(root.0.join("state/leases.json")).unwrap();
+            let inject = Arc::new(AtomicBool::new(before_ready));
+            let remaining = Arc::new(AtomicBool::new(true));
+            let pass = |boot: bool| {
+                let ledger = ledger.clone();
+                let inject = inject.clone();
+                let remaining = remaining.clone();
+                move || {
+                    if boot == fail_boot
+                        && inject.load(Ordering::SeqCst)
+                        && remaining.swap(false, Ordering::SeqCst)
+                    {
+                        return Err(Error::Unavailable);
+                    }
+                    if boot {
+                        ledger.enforce_boots()
+                    } else {
+                        ledger.enforce()
+                    }
+                }
+            };
+            let shutdown = CancellationToken::new();
+            let active = Arc::new(AtomicUsize::new(0));
+            let enforcer = Enforcer::start_with(
+                ledger.clone(),
+                active.clone(),
+                shutdown.clone(),
+                pass(false),
+                pass(true),
+            );
+            let task = tokio::spawn(server.run_owned(shutdown, active, enforcer));
+            if !before_ready {
+                LeaseGuardClient::discover(root.socket(), "worker", Some(ledger.store_id()))
+                    .await
+                    .unwrap();
+                inject.store(true, Ordering::SeqCst);
+            }
+            let result = tokio::time::timeout(Duration::from_secs(3), task)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                result,
+                Err(Error::Unavailable),
+                "before_ready={before_ready} fail_boot={fail_boot}"
+            );
+            assert!(!remaining.load(Ordering::SeqCst));
+            assert!(fs::read(root.0.join("state/leases.json")).unwrap() == original);
+            assert!(!root.socket().exists());
+            assert_eq!(ledger.status("missing"), Err(Error::Unavailable));
+        }
+    }
+}
+
+#[tokio::test]
 async fn private_readiness_and_stale_epochs_do_not_create_missing_ownership() {
     let root = Root::new();
     let ledger = root.ledger();
@@ -207,6 +270,68 @@ mod native {
             let _ = self.0.kill();
             let _ = self.0.wait();
         }
+    }
+
+    #[tokio::test]
+    async fn enforcement_failure_stops_the_writer_and_waits_for_owned_jobs_before_error() {
+        let root = Root::new();
+        let ledger = root.ledger();
+        let mut child = Child::new();
+        let lease = child.lease(10_000);
+        let server = LeaseGuardServer::bind(ledger.clone(), root.0.join("rpc"))
+            .await
+            .unwrap();
+        let identity = server.identity().clone();
+        let trigger = Arc::new(AtomicBool::new(false));
+        let known = ledger.clone();
+        let boots = ledger.clone();
+        let fault = trigger.clone();
+        let active = Arc::new(AtomicUsize::new(0));
+        let owned = ActiveJob::new(active.clone());
+        let shutdown = CancellationToken::new();
+        let enforcer = Enforcer::start_with(
+            ledger.clone(),
+            active.clone(),
+            shutdown.clone(),
+            move || {
+                if fault.swap(false, Ordering::SeqCst) {
+                    Err(Error::Unavailable)
+                } else {
+                    known.enforce()
+                }
+            },
+            move || boots.enforce_boots(),
+        );
+        let mut service = tokio::spawn(server.run_owned(shutdown, active, enforcer));
+        let client = LeaseGuardClient::bind(root.socket(), identity);
+        client.adopt(lease.clone()).await.unwrap();
+        let original = fs::read(root.0.join("state/leases.json")).unwrap();
+        trigger.store(true, Ordering::SeqCst);
+        child.exited().await;
+        assert!(lease.process.writers_exited().unwrap());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), &mut service)
+                .await
+                .is_err(),
+            "service discarded an accepted job after enforcement failed"
+        );
+        assert!(client.status(&lease.box_id).await.is_err());
+        drop(owned);
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(3), service)
+                .await
+                .unwrap()
+                .unwrap(),
+            Err(Error::Unavailable)
+        );
+        assert!(fs::read(root.0.join("state/leases.json")).unwrap() == original);
+        let store = ledger.store_id().to_owned();
+        drop(ledger);
+        let reopened =
+            ExecutionLeaseLedger::open_bound(root.0.join("state"), "worker", &store).unwrap();
+        let retained = reopened.status(&lease.box_id).unwrap().unwrap();
+        assert_eq!(retained.process, lease.process);
+        assert!(retained.revoked);
     }
 
     #[tokio::test]

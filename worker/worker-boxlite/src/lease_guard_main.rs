@@ -1,5 +1,7 @@
 //! Private companion service. Worker registry/configuration is not loaded here.
+use std::io::Write;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use worker_boxlite::persistence::{ExecutionLeaseLedger, LeaseGuardServer};
@@ -38,23 +40,49 @@ async fn run() -> Result<(), ()> {
     .map_err(|_| ())?;
     let shutdown = CancellationToken::new();
     let signal = shutdown.clone();
+    let signal_reason = Arc::new(AtomicUsize::new(0));
+    let reason = signal_reason.clone();
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .map_err(|_| ())?;
     let watcher = tokio::spawn(async move {
-        tokio::select! { _=tokio::signal::ctrl_c()=>{}, _=term.recv()=>{} }
+        let received = tokio::select! {
+            result=tokio::signal::ctrl_c()=>if result.is_ok() { 1 } else { 3 },
+            result=term.recv()=>if result.is_some() { 2 } else { 3 }
+        };
+        reason.store(received, Ordering::SeqCst);
         signal.cancel();
     });
     let result = LeaseGuardServer::serve(Arc::new(ledger), socket, shutdown)
         .await
         .map_err(|_| ());
     watcher.abort();
-    result
+    let _ = watcher.await;
+    // Native enforcement has joined before any diagnostic output. Logging
+    // failure cannot prevent signal cancellation or writer shutdown.
+    let reason = signal_reason.load(Ordering::SeqCst);
+    let message = match reason {
+        1 => Some("BoxLite lease guard stopped: SIGINT"),
+        2 => Some("BoxLite lease guard stopped: SIGTERM"),
+        3 => Some("BoxLite lease guard failure: signal_watcher"),
+        _ => None,
+    };
+    if let Some(message) = message {
+        let _ = writeln!(std::io::stderr().lock(), "{message}");
+    }
+    if reason == 3 {
+        Err(())
+    } else {
+        result
+    }
 }
 
 #[tokio::main]
 async fn main() {
     if run().await.is_err() {
-        eprintln!("BoxLite lease guard is unavailable");
+        let _ = writeln!(
+            std::io::stderr().lock(),
+            "BoxLite lease guard is unavailable"
+        );
         std::process::exit(1);
     }
 }

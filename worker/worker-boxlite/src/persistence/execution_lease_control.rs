@@ -1,10 +1,13 @@
 //! One bounded frame per private connection; native enforcement owns its own
 //! thread and never depends on a client or an asynchronous control task.
 use super::journal::{check_file, private_directory, private_options};
-use super::{BootAuthorization, Error, ExecutionLease, ExecutionLeaseLedger, HostProcess};
+use super::{
+    BootAuthorization, Error, ExecutionLease, ExecutionLeaseLedger, HostProcess, LeaseEnforcement,
+};
 use super::{LeaseRetirement, RetirementStatus};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
+use std::io::Write;
 use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -20,6 +23,8 @@ const VERSION: u32 = 2;
 const MAX_FRAME: usize = 16 << 10;
 const MAX_HANDLERS: usize = 8;
 const IO_TIMEOUT: Duration = Duration::from_secs(1);
+const BOOT_DISCOVERY_FAILURE: usize = 1;
+const WRITER_ENFORCEMENT_FAILURE: usize = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -395,16 +400,27 @@ struct Enforcer {
     ledger: Arc<ExecutionLeaseLedger>,
     closing: Arc<AtomicBool>,
     started: Arc<AtomicBool>,
+    failed: Arc<AtomicUsize>,
     thread: Option<std::thread::JoinHandle<()>>,
     discovery: Option<std::thread::JoinHandle<()>>,
 }
 struct EnforcementExit {
     ledger: Arc<ExecutionLeaseLedger>,
     shutdown: CancellationToken,
+    closing: Arc<AtomicBool>,
+    failed: Arc<AtomicUsize>,
+    role: usize,
+}
+fn record_enforcement_failure(failed: &AtomicUsize, role: usize) {
+    // Enforcement threads never wait for log output, control I/O or a client.
+    let _ = failed.compare_exchange(0, role, Ordering::SeqCst, Ordering::SeqCst);
 }
 impl Drop for EnforcementExit {
     fn drop(&mut self) {
         self.ledger.close_admission();
+        if !self.closing.load(Ordering::SeqCst) {
+            record_enforcement_failure(&self.failed, self.role);
+        }
         self.shutdown.cancel();
     }
 }
@@ -414,7 +430,32 @@ impl Enforcer {
         active: Arc<AtomicUsize>,
         shutdown: CancellationToken,
     ) -> Self {
+        let known = ledger.clone();
+        let boots = ledger.clone();
+        Self::start_with(
+            ledger,
+            active,
+            shutdown,
+            move || known.enforce(),
+            move || boots.enforce_boots(),
+        )
+    }
+
+    fn start_with<W, B>(
+        ledger: Arc<ExecutionLeaseLedger>,
+        active: Arc<AtomicUsize>,
+        shutdown: CancellationToken,
+        mut known_pass: W,
+        mut boot_pass: B,
+    ) -> Self
+    where
+        W: FnMut() -> Result<LeaseEnforcement> + Send + 'static,
+        B: FnMut() -> Result<LeaseEnforcement> + Send + 'static,
+    {
         let closing = Arc::new(AtomicBool::new(false));
+        let failed = Arc::new(AtomicUsize::new(0));
+        let boot_failed = failed.clone();
+        let known_failed = failed.clone();
         let end = closing.clone();
         let engine = ledger.clone();
         let started = Arc::new(AtomicBool::new(false));
@@ -429,13 +470,18 @@ impl Enforcer {
             let _exit = EnforcementExit {
                 ledger: boot_engine.clone(),
                 shutdown: boot_shutdown.clone(),
+                closing: boot_end.clone(),
+                failed: boot_failed.clone(),
+                role: BOOT_DISCOVERY_FAILURE,
             };
             loop {
-                if boot_engine.enforce_boots().is_err() {
+                if boot_pass().is_err() {
                     boot_engine.close_admission();
+                    record_enforcement_failure(&boot_failed, BOOT_DISCOVERY_FAILURE);
                     boot_shutdown.cancel();
+                } else {
+                    boot_ready_writer.store(true, Ordering::SeqCst);
                 }
-                boot_ready_writer.store(true, Ordering::SeqCst);
                 if boot_end.load(Ordering::SeqCst)
                     && boot_active.load(Ordering::SeqCst) == 0
                     && boot_engine.boots_settled() == Ok(true)
@@ -449,15 +495,21 @@ impl Enforcer {
             let _exit = EnforcementExit {
                 ledger: engine.clone(),
                 shutdown: shutdown.clone(),
+                closing: end.clone(),
+                failed: known_failed.clone(),
+                role: WRITER_ENFORCEMENT_FAILURE,
             };
             loop {
                 if end.load(Ordering::SeqCst) {
                     engine.close_admission();
                 }
-                if engine.enforce().is_err() {
+                if known_pass().is_err() {
                     engine.close_admission();
+                    record_enforcement_failure(&known_failed, WRITER_ENFORCEMENT_FAILURE);
                     shutdown.cancel();
-                } else if boot_ready.load(Ordering::SeqCst) {
+                } else if boot_ready.load(Ordering::SeqCst)
+                    && known_failed.load(Ordering::SeqCst) == 0
+                {
                     ready.store(true, Ordering::SeqCst);
                 }
                 if end.load(Ordering::SeqCst)
@@ -473,6 +525,7 @@ impl Enforcer {
             ledger,
             closing,
             started,
+            failed,
             thread: Some(thread),
             discovery: Some(discovery),
         }
@@ -480,14 +533,31 @@ impl Enforcer {
     async fn join(&mut self) -> Result<()> {
         let thread = self.thread.take().ok_or(Error::Unavailable)?;
         let discovery = self.discovery.take().ok_or(Error::Unavailable)?;
-        tokio::task::spawn_blocking(move || {
+        let joined = tokio::task::spawn_blocking(move || {
             let a = thread.join();
             let b = discovery.join();
             a.and(b)
         })
         .await
-        .map_err(|_| Error::Unavailable)?
         .map_err(|_| Error::Unavailable)
+        .and_then(|result| result.map_err(|_| Error::Unavailable));
+        let failure = self.failed.load(Ordering::SeqCst);
+        if failure != 0 {
+            let role = match failure {
+                BOOT_DISCOVERY_FAILURE => "boot_discovery",
+                WRITER_ENFORCEMENT_FAILURE => "writer_enforcement",
+                _ => "enforcement",
+            };
+            // Log only after joining native enforcement. A full or broken
+            // stderr pipe cannot block writer stops or panic an enforcer.
+            let _ = writeln!(
+                std::io::stderr().lock(),
+                "BoxLite lease guard failure: {role}"
+            );
+            Err(Error::Unavailable)
+        } else {
+            joined
+        }
     }
 }
 impl Drop for Enforcer {

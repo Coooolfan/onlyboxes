@@ -1,4 +1,5 @@
 //! Actual companion binary, with no Worker, VM or external service required.
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -114,4 +115,37 @@ async fn real_companion_restarts_require_pinned_store_and_reject_old_clients() {
     assert_eq!(unsafe { libc::kill(pid as i32, libc::SIGTERM) }, 0);
     fixture.exited().await;
     assert!(!Path::new(&fixture.socket()).exists());
+}
+
+#[tokio::test]
+async fn real_companion_diagnostics_distinguish_signal_stop_and_rejected_startup() {
+    let mut fixture = Fixture::new();
+    let child = fixture
+        .command(None)
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    fixture.child = Some(child);
+    fixture.ready(None).await;
+    let mut diagnostics = fixture.child.as_mut().unwrap().stderr.take().unwrap();
+    let pid = fixture.child.as_ref().unwrap().id();
+    // SAFETY: this owned, unreaped child reserves its PID until exited() waits.
+    assert_eq!(unsafe { libc::kill(pid as i32, libc::SIGTERM) }, 0);
+    fixture.exited().await;
+    let mut text = String::new();
+    diagnostics.read_to_string(&mut text).unwrap();
+    assert_eq!(text, "BoxLite lease guard stopped: SIGTERM\n");
+    let output = fixture
+        .command(None)
+        .stderr(Stdio::piped())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(output.stderr, b"BoxLite lease guard is unavailable\n");
+    let output = Command::new(env!("CARGO_BIN_EXE_boxlite-lease-guard"))
+        .args(["--unknown", "private-argument-must-not-be-logged"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(output.stderr, b"BoxLite lease guard is unavailable\n");
 }
