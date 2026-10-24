@@ -34,7 +34,31 @@ Activation requires the same operation, generation and live lease. Ordinary dela
 
 Private partial downloads survive transient failures. A resumed reply must describe exactly the requested remainder; a server that ignores Range restarts from byte zero. Only a complete file with matching size and full SHA-256 is synced and atomically published for import. Verification and import use a fixed open descriptor. Grant URLs and signed headers are never part of journal records.
 
-Cache eviction considers only verified shared-snapshot copies. Current held operations and pinned files are protected. Unused copies can be removed for TTL, cache budget or staging pressure. Uncommitted source archives are excluded from cache eviction. Periodic TTL/budget eviction runs in lifecycle maintenance. Obsolete-artifact/image GC and terminal journal compaction remain separate lifecycle cleanup work.
+Cache eviction considers only verified shared-snapshot copies. Current held operations and pinned files are protected. Unused copies can be removed for TTL, cache budget or staging pressure. Uncommitted source archives are excluded from cache eviction. Periodic TTL/budget eviction runs in lifecycle maintenance. Retired import images use the independent retirement checks below; unregistered native debris, obsolete export artifacts and terminal journal compaction still require separate cleanup work.
+
+### Retired import images
+
+Repeated restore/suspend cycles need not retain every imported Docker image until permanent session deletion. The background maintenance loop collects an operation's import tag and operation-labeled dangling images only after the journal supplies one of these proofs:
+
+- That target was confirmed canceled, after exact native removal and lease-release acknowledgement.
+- The same scope, generation, immutable container ID and restore specification appear in a finalized source whose archive was committed and fully verified remotely. Finalization includes physical source removal and lease release.
+- The scope has a confirmed physical deletion fence at a higher generation.
+
+A newer operation, an expired lease, a frozen source or a committed-but-not-finalized snapshot is insufficient. Current active/ready/importing targets retain their images. The collector never removes a container, changes a lease, updates lifecycle state, discards journal identities or deletes archive caches. Delayed controls remain fenced by the existing operation/generation rules.
+
+Cleanup acquires the same per-session action admission as lifecycle controls and rechecks the journal after admission. Reconnect pauses admission, and shutdown cancels/joins accepted cleanup jobs. Each maintenance pass starts at most `WORKER_SNAPSHOT_MAX_INFLIGHT` jobs, sharing action admission; each job is bounded to ten seconds. Each eligible operation is revisited at most once per minute, including after success, because an ambiguously acknowledged import can appear late. Journal reopen retains the retirement proof; in-memory retry timing restarts on Worker startup. Native errors keep the operation metadata and emit a sanitized pending-cleanup warning.
+
+Image deletion verifies the operation tag, archive checksum and native image identity/operation label. It uses no forced removal. Another container referencing the image prevents physical deletion; another image tag remains outside the collector's authority. A conflict retains the data for a later attempt. Unregistered images and imports without a durable known archive identity are retained for separate reconciliation; this is not a daemon-wide prune.
+
+For an operation-labeled dangling image, the collector creates a deterministic owned `:gc-<image-ID>` tag and removes that reference instead of deleting by image ID. A foreign tag added after inspection remains a separate reference when Docker removes the GC tag. A crash after tagging leaves an operation-labeled image discoverable on the next pass, including when it is no longer dangling. Only the operation's main tag and derived GC tags belong to this cleanup path; other tags are preserved. Native regression `TestIntegrationSnapshotImportGCReferenceSurvivesCrashAndPreservesConcurrentForeignTag` recreates the interrupted-tagging window and injects a foreign tag immediately before deletion, then verifies recovery and replay preserve that reference.
+
+`TestIntegrationSnapshotRetiredImportsProtectLiveRootsAndRetryLateImages` uses real Docker imports and containers to verify active/frozen-root protection, finalization, a borrowed-image conflict, retry after the borrower is removed, archive-cache retention and background cleanup after journal reopen and a late import. The fixture uses tiny non-executed roots and does not replace full runtime or cross-machine acceptance:
+
+```bash
+DOCKER_INTEGRATION=1 \
+DOCKER_SNAPSHOT_HELPER_IMAGE='repository@sha256:<pinned-digest>' \
+go test -race ./internal/runner -run '^TestIntegrationSnapshotRetiredImports' -count=1 -v
+```
 
 ## Validation and remaining integration
 

@@ -181,7 +181,7 @@ func (c *snapshotController) removeImportTag(ctx context.Context, op snapshotOpe
 	// Repeated, ambiguously acknowledged imports can leave earlier images
 	// dangling after the same tag moves. Immutable operation labels identify them.
 	var dangling bytesBuffer
-	if err := dockerSnapshotCLI(ctx, nil, &dangling, "image", "ls", "--all", "--no-trunc", "--filter", "dangling=true", "--filter", "label=onlyboxes.snapshot.import_tag="+tag, "--format", "{{.ID}}"); err != nil {
+	if err := dockerSnapshotCLI(ctx, nil, &dangling, "image", "ls", "--all", "--no-trunc", "--filter", "label=onlyboxes.snapshot.import_tag="+tag, "--format", "{{.ID}}"); err != nil {
 		return err
 	}
 	seen := make(map[string]bool)
@@ -197,14 +197,43 @@ func (c *snapshotController) removeImportTag(ctx context.Context, op snapshotOpe
 		if image.ID != imageID || image.Config.Labels["onlyboxes.snapshot.sha256"] != op.Archive.SHA256 || image.Config.Labels["onlyboxes.snapshot.import_tag"] != tag {
 			return errSnapshotJournalConflict
 		}
-		if len(image.RepoTags) != 0 {
-			continue
-		}
-		if err := dockerSnapshotCLI(ctx, nil, io.Discard, "image", "rm", imageID); err != nil {
+		if err := c.removeDanglingImport(ctx, tag, image); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// Delete by our own temporary reference, never by image ID: another actor can
+// add a foreign tag between inspection and deletion. The engine then retains
+// that reference atomically when it removes ours. The deterministic GC tag and
+// immutable operation label also make a crash after tagging discoverable.
+func (c *snapshotController) removeDanglingImport(ctx context.Context, operationTag string, image snapshotImportedImage) error {
+	gcTag := strings.TrimSuffix(operationTag, ":rootfs") + ":gc-" + strings.TrimPrefix(image.ID, "sha256:")
+	claimed, foreign := false, false
+	for _, tag := range image.RepoTags {
+		if tag == gcTag {
+			claimed = true
+		} else {
+			foreign = true
+		}
+	}
+	if foreign && !claimed {
+		return nil
+	}
+	if !claimed {
+		var listed bytesBuffer
+		if err := dockerSnapshotCLI(ctx, nil, &listed, "image", "ls", "--no-trunc", "--filter", "reference="+gcTag, "--format", "{{.ID}}"); err != nil {
+			return err
+		}
+		if id := strings.TrimSpace(listed.String()); id != "" && id != image.ID {
+			return errSnapshotJournalConflict
+		}
+		if err := dockerSnapshotCLI(ctx, nil, io.Discard, "image", "tag", image.ID, gcTag); err != nil {
+			return err
+		}
+	}
+	return dockerSnapshotCLI(ctx, nil, io.Discard, "image", "rm", gcTag)
 }
 func (c *snapshotController) detachDeletedScope(scope string) {
 	m := c.manager

@@ -260,6 +260,7 @@ func (c *snapshotController) maintain(ctx context.Context) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	deletionSweeps := make(map[string]time.Time)
+	importSweeps := make(map[string]time.Time)
 	for {
 		select {
 		case <-ctx.Done():
@@ -305,6 +306,7 @@ func (c *snapshotController) maintain(ctx context.Context) {
 				}
 			}
 		}
+		c.reconcileRetiredImports(ctx, state, time.Now(), importSweeps)
 		_ = c.evictCache()
 	}
 }
