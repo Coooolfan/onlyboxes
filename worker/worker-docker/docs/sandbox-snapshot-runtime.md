@@ -2,7 +2,7 @@
 
 `internal/runner/snapshot_runtime.go` implements the Docker backend primitives for a filesystem snapshot: inspect the existing container and restore specification, freeze its writers, export a private archive, verify/import an archive, reconstruct container creation arguments, explicitly roll back a source, and remove an instance by immutable backend ID.
 
-The Worker does not yet declare `sandbox_persistence` or accept lifecycle controls. Durable operation journals, local session/generation gates, transfer/cache management, lease/orphan-cleanup integration and the registry control handler must be connected before enabling persistence. This adapter alone does not provide the public suspend/resume feature.
+The opt-in [lifecycle controller](sandbox-snapshot-controller.md) connects this adapter to durable operation journals, local session/generation gates, transfer/cache management, independent execution leases and registry lifecycle controls. The adapter's direct integration tests cover backend primitives; public suspend/resume acceptance uses the controller and Console/S3 path.
 
 ## Archive and configuration contract
 
@@ -42,3 +42,5 @@ go test -race ./internal/runner -run '^TestIntegrationDockerSnapshot' -count=1 -
 ```
 
 The helper image must provide GNU tar with ACL/xattr/sparse support, `python3` and `sh` for the test fixture. No source container, target container, helper or imported test image is retained on a successful test run. Source deletion and cold-image import happen on one daemon; this is not a two-worker, shared-object-store or cross-machine acceptance test.
+
+An additional opt-in [native performance fixture](sandbox-snapshot-performance.md) measures large payloads and concurrent imports, with full restored-content verification and machine-readable stage timings.

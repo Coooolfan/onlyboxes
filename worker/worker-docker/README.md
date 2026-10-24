@@ -18,7 +18,9 @@ Configuration sources:
 
 Snapshot lifecycle support is opt-in through `WORKER_PERSISTENCE_ENABLED=true`; see [configuration](docs/config-file.md#snapshot-lifecycle-configuration) and [controller/recovery behavior](docs/sandbox-snapshot-controller.md). The local journal directory must survive Worker restarts and container recreation.
 
-The [independent lease guard](docs/runtime-lease-guard.md) is connected to controlled lifecycle actions through an internal client, with real Docker controller verification. Production startup verifies and binds its helper image/container, daemon and durable volume before Hello. Initial-session adoption persists its immutable ID and lease before guard confirmation. A real Worker `Run` SIGKILL fixture verifies independent expiry and retained rootfs after adoption and renewal; deployed Console/S3 and cross-machine acceptance remain outstanding. Worker process timers alone do not enforce execution leases after SIGKILL or a process hang.
+The opt-in [native snapshot performance fixture](docs/sandbox-snapshot-performance.md) measures large payloads, small files and concurrent imports, and reports verified per-stage timings. Shared-storage and cross-host performance require separate acceptance.
+
+The [independent lease guard](docs/runtime-lease-guard.md) is connected to controlled lifecycle actions through an internal client, with real Docker controller verification. Production startup verifies and binds its helper image/container, daemon and durable volume before Hello. Initial-session adoption persists its immutable ID and lease before guard confirmation. A real Worker `Run` SIGKILL fixture verifies independent expiry and retained rootfs after adoption and renewal. Local two-Worker Console/S3 acceptance covers repeated snapshots, recovery, cache identity and final cleanup; see the [controller's acceptance boundaries](docs/sandbox-snapshot-controller.md#real-console--s3-acceptance). Cross-physical-machine acceptance remains outstanding. Worker process timers alone do not enforce execution leases after SIGKILL or a process hang.
 
 Required identity:
 - `WORKER_ID`
