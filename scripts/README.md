@@ -87,6 +87,24 @@ scripts/dev.sh stop sandbox-persistence
 
 验收脚本通过 Console API 创建会话、写入文件，检查跨 Worker 恢复、同 Worker 恢复、无 Worker 时的 `no_worker`（同步拒绝为 503；异步接受后在操作结果中报告）和重新上线后的恢复，最后删除测试会话并等待该独立验收账号的物理清理积压归零。文件验证包含 SHA-256、权限和符号链接。失败时保留会话与私有 `snapshot-e2e-<scenario>-result.json`，不将未知操作视为成功。脚本需要 `dev.sh` 缓存的本机管理员登录凭据，以创建短期测试执行 token。不要在有其他工作负载的 Worker 上运行此验收。
 
+Docker 使用独立组合 `sandbox-persistence-docker`，不复用公共预览的 Worker、容器名或端口。先按同一模板配置 `WORKER_TERMINAL_EXEC_DOCKER_IMAGE` 为固定 digest，再运行：
+
+```bash
+scripts/dev.sh start sandbox-persistence-docker
+python3 scripts/tests/snapshot_e2e.py --runtime docker
+scripts/dev.sh stop sandbox-persistence-docker
+```
+
+`worker-docker-snapshot` 和 `worker-docker-snapshot-peer` 分别拥有 Worker 凭据、journal 和生产独立租约守护器。Linux Worker 二进制和静态守护器由 `dev.sh` 自动编译；守护器镜像按二进制 SHA-256 固定标签，避免重复构建替换正在使用的镜像索引。Linux 使用原生 Worker 进程和本机私有 journal；macOS 要求 OrbStack 已安装且已启动，Worker 通过 Docker CLI 镜像运行在当前 Linux daemon 网络中，各自使用独立 journal 卷。可用 `ONLYBOXES_DEV_DOCKER_WORKER_IMAGE` 指定已有 CLI 镜像；运行时固定为其实际 image ID。Console 连接主机默认 macOS 为 `host.docker.internal`、Linux 为 `127.0.0.1`，可用 `ONLYBOXES_DEV_DOCKER_CONSOLE_HOST` 覆盖。不要将该入口指向远程 daemon：本机二进制挂载、同机 Console/S3 网络和 daemon 本机卷是这一开发入口的部署前提。
+
+Docker 验收支持 `cycle`、`same-worker` 和 `no-worker`，尚未接入此脚本的 Console/Worker 故障注入场景会直接拒绝。Docker 结果写入私有 `snapshot-e2e-docker-<scenario>-result.json`。两个 runtime 的验收应使用各自独立会话、配置与状态目录；脚本在创建沙盒前拒绝所选两个 Worker 之外仍有在线 Worker 的 Console。
+
+`--return-to-source` 可与任一 runtime 的 `cycle` 组合：源 A 首次快照后离线，B 从共享存储恢复并新增、修改、删除文件，随后再次快照；无 Worker 报错后，先只读核对 A 的旧缓存文件仍存在、完整 SHA-256 匹配首次快照且 snapshot ID 不同于最新快照，再只启动 A，验证 A 使用最新快照恢复，旧缓存不会遮蔽 B 的修改，最后启动 B 并等待清理。例如 `python3 scripts/tests/snapshot_e2e.py --runtime docker --return-to-source`。缓存已淘汰或关闭时会明确失败，不能据此声称覆盖了旧缓存窗口。该结果文件增加 `-return-to-source` 后缀。
+
+停止 Docker 验收 Worker 保留其 journal、缓存卷和生产租约守护器；守护器继续独立执行已登记的到期停止。开发编排不会删除已绑定的 guard 或卷，也不会因其丢失而重新绑定空目录。配置和本机 `docker-volume.json` 保留卷名、创建身份和 daemon 路径；同名卷被替换会拒绝启动。Console 数据库重建后新 Worker 使用新卷，旧卷仍保留。
+
+连续挂起/唤醒可能在旧容量心跳尚未更新时收到可重试 `no_capacity`。普通验收场景最多重试三次，每次先验证失败已解析、会话仍挂起且快照引用未变，再以新幂等键创建新 operation/generation；持续满载仍报错并保留现场。故障注入场景保持原 operation 身份断言。
+
 可用 `--scenario same-worker` 或 `--scenario no-worker` 分别验证首次同节点恢复和无 Worker 后的恢复；默认 `cycle` 保留完整循环检查。 `--scenario console-restart` 在源停止后导出中、目标已登记原生启动意图时分别停止并重新启动 Console，验证原 operation/实例继续完成、重启后幂等重放及参数冲突。此场景只读检查本机 Worker journal 与停止期间的 SQLite；没有实际命中在途窗口会失败，不把完成后的普通重启记作故障恢复通过。
 
 `scripts/dev.sh crash worker-boxlite`（或 `worker-boxlite-peer`）仅向本机管理进程直接托管的 Worker 子进程发送 SIGKILL，并等待该子进程退出回执；命令不接受 PID 或进程组。Worker 的本机管理端点位于私有 Unix 目录，独立租约守护器使用另一端点和进程。正常 `stop` 仍执行 Worker/守护器的依赖停止顺序。

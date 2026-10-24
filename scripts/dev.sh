@@ -14,7 +14,7 @@ SANDBOX_HELPER="$SCRIPT_DIR/dev-sandbox.py"
 ENV_FILE="${ONLYBOXES_DEV_ENV:-$SCRIPT_DIR/dev.env}"
 
 DEFAULT_SERVICES=(console web website)
-ALL_SERVICES=(snapshot-store console web website worker-docker worker-boxlite-lease worker-boxlite worker-boxlite-peer-lease worker-boxlite-peer nginx)
+ALL_SERVICES=(snapshot-store console web website worker-docker worker-docker-snapshot worker-docker-snapshot-peer worker-boxlite-lease worker-boxlite worker-boxlite-peer-lease worker-boxlite-peer nginx)
 
 svc_dir() {
     case "$1" in
@@ -22,6 +22,7 @@ svc_dir() {
         web) echo "$ROOT_DIR/web" ;;
         website) echo "$ROOT_DIR/website" ;;
         worker-docker) echo "$ROOT_DIR/worker/worker-docker" ;;
+        worker-docker-snapshot*) echo "$ROOT_DIR/worker/worker-docker" ;;
         snapshot-store | worker-boxlite*) echo "$ROOT_DIR/worker/worker-boxlite" ;;
         *) return 1 ;;
     esac
@@ -37,6 +38,7 @@ svc_cmd() {
         web) echo "NO_COLOR=1 yarn dev" ;;
         website) echo "NO_COLOR=1 yarn dev" ;;
         worker-docker) echo "go run ./cmd/worker-docker" ;;
+        worker-docker-snapshot*) printf 'python3 %q worker %q\n' "$SCRIPT_DIR/dev-docker-snapshot.py" "$1" ;;
         *) return 1 ;;
     esac
 }
@@ -126,7 +128,7 @@ worker_runner() {
 
 is_tmux_service() {
     case "$1" in
-        console | web | website | snapshot-store | worker-boxlite*) return 0 ;;
+        console | web | website | snapshot-store | worker-boxlite* | worker-docker-snapshot*) return 0 ;;
         worker-docker) [ "$(worker_runner)" = "native" ] ;;
         *) return 1 ;;
     esac
@@ -148,6 +150,7 @@ resolve_services() {
     for svc in $requested; do
         case "$svc" in
             sandbox-persistence) expanded+=" snapshot-store console worker-boxlite-lease worker-boxlite worker-boxlite-peer-lease worker-boxlite-peer"; continue ;;
+            sandbox-persistence-docker) expanded+=" snapshot-store console worker-docker-snapshot worker-docker-snapshot-peer"; continue ;;
             worker-boxlite | worker-boxlite-peer) expanded+=" $svc-lease $svc"; continue ;;
         esac
         if [ "$svc" = "public-preview" ]; then
@@ -520,6 +523,7 @@ Onlyboxes 本地开发服务编排（tmux + Docker/OrbStack）
       worker-boxlite / worker-boxlite-peer（各自独立守护器）snapshot-store（本地 S3）
 组合：public-preview = console + worker-docker + nginx
       sandbox-persistence = snapshot-store + console + 两个 BoxLite Worker
+      sandbox-persistence-docker = snapshot-store + console + 两个 Docker Worker
 
 示例：
   scripts/dev.sh start              # 三个全起

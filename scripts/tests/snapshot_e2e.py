@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise real Console/S3 snapshot APIs on dev.sh's two BoxLite workers."""
+"""Exercise real Console/S3 snapshot APIs on dev.sh's two same-runtime workers."""
 import importlib.util
 import atexit
 import argparse
@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -23,8 +24,17 @@ SPEC.loader.exec_module(dev)
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--runtime", choices=("boxlite", "docker"), default="boxlite")
+    parser.add_argument("--return-to-source", action="store_true", help="after cross-worker mutation and no-worker failure, restore onto the original worker with its older cache")
     parser.add_argument("--scenario", choices=("cycle", "same-worker", "no-worker", "console-restart", "worker-restart", "worker-start-restart"), default="cycle")
-    scenario = parser.parse_args().scenario
+    args = parser.parse_args()
+    scenario = args.scenario
+    if args.return_to_source and scenario != "cycle":
+        parser.error("--return-to-source requires --scenario cycle")
+    if args.runtime == "docker":
+        if scenario not in ("cycle", "same-worker", "no-worker"):
+            parser.error("Docker currently supports cycle, same-worker and no-worker acceptance")
+        dev.SERVICES = ("worker-docker-snapshot", "worker-docker-snapshot-peer")
     config = Path(os.environ.get("ONLYBOXES_DEV_ENV", dev.ROOT / "scripts/dev.env"))
     os.environ.update(dev.env_file(config))
     opener, headers = dev.console_auth()
@@ -72,6 +82,8 @@ def main():
     while time.monotonic() < deadline:
         workers = require(*api("GET", "/api/v1/workers?status=all"))["items"]
         if all(any(w["node_id"] == node and w["status"] == "online" for w in workers) for node in nodes):
+            if any(w["status"] == "online" and w["node_id"] not in nodes for w in workers):
+                raise RuntimeError("acceptance requires an isolated Console with only the two selected runtime workers online")
             break
         time.sleep(1)
     else:
@@ -87,10 +99,11 @@ def main():
     sid, digest = first["session_id"], first["stdout"].strip()
     base = "/api/v1/sessions/" + sid
     query = "?account_id=" + account
-    evidence = {"session_id": sid, "account_id": account, "sha256": digest, "checks": []}
+    evidence = {"runtime": args.runtime, "return_to_source": args.return_to_source, "session_id": sid, "account_id": account, "sha256": digest, "checks": []}
+    result_name = ("docker-" if args.runtime == "docker" else "") + scenario + ("-return-to-source" if args.return_to_source else "")
     def record(label, **values):
         evidence["checks"].append({"check": label, **values})
-        dev.atomic_private(dev.STATE / ("snapshot-e2e-" + scenario + "-result.json"), json.dumps(evidence, indent=2) + "\n")
+        dev.atomic_private(dev.STATE / ("snapshot-e2e-" + result_name + "-result.json"), json.dumps(evidence, indent=2) + "\n")
         print(label + ": " + json.dumps(values), flush=True)
     def session():
         return require(*api("GET", base + query))
@@ -272,8 +285,9 @@ def main():
             raise RuntimeError("same idempotency key with different parameters was accepted after restart")
         record("restart-idempotency-" + kind, operation_id=operation_id, replay_status=replay_status, conflicting_status=conflict_status)
         restarted[kind] = (operation_id, native["box_id"])
-    def lifecycle(kind, recovery_retry=False):
+    def lifecycle(kind, recovery_retry=False, capacity_retry=0):
         parameters = {"retention_ttl_sec": 3600} if kind == "suspend" else {"lease_ttl_sec": 900}
+        retained = session()["persistence"]["latest_snapshot"] if kind == "resume" else None
         request_key = str(uuid.uuid4())
         status, result = api("POST", base + "/" + kind + query, parameters, request_key)
         require(status, result, 202)
@@ -294,6 +308,17 @@ def main():
             if operation["status"] in ("succeeded", "failed", "canceled"):
                 record(kind, status=operation["status"], error=operation.get("error"))
                 if operation["status"] != "succeeded":
+                    error = operation.get("error") or {}
+                    if kind == "resume" and scenario in ("cycle", "same-worker", "no-worker") and error.get("code") == "no_capacity" and error.get("retryable") and capacity_retry < 3:
+                        current = session()
+                        if operation.get("phase") != "resolved" or current["lifecycle_state"] != "suspended" or current.get("current_operation_id") or current["persistence"]["latest_snapshot"] != retained:
+                            raise RuntimeError("capacity refusal did not preserve the snapshot and release operation ownership")
+                        record("capacity-retry", failed_operation_id=operation["operation_id"], generation=operation["generation"], code="no_capacity", snapshot_retained=True)
+                        time.sleep(1)
+                        fresh = lifecycle(kind, recovery_retry=recovery_retry, capacity_retry=capacity_retry+1)
+                        if fresh["operation_id"] == operation["operation_id"] or fresh["generation"] <= operation["generation"]:
+                            raise RuntimeError("capacity retry reused the failed operation or generation")
+                        return fresh
                     if scenario == "worker-start-restart" and kind == "resume" and not recovery_retry and "resume" in restarted:
                         finish_failed_start(operation, result["operation_id"])
                         return
@@ -318,6 +343,36 @@ def main():
                 return
             time.sleep(1)
         raise RuntimeError("source worker did not become offline")
+    def verify_old_source_cache(node, operation_id):
+        root = dev.STATE / nodes[node] / hashlib.sha256(node.encode()).hexdigest()[:32]
+        code = """import hashlib,json,sys,time
+from pathlib import Path
+root=Path(sys.argv[1]); op=json.loads((root/'journal.json').read_text())['operations'][sys.argv[2]]
+assert op['phase']=='finalized' and op['snapshot_committed'] and op['verified']
+assert op['cache_until_unix_ms']>time.time()*1000
+name=op['artifact']; assert name and Path(name).name==name
+file=root/'artifacts'/name; assert file.is_file() and not file.is_symlink()
+digest=hashlib.sha256(); size=0
+with file.open('rb') as stream:
+    for block in iter(lambda:stream.read(1048576),b''): digest.update(block); size+=len(block)
+archive=op['archive']; assert size==archive['size_bytes'] and digest.hexdigest()==archive['sha256']
+print(json.dumps({'snapshot_id':archive['snapshot_id'],'sha256':digest.hexdigest()}))
+"""
+        if args.runtime == "docker" and sys.platform == "darwin":
+            binding = json.loads(dev.read_private(root / "docker-volume.json"))
+            if binding["Name"] != "onlyboxes-snapshot-node-" + dev.NAMESPACE + "-" + node:
+                raise RuntimeError("cache inspection volume does not belong to the source worker")
+            command = ["docker", "run", "--rm", "--read-only", "--network", "none", "--mount", "type=volume,source=" + binding["Name"] + ",target=/snapshot-state,readonly", "--entrypoint", "python3", os.environ["WORKER_TERMINAL_EXEC_DOCKER_IMAGE"], "-c", code, "/snapshot-state/journal", operation_id]
+        else:
+            command = [sys.executable, "-c", code, str(root / "journal"), operation_id]
+        result = subprocess.run(command, capture_output=True, text=True, timeout=60)
+        if result.returncode:
+            raise RuntimeError("return-to-source requires the original verified cache to remain present")
+        cached = json.loads(result.stdout)
+        latest = session()["persistence"]["latest_snapshot"]
+        if cached["snapshot_id"] != suspended["persistence"]["latest_snapshot"]["snapshot_id"] or cached["sha256"] != suspended["persistence"]["latest_snapshot"]["sha256"] or cached["snapshot_id"] == latest["snapshot_id"]:
+            raise RuntimeError("source cache does not represent the older committed snapshot")
+        record("old-cache-present", **cached, latest_snapshot_id=latest["snapshot_id"])
     mutated = False
     def verify(label, expected_worker=None):
         current = session()
@@ -336,7 +391,7 @@ def main():
 
     source = session()["worker_id"]
     record("created", worker_id=source)
-    lifecycle("suspend")
+    original_suspend = lifecycle("suspend")
     suspended = session()
     if suspended["lifecycle_state"] != "suspended" or suspended["worker_id"] is not None or not suspended["persistence"]["latest_snapshot"]:
         raise RuntimeError("snapshot was not durably suspended")
@@ -387,17 +442,22 @@ def main():
     if session()["lifecycle_state"] != "suspended":
         raise RuntimeError("no-worker attempt changed suspended state")
     record("no-worker", submission_status=submission_status, code=outcome_code, asynchronous=submission_status == 202)
-    services("start", *dev.SERVICES)
+    if args.return_to_source:
+        verify_old_source_cache(source, original_suspend["operation_id"])
+    recovery_nodes = {source: nodes[source]} if args.return_to_source else nodes
+    services("start", *recovery_nodes.values())
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
         workers = require(*api("GET", "/api/v1/workers?status=all"))["items"]
-        if all(any(w["node_id"] == node and w["status"] == "online" for w in workers) for node in nodes):
+        if all(any(w["node_id"] == node and w["status"] == "online" for w in workers) for node in recovery_nodes):
             break
         time.sleep(1)
     else:
         raise RuntimeError("workers did not reconnect")
     lifecycle("resume")
-    verify("resume-after-no-worker")
+    verify("return-to-source" if args.return_to_source else "resume-after-no-worker", source if args.return_to_source else None)
+    if args.return_to_source:
+        services("start", *(service for node, service in nodes.items() if node not in recovery_nodes))
     require(*api("DELETE", base + query), expected=204)
     record("deleted", status=204)
     wait_cleanup()
