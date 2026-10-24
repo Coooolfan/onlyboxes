@@ -72,6 +72,10 @@ Worker 凭据和运行参数使用独立文件 `scripts/.dev/<worker>.env`，由
 
 `sandbox-persistence` 组合服务启动本地 S3、Console 和两个独立 BoxLite Worker。每个 Worker 有独立的 SDK home、journal、租约账本和 `boxlite-lease-guard` 进程。两个 Worker 运行在同一物理机器，用于验证跨 Worker 调度；跨物理机器和 Linux BoxLite VM 仍需单独部署验收。
 
+BoxLite 守护器就绪通过私有 Unix `ping` 核对协议版本、请求 nonce、Worker/store/epoch 身份和实际服务进程；守护器管理进程还要求回执 PID 匹配自己持有、尚未回收的子进程。只有这些核对通过且子进程仍在运行，才固定首次 store ID 并报告就绪。残留 socket、其他进程的回执、旧 nonce、错误身份或损坏响应均不作为就绪证据。Worker 同样等待匹配的实际就绪回执，Rust 启动路径继续独立校验绑定与执行许可。
+
+本机管理进程先安装信号转发，再创建独立会话中的子进程。创建过程中收到停止请求时，已创建的精确子进程会收到停止信号并被等待；请求先于创建到达时不再创建子进程。不会按进程名/PID 查询结果或进程组发送停止信号，也不因等待过久强制丢弃尚未确认的原生结果。守护器在就绪前退出会报告实际 `returncode`；服务管道保留原始失败退出码，不让日志 `tee` 的成功覆盖服务失败。`start` 仍立即返回，只表示启动指令已提交。
+
 依赖本机 Docker、Go、Rust、tmux、Python 3 及 BoxLite 支持的虚拟化环境。默认从固定官方 MinIO 源码 `RELEASE.2025-10-15T17-29-55Z` 编译本地 S3 镜像，首次启动需要下载依赖和构建；也可在配置中指定 `ONLYBOXES_DEV_MINIO_IMAGE`。此对象存储只监听 loopback，供本机验收使用。
 
 ```bash
@@ -112,6 +116,8 @@ Docker 验收支持 `cycle`、`same-worker` 和 `no-worker`，尚未接入此脚
 `--scenario worker-restart` 已通过源停止后导出中途 SIGKILL 的真实验收：守护器完整身份与 epoch 不变，新 Worker 继续原 operation 和原 Box ID，完成快照、恢复及最终回收。`--scenario worker-start-restart` 已通过目标 shim 已启动、Worker 与守护器尚未绑定 writer 的故障窗口：原恢复失败后确认取消与所有权释放，保留快照，再以新 operation、新 generation 和新实例恢复，最终回收积压归零。该场景要求配套的守护器协议 v2；没有实际命中未绑定窗口会明确失败。
 
 当前 macOS / BoxLite 0.10.7 已通过真实 S3 的完整多轮检查，包括恢复后新增、修改、删除文件再快照，以及无 Worker 后重新上线恢复和最终清理。Worker 对自包含磁盘直接封装，原生 SDK 的再次 flatten 短读边界仍可独立复现；见 [BoxLite 导出策略](../worker/worker-boxlite/docs/sandbox-snapshot-deployment.md#boxlite-0107-的原生导出边界)。跨物理宿主和 Linux VM 需单独验收。
+
+编排回归可运行 `python3 -m unittest discover -s scripts/tests -p '*test.py'`。测试包含真实 Unix socket 的遗留/错误回执与总交互超时、启动期间的信号交付、Ping 期间子进程退出时凭据不变、独立 Worker/守护进程隔离，以及实际 Bash 管道的退出码保留；这些测试不启动沙盒 VM。
 
 单独 `stop worker-boxlite` 或 `stop worker-boxlite-peer` 会依次停止该 Worker 和其守护器，Console 与对象存储继续运行。再次 `start` 复用相同 Worker 身份和持久目录。Console 数据库重建后创建新身份，旧 SDK home 和账本保留，不会交给新 Worker 使用。
 

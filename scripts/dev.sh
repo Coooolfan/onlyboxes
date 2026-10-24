@@ -101,7 +101,7 @@ wrapped_cmd() {
     if [ "$svc" = "worker-docker" ]; then
         printf -v extra_env '; worker_env="$(%q worker-env)"; [ -f "$worker_env" ] && . "$worker_env"' "$PREVIEW_HELPER"
     fi
-    inner="$state_env set -a; [ -f $env_arg ] && . $env_arg$extra_env; set +a; $state_env $(svc_cmd "$svc") 2>&1 | tee $log_arg"
+    inner="set -o pipefail; $state_env set -a; [ -f $env_arg ] && . $env_arg$extra_env; set +a; $state_env $(svc_cmd "$svc") 2>&1 | tee $log_arg"
     printf 'bash -c %q\n' "$inner"
 }
 

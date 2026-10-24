@@ -22,6 +22,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 
 ROOT = Path(__file__).resolve().parent.parent
 STATE = Path(os.environ.get("ONLYBOXES_DEV_STATE_DIR", ROOT / "scripts/.dev")).resolve()
@@ -209,6 +210,124 @@ def worker_environment():
             if not key.startswith(("CONSOLE_", "MINIO_")) and key != "ONLYBOXES_DEV_CONSOLE_API_KEY"}
 
 
+def guard_identity(control, worker, store=None, pid=None, timeout=1):
+    """A private Ping confirms a live ready service; a socket inode does not."""
+    try:
+        parent = control.lstat()
+        endpoint = control / "control.sock"
+        info = endpoint.lstat()
+        if (not stat.S_ISDIR(parent.st_mode) or parent.st_uid != os.geteuid() or parent.st_mode & 0o077
+                or not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.geteuid()
+                or info.st_mode & 0o077 or info.st_nlink != 1):
+            return None
+        request_id = str(uuid.uuid4())
+        payload = json.dumps({"version": 2, "request_id": request_id, "worker_id": worker,
+                              "store_id": store, "expected": None, "command": {"action": "ping"}}).encode()
+        deadline = time.monotonic() + timeout
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            def remaining():
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    raise TimeoutError()
+                client.settimeout(left)
+            def receive(size):
+                data = bytearray()
+                while len(data) < size:
+                    remaining()
+                    part = client.recv(size - len(data))
+                    if not part:
+                        raise ValueError()
+                    data.extend(part)
+                return bytes(data)
+            remaining()
+            client.connect(str(endpoint))
+            remaining()
+            client.sendall(len(payload).to_bytes(4, "big") + payload)
+            size = int.from_bytes(receive(4), "big")
+            if not 0 < size <= 16384:
+                return None
+            def unique_object(pairs):
+                result = {}
+                for key, value in pairs:
+                    if key in result:
+                        raise ValueError()
+                    result[key] = value
+                return result
+            reply = json.loads(receive(size), object_pairs_hook=unique_object)
+        if (not isinstance(reply, dict) or set(reply) != {"version", "request_id", "identity", "reply"}
+                or type(reply.get("version")) is not int or reply["version"] != 2
+                or reply.get("request_id") != request_id):
+            return None
+        identity = reply.get("identity")
+        if (not isinstance(identity, dict) or set(identity) != {"worker_id", "store_id", "epoch_id", "process"}
+                or identity.get("worker_id") != worker):
+            return None
+        for key in ("store_id", "epoch_id"):
+            parsed = uuid.UUID(identity.get(key, ""))
+            if parsed.int == 0 or str(parsed) != identity[key]:
+                return None
+        process = identity.get("process")
+        required = {"host_id", "boot_id", "process_namespace", "pid", "start_time"}
+        if (not isinstance(process, dict) or not required <= set(process) <= required | {"writer_cgroup", "signal_version"}
+                or type(process.get("pid")) is not int or not 1 < process["pid"] <= 2147483647
+                or type(process.get("start_time")) is not int or not 0 < process["start_time"] < 1 << 64
+                or process.get("writer_cgroup") is not None or process.get("signal_version") is not None
+                or (pid is not None and process["pid"] != pid)
+                or (store is not None and identity["store_id"] != store)
+                or reply.get("reply") != {"type": "ready"}):
+            return None
+        for key in ("host_id", "boot_id"):
+            parsed = uuid.UUID(process[key])
+            if parsed.int == 0 or str(parsed) != process[key]:
+                return None
+        namespace = process["process_namespace"]
+        if namespace != "host":
+            pieces = namespace.split(":")
+            if (len(pieces) != 3 or pieces[0] != "linux-pid" or not 0 <= int(pieces[1]) < 1 << 64
+                    or not 0 < int(pieces[2]) < 1 << 64
+                    or namespace != f"linux-pid:{int(pieces[1])}:{int(pieces[2])}"):
+                return None
+        return identity
+    except (OSError, ValueError, TypeError, AttributeError, RecursionError):
+        return None
+
+
+class ManagedProcess:
+    """Install signal forwarding before spawn and retain the direct child until exit."""
+    def __init__(self, command, environment):
+        self.command, self.environment = command, environment
+        self.child, self.stopping, self.previous = None, False, {}
+
+    def stop(self, _signal, _frame):
+        self.stopping = True
+        if self.child is not None and self.child.poll() is None:
+            self.child.terminate()
+
+    def __enter__(self):
+        try:
+            for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+                self.previous[sig] = signal.signal(sig, self.stop)
+            if not self.stopping:
+                self.child = subprocess.Popen(self.command, env=self.environment, start_new_session=True)
+                if self.stopping and self.child.poll() is None:
+                    self.child.terminate()
+            return self
+        except BaseException:
+            self.__exit__(*sys.exc_info())
+            raise
+
+    def __exit__(self, *_exception):
+        try:
+            if self.child is not None and self.child.poll() is None:
+                self.child.terminate()
+                # No forced kill: an accepted native start or independent stop
+                # can retain an unresolved outcome beyond a local stop request.
+                self.child.wait()
+        finally:
+            for sig, handler in self.previous.items():
+                signal.signal(sig, handler)
+
+
 def lease(service):
     binaries = build_boxlite()
     values = provision(service)
@@ -220,34 +339,25 @@ def lease(service):
     args = [str(binaries / "boxlite-lease-guard"), "--state-dir", str(state), "--socket-dir", str(control), "--worker-id", values["WORKER_ID"]]
     if expected:
         args += ["--store-id", expected]
-    child = subprocess.Popen(args, env=worker_environment(), start_new_session=True)
-    def stop(_signal, _frame):
-        if child.poll() is None:
-            child.send_signal(signal.SIGTERM)
-    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
-        signal.signal(sig, stop)
-    try:
+    with ManagedProcess(args, worker_environment()) as process:
+        child = process.child
+        if child is None:
+            return 0
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
+            if process.stopping:
+                return child.wait()
             if child.poll() is not None:
-                fail("独立租约守护器退出，未开放 Worker 启动")
-            raw = read_private(state / "owner.json")
-            if raw and (control / "control.sock").is_socket():
-                owner = json.loads(raw)
-                if owner.get("worker_id") != values["WORKER_ID"] or (expected and owner.get("store_id") != expected):
-                    fail("租约账本身份不匹配")
-                values["WORKER_PERSISTENCE_LEASE_STORE_ID"] = owner["store_id"]
+                fail(f"独立租约守护器在就绪前退出（returncode={child.returncode}），未开放 Worker 启动")
+            identity = guard_identity(control, values["WORKER_ID"], expected, child.pid,
+                                      min(1, max(0, deadline - time.monotonic())))
+            if identity and child.poll() is None and not process.stopping:
+                values["WORKER_PERSISTENCE_LEASE_STORE_ID"] = identity["store_id"]
                 write_env(STATE / (service + ".env"), values)
                 print(f"• {service} 独立租约守护器已就绪", flush=True)
                 return child.wait()
             time.sleep(0.1)
         fail("独立租约守护器未在期限内就绪")
-    finally:
-        if child.poll() is None:
-            child.send_signal(signal.SIGTERM)
-            # The service retains unresolved outcomes rather than force-killing
-            # its independent expiry thread during a normal dev.sh stop.
-            child.wait()
 
 
 def worker(service):
@@ -257,7 +367,7 @@ def worker(service):
         values = env_file(STATE / (service + ".env"))
         if values.get("WORKER_PERSISTENCE_LEASE_STORE_ID"):
             root, control = node_paths(service, values)
-            if (control / "control.sock").is_socket():
+            if guard_identity(control, values["WORKER_ID"], values["WORKER_PERSISTENCE_LEASE_STORE_ID"]):
                 break
         time.sleep(0.2)
     else:
@@ -298,48 +408,42 @@ def supervise_worker(command, environment, root, control):
                 fail("拒绝替换非本机 Worker 的控制端点")
             endpoint.unlink()
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        child = None
-        previous = {}
         try:
             server.bind(str(endpoint))
             os.chmod(endpoint, 0o600)
             server.listen(4)
             server.settimeout(0.2)
-            child = subprocess.Popen(command, env=environment, start_new_session=True)
-            def stop(_signal, _frame):
-                if child.poll() is None:
-                    child.terminate()
-            for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
-                previous[sig] = signal.signal(sig, stop)
-            while child.poll() is None:
-                try:
-                    connection, _ = server.accept()
-                except socket.timeout:
-                    continue
-                with connection:
-                    connection.settimeout(1)
-                    try:
-                        with connection.makefile("rb") as stream:
-                            request = stream.readline(17)
-                        if request != b"kill\n":
-                            connection.sendall(b"rejected\n")
-                            continue
-                        # An unreaped direct child cannot have its PID recycled.
-                        # The command never targets a group, shim or lease guard.
-                        child.kill()
-                        result = child.wait()
-                        connection.sendall(json.dumps({"pid": child.pid, "returncode": result}).encode() + b"\n")
-                    except (OSError, subprocess.SubprocessError):
-                        continue
-            return child.wait()
+            with ManagedProcess(command, environment) as process:
+                return supervise_requests(server, process.child)
         finally:
-            if child is not None and child.poll() is None:
-                child.terminate()
-                child.wait()
-            for sig, handler in previous.items():
-                signal.signal(sig, handler)
             server.close()
             endpoint.unlink(missing_ok=True)
+
+
+def supervise_requests(server, child):
+    if child is None:
+        return 0
+    while child.poll() is None:
+        try:
+            connection, _ = server.accept()
+        except socket.timeout:
+            continue
+        with connection:
+            connection.settimeout(1)
+            try:
+                with connection.makefile("rb") as stream:
+                    request = stream.readline(17)
+                if request != b"kill\n":
+                    connection.sendall(b"rejected\n")
+                    continue
+                # An unreaped direct child cannot have its PID recycled.
+                # The command never targets a group, shim or lease guard.
+                child.kill()
+                result = child.wait()
+                connection.sendall(json.dumps({"pid": child.pid, "returncode": result}).encode() + b"\n")
+            except (OSError, subprocess.SubprocessError):
+                continue
+    return child.wait()
 
 
 def crash_worker(service):
