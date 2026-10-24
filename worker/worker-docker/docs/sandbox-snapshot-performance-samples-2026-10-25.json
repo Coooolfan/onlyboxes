@@ -1,0 +1,95 @@
+{
+  "date": "2026-10-25",
+  "scope": "single-daemon native filesystem adapter",
+  "host": {
+    "cpu": "Apple M4",
+    "memory_bytes": 34359738368
+  },
+  "daemon": {
+    "cpus": 10,
+    "memory_bytes": 16819613696,
+    "storage_driver": "overlayfs"
+  },
+  "conditions": {
+    "source_image": "preloaded",
+    "host_and_daemon_caches": "uncontrolled",
+    "race_detector": false,
+    "source_cpus": 1,
+    "source_memory_bytes": 536870912,
+    "source_max_processes": 128
+  },
+  "samples": [
+    {
+      "runtime_version": "29.4.0",
+      "platform": "linux/arm64",
+      "helper_image": "python@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258",
+      "concurrent_fixtures": 1,
+      "required_headroom_bytes": 34642882412,
+      "fixture_wall_seconds": 197.98157275,
+      "results": [
+        {
+          "payload_bytes": 5368709120,
+          "files": 1,
+          "archive_bytes": 5520558080,
+          "expanded_budget_bytes": 5555814400,
+          "archive_sha256": "d5286d7efd29c95d4fe72188cfc8cc6735f6e7317ffa81cdc95869ab9e33f65f",
+          "payload_sha256": "9a50783e3f8d36cd59acf9d1538dacd0a884e5120732159ec0577847012e5219",
+          "seconds": {
+            "content_verify": 2.515808041,
+            "create_start_ready": 0.422204708,
+            "export": 93.389762792,
+            "freeze": 0.056709041,
+            "import": 79.333998292,
+            "local_verify": 2.01950475,
+            "prepare": 0.17188625,
+            "seed": 19.3401005,
+            "source_remove": 0.160654667
+          },
+          "export_archive_mib_per_sec": 56.3746420991659,
+          "import_archive_mib_per_sec": 66.36265115174336
+        }
+      ]
+    },
+    {
+      "runtime_version": "29.4.0",
+      "platform": "linux/arm64",
+      "helper_image": "python@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258",
+      "concurrent_fixtures": 1,
+      "required_headroom_bytes": 66855137132,
+      "fixture_wall_seconds": 405.979461542,
+      "results": [
+        {
+          "payload_bytes": 10737418240,
+          "files": 1,
+          "archive_bytes": 10889267200,
+          "expanded_budget_bytes": 10924523520,
+          "archive_sha256": "160dc284fb54d0f74a85b3f8a7d0de2b85b90480b136203987e8a2ae6d03cd41",
+          "payload_sha256": "c9a2a174dfe2c8956a4164e3d48086dcbd248fdd96f52b2adff7a5c800571d9d",
+          "seconds": {
+            "content_verify": 14.005327708,
+            "create_start_ready": 1.388510584,
+            "export": 183.276665708,
+            "freeze": 0.039663458,
+            "import": 184.147093625,
+            "local_verify": 3.9765954580000002,
+            "prepare": 0.152023791,
+            "seed": 18.067793542,
+            "source_remove": 0.161121833
+          },
+          "export_archive_mib_per_sec": 56.66195646351561,
+          "import_archive_mib_per_sec": 56.3941262862003
+        }
+      ]
+    }
+  ],
+  "capacity_refusals": [
+    {
+      "payload_bytes_per_fixture": 5368709120,
+      "concurrent_fixtures": 4,
+      "files_per_fixture": 1,
+      "filesystem": "archive",
+      "required_headroom_bytes": 132129078704,
+      "outcome": "refused before source creation"
+    }
+  ]
+}

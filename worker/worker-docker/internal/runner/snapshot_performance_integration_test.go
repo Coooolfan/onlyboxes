@@ -100,7 +100,7 @@ func TestIntegrationDockerSnapshotPerformance(t *testing.T) {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
-			results[index], failures[index] = runSnapshotPerformance(ctx, runtime, image, directory, payload, imageInfo.Size, files)
+			results[index], failures[index] = runSnapshotPerformance(t, index, ctx, runtime, image, directory, payload, imageInfo.Size, files)
 		}(index)
 	}
 	wg.Wait()
@@ -128,7 +128,7 @@ func TestIntegrationDockerSnapshotPerformance(t *testing.T) {
 	t.Logf("snapshot_performance=%s", encoded)
 }
 
-func runSnapshotPerformance(ctx context.Context, runtime *dockerSnapshotRuntime, image, directory string, payload, baseBytes int64, files int) (result snapshotPerformanceResult, err error) {
+func runSnapshotPerformance(t *testing.T, index int, ctx context.Context, runtime *dockerSnapshotRuntime, image, directory string, payload, baseBytes int64, files int) (result snapshotPerformanceResult, err error) {
 	id := uuid.NewString()
 	scope := "snapshot-performance:" + id
 	name := terminalSessionResourceName(scope)
@@ -155,6 +155,7 @@ func runSnapshotPerformance(ctx context.Context, runtime *dockerSnapshotRuntime,
 		start := time.Now()
 		err := fn()
 		result.Seconds[key] = time.Since(start).Seconds()
+		t.Logf("snapshot_performance_stage fixture=%d stage=%s seconds=%.6f success=%t", index, key, result.Seconds[key], err == nil)
 		if err != nil {
 			return fmt.Errorf("%s: %w", key, err)
 		}

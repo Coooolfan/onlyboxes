@@ -42,7 +42,7 @@ The source/helper image is already local, and runtime probes use it before timin
 
 ## Result interpretation
 
-The successful verbose log contains one `snapshot_performance=<JSON>` line with runtime version, guest platform, helper digest, concurrency, headroom requirement, total fixture wall time and per-fixture records. Per-fixture records include payload size/file count, actual archive bytes/SHA-256, restored payload digest, conservative expanded budget, seconds per stage and archive-based export/import MiB/s.
+The verbose log emits a `snapshot_performance_stage` line after each stage, identifying the concurrent fixture index, stage, elapsed seconds and success. These lines show progress for large runs; they do not establish successful restoration or cleanup. Only a successful run emits the final `snapshot_performance=<JSON>` line with runtime version, guest platform, helper digest, concurrency, headroom requirement, total fixture wall time and per-fixture records. Per-fixture records include payload size/file count, actual archive bytes/SHA-256, restored payload digest, conservative expanded budget, seconds per stage and archive-based export/import MiB/s.
 
 | Stage | Included work |
 | --- | --- |
@@ -66,6 +66,8 @@ On 2026-10-24, the fixture passed on Docker Engine 29.4.0, Linux arm64 under Orb
 | 1 GiB | 1 | 1 | 1,225,584,640 bytes | 23.74 s | 0.45 s | 18.46 s | 1.52 s |
 | 1 GiB | 4 | 1 | 1,225,584,640 bytes | 29.94–30.41 s | 0.53–0.59 s | 28.09–28.58 s | 0.35–0.42 s |
 | 1 GiB | 1 | 65,536 | 1,326,254,080 bytes | 22.44 s | 0.49 s | 25.50 s | 1.16 s |
+| 5 GiB | 1 | 1 | 5,520,558,080 bytes | 93.39 s | 2.02 s | 79.33 s | 0.42 s |
+| 10 GiB | 1 | 1 | 10,889,267,200 bytes | 183.28 s | 3.98 s | 184.15 s | 1.39 s |
 
 The single large-file sample exported at 49.24 MiB/s and imported at 63.31 MiB/s, including the validation and filesystem work described above. Complete fixture wall time was 47.79 s, including data generation, restored-content verification and cleanup.
 
@@ -73,6 +75,12 @@ The four-concurrent sample ran separately from correctness/race checks and compl
 
 The small-file sample divided 1 GiB into 65,536 files of 16 KiB each. Export/import rates were 56.37 / 49.61 MiB/s; archive metadata increased its size by about 96 MiB compared with the one-file sample. Seeding and syncing every file took 42.01 s and full fixture wall time was 94.98 s. Source preparation is excluded from the suspend/resume adapter stages. Each sample verified every restored file before cleanup.
 
+The 5 GiB single-file sample was recorded on 2026-10-25 with the same pinned helper and Docker version/platform. Export/import rates were 56.37 / 66.36 MiB/s. Synced data generation took 19.34 s, restored-content verification took 2.52 s and full fixture wall time was 197.98 s. The actual archive includes the base filesystem and metadata; these values are single native-adapter samples with uncontrolled caches.
+
+The 10 GiB single-file sample on the same date exported/imported at 56.66 / 56.39 MiB/s. Synced generation took 18.07 s, restored-content verification took 14.01 s and full fixture wall time was 405.98 s. Every restored byte and file mode was checked before cleanup. These single runs do not establish linear scaling or tail latency. [Machine-readable sample records](sandbox-snapshot-performance-samples-2026-10-25.json) retain the full stage durations, actual archive sizes, checksums and fixture headroom requirements for both larger samples.
+
 The 4 × 10 GiB headroom-negative case required 260,978,097,584 free bytes on each checked filesystem with this base image and file count. This machine had insufficient space, and the fixture refused before source creation. The failed preflight is a capacity-guard check, not a large-archive performance result.
+
+The 4 × 5 GiB preflight on 2026-10-25 likewise refused before source creation, requiring 132,129,078,704 free bytes on the archive filesystem. The 5/10 GiB single-fixture measurements do not replace either missing four-concurrent result. Larger concurrent cases require adequate free space on both filesystems under the same guard.
 
 S3 upload/download/readback, Console scheduling and durable lifecycle commits, execution-lease handoff, cache-hit resumes, image pulls, cross-physical-host behavior and end-to-end percentiles require separate acceptance. The [full performance matrix](../../../docs/plan/sandbox-session-persistence-storage-api.zh-CN.md#基本性能与容量建议) remains the release gate for deployment performance claims.
