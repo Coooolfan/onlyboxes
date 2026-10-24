@@ -125,8 +125,20 @@ impl RuntimeHomeGuard {
             if paired != owner {
                 return Err(Error::Unavailable);
             }
-            let journal = Arc::new(Journal::open(&journal_dir.path, worker)?);
-            super::native::reconcile_home(&home.path, &journal).map_err(|_| Error::Unavailable)?;
+            let journal = Arc::new(Journal::open(&journal_dir.path, worker).map_err(|error| {
+                tracing::error!(
+                    stage = "journal_open",
+                    "BoxLite persistence home check failed"
+                );
+                error
+            })?);
+            super::native::reconcile_home(&home.path, &journal).map_err(|_| {
+                tracing::error!(
+                    stage = "native_reconciliation",
+                    "BoxLite persistence home check failed"
+                );
+                Error::Unavailable
+            })?;
             (owner, journal)
         } else {
             // There is no adoption-by-empty-journal path. A new pair starts

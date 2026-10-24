@@ -622,6 +622,10 @@ impl TerminalSessionManager {
                         return Err(unavailable());
                     };
                     if guard.identity() != &adoption.guard {
+                        tracing::error!(
+                            stage = "initial_companion_identity",
+                            "BoxLite persistence recovery check failed"
+                        );
                         state.fail();
                         return Err(unavailable());
                     }
@@ -633,6 +637,10 @@ impl TerminalSessionManager {
                                 && live.process == adoption.lease.process
                                 && live.expires_unix_ms >= adoption.lease.expires_unix_ms
                         }) {
+                            tracing::error!(
+                                stage = "initial_writer_lease",
+                                "BoxLite persistence recovery check failed"
+                            );
                             state.fail();
                             return Err(unavailable());
                         }

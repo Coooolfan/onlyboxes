@@ -59,6 +59,14 @@ BoxLite `0.10.7` 初始化时会更新恢复状态、回收没有数据库记录
 
 这一步不更新阶段、不生成最终 ACK，也不清理共享对象或归档。后续控制器仍须完成原生名称占位、必要的 artifacts 清理、finalized/canceled/deleted 状态写入与 Console 确认。未提交且没有永久 DELETE 授权的源磁盘、未知目录、丢失的数据库、异常 schema、原生 pending snapshot 仍保留并拒绝启动。
 
+## 启动失败定位
+
+启动错误使用固定阶段名区分目录布局、租约账本、守护器发现/宿主身份、home 所有权、账本绑定、pythonExec home、SDK 初始化、原生适配器和控制引擎。错误不附带底层 SDK、IO 或传输错误原文，避免路径、配置及授权信息进入日志。已有 home 的 journal 打开和原生清单恢复失败另有 `journal_open`、`native_reconciliation` 阶段日志。
+
+`control_engine` 阶段中，初始会话恢复进一步区分 `initial_companion_identity`（保存的守护器身份不匹配）与 `initial_writer_lease`（同一守护器未确认匹配的运行租约）。只有 Worker ID 和 store ID 相同不足以接受新的守护服务；epoch 和进程身份同样必须匹配。守护服务重启后的安全协调尚未实现，保留旧记录并拒绝启动，不能重写 journal 绕过检查。
+
+本机旧测试目录在写满 guest 磁盘、普通会话逻辑删除及整组服务重启后，重现了 `control_engine` / `initial_companion_identity` 拒绝。配对目录和原生清单通过，当前守护器与旧记录的 Worker/store 相同，但 epoch/进程不同。更改新会话磁盘容量的同时也重启了守护器，因此该结果不能归因于磁盘容量配置。该目录的原生数据与账本继续保留；新目录中通过的快照周期不能替代旧状态恢复验收。
+
 ## 验证
 
 ```bash

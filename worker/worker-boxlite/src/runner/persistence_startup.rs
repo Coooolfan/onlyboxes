@@ -32,6 +32,11 @@ pub(crate) struct Startup {
 fn unavailable() -> RunnerError {
     RunnerError::Message("BoxLite persistence ownership or companion is unavailable".into())
 }
+// Only fixed call-site labels reach startup errors; SDK/IO error text can
+// contain paths, configuration or transport credentials.
+fn startup_unavailable(stage: &'static str) -> RunnerError {
+    RunnerError::Message(format!("BoxLite persistence startup failed at {stage}"))
+}
 fn canonical_candidate(path: &Path) -> Result<PathBuf, RunnerError> {
     resolve_candidate(path, true)
 }
@@ -86,13 +91,13 @@ pub(crate) async fn initialize(
             .map_err(|error| RunnerError::Message(error.to_string()))?;
         return Ok(None);
     }
-    let paths = directories(cfg)?;
+    let paths = directories(cfg).map_err(|_| startup_unavailable("directories"))?;
     ExecutionLeaseLedger::verify_external_store(
         &paths[2],
         &cfg.worker_id,
         &cfg.persistence.lease_store_id,
     )
-    .map_err(|_| unavailable())?;
+    .map_err(|_| startup_unavailable("lease_store"))?;
     let socket = paths[3].join("control.sock");
     let identity = LeaseGuardClient::discover(
         &socket,
@@ -100,44 +105,46 @@ pub(crate) async fn initialize(
         Some(&cfg.persistence.lease_store_id),
     )
     .await
-    .map_err(|_| unavailable())?;
-    let current = HostProcess::current().map_err(|_| unavailable())?;
+    .map_err(|_| startup_unavailable("companion_discovery"))?;
+    let current = HostProcess::current().map_err(|_| startup_unavailable("host_identity"))?;
     if identity.process.host_id != current.host_id
         || identity.process.boot_id != current.boot_id
         || identity.process.process_namespace != current.process_namespace
     {
-        return Err(unavailable());
+        return Err(startup_unavailable("companion_identity"));
     }
     let client = LeaseGuardClient::bind(socket, identity);
     let owner = Arc::new(
-        RuntimeHomeGuard::open(&paths[0], &paths[1], &cfg.worker_id).map_err(|_| unavailable())?,
+        RuntimeHomeGuard::open(&paths[0], &paths[1], &cfg.worker_id)
+            .map_err(|_| startup_unavailable("home_ownership"))?,
     );
     owner
         .bind_execution_store(&paths[2], &cfg.persistence.lease_store_id)
-        .map_err(|_| unavailable())?;
+        .map_err(|_| startup_unavailable("execution_store_binding"))?;
     // Stateless pythonExec instances never enter the protected terminal home.
     fs::DirBuilder::new()
         .recursive(true)
         .mode(0o700)
         .create(&paths[4])
-        .map_err(|_| unavailable())?;
-    let metadata = fs::symlink_metadata(&paths[4]).map_err(|_| unavailable())?;
+        .map_err(|_| startup_unavailable("python_home_create"))?;
+    let metadata =
+        fs::symlink_metadata(&paths[4]).map_err(|_| startup_unavailable("python_home_metadata"))?;
     use std::os::unix::fs::MetadataExt;
     if !metadata.is_dir()
         || metadata.permissions().mode() & 0o077 != 0
         || metadata.uid() != unsafe { libc::geteuid() }
     {
-        return Err(unavailable());
+        return Err(startup_unavailable("python_home_permissions"));
     }
     let journal = owner.journal();
     let runtime = Arc::new(
         crate::boxlite_runtime::initialize_guarded(cfg, owner.clone())
-            .map_err(|_| unavailable())?
+            .map_err(|_| startup_unavailable("sdk_initialization"))?
             .clone(),
     );
     let native = Arc::new(
         NativeRuntime::new(runtime, &paths[0])
-            .map_err(|_| unavailable())?
+            .map_err(|_| startup_unavailable("native_runtime"))?
             .with_execution_guard(client.clone()),
     );
     let p = &cfg.persistence;
@@ -157,9 +164,9 @@ pub(crate) async fn initialize(
         },
     )
     .await
-    .map_err(|_| unavailable())?;
+    .map_err(|_| startup_unavailable("control_engine"))?;
     let dispatcher = snapshot_control::ControlDispatcher::new(engine.clone(), p.max_inflight)
-        .map_err(|_| unavailable())?;
+        .map_err(|_| startup_unavailable("dispatcher"))?;
     let cache_maintenance = engine.start_cache_maintenance();
     let startup = Arc::new(Startup {
         config: p.clone(),
@@ -180,7 +187,7 @@ pub(crate) async fn initialize(
             .engine
             .stop_cache_maintenance(&startup.cache_maintenance)
             .await;
-        return Err(unavailable());
+        return Err(startup_unavailable("singleton_install"));
     }
     tracing::info!(
         runtime_version = RUNTIME_VERSION,
