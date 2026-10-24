@@ -206,6 +206,12 @@ func openSnapshotJournal(root, worker string) (*snapshotJournal, error) {
 				return fail()
 			}
 		}
+		for _, op := range j.state.Operations {
+			current, found := j.state.Operations[j.state.Current[op.SessionID]]
+			if !found || (op.Kind != "cancel" && op.Generation > current.Generation) || (op.Kind == "delete" && current.ID != op.ID) {
+				return fail()
+			}
+		}
 	} else if !os.IsNotExist(err) {
 		return fail()
 	} else if j.persist(j.state) != nil {
@@ -314,17 +320,17 @@ func (j *snapshotJournal) Claim(op snapshotOperation) error {
 		}
 		if id := state.Current[op.SessionID]; id != "" {
 			prior := state.Operations[id]
-			if (prior.Kind == "delete" && op.Kind != "delete") || (prior.Kind != "cancel" && !snapshotSpecEqual(prior.Spec, op.Spec)) {
+			if prior.Kind == "delete" || (prior.Kind != "cancel" && !snapshotSpecEqual(prior.Spec, op.Spec)) {
 				return errSnapshotJournalConflict
 			}
 			if !((op.Kind == "delete" && prior.Generation < op.Generation) || (prior.active() && op.Kind == "source" && prior.Generation == op.Generation) || (prior.terminal() && op.Kind == "target" && prior.Generation < op.Generation)) {
 				return errSnapshotJournalConflict
 			}
 		}
-		// Lower-generation terminal tombstones can be compacted: the current
-		// generation still rejects every delayed control from those generations.
+		// Only empty cancellation tombstones can be discarded here. Missing an
+		// artifact name does not retire native images, roots or export intents.
 		for id, prior := range state.Operations {
-			if prior.SessionID == op.SessionID && prior.Generation < op.Generation && state.Current[op.SessionID] != id && prior.Artifact == "" {
+			if prior.SessionID == op.SessionID && prior.Generation < op.Generation && state.Current[op.SessionID] != id && prior.Kind == "cancel" && prior.Phase == "canceled" {
 				delete(state.Operations, id)
 			}
 		}
@@ -399,9 +405,12 @@ func (j *snapshotJournal) CancelUnknown(id, scope string, generation int64) erro
 		if _, known := state.Operations[id]; known {
 			return errSnapshotJournalConflict
 		}
+		current := state.Operations[state.Current[scope]]
+		if current.Kind == "delete" {
+			return errSnapshotJournalConflict
+		}
 		op := snapshotOperation{ID: id, SessionID: scope, Generation: generation, Kind: "cancel", Phase: "canceled"}
 		state.Operations[id] = op
-		current := state.Operations[state.Current[scope]]
 		if current.ID == "" || current.terminal() && current.Generation < generation {
 			state.Current[scope] = id
 		}

@@ -196,6 +196,9 @@ func (c *snapshotController) execute(ctx context.Context, control *registryv1.Sa
 	if current.ID != "" && current.Generation > control.Generation {
 		return wire.Result{}, errSnapshotJournalConflict
 	}
+	if current.Kind == "delete" && (!known || op.ID != current.ID) {
+		return wire.Result{}, errSnapshotJournalConflict
+	}
 	if known && state.Current[op.SessionID] != op.ID {
 		if op.terminal() && (control.Action == registryv1.SandboxPersistenceControl_INSPECT || control.Action == registryv1.SandboxPersistenceControl_CANCEL || control.Action == registryv1.SandboxPersistenceControl_FINALIZE_SUSPEND) {
 			return snapshotOperationResult(op), nil

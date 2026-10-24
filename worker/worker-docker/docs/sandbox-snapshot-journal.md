@@ -1,6 +1,6 @@
 # Snapshot operation ownership and recovery
 
-The Docker Worker has private journal and session-fencing primitives for filesystem persistence. The [internal lifecycle controller](sandbox-snapshot-controller.md) uses these primitives; startup and authenticated stream integration remain required. The Worker does not yet advertise snapshot support or execute registry lifecycle controls.
+The Docker Worker uses a private journal and session fences for filesystem persistence. With `WORKER_PERSISTENCE_ENABLED=true`, the [lifecycle controller](sandbox-snapshot-controller.md) and independent lease guard are installed before persistence-capable registration and authenticated lifecycle dispatch. Persistence is disabled by default.
 
 ## Durable journal
 
@@ -10,7 +10,13 @@ The versioned JSON state records current session ownership and operation records
 
 Writes create a private temporary file, sync its contents, atomically replace the state file, and sync the parent directory. In-memory state changes only after persistence succeeds. Any write failure disables further decisions for that journal instance. Corrupt, incomplete, incompatible or differently owned state fails startup; it does not become an empty journal. State is limited to 64 MiB. Lifecycle/cache GC remains responsible for retiring artifacts and obsolete records before this limit is reached.
 
-Claims serialize session ownership. Source operations can claim the same generation of an active session; restore targets require a newer generation after prior terminal ownership. Phase updates cannot alter scope, generation, role, restore specification, chosen backend IDs or a known archive. Canceled/finished operations cannot re-enter preparation. Superseded operations cannot mutate the current session. Lower-generation records can be compacted only when they do not retain artifact references; the current generation still rejects delayed controls from them.
+Claims serialize session ownership. Source operations can claim the same generation of an active session; restore targets require a newer generation after prior terminal ownership. Phase updates cannot alter scope, generation, role, restore specification, chosen backend IDs or a known archive. Canceled/finished operations cannot re-enter preparation. Superseded operations cannot mutate the current session.
+
+Only empty `kind=cancel` tombstones below the retained current generation are pruned during a claim. Their schema excludes restore specifications, native IDs, archives, artifacts and lease/staging state, and the newer current generation rejects delayed controls. An empty artifact basename on a regular source/target record does not prove its native image, root or export intent was retired. Those records remain available to native cleanup and restart recovery. Full resource-aware history compaction remains pending; the 64 MiB limit continues to fail closed rather than dropping ownership metadata.
+
+A `deleting` or `deleted` current operation is a permanent stable-session fence. `CancelUnknown` rejects cancellations for that scope even when they carry a higher generation; they cannot replace the deletion with an ordinary cancellation tombstone. Claims cannot replace it with another operation, including a new deletion ID. The controller rejects controls for other operation IDs before native inspection or mutation; setting `purge_session` on a different action or operation does not bypass the fence. Matching deletion inspect/purge retries retain their existing identity and behavior.
+
+Startup validates historical records against the current scope/generation. A deletion record must remain that scope's current operation, and normal resource operations cannot exceed the current generation. Historical empty cancellation records may refer to a future canceled request without becoming current ownership. Inconsistent history fails startup with the original journal retained; it is not rewritten as an empty or reusable session.
 
 ## Local execution and cleanup fences
 
@@ -47,4 +53,4 @@ DOCKER_SNAPSHOT_HELPER_IMAGE='repository@sha256:<pinned-digest>' \
 go test -race ./internal/runner -run '^TestIntegrationSnapshotJournalRestart' -count=1 -v
 ```
 
-This validates local ownership/restart primitives. Public suspend/resume APIs, real two-worker shared-store recovery, BoxLite lifecycle integration and full failure/retention acceptance remain separate required work.
+This validates local ownership/restart primitives. Real Console/S3 local two-Worker recovery and deletion acceptance are described in the [controller documentation](sandbox-snapshot-controller.md#real-console--s3-acceptance); cross-physical-machine and broader failure acceptance remain separate gates. Journal regressions also cover higher-generation unknown cancellation after deletion, reopen, rejection before native I/O, and retention of native cleanup identity when artifact names are empty.

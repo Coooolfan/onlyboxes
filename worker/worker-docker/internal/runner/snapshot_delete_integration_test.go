@@ -261,6 +261,19 @@ func TestIntegrationSnapshotPurgeFencesNativeNameAndSurvivesRestart(t *testing.T
 	if report := controller.Handle(stale); report.Error == nil {
 		t.Fatal("late rollback resurrected a deleted source")
 	}
+	unknown := workerTestControl(registryv1.SandboxPersistenceControl_CANCEL)
+	unknown.ScopedSessionId, unknown.OperationId, unknown.Generation = scope, "future-cancel", 3
+	unknown.PayloadJson = []byte(`{}`)
+	if report := controller.Handle(unknown); report.Error == nil || report.Error.Code != "session_state_conflict" {
+		t.Fatal("higher-generation unknown cancellation bypassed permanent deletion", report.Error)
+	}
+	state, err = journal.Snapshot()
+	if err != nil || state.Current[scope] != deletion || state.Operations[deletion].TombstoneID != marker.TombstoneID {
+		t.Fatal("unknown cancellation changed the durable deletion fence", err)
+	}
+	if err := dockerSnapshotJSON(ctx, &native, "inspect", "--format", "{{json .}}", marker.TombstoneID); err != nil || native.State.Running || !deletionMarker(native, scope, deletion, 2) {
+		t.Fatal("unknown cancellation changed the native deletion fence", err)
+	}
 	next := testSnapshotOperation()
 	next.SessionID = scope
 	next.ID = "future-restore"
