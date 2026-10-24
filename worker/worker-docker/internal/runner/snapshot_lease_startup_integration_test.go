@@ -102,6 +102,54 @@ func snapshotGuardImageFixture(t *testing.T, ctx context.Context, platform strin
 	return image
 }
 
+// OCI indexes can have a runnable engine ID distinct from --platform inspect's
+// config digest. Neither changing the configured pin nor accepting an arbitrary
+// replacement container is necessary to start and reuse the pinned helper.
+func TestIntegrationSnapshotLeaseGuardIndexIdentity(t *testing.T) {
+	image := os.Getenv("DOCKER_SNAPSHOT_LEASE_INDEX_IMAGE")
+	if os.Getenv("DOCKER_INTEGRATION") != "1" || image == "" {
+		t.Skip("requires DOCKER_INTEGRATION=1 and DOCKER_SNAPSHOT_LEASE_INDEX_IMAGE")
+	}
+	if !pinnedLeaseImage(image) {
+		t.Fatal("index fixture must be pinned")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	var server struct{ Os, Arch string }
+	if err := dockerSnapshotJSON(ctx, &server, "version", "--format", "{{json .Server}}"); err != nil {
+		t.Fatal(err)
+	}
+	platform := server.Os + "/" + server.Arch
+	var runnable, selected struct {
+		ID string `json:"Id"`
+	}
+	if dockerSnapshotJSON(ctx, &runnable, "image", "inspect", "--format", "{{json .}}", image) != nil || dockerSnapshotJSON(ctx, &selected, "image", "inspect", "--platform", platform, "--format", "{{json .}}", image) != nil || runnable.ID == selected.ID {
+		t.Fatal("fixture does not exercise distinct index/config identities")
+	}
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	j, err := openSnapshotJournal(root, "index-fixture-"+uuid.NewString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer j.Close()
+	snapshotCleanupLaunchedGuard(t, j.root)
+	client, err := startSnapshotLeaseGuard(ctx, j, image, "/var/run/docker.sock", platform)
+	if err != nil {
+		t.Fatal("pinned index startup failed", err)
+	}
+	state, err := j.Snapshot()
+	if err != nil || state.LeaseGuard == nil || state.LeaseGuard.ImageID != runnable.ID || state.LeaseGuard.ImageRef != image || state.LeaseGuard.StateID == "" {
+		t.Fatal("runnable index identity was not durably pinned", err)
+	}
+	second, err := startSnapshotLeaseGuard(ctx, j, image, "/var/run/docker.sock", platform)
+	if err != nil || second.helperID != client.helperID {
+		t.Fatal("index helper was replaced on reuse", err)
+	}
+}
+
 func TestIntegrationSnapshotLeaseGuardStartupPinsResourcesAndRejectsLoss(t *testing.T) {
 	if os.Getenv("DOCKER_INTEGRATION") != "1" {
 		t.Skip("set DOCKER_INTEGRATION=1")

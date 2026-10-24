@@ -38,6 +38,16 @@ Enabled Workers require `WORKER_SNAPSHOT_LEASE_GUARD_IMAGE`, an already-loaded i
 
 Before creating resources, the Worker writes a random binding token, exact image reference/ID, daemon ID, socket path and derived resource names into its locked journal. It then pins the state volume's creation identity, the helper's immutable container ID and the lease store's persistent random ID. The store identity survives helper restart; resetting an otherwise unchanged volume produces a new ID and cannot silently replace the journal's bound ledger. A lost create reply can discover only the matching token/name/configuration; a confirmed volume or container identity cannot be replaced. Existing probes, unfinished lifecycle ownership, or owner-labeled containers/volumes without the journal binding refuse empty initialization. An older unguarded operation journal is not silently promoted into guarded ownership. A changed daemon, image, mount, volume creation identity or helper container fails startup while preserving resources.
 
+Image binding uses the engine's native runnable image ID from unqualified image inspection, then verifies its OS/architecture against the exact daemon runtime platform. With Docker's containerd image store, `image inspect --platform` can return a selected config digest that is neither a runnable local reference nor `Container.Image`; that digest must not replace the bound runnable ID. Configured references remain digest-pinned, and startup/reconnect still require the same actual helper image and container configuration. An opt-in native regression uses an existing pinned index image whose two inspection identities differ:
+
+```sh
+DOCKER_INTEGRATION=1 \
+DOCKER_SNAPSHOT_LEASE_INDEX_IMAGE='repository@sha256:<index-digest>' \
+go test ./internal/runner -run '^TestIntegrationSnapshotLeaseGuardIndexIdentity$' -count=1 -v
+```
+
+It creates only a unique test helper and state volume, confirms durable identity and warm reuse, then removes those test resources; it leaves the supplied image intact.
+
 The Worker creates a read-only helper with a private `/run` tmpfs, no network, dropped capabilities, `no-new-privileges`, Docker init and the pinned state volume. Startup verifies the actual configuration and observes an unchanged process/restart tuple continuously for ten seconds, then verifies private readiness, Worker ID and daemon ID and rechecks the native tuple. Only then can `Run` install the client and send Hello. The helper remains running across Worker exit; Worker teardown does not remove its lease volume or container. Unexpected deletion of a pinned helper/volume requires operator recovery of that ownership; startup does not create empty replacements.
 
 ## Helper deployment contract

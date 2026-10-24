@@ -162,7 +162,11 @@ func startSnapshotLeaseGuard(ctx context.Context, j *snapshotJournal, image, soc
 			Labels          map[string]string
 		}
 	}
-	if dockerSnapshotJSON(startup, &metadata, "image", "inspect", "--platform", platform, "--format", "{{json .}}", image) != nil || metadata.Os+"/"+metadata.Architecture != platform || metadata.Config.User != "0:0" || !reflect.DeepEqual(metadata.Config.Entrypoint, []string{"/runtime-lease-guard"}) || len(metadata.Config.Cmd) != 0 || metadata.Config.Labels["onlyboxes.component"] != leaseGuardComponent || metadata.Config.Labels["onlyboxes.runtime-lease-guard.schema"] != "2" {
+	// Keep the engine's runnable image identity. With the containerd image
+	// store, --platform can return a config digest that cannot be used as a
+	// create reference and differs from Container.Image. Native-platform
+	// selection is still verified against the daemon's exact runtime platform.
+	if dockerSnapshotJSON(startup, &metadata, "image", "inspect", "--format", "{{json .}}", image) != nil || metadata.Os+"/"+metadata.Architecture != platform || metadata.Config.User != "0:0" || !reflect.DeepEqual(metadata.Config.Entrypoint, []string{"/runtime-lease-guard"}) || len(metadata.Config.Cmd) != 0 || metadata.Config.Labels["onlyboxes.component"] != leaseGuardComponent || metadata.Config.Labels["onlyboxes.runtime-lease-guard.schema"] != "2" {
 		return nil, errSnapshotLeaseUnavailable
 	}
 	state, err := j.Snapshot()
