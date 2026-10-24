@@ -28,6 +28,7 @@ impl Fixture {
             memory_mib: 384,
             cpus: 2.0,
             max_processes: 128,
+            disk_size_gb: None,
             user: String::new(),
             working_dir: String::new(),
             env: BTreeMap::from([("PRIVATE".into(), "private-value".into())]),
@@ -235,6 +236,37 @@ fn immutable_metadata_and_actual_digest_define_the_spec() {
 }
 
 #[test]
+fn disk_capacity_survives_native_and_wire_round_trips() {
+    let mut f = Fixture::new();
+    let original = spec_from_config(&f.config, &f.info).unwrap();
+    assert_eq!(original.disk_size_gb, None);
+    assert!(serde_json::to_value(&original)
+        .unwrap()
+        .get("disk_size_gb")
+        .is_none());
+    for size in [1, 4, 10240] {
+        f.config.options.disk_size_gb = Some(size);
+        f.config.options.sanitize().unwrap();
+        let spec = spec_from_config(&f.config, &f.info).unwrap();
+        assert_eq!(spec.disk_size_gb, Some(size));
+        let encoded = serde_json::to_vec(&spec).unwrap();
+        let restored: RestoreSpec = serde_json::from_slice(&encoded).unwrap();
+        let options = options_for_spec(&restored).unwrap();
+        assert_eq!(options.disk_size_gb, Some(size));
+        assert_eq!(
+            options.advanced.security.resource_limits.max_file_size,
+            f.config
+                .options
+                .advanced
+                .security
+                .resource_limits
+                .max_file_size
+        );
+        assert!(spec != original);
+    }
+}
+
+#[test]
 fn readonly_inspection_does_not_rewrite_native_configuration() {
     let f = Fixture::new();
     let before = fs::read(f.home.join("db/boxlite.db")).unwrap();
@@ -289,7 +321,8 @@ fn unsupported_options_are_rejected_instead_of_silently_lost() {
         |o| o.rootfs = RootfsSpec::RootfsPath("/host/rootfs".into()),
         |o| o.detach = false,
         |o| o.auto_delete = Some(1),
-        |o| o.disk_size_gb = Some(100),
+        |o| o.disk_size_gb = Some(0),
+        |o| o.disk_size_gb = Some(10241),
         |o| o.tty = true,
         |o| o.advanced.privileged = true,
         |o| o.advanced.security.jailer_enabled = false,

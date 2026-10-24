@@ -48,6 +48,12 @@ cargo test --locked --features integration --test integration -- --test-threads=
 
 ## 生命周期接入约束
 
+`WORKER_TERMINAL_EXEC_BOXLITE_DISK_SIZE_GB` 为新 terminal Box 选择稀疏根盘容量；SDK 按 GiB 计量并保留至少基础镜像大小。默认未指定容量时，guest 根文件系统可能不足 1 GiB，即使宿主有充足空间，大文件也会收到 `ENOSPC`。容量随私有 `RestoreSpec.disk_size_gb` 保存并参与归档校验和缓存匹配，恢复按原规格创建；目标 Worker 的新默认值不能改变已有快照的容量。[配置说明](config-file.md)列出范围和未完成的默认值变更验收。
+
+2026-10-25 在 macOS arm64、BoxLite 0.10.7、真实 Console/MinIO 和两个独立 Worker 上，以 4 GiB 根盘完成 1 GiB 随机数据的跨 Worker 验收。配置归档上限 2 GiB、展开上限 8 GiB，开始前检查主机与存储 daemon 至少有 28 GiB 空闲空间。提交归档为 1,112,872,949 字节，17 个持久化分段回执覆盖全部归档。挂起观察耗时 271.02 秒、恢复观察耗时 367.61 秒；源、目标 journal 中容量均为 4 GiB。完整文件哈希、权限、符号链接和最终清理通过，积压归零。[脱敏样本](sandbox-snapshot-s3-sample-2026-10-25.json)保存实际展开量、规格与计时条件。
+
+这是一条新建会话的单次本机链路，采用约一秒操作轮询，未拆分原生处理、上传、回读和下载阶段；不代表跨物理机器、冷缓存、并发、百分位或生产延迟承诺。初始会话失败后的遗留根盘协调和默认容量变更另见配置中的验收边界。
+
 原生 export 会在磁盘复制期间 quiesce，但复制结束会恢复运行中的源实例。平台挂起必须先关闭命令和预览入口、排空执行，再停止所有写入；不能把直接对运行中 Box 调用 `export()` 视为已挂起。当前验收使用停止后的导出，不保留进程或内存。
 
 归档可以在空 home 导入，但目标启动仍需要访问基础镜像 registry。恢复规格必须使用固定平台 digest；不能将可变 tag 的一次成功恢复当作基础镜像一致性的证明。

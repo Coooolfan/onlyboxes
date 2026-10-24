@@ -45,6 +45,13 @@ must echo its delivery request, operation, scoped session, generation and action
 Archive data flows directly between Worker and object storage. These messages do
 not enable public lifecycle APIs or imply a worker implements snapshot export.
 
+The private `sandboxpersistence.RestoreSpec` optionally carries `disk_size_gb`
+for BoxLite root disks. A present value must be 1–10240; omission preserves the
+image-derived default and explicit zero is invalid. The SDK field uses GiB
+(2^30 bytes) despite its `gb` name. Docker specifications reject this field.
+Capacity belongs to the immutable specification and cache identity; restoration
+must retain the saved value rather than substituting a target Worker's default.
+
 See the [Console protocol contract](../../console/docs/sandbox-snapshot-worker-protocol.md)
 for admission, uncertainty and reconciliation requirements.
 

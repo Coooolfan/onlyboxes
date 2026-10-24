@@ -33,6 +33,8 @@ python_exec_max_processes = 128
 # terminalExec capability.
 terminal_exec_boxlite_image = "coolfan1024/onlyboxes-runtime:default"
 terminal_exec_memory_mib = 256
+# 0 keeps the image-derived root disk. Positive values select sparse GiB.
+terminal_exec_boxlite_disk_size_gb = 0
 terminal_exec_cpus = 1
 terminal_exec_max_processes = 128
 terminal_lease_min_sec = 60

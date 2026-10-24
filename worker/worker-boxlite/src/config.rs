@@ -54,6 +54,7 @@ pub struct Config {
     pub python_exec_max_processes: u32,
     pub terminal_exec_image: String,
     pub terminal_exec_memory_mib: u32,
+    pub terminal_exec_disk_size_gb: Option<u64>,
     pub terminal_exec_cpus: u32,
     pub terminal_exec_max_processes: u32,
     pub terminal_lease_min_sec: u32,
@@ -81,6 +82,12 @@ pub struct Config {
 impl Config {
     pub fn load() -> Self {
         let src = Source::load();
+        let terminal_exec_disk_size_gb =
+            parse_terminal_disk_size(&src.get("WORKER_TERMINAL_EXEC_BOXLITE_DISK_SIZE_GB"))
+                .unwrap_or_else(|message| {
+                    eprintln!("{message}");
+                    std::process::exit(1);
+                });
 
         let heartbeat_interval_sec = src.positive_u64(
             "WORKER_HEARTBEAT_INTERVAL_SEC",
@@ -149,6 +156,7 @@ impl Config {
                 "WORKER_TERMINAL_EXEC_MEMORY_MIB",
                 DEFAULT_TERMINAL_EXEC_MEMORY_MIB,
             ),
+            terminal_exec_disk_size_gb,
             terminal_exec_cpus: src
                 .positive_u32("WORKER_TERMINAL_EXEC_CPUS", DEFAULT_TERMINAL_EXEC_CPUS),
             terminal_exec_max_processes: src.positive_u32(
@@ -239,6 +247,17 @@ fn parse_labels(raw: &str) -> BTreeMap<String, String> {
     labels
 }
 
+fn parse_terminal_disk_size(value: &str) -> Result<Option<u64>, &'static str> {
+    let value = value.trim();
+    if value.is_empty() || value == "0" {
+        return Ok(None);
+    }
+    match value.parse::<u64>() {
+        Ok(n @ 1..=10240) => Ok(Some(n)),
+        _ => Err("WORKER_TERMINAL_EXEC_BOXLITE_DISK_SIZE_GB must be 0 or 1..10240"),
+    }
+}
+
 fn default_call_timeout_sec(heartbeat_interval_sec: u64) -> u64 {
     let heartbeat = heartbeat_interval_sec.max(DEFAULT_HEARTBEAT_INTERVAL_SEC);
     (heartbeat * 5).div_ceil(2)
@@ -317,5 +336,16 @@ mod tests {
             parse_proxy_ports("8080, 3000,invalid,8080"),
             vec![3000, 8080]
         );
+    }
+}
+#[test]
+fn terminal_disk_capacity_is_explicit_and_rejects_invalid_values() {
+    for value in ["", " ", "0"] {
+        assert_eq!(parse_terminal_disk_size(value), Ok(None));
+    }
+    assert_eq!(parse_terminal_disk_size(" 4 "), Ok(Some(4)));
+    assert_eq!(parse_terminal_disk_size("10240"), Ok(Some(10240)));
+    for value in ["-1", "10241", "invalid", "18446744073709551616"] {
+        assert!(parse_terminal_disk_size(value).is_err());
     }
 }

@@ -38,6 +38,7 @@ secret = "..."
 console_grpc_target = "console.internal:50051"
 heartbeat_interval_sec = 5
 terminal_exec_boxlite_image = "coolfan1024/onlyboxes-runtime:default"
+terminal_exec_boxlite_disk_size_gb = 0
 terminal_max_active_sessions = 0
 proxy_enabled = true
 proxy_listen_addr = "0.0.0.0:8091"
@@ -48,5 +49,11 @@ log_level = "info"
 [labels]
 region = "cn"
 ```
+
+`terminal_exec_boxlite_disk_size_gb` maps to `WORKER_TERMINAL_EXEC_BOXLITE_DISK_SIZE_GB`. Omission or `0` uses the SDK's image-derived root disk, which may provide substantially less than 1 GiB of writable space. Values 1–10240 request a sparse root disk in GiB; the SDK keeps at least the base image size. Invalid values fail startup. This affects newly created terminal Boxes; it does not resize existing sessions or pythonExec Boxes. Virtual capacity does not reserve host disk space.
+
+Filesystem snapshots save the optional capacity in their private restore specification. Native inspection, archive validation and cache matching include it. Resume uses that recorded value even when the target Worker's configured default differs; changing a snapshot's requested capacity is rejected. Omitted capacity remains omitted for existing image-sized snapshots. Account archive quotas, staging budgets and actual free space continue to apply independently.
+
+Changing this default while a Worker retains initial-boot records without lifecycle adoption is not yet an accepted transition. A local write-full → ordinary-session logical deletion → default change from image-sized to 4 GiB → restart did not reconnect one Worker and reported ownership/companion unavailable. The exact rejecting stage remains unresolved; its native data, journal and lease records remain retained. Successful new-session snapshot cycles do not establish recovery of that state, and startup must not replace its bound home with an empty one.
 
 Filesystem persistence is opt-in through `[persistence] enabled = true` / `WORKER_PERSISTENCE_ENABLED=true`. It requires a dedicated `boxlite_home`, separate journal, already provisioned external lease state/control directories, a pinned store UUID, and a separate pythonExec home. Malformed persistence values fail startup. See [persistence configuration and deployment](sandbox-snapshot-deployment.md) for the complete field table, storage budget calculation, companion provisioning and remaining acceptance boundaries. `config.example.toml` includes all defaults.

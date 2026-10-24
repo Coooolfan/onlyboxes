@@ -914,6 +914,7 @@ mod tests {
             python_exec_max_processes: 128,
             terminal_exec_image: "coolfan1024/onlyboxes-runtime:default".to_owned(),
             terminal_exec_memory_mib: 256,
+            terminal_exec_disk_size_gb: None,
             terminal_exec_cpus: 1,
             terminal_exec_max_processes: 128,
             terminal_lease_min_sec: 60,

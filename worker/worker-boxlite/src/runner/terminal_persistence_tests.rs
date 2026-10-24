@@ -249,6 +249,7 @@ fn spec() -> RestoreSpec {
         memory_mib: 256,
         cpus: 1.0,
         max_processes: 128,
+        disk_size_gb: None,
         user: String::new(),
         working_dir: String::new(),
         env: BTreeMap::new(),

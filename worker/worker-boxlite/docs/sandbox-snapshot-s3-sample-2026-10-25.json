@@ -1,0 +1,39 @@
+{
+  "date_asia_shanghai": "2026-10-25",
+  "scope": "local Console/MinIO and two native BoxLite Workers on macOS arm64",
+  "runtime_version": "0.10.7",
+  "platform": "linux/arm64",
+  "image": "python@sha256:739ba32ae445e8d58f3d90feb85f83bebc8346f8dd280fa1eb5848f4ff1ed163",
+  "conditions": {
+    "configured_root_disk_gib": 4,
+    "worker_memory_mib": 256,
+    "worker_cpus": 1.0,
+    "integrity_mode": "readback",
+    "multipart_part_size_bytes": 67108864,
+    "archive_limit_bytes": 2147483648,
+    "expanded_limit_bytes": 8589934592,
+    "required_headroom_bytes": 30064771072,
+    "cache_state": "fresh Worker homes; registry/SDK/host caches uncontrolled",
+    "poll_interval_seconds": 1,
+    "timing": "API submission through observed terminal status; excludes seeding, Worker offline wait, content probe and final deletion"
+  },
+  "sample": {
+    "payload_bytes": 1073741824,
+    "archive_bytes": 1112872949,
+    "expanded_bytes": 5506400256,
+    "archive_sha256": "90f0e6f6cfa28f6315c7201c1ed41fec4f3304890df0dab8d44f809f80fefe2c",
+    "payload_sha256": "9613080fb9595d5df78e816b4f90888e14662ea51e2b4056830dbe0cc58c46ec",
+    "suspend_observed_seconds": 271.019045875,
+    "resume_observed_seconds": 367.611879708,
+    "committed_multipart": {
+      "parts": 17,
+      "size_bytes": 1112872949
+    },
+    "source_and_target_disk_size_gb": 4,
+    "cleanup_backlog": {
+      "pending_sessions": 0,
+      "pending_workers": 0,
+      "pending_snapshots": 0
+    }
+  }
+}

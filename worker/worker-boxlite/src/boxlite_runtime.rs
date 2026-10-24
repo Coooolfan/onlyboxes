@@ -604,6 +604,7 @@ fn build_terminal_exec_box_options(cfg: &Config) -> BoxOptions {
     let mut options = BoxOptions {
         cpus: Some(resolve_cpus(cfg.terminal_exec_cpus)),
         memory_mib: Some(cfg.terminal_exec_memory_mib),
+        disk_size_gb: cfg.terminal_exec_disk_size_gb,
         rootfs: RootfsSpec::Image(cfg.terminal_exec_image.clone()),
         auto_delete: Some(0),
         detach: true,
@@ -926,6 +927,7 @@ mod tests {
             python_exec_max_processes: 128,
             terminal_exec_image: "coolfan1024/onlyboxes-runtime:default".to_owned(),
             terminal_exec_memory_mib: 256,
+            terminal_exec_disk_size_gb: None,
             terminal_exec_cpus: 1,
             terminal_exec_max_processes: 128,
             terminal_lease_min_sec: 60,
@@ -960,6 +962,13 @@ mod tests {
         assert_eq!(options.auto_delete, Some(0));
         assert!(options.ports.is_empty());
         assert!(options.detach);
+        assert_eq!(options.disk_size_gb, None);
+        let mut configured = cfg;
+        configured.terminal_exec_disk_size_gb = Some(4);
+        assert_eq!(
+            build_terminal_exec_box_options(&configured).disk_size_gb,
+            Some(4)
+        );
     }
 
     #[test]
@@ -984,6 +993,7 @@ mod tests {
             python_exec_max_processes: 128,
             terminal_exec_image: "coolfan1024/onlyboxes-runtime:default".to_owned(),
             terminal_exec_memory_mib: 256,
+            terminal_exec_disk_size_gb: None,
             terminal_exec_cpus: 1,
             terminal_exec_max_processes: 128,
             terminal_lease_min_sec: 60,

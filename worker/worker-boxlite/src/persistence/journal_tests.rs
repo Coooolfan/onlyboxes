@@ -49,6 +49,7 @@ fn source() -> Operation {
             memory_mib: 512,
             cpus: 1.0,
             max_processes: 128,
+            disk_size_gb: None,
             user: "root".into(),
             working_dir: "/workspace".into(),
             env: BTreeMap::from([("PRIVATE".into(), "private-value".into())]),

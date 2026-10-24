@@ -28,6 +28,8 @@ pub struct RestoreSpec {
     pub memory_mib: i64,
     pub cpus: f64,
     pub max_processes: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disk_size_gb: Option<u64>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub user: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -63,6 +65,7 @@ impl RestoreSpec {
             || self.cpus > u8::MAX as f64
             || self.cpus.fract() != 0.0
             || self.max_processes <= 0
+            || self.disk_size_gb.is_some_and(|n| !(1..=10240).contains(&n))
             || serde_json::to_vec(self).map_err(|_| Error::Conflict)?.len() > 32 << 10
         {
             return Err(Error::Conflict);

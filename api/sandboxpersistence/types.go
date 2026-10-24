@@ -26,6 +26,7 @@ type RestoreSpec struct {
 	MemoryMiB      int64             `json:"memory_mib"`
 	CPUs           float64           `json:"cpus"`
 	MaxProcesses   int32             `json:"max_processes"`
+	DiskSizeGB     *int64            `json:"disk_size_gb,omitempty"`
 	User           string            `json:"user,omitempty"`
 	WorkingDir     string            `json:"working_dir,omitempty"`
 	Env            map[string]string `json:"env,omitempty"`
@@ -46,6 +47,9 @@ func (s RestoreSpec) Validate() error {
 	}
 	if (s.Runtime == "docker" && s.Format != DockerRootFSFormat) || (s.Runtime == "boxlite" && s.Format != BoxliteArchiveFormat) {
 		return errors.New("snapshot format is not supported by its runtime")
+	}
+	if s.DiskSizeGB != nil && (s.Runtime != "boxlite" || *s.DiskSizeGB < 1 || *s.DiskSizeGB > 10240) {
+		return errors.New("disk_size_gb requires BoxLite and a value from 1 to 10240")
 	}
 	encoded, err := json.Marshal(s)
 	if err != nil || len(encoded) > 32<<10 {

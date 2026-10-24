@@ -28,6 +28,7 @@ impl Fixture {
             memory_mib: 384,
             cpus: 2.0,
             max_processes: 128,
+            disk_size_gb: None,
             user: String::new(),
             working_dir: String::new(),
             env: BTreeMap::from([("PRIVATE".into(), "private-env".into())]),
@@ -282,6 +283,25 @@ fn target_host_profile_is_rebuilt_and_other_overrides_are_rejected() {
     decoded.extend([0; 1024]);
     let mut input = f.encoded("unsafe-host", &decoded);
     assert!(describe_archive(&mut input, &f.spec, SCOPE, "snapshot-1", limits()).is_err());
+}
+
+#[test]
+fn disk_capacity_cannot_be_changed_by_restore_spec() {
+    let f = Fixture::new();
+    let (mut input, descriptor) = f.canonical();
+    let mut expected = f.spec.clone();
+    expected.disk_size_gb = Some(4);
+    let mut output = f.file("different-capacity");
+    assert!(prepare_import_archive(
+        &mut input,
+        &mut output,
+        &expected,
+        SCOPE,
+        &descriptor,
+        limits()
+    )
+    .is_err());
+    assert_eq!(output.metadata().unwrap().len(), 0);
 }
 
 #[test]

@@ -420,6 +420,7 @@ fn spec_from_config_with_pin(
         memory_mib: info.memory_mib as i64,
         cpus: info.cpus as f64,
         max_processes,
+        disk_size_gb: options.disk_size_gb,
         user: options.user.clone().unwrap_or_default(),
         working_dir: options.working_dir.clone().unwrap_or_default(),
         env,
@@ -451,6 +452,7 @@ pub(crate) fn options_for_spec(spec: &RestoreSpec) -> Result<BoxOptions> {
     let mut options = BoxOptions {
         cpus: Some(spec.cpus as u8),
         memory_mib: Some(spec.memory_mib as u32),
+        disk_size_gb: spec.disk_size_gb,
         rootfs: RootfsSpec::Image(spec.image.clone()),
         auto_delete: Some(0),
         detach: true,
