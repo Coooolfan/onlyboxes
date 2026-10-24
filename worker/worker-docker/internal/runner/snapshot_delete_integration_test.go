@@ -182,6 +182,10 @@ func TestIntegrationSnapshotPurgeFencesNativeNameAndSurvivesRestart(t *testing.T
 	if marker.Kind != "delete" || marker.Phase != "deleted" || marker.TombstoneID == "" || marker.TombstoneID == described.InstanceID {
 		t.Fatal("deletion did not retain an independent native fence", marker)
 	}
+	retired := state.Operations[operation]
+	if state.Version != 2 || marker.SpecSHA256 == "" || retired.Phase != "retired" || retired.SpecSHA256 == "" {
+		t.Fatal("native deletion was acknowledged before history compaction")
+	}
 	var old bytesBuffer
 	if err := dockerSnapshotCLI(ctx, nil, &old, "ps", "-a", "--no-trunc", "--filter", "id="+described.InstanceID, "--format", "{{.ID}}"); err != nil || old.Len() != 0 {
 		t.Fatal("source writable layer survived purge", err)
@@ -206,6 +210,12 @@ func TestIntegrationSnapshotPurgeFencesNativeNameAndSurvivesRestart(t *testing.T
 	}
 	if result, err := manager.Execute(ctx, terminalExecRequest{SessionID: other, Command: "cat /root/data"}); err != nil || result.Stdout != "preserve-until-delete" {
 		t.Fatal("purge touched another session", err)
+	}
+	lateArchive := controller.artifact(retired.Artifact)
+	for _, path := range []string{orphan, lateArchive, lateArchive + ".partial"} {
+		if err := os.WriteFile(path, []byte("late-private-export"), 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	// Workers sharing one daemon observe the same global deletion marker; an
@@ -252,6 +262,14 @@ func TestIntegrationSnapshotPurgeFencesNativeNameAndSurvivesRestart(t *testing.T
 		t.Fatal("deletion could not recover", err)
 	}
 	snapshotControllerCall(t, controller, scope, deletion, 2, registryv1.SandboxPersistenceControl_CANCEL, wire.Control{PurgeSession: true, Spec: described.Spec})
+	for _, path := range []string{orphan, lateArchive, lateArchive + ".partial"} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatal("compacted cleanup lost a late export/artifact locator", err)
+		}
+	}
+	if data, err := os.ReadFile(unrelated); err != nil || string(data) != "another-session" {
+		t.Fatal("compacted cleanup removed an unrelated export", err)
+	}
 	stale := workerTestControl(registryv1.SandboxPersistenceControl_CANCEL)
 	stale.ScopedSessionId = scope
 	stale.OperationId = operation

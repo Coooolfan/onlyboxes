@@ -318,7 +318,11 @@ func (c *snapshotController) reconcileDeletedOperation(op snapshotOperation, now
 		return
 	}
 	next[op.ID] = now.Add(time.Minute)
-	body, _ := json.Marshal(wire.Control{PurgeSession: true, Spec: &op.Spec})
+	payload := wire.Control{PurgeSession: true}
+	if op.SpecSHA256 == "" {
+		payload.Spec = &op.Spec
+	}
+	body, _ := json.Marshal(payload)
 	run := c.admit("", &registryv1.SandboxPersistenceControl{RequestId: uuid.NewString(), OperationId: op.ID, ScopedSessionId: op.SessionID, Generation: op.Generation, Action: registryv1.SandboxPersistenceControl_CANCEL, DeadlineUnixMs: now.Add(10 * time.Second).UnixMilli(), PayloadJson: body})
 	go run()
 }

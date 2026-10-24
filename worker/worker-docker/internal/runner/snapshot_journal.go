@@ -32,6 +32,7 @@ type snapshotOperation struct {
 	Kind               string           `json:"kind"`
 	Phase              string           `json:"phase"`
 	Spec               wire.RestoreSpec `json:"restore_spec"`
+	SpecSHA256         string           `json:"restore_spec_sha256,omitempty"`
 	Archive            *wire.Archive    `json:"archive,omitempty"`
 	Artifact           string           `json:"artifact,omitempty"`
 	TombstoneID        string           `json:"tombstone_id,omitempty"`
@@ -48,11 +49,14 @@ type snapshotOperation struct {
 
 func (o snapshotOperation) active() bool { return o.Phase == "active" || o.Phase == "rolled_back" }
 func (o snapshotOperation) terminal() bool {
-	return o.Phase == "finalized" || o.Phase == "canceled" || o.Phase == "deleted"
+	return o.Phase == "finalized" || o.Phase == "canceled" || o.Phase == "deleted" || o.Phase == "retired"
 }
 func (o snapshotOperation) held() bool { return !o.active() && !o.terminal() }
 
 func (o snapshotOperation) validate() error {
+	if o.SpecSHA256 != "" {
+		return validateCompactedSnapshotOperation(o)
+	}
 	if o.Kind == "cancel" {
 		empty, _ := json.Marshal(wire.RestoreSpec{})
 		spec, _ := json.Marshal(o.Spec)
@@ -81,7 +85,7 @@ func (o snapshotOperation) validate() error {
 	if !allowed[o.Phase] || (o.Archive != nil && (o.Archive.Validate() != nil || o.Archive.Format != o.Spec.Format)) || (o.ContainerID != "" && !dockerSnapshotDigest.MatchString("sha256:"+o.ContainerID)) || (o.ImageID != "" && !dockerSnapshotDigest.MatchString(o.ImageID)) {
 		return errSnapshotJournalConflict
 	}
-	if o.Artifact != "" && (filepath.Base(o.Artifact) != o.Artifact || o.Artifact == "." || strings.ContainsAny(o.Artifact, "/\\\x00")) {
+	if o.Artifact != "" && (filepath.Base(o.Artifact) != o.Artifact || o.Artifact == "." || o.Artifact == ".." || strings.ContainsAny(o.Artifact, "/\\\x00")) {
 		return errSnapshotJournalConflict
 	}
 	if o.Committed && (o.Kind != "source" || o.Archive == nil) {
@@ -179,7 +183,7 @@ func openSnapshotJournal(root, worker string) (*snapshotJournal, error) {
 			err = errSnapshotJournalUnavailable
 		}
 		_ = file.Close()
-		if err != nil || j.state.Version != 1 || j.state.WorkerID != worker || j.state.Operations == nil || j.state.Current == nil {
+		if err != nil || (j.state.Version != 1 && j.state.Version != 2) || j.state.WorkerID != worker || j.state.Operations == nil || j.state.Current == nil {
 			return fail()
 		}
 		if j.state.LeaseGuard != nil && !j.state.LeaseGuard.valid(worker) {
@@ -209,6 +213,9 @@ func openSnapshotJournal(root, worker string) (*snapshotJournal, error) {
 		for _, op := range j.state.Operations {
 			current, found := j.state.Operations[j.state.Current[op.SessionID]]
 			if !found || (op.Kind != "cancel" && op.Generation > current.Generation) || (op.Kind == "delete" && current.ID != op.ID) {
+				return fail()
+			}
+			if op.SpecSHA256 != "" && (j.state.Version != 2 || current.Kind != "delete" || current.Phase != "deleted" || (op.Phase == "retired" && (current.ID == op.ID || current.Generation <= op.Generation))) {
 				return fail()
 			}
 		}
@@ -287,6 +294,7 @@ func (j *snapshotJournal) transaction(change func(*snapshotJournalState) error) 
 	if err := change(&next); err != nil {
 		return err
 	}
+	compactDeletedSnapshotHistory(&next)
 	if err := j.persist(next); err != nil {
 		j.poisoned = true
 		return errSnapshotJournalUnavailable
@@ -364,7 +372,10 @@ func (j *snapshotJournal) Update(id string, change func(*snapshotOperation) erro
 		if err := change(&next); err != nil {
 			return err
 		}
-		if next.validate() != nil || next.ID != prior.ID || next.SessionID != prior.SessionID || next.Generation != prior.Generation || next.Kind != prior.Kind || next.StagingBytes != prior.StagingBytes || !snapshotSpecEqual(next.Spec, prior.Spec) || (prior.TombstoneID != "" && next.TombstoneID != prior.TombstoneID) || (prior.ContainerID != "" && next.ContainerID != prior.ContainerID) || (prior.ImageID != "" && next.ImageID != prior.ImageID) || (prior.Artifact != "" && next.Artifact != prior.Artifact) || (prior.Committed && !next.Committed) || (prior.Archive != nil && (next.Archive == nil || *next.Archive != *prior.Archive)) {
+		if prior.SpecSHA256 != "" && next.ContainerID != prior.ContainerID {
+			return errSnapshotJournalConflict
+		}
+		if next.validate() != nil || next.ID != prior.ID || next.SessionID != prior.SessionID || next.Generation != prior.Generation || next.Kind != prior.Kind || next.StagingBytes != prior.StagingBytes || next.SpecSHA256 != prior.SpecSHA256 || !snapshotSpecEqual(next.Spec, prior.Spec) || (prior.TombstoneID != "" && next.TombstoneID != prior.TombstoneID) || (prior.ContainerID != "" && next.ContainerID != prior.ContainerID) || (prior.ImageID != "" && next.ImageID != prior.ImageID) || (prior.Artifact != "" && next.Artifact != prior.Artifact) || (prior.Committed && !next.Committed) || (prior.Archive != nil && (next.Archive == nil || *next.Archive != *prior.Archive)) {
 			return errSnapshotJournalConflict
 		}
 		if !snapshotPhaseTransition(prior.Kind, prior.Phase, next.Phase) {

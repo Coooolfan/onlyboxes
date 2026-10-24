@@ -329,7 +329,7 @@ func snapshotOperationResult(op snapshotOperation) wire.Result {
 		phase = "running"
 	}
 	result := wire.Result{State: phase, Archive: op.Archive, InstanceID: op.ContainerID, LeaseExpiresUnixMS: op.LeaseExpiresUnixMS}
-	if op.Kind != "cancel" {
+	if op.Kind != "cancel" && op.SpecSHA256 == "" {
 		spec := op.Spec
 		result.Spec = &spec
 	}

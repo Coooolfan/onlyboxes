@@ -14,17 +14,18 @@ import (
 // purgeSession is authorized only after Console has tombstoned the stable
 // session and advanced generation. It writes that fence before native removal.
 func (c *snapshotController) purgeSession(ctx context.Context, control *registryv1.SandboxPersistenceControl, p wire.Control, state snapshotJournalState) (wire.Result, error) {
-	if control.Generation <= 1 || p.Spec == nil || p.Spec.Validate() != nil || p.Spec.Runtime != "docker" || p.Rollback || p.Delete {
+	if control.Generation <= 1 || p.Rollback || p.Delete {
 		return wire.Result{}, errSnapshotJournalConflict
 	}
 	current := state.Operations[state.Current[control.ScopedSessionId]]
+	validSpec := p.Spec != nil && p.Spec.Validate() == nil && p.Spec.Runtime == "docker"
 	if current.ID == control.OperationId {
-		if current.Kind != "delete" || !snapshotSpecEqual(current.Spec, *p.Spec) {
+		if current.Kind != "delete" || (p.Spec == nil && (current.Phase != "deleted" || current.SpecSHA256 == "")) || (p.Spec != nil && (!validSpec || !current.matchesSpec(*p.Spec))) {
 			return wire.Result{}, errSnapshotJournalConflict
 		}
 
 	} else {
-		if current.ID != "" && (current.Generation >= control.Generation || (current.Kind != "cancel" && !snapshotSpecEqual(current.Spec, *p.Spec))) {
+		if !validSpec || (current.ID != "" && (current.Generation >= control.Generation || (current.Kind != "cancel" && !current.matchesSpec(*p.Spec)))) {
 			return wire.Result{}, errSnapshotJournalConflict
 		}
 		id := current.ContainerID
