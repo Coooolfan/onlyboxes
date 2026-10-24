@@ -32,8 +32,8 @@ def main():
     if args.return_to_source and scenario != "cycle":
         parser.error("--return-to-source requires --scenario cycle")
     if args.runtime == "docker":
-        if scenario not in ("cycle", "same-worker", "no-worker", "worker-restart"):
-            parser.error("Docker currently supports cycle, same-worker, no-worker and source worker-restart acceptance")
+        if scenario not in ("cycle", "same-worker", "no-worker", "worker-restart", "console-restart"):
+            parser.error("Docker target worker-start-restart acceptance is not yet supported")
         dev.SERVICES = ("worker-docker-snapshot", "worker-docker-snapshot-peer")
         spec = importlib.util.spec_from_file_location("docker_acceptance", Path(dev.__file__).with_name("dev-docker-snapshot.py"))
         docker = importlib.util.module_from_spec(spec)
@@ -317,6 +317,15 @@ def main():
         if not native or kind in restarted:
             return
         eligible = (kind == "suspend" and native.get("phase") == "preparing" and native.get("source_stop_confirmed")) or (kind == "resume" and native.get("phase") == "importing" and native.get("start_attempted") and native.get("box_id"))
+        guardian = None
+        if args.runtime == "docker":
+            instance = docker.inspect("container", native["box_id"]) if native.get("box_id") else None
+            state = (instance or {}).get("State", {})
+            eligible = (
+                (kind == "suspend" and native.get("kind") == "source" and native.get("phase") == "preparing" and state.get("Paused")) or
+                (kind == "resume" and native.get("kind") == "target" and native.get("phase") == "importing" and native.get("verified") and not native.get("box_id") and not native.get("image_id")))
+            if eligible:
+                guardian = lease_identity(node)
         if not eligible:
             return
         services("stop", "console")
@@ -335,6 +344,10 @@ def main():
         dev.request_json(opener, "POST", "/api/v1/auth/login", {"username": fields["username"], "password": fields["password"]})
         if status not in ("pending", "running"):
             raise RuntimeError("operation completed before Console interruption; fault window was not exercised")
+        if guardian is not None:
+            if lease_identity(node) != guardian:
+                raise RuntimeError("Console restart replaced the Docker independent guard")
+            record("console-restart-guard-" + kind, guard_binding_sha256=guardian["binding_sha256"], unchanged=True)
         replay_status, replay = api("POST", base + "/" + kind + query, parameters, request_key)
         if replay_status == 202:
             if replay.get("operation_id") != operation_id:
@@ -389,8 +402,11 @@ def main():
                     if kind not in restarted:
                         raise RuntimeError("operation completed without exercising the intended restart window")
                     _, native = native_operation(result["operation_id"])
-                    if not native or native["box_id"] != restarted[kind][1]:
+                    expected_instance = restarted[kind][1]
+                    if not native or not native.get("box_id") or (expected_instance and native["box_id"] != expected_instance):
                         raise RuntimeError("recovery replaced the selected native instance")
+                    if args.runtime == "docker" and kind == "resume" and native.get("phase") != "active":
+                        raise RuntimeError("Docker restore did not activate the original target operation")
                     record("restart-reconciled-" + kind, operation_id=result["operation_id"], instance_id=native["box_id"])
                 return operation
             time.sleep(0.05 if fault_expected and kind not in restarted else 1)

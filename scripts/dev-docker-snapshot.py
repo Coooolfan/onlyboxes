@@ -28,7 +28,7 @@ p=j/'journal.json'
 assert p.is_file() and not p.is_symlink() and p.stat().st_size<=64*1024*1024 and p.stat().st_mode&0o077==0 and p.stat().st_uid==os.geteuid()
 s=json.loads(p.read_text()); assert s['worker_id']==sys.argv[3]
 op=s['operations'].get(sys.argv[2]); guard=s.get('lease_guard')
-view=None if op is None else {k:op.get(k) for k in ('operation_id','scoped_session_id','generation','kind','phase','container_id','image_id')}
+view=None if op is None else {k:op.get(k) for k in ('operation_id','scoped_session_id','generation','kind','phase','container_id','image_id','verified')}
 if view is not None:
     view['box_id']=view['container_id']; name=op.get('artifact') or ''; assert not name or Path(name).name==name
     prefix='snapshot-'+hashlib.sha256(sys.argv[2].encode()).hexdigest()+'-'
