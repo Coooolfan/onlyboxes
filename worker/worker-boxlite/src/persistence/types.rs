@@ -214,6 +214,10 @@ pub struct Operation {
     pub phase: Phase,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub restore_spec: Option<RestoreSpec>,
+    /// Only the private on-disk journal codec uses references. Runtime views
+    /// are hydrated before validation and must never carry this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restore_spec_sha256: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub archive: Option<Archive>,
     #[serde(default)]
@@ -277,7 +281,8 @@ impl Operation {
     }
 
     pub fn validate(&self) -> Result<()> {
-        if !valid_id(&self.operation_id)
+        if self.restore_spec_sha256.is_some()
+            || !valid_id(&self.operation_id)
             || !valid_scope(&self.scoped_session_id)
             || self.generation <= 0
             || self.staging_bytes < 0

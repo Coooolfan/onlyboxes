@@ -13,7 +13,7 @@ use super::{artifact_name, Error, Kind, Operation, Phase};
 type Result<T> = std::result::Result<T, Error>;
 const MAX_JOURNAL_BYTES: usize = 64 << 20;
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct JournalState {
     pub version: u32,
@@ -388,6 +388,7 @@ impl Journal {
                 kind: Kind::Cancel,
                 phase: Phase::Canceled,
                 restore_spec: None,
+                restore_spec_sha256: None,
                 archive: None,
                 artifact: String::new(),
                 box_id: String::new(),
@@ -535,7 +536,7 @@ pub(super) fn read_private(path: &Path, limit: usize) -> Result<Option<Vec<u8>>>
 }
 
 fn persist_state(root: &Path, state: &JournalState) -> Result<()> {
-    let data = serde_json::to_vec(state).map_err(|_| Error::Unavailable)?;
+    let data = codec::encode(state)?;
     if data.len() > MAX_JOURNAL_BYTES {
         return Err(Error::Unavailable);
     }
@@ -562,3 +563,6 @@ mod tests;
 
 #[path = "journal_artifacts.rs"]
 mod artifacts;
+
+#[path = "journal_codec.rs"]
+mod codec;

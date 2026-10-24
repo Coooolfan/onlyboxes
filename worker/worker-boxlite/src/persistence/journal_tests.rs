@@ -6,6 +6,9 @@ use std::os::unix::fs::symlink;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Barrier};
 
+#[path = "journal_codec_tests.rs"]
+mod codec_tests;
+
 struct Root(PathBuf);
 impl Root {
     fn new() -> Self {
@@ -36,6 +39,7 @@ fn source() -> Operation {
         generation: 1,
         kind: Kind::Source,
         phase: Phase::Preparing,
+        restore_spec_sha256: None,
         restore_spec: Some(RestoreSpec {
             runtime: "boxlite".into(),
             runtime_version: "0.10.7".into(),

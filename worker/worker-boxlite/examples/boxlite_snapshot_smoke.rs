@@ -191,6 +191,7 @@ async fn phase(phase: &str, root: &Path, image: &str) -> Result<()> {
                 generation: 1,
                 kind: Kind::Source,
                 phase: Phase::Preparing,
+                restore_spec_sha256: None,
                 restore_spec: Some(inspected.spec),
                 archive: None,
                 artifact: String::new(),
@@ -408,6 +409,7 @@ async fn phase(phase: &str, root: &Path, image: &str) -> Result<()> {
                 generation: 2,
                 kind: Kind::Target,
                 phase: Phase::Prepared,
+                restore_spec_sha256: None,
                 restore_spec: Some(spec.clone()),
                 archive: Some(descriptor.clone()),
                 artifact: worker_boxlite::persistence::artifact_name(
