@@ -228,6 +228,21 @@ func (c *SnapshotCoordinator) resume(ctx context.Context, op sandboxsnapshot.Ope
 	if session.State == sandboxsnapshot.Running && op.Phase == "activating" {
 		// A lost activation response or Console restart must finish the existing
 		// instance, rather than constructing another one from the same snapshot.
+		c.mu.Lock()
+		reservation := c.reservations[op.ID]
+		c.mu.Unlock()
+		if reservation != nil && c.service.getSession(op.TargetWorkerID) != reservation.session {
+			// The old connection cannot deliver controls. Confirm this exact
+			// durable target on its replacement before retiring the old charge.
+			observed, err := c.call(ctx, op, op.TargetWorkerID, registryv1.SandboxPersistenceControl_INSPECT, wire.Control{}, true)
+			if err != nil {
+				return err
+			}
+			if (observed.State != "ready" && observed.State != "active") || !validSnapshotInstance(observed, session.Spec) {
+				return sandboxsnapshot.ErrConflict
+			}
+			c.releaseReservation(op.ID)
+		}
 		if time.Now().UnixMilli() >= op.DeadlineUnixMS {
 			result, err := c.call(ctx, op, op.TargetWorkerID, registryv1.SandboxPersistenceControl_INSPECT, wire.Control{}, true)
 			if err != nil {

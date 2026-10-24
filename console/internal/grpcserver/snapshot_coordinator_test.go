@@ -550,6 +550,110 @@ func TestSnapshotCoordinatorRestartInspectsReadyTargetBeforeActivation(t *testin
 	}
 }
 
+func TestSnapshotCoordinatorWorkerReconnectDuringActivation(t *testing.T) {
+	svc, a, b, _ := setupSnapshotRouteTest(t)
+	startCoordinatorActor(t, a, []byte("snapshot"))
+	target := startCoordinatorActor(t, b, nil)
+	block := make(chan struct{})
+	defer close(block)
+	target.blocks[registryv1.SandboxPersistenceControl_ACTIVATE] = block
+	cfg := coordinatorTestConfig()
+	cfg.OperationTimeout = time.Minute
+	c := startCoordinatorTest(t, svc, newCoordinatorObjects(t), cfg)
+	_, op, err := c.Begin(context.Background(), "owner", "session", sandboxsnapshot.Suspend, "suspend", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitCoordinatorOperation(t, c, op, "completed")
+	a.lastHeartbeatUnixMs.Store(time.Now().Add(-time.Minute).UnixMilli())
+	_, wake, err := c.Begin(context.Background(), "owner", "session", sandboxsnapshot.Resume, "resume", 0, 300)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitCoordinatorActorState(t, target, wake.ID, "active")
+	// Keep the coordinator and its old reservation alive. Only the Worker
+	// connection is replaced after activation took effect but before its reply.
+	b.close(errors.New("worker disconnected"))
+	connection := addSnapshotTestWorker(t, svc, snapshotTestHello("worker-b"))
+	recovered := startCoordinatorActor(t, connection, nil)
+	recovered.mu.Lock()
+	recovered.states[wake.ID] = "active"
+	recovered.mu.Unlock()
+	waitCoordinatorOperation(t, c, wake, "completed")
+	recovered.mu.Lock()
+	defer recovered.mu.Unlock()
+	if recovered.boots != 0 || recovered.counts[registryv1.SandboxPersistenceControl_RESTORE] != 0 || recovered.counts[registryv1.SandboxPersistenceControl_INSPECT] < 1 || recovered.counts[registryv1.SandboxPersistenceControl_ACTIVATE] < 1 || recovered.counts[registryv1.SandboxPersistenceControl_CANCEL] != 0 {
+		t.Fatalf("reconnected activation did not reconcile the existing target: boots=%d controls=%v", recovered.boots, recovered.counts)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.reservations[wake.ID] != nil {
+		t.Fatal("old connection reservation retained after successful activation")
+	}
+}
+
+func TestSnapshotCoordinatorActivationReconnectRetainsReservationWithoutLiveTarget(t *testing.T) {
+	for _, state := range []string{"missing", "prepared", "canceled", "wrong-spec", "expired"} {
+		t.Run(state, func(t *testing.T) {
+			svc, a, b, _ := setupSnapshotRouteTest(t)
+			startCoordinatorActor(t, a, []byte("snapshot"))
+			target := startCoordinatorActor(t, b, nil)
+			block := make(chan struct{})
+			defer close(block)
+			target.blocks[registryv1.SandboxPersistenceControl_ACTIVATE] = block
+			c := startCoordinatorTest(t, svc, newCoordinatorObjects(t), coordinatorTestConfig())
+			_, op, err := c.Begin(context.Background(), "owner", "session", sandboxsnapshot.Suspend, "suspend", 0, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			waitCoordinatorOperation(t, c, op, "completed")
+			a.lastHeartbeatUnixMs.Store(time.Now().Add(-time.Minute).UnixMilli())
+			_, wake, err := c.Begin(context.Background(), "owner", "session", sandboxsnapshot.Resume, "resume", 0, 300)
+			if err != nil {
+				t.Fatal(err)
+			}
+			waitCoordinatorActorState(t, target, wake.ID, "active")
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			if err := c.Stop(ctx); err != nil {
+				t.Fatal(err)
+			}
+			b.close(errors.New("worker disconnected"))
+			connection := addSnapshotTestWorker(t, svc, snapshotTestHello("worker-b"))
+			recovered := startCoordinatorActor(t, connection, nil)
+			recovered.states[wake.ID] = state
+			if state == "wrong-spec" {
+				recovered.states[wake.ID] = "active"
+				recovered.spec.CPUs++
+			}
+			if state == "expired" {
+				recovered.states[wake.ID] = "active"
+				recovered.lease = time.Now().Add(-time.Second).UnixMilli()
+			}
+			current, err := c.repository.Operation(ctx, wake.OwnerID, wake.SessionID, wake.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			session, err := c.repository.Session(ctx, wake.OwnerID, wake.SessionID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := c.resume(ctx, current, session, snapshotParameters{LeaseTTLSec: 300}); !errors.Is(err, sandboxsnapshot.ErrConflict) {
+				t.Fatalf("invalid target accepted: %v", err)
+			}
+			reservation := c.reservations[wake.ID]
+			if reservation == nil || reservation.released {
+				t.Fatal("invalid target evidence released the old reservation")
+			}
+			recovered.mu.Lock()
+			defer recovered.mu.Unlock()
+			if recovered.counts[registryv1.SandboxPersistenceControl_INSPECT] != 1 || recovered.counts[registryv1.SandboxPersistenceControl_ACTIVATE] != 0 || recovered.counts[registryv1.SandboxPersistenceControl_RESTORE] != 0 {
+				t.Fatalf("invalid target caused execution: %v", recovered.counts)
+			}
+		})
+	}
+}
+
 func TestSnapshotCoordinatorResumeWaitsForCommittedSourceCleanup(t *testing.T) {
 	svc, a, _, _ := setupSnapshotRouteTest(t)
 	source := startCoordinatorActor(t, a, []byte("snapshot"))

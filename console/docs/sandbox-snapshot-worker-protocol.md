@@ -14,6 +14,8 @@ The original worker can be preferred, but any compatible available worker can be
 
 Reservations are pinned to the authenticated connection that admitted them. A replacement connection cannot inherit their controls. After reconnect, durable operations must be inspected and worker-local reservations reconciled before placement can be retried. `Release` is idempotent and is only appropriate after confirmed cleanup or ownership handoff; a timeout never releases the reservation automatically.
 
+If a target reconnects while its committed route is awaiting activation acknowledgement, Console inspects the same operation and generation on the replacement connection. Only a matching, live `ready` or `active` target permits retiring the old connection reservation and retrying activation. The operation continues with its existing instance; it does not import or boot another target. Missing or invalid target evidence retains ownership for reconciliation.
+
 ## Control and report envelopes
 
 `SandboxPersistenceControl` carries a new request ID per delivery, durable operation ID, account-scoped session ID, generation, action, absolute deadline and bounded JSON metadata. Supported actions are prepare snapshot, upload, remote verification, finalize suspend, prepare restore, restore, activate, cancel and inspect. Metadata may contain private restore specifications and scoped transfer grants; it must not be logged. Archive bytes do not belong in these frames.
