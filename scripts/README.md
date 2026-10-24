@@ -101,7 +101,7 @@ scripts/dev.sh stop sandbox-persistence-docker
 
 `worker-docker-snapshot` 和 `worker-docker-snapshot-peer` 分别拥有 Worker 凭据、journal 和生产独立租约守护器。Linux Worker 二进制和静态守护器由 `dev.sh` 自动编译；守护器镜像按二进制 SHA-256 固定标签，避免重复构建替换正在使用的镜像索引。Linux 使用原生 Worker 进程和本机私有 journal；macOS 要求 OrbStack 已安装且已启动，Worker 通过 Docker CLI 镜像运行在当前 Linux daemon 网络中，各自使用独立 journal 卷。可用 `ONLYBOXES_DEV_DOCKER_WORKER_IMAGE` 指定已有 CLI 镜像；运行时固定为其实际 image ID。Console 连接主机默认 macOS 为 `host.docker.internal`、Linux 为 `127.0.0.1`，可用 `ONLYBOXES_DEV_DOCKER_CONSOLE_HOST` 覆盖。不要将该入口指向远程 daemon：本机二进制挂载、同机 Console/S3 网络和 daemon 本机卷是这一开发入口的部署前提。
 
-Docker 验收支持 `cycle`、`same-worker`、`no-worker`、`console-restart`、源导出中的 `worker-restart` 和目标启动后的 `worker-start-restart`。Docker 结果写入私有 `snapshot-e2e-docker-<scenario>-result.json`。两个 runtime 的验收应使用各自独立会话、配置与状态目录；脚本在创建沙盒前拒绝所选两个 Worker 之外仍有在线 Worker 的 Console。
+Docker 验收支持 `cycle`、`same-worker`、`no-worker`、`console-restart`、源导出中的 `worker-restart`、目标启动后的 `worker-start-restart`，以及 `cache-corrupt`、`cache-miss`。Docker 结果写入私有 `snapshot-e2e-docker-<scenario>-result.json`。两个 runtime 的验收应使用各自独立会话、配置与状态目录；脚本在创建沙盒前拒绝所选两个 Worker 之外仍有在线 Worker 的 Console。
 
 `python3 scripts/tests/snapshot_e2e.py --runtime docker --scenario worker-restart` 要求命中真实导出窗口：journal 中原 source 仍为 `preparing`，原不可变容器已经 paused，且带同一 source/operation 标签的导出 helper 正在运行。随后仅终止 Worker，核对其实际退出回执，确认冻结源和 journal 仍在原操作上、独立 guard 的完整绑定摘要/实例/状态卷身份不变，再重启同一 Worker。原 operation ID 与源容器 ID 必须完成挂起；同节点唤醒后校验文件内容、权限和符号链接，永久删除后等待积压归零，并只读检查原源容器、该操作的归档/导出临时文件和导出 helper 已移除。窗口已经错过会失败，不能把普通完成后的重启记作中断恢复通过。
 
@@ -112,6 +112,12 @@ Docker 验收支持 `cycle`、`same-worker`、`no-worker`、`console-restart`、
 Docker 在启动前已登记 guard 租约；此场景验证带有效租约的已启动目标继续完成恢复。BoxLite 的同名场景验证未绑定 writer 的未知启动结果取消及新实例重试，两者的断言分别对应各自启动协议。事件故障注入由验收脚本内部托管，最多等待 120 秒，事件不匹配或未出现时不发送 SIGKILL；脚本退出时终止自己持有的事件观察进程。Worker 的启动、恢复及其他服务编排仍使用 `dev.sh`，普通 `crash` 行为不变。
 
 该 Docker 目标中断场景已在 macOS arm64、OrbStack / Docker 29.4.0 与真实 Console/MinIO 上通过，两个 Worker 分别作为目标均命中已启动且仍为 `importing` 的窗口；包含容器、归档与 guard 租约清理检查的入口也已通过。Linux 原生 Worker 与跨物理机器仍需独立部署验收。
+
+`python3 scripts/tests/snapshot_e2e.py --runtime docker --scenario cache-corrupt` 在共享快照已提交、源操作已 `finalized`、原容器已移除后，校验本地归档完整 SHA-256，再只翻转该归档的一个字节并保持大小不变。`--scenario cache-miss` 在相同前提下移除这一可选缓存。两个场景均先让另一 Worker 离线，再要求原节点恢复；目标归档必须重新匹配共享快照的 SHA-256、大小和 snapshot ID，会话的最新快照引用保持不变，文件内容、权限与符号链接校验通过，最后删除并等待清理积压归零。BoxLite 尚未接入这两个入口，会在创建会话前拒绝。
+
+缓存故障工具只接受已远程校验、已提交、缓存尚未到期的精确源操作，拒绝未提交/冻结源、错误 Worker/快照、符号链接、路径越界或多链接文件。macOS 上先核对绑定的卷身份，journal 以只读卷挂载，只有归档子目录可写；工具不修改 journal、恢复规格、共享对象或 guard 记录。缓存未保留、已损坏或源容器仍存在时，不能把故障未命中的运行计为通过。
+
+两个缓存故障场景已在 macOS arm64、OrbStack / Docker 29.4.0 与真实 Console/MinIO 上通过，同节点恢复后的归档与文件校验通过，删除后清理积压归零。该结果不证明 BoxLite、Linux 原生 Worker 或恢复期间缓存淘汰竞争的验收通过。
 
 `--return-to-source` 可与任一 runtime 的 `cycle` 组合：源 A 首次快照后离线，B 从共享存储恢复并新增、修改、删除文件，随后再次快照；无 Worker 报错后，先只读核对 A 的旧缓存文件仍存在、完整 SHA-256 匹配首次快照且 snapshot ID 不同于最新快照，再只启动 A，验证 A 使用最新快照恢复，旧缓存不会遮蔽 B 的修改，最后启动 B 并等待清理。例如 `python3 scripts/tests/snapshot_e2e.py --runtime docker --return-to-source`。缓存已淘汰或关闭时会明确失败，不能据此声称覆盖了旧缓存窗口。该结果文件增加 `-return-to-source` 后缀。
 

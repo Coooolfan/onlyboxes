@@ -148,6 +148,28 @@ def snapshot_evidence(service, values, operation):
     return json.loads(result.stdout)
 
 
+def cache_probe(service, values, operation, action, snapshot, sha256):
+    root = dev.STATE / service / hashlib.sha256(values["WORKER_ID"].encode()).hexdigest()[:32]
+    fixture = Path(__file__).with_name("tests") / "snapshot_cache_fixture.py"
+    arguments = [operation, values["WORKER_ID"], action, snapshot, sha256]
+    if sys.platform.startswith("linux"):
+        command = [sys.executable, str(fixture), str(root / "journal"), *arguments]
+    else:
+        binding = retained_volume(service, values, root)
+        image = os.environ.get("WORKER_TERMINAL_EXEC_DOCKER_IMAGE", "")
+        if "@sha256:" not in image:
+            dev.fail("Docker 缓存验收需要固定镜像 digest")
+        command = ["docker", "run", "--rm", "--read-only", "--network", "none", "--user", "0:0", "--mount",
+                   "type=volume,source=" + binding["Name"] + ",target=/snapshot-state,readonly"]
+        if action in ("corrupt", "evict"):
+            command += ["--mount", "type=volume,source=" + binding["Name"] + ",volume-subpath=journal/artifacts,target=/snapshot-state/journal/artifacts"]
+        command += ["--entrypoint", "python3", image, "-c", fixture.read_text(), "/snapshot-state/journal", *arguments]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=120)
+    if result.returncode:
+        dev.fail("Docker 指定操作的缓存验收失败，保留现场")
+    return json.loads(result.stdout)
+
+
 def start_event(raw, operation, worker):
     if len(raw) > 16384 or not raw.endswith("\n"):
         dev.fail("Docker 启动事件帧异常")

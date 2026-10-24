@@ -26,11 +26,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime", choices=("boxlite", "docker"), default="boxlite")
     parser.add_argument("--return-to-source", action="store_true", help="after cross-worker mutation and no-worker failure, restore onto the original worker with its older cache")
-    parser.add_argument("--scenario", choices=("cycle", "same-worker", "no-worker", "console-restart", "worker-restart", "worker-start-restart"), default="cycle")
+    parser.add_argument("--scenario", choices=("cycle", "same-worker", "no-worker", "console-restart", "worker-restart", "worker-start-restart", "cache-corrupt", "cache-miss"), default="cycle")
     args = parser.parse_args()
     scenario = args.scenario
     if args.return_to_source and scenario != "cycle":
         parser.error("--return-to-source requires --scenario cycle")
+    if scenario.startswith("cache-") and args.runtime != "docker":
+        parser.error("cache-corrupt/cache-miss currently require --runtime docker")
     if args.runtime == "docker":
         dev.SERVICES = ("worker-docker-snapshot", "worker-docker-snapshot-peer")
         spec = importlib.util.spec_from_file_location("docker_acceptance", Path(dev.__file__).with_name("dev-docker-snapshot.py"))
@@ -539,13 +541,37 @@ print(json.dumps({'snapshot_id':archive['snapshot_id'],'sha256':digest.hexdigest
     suspended = session()
     if suspended["lifecycle_state"] != "suspended" or suspended["worker_id"] is not None or not suspended["persistence"]["latest_snapshot"]:
         raise RuntimeError("snapshot was not durably suspended")
-    if scenario in ("same-worker", "console-restart", "worker-restart", "worker-start-restart"):
+    if scenario in ("same-worker", "console-restart", "worker-restart", "worker-start-restart", "cache-corrupt", "cache-miss"):
         stopped_peer = None
-        if args.runtime == "docker" and scenario == "worker-start-restart":
+        cache_fault = scenario in ("cache-corrupt", "cache-miss")
+        if args.runtime == "docker" and (scenario == "worker-start-restart" or cache_fault):
             stopped_peer = next(node for node in nodes if node != source)
             services("stop", nodes[stopped_peer])
             offline(stopped_peer)
-        lifecycle("resume")
+        if cache_fault:
+            _, native = native_operation(original_suspend["operation_id"])
+            if not native or native.get("phase") != "finalized" or not native.get("box_id"):
+                raise RuntimeError("cache fault requires the exact finalized source operation")
+            roots = dev.run(["docker", "ps", "-a", "--no-trunc", "--filter", "id=" + native["box_id"], "--format", "{{.ID}}"])
+            if roots:
+                raise RuntimeError("source container still exists; refusing cache fault injection")
+            latest = suspended["persistence"]["latest_snapshot"]
+            def cache_probe(operation_id, action):
+                return docker.cache_probe(nodes[source], {"WORKER_ID":source}, operation_id, action, latest["snapshot_id"], latest["sha256"])
+            injected = cache_probe(original_suspend["operation_id"], "corrupt" if scenario == "cache-corrupt" else "evict")
+            if scenario == "cache-corrupt" and injected.get("valid") is not False:
+                raise RuntimeError("source cache corruption was not confirmed")
+            if scenario == "cache-miss" and injected.get("present") is not False:
+                raise RuntimeError("source cache eviction was not confirmed")
+            record("cache-fault-injected", scenario=scenario, source_removed=True, **injected)
+        restored = lifecycle("resume")
+        if cache_fault:
+            if session()["persistence"]["latest_snapshot"] != latest:
+                raise RuntimeError("cache fallback changed the committed snapshot reference")
+            valid = cache_probe(restored["operation_id"], "target-valid")
+            if valid.get("valid") is not True:
+                raise RuntimeError("restored target lacks the verified committed archive")
+            record("cache-fallback-verified", **valid, snapshot_retained=True)
         verify("same-worker", source)
         if stopped_peer:
             services("start", nodes[stopped_peer])
