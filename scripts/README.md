@@ -72,6 +72,8 @@ Worker 凭据和运行参数使用独立文件 `scripts/.dev/<worker>.env`，由
 
 `sandbox-persistence` 组合服务启动本地 S3、Console 和两个独立 BoxLite Worker。每个 Worker 有独立的 SDK home、journal、租约账本和 `boxlite-lease-guard` 进程。两个 Worker 运行在同一物理机器，用于验证跨 Worker 调度；跨物理机器和 Linux BoxLite VM 仍需单独部署验收。
 
+单独执行 `stop worker-boxlite` / `restart worker-boxlite`（含 `worker-boxlite-peer`）只停止或重启 Worker，保留独立守护器及服务 epoch。`start` 会先确保守护器已运行。需要停止整组服务时使用 `stop sandbox-persistence`；也可显式指定 `worker-boxlite-lease` / `worker-boxlite-peer-lease`。守护器自身重启会改变服务身份，已有受保护会话目前会拒绝自动恢复；重新启动组合服务不等于已有会话已完成恢复。不得删除 journal 或重写守护器身份来跳过该边界。
+
 BoxLite 守护器就绪通过私有 Unix `ping` 核对协议版本、请求 nonce、Worker/store/epoch 身份和实际服务进程；守护器管理进程还要求回执 PID 匹配自己持有、尚未回收的子进程。只有这些核对通过且子进程仍在运行，才固定首次 store ID 并报告就绪。残留 socket、其他进程的回执、旧 nonce、错误身份或损坏响应均不作为就绪证据。Worker 同样等待匹配的实际就绪回执，Rust 启动路径继续独立校验绑定与执行许可。
 
 本机管理进程先安装信号转发，再创建独立会话中的子进程。创建过程中收到停止请求时，已创建的精确子进程会收到停止信号并被等待；请求先于创建到达时不再创建子进程。不会按进程名/PID 查询结果或进程组发送停止信号，也不因等待过久强制丢弃尚未确认的原生结果。守护器在就绪前退出会报告实际 `returncode`；服务管道保留原始失败退出码，不让日志 `tee` 的成功覆盖服务失败。`start` 仍立即返回，只表示启动指令已提交。

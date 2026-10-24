@@ -243,5 +243,47 @@ class ServiceReadinessTests(unittest.TestCase):
                 self.assertEqual((root/"fixture.log").read_text(), "fixture\n")
 
 
+class ServiceSelectionTests(unittest.TestCase):
+    def actions(self, *arguments):
+        source = (Path(dev.__file__).parent / "dev.sh").read_text()
+        declarations = next(line for line in source.splitlines() if line.startswith("ALL_SERVICES=("))
+        functions = []
+        for name in ("is_valid_service", "resolve_services", "cmd_start", "cmd_stop", "cmd_restart"):
+            start = source.index(name + "() {")
+            functions.append(source[start:source.index("\n}\n", start)+3])
+        # Exercise the real shell dispatch and expansion, with no tmux/services.
+        harness = declarations + "\n" + "\n".join(functions) + """
+require_tmux() { :; }
+ensure_session() { :; }
+cleanup_bootstrap() { :; }
+session_exists() { return 1; }
+sleep() { :; }
+start_service() { printf 'ACTION start %s\\n' "$1"; }
+stop_service() { printf 'ACTION stop %s\\n' "$1"; }
+die() { exit 2; }
+PREVIEW_HELPER=true
+command="$1"
+shift
+"cmd_$command" "$@"
+"""
+        result = subprocess.run(["bash", "-euc", harness, "fixture", *arguments], capture_output=True, text=True, check=True)
+        return [line.removeprefix("ACTION ") for line in result.stdout.splitlines() if line.startswith("ACTION ")]
+
+    def test_worker_stop_and_restart_preserve_the_independent_companion(self):
+        for worker in ("worker-boxlite", "worker-boxlite-peer"):
+            with self.subTest(worker=worker):
+                self.assertEqual(self.actions("start", worker), [f"start {worker}-lease", f"start {worker}"])
+                self.assertEqual(self.actions("stop", worker), [f"stop {worker}"])
+                self.assertEqual(self.actions("restart", worker), [f"stop {worker}", f"start {worker}-lease", f"start {worker}"])
+
+    def test_explicit_companion_and_group_selection_still_operate_on_companions(self):
+        self.assertEqual(self.actions("restart", "worker-boxlite-lease"), ["stop worker-boxlite-lease", "start worker-boxlite-lease"])
+        self.assertEqual(self.actions("stop", "sandbox-persistence"), [
+            "stop worker-boxlite-peer", "stop worker-boxlite-peer-lease", "stop worker-boxlite", "stop worker-boxlite-lease", "stop console", "stop snapshot-store"])
+        self.assertEqual(self.actions("start", "worker-boxlite", "worker-boxlite", "worker-boxlite-lease"), ["start worker-boxlite-lease", "start worker-boxlite"])
+        self.assertIn("stop worker-boxlite-lease", self.actions("stop"))
+        self.assertIn("stop worker-boxlite-peer-lease", self.actions("stop"))
+
+
 if __name__ == "__main__":
     unittest.main()

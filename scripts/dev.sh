@@ -136,8 +136,8 @@ is_tmux_service() {
 
 # public-preview 是 console / worker-docker / nginx 的组合别名。
 resolve_services() {
-    local empty_set="$1" svc requested="" expanded=""
-    shift
+    local empty_set="$1" action="$2" svc requested="" expanded=""
+    shift 2
     if [ "$#" -eq 0 ]; then
         if [ "$empty_set" = "all" ]; then
             requested="${ALL_SERVICES[*]}"
@@ -151,7 +151,12 @@ resolve_services() {
         case "$svc" in
             sandbox-persistence) expanded+=" snapshot-store console worker-boxlite-lease worker-boxlite worker-boxlite-peer-lease worker-boxlite-peer"; continue ;;
             sandbox-persistence-docker) expanded+=" snapshot-store console worker-docker-snapshot worker-docker-snapshot-peer"; continue ;;
-            worker-boxlite | worker-boxlite-peer) expanded+=" $svc-lease $svc"; continue ;;
+            worker-boxlite | worker-boxlite-peer)
+                # A Worker restart must retain the independent service epoch.
+                if [ "$action" = "start" ]; then expanded+=" $svc-lease"; fi
+                expanded+=" $svc"
+                continue
+                ;;
         esac
         if [ "$svc" = "public-preview" ]; then
             expanded+=" console worker-docker nginx"
@@ -334,7 +339,7 @@ stop_service() {
 cmd_start() {
     require_tmux
     local services
-    services=$(resolve_services default "$@")
+    services=$(resolve_services default start "$@")
     ensure_session
     while IFS= read -r svc; do
         start_service "$svc"
@@ -347,7 +352,7 @@ cmd_start() {
 cmd_stop() {
     require_tmux
     local services
-    services=$(resolve_services all "$@")
+    services=$(resolve_services all stop "$@")
 
     # 逆依赖顺序停止：Nginx → Worker →应用服务。
     while IFS= read -r svc; do
@@ -365,7 +370,7 @@ cmd_stop() {
 
 cmd_restart() {
     local services
-    services="$(resolve_services default "$@")"
+    services="$(resolve_services default restart "$@")"
     # shellcheck disable=SC2086
     cmd_stop $services
     sleep 1
