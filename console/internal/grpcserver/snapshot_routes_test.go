@@ -4,19 +4,34 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	registryv1 "github.com/onlyboxes/onlyboxes/api/gen/go/registry/v1"
 	"github.com/onlyboxes/onlyboxes/console/internal/objectstore"
+	"github.com/onlyboxes/onlyboxes/console/internal/persistence"
+	"github.com/onlyboxes/onlyboxes/console/internal/registry"
 	"github.com/onlyboxes/onlyboxes/console/internal/sandboxsnapshot"
-	"github.com/onlyboxes/onlyboxes/console/internal/testutil/registrytest"
 )
 
 func setupSnapshotRouteTest(t *testing.T) (*RegistryService, *activeSession, *activeSession, string) {
 	t.Helper()
-	svc := NewRegistryService(registrytest.NewStore(t), nil, 5, 15, time.Minute)
+	// Canceling an in-flight SQLite call can discard its connection. A real
+	// file preserves the database across that event, as Console deployment does.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	db, err := persistence.Open(ctx, persistence.Options{Path: filepath.Join(t.TempDir(), "console.db"), BusyTimeoutMS: 5000, HashKey: "test-hash-key", TaskRetentionDay: 30})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	store, err := registry.NewStoreWithPersistence(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := NewRegistryService(store, nil, 5, 15, time.Minute)
 	svc.proxyEnabled = true
 	hello := snapshotTestHello("worker-a")
 	hello.Capabilities = append(hello.Capabilities, &registryv1.CapabilityDeclaration{Name: taskCapabilityTerminalResource}, &registryv1.CapabilityDeclaration{Name: taskCapabilityTerminalLeaseRenew})
