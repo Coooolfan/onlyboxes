@@ -29,6 +29,8 @@ Worker 通过 `persistence.enabled` 显式开启文件系统快照。在取得�
 
 SDK home 和 journal 建议使用本机 SSD。暂存预留按最大归档预算的两倍，加展开预算，再增加 20% 余量计算；展开预算还必须覆盖 qcow 虚拟容量，不能只按 guest 当前已写入文件大小配置。例如 `512 MiB` 归档、`48 GiB` 展开预算约需要 `58.8 GiB` 的预留，能放入默认 `64 GiB`；增大并发前应相应增加本地空间和额度。本地缓存只减少共享归档下载，不降低共享提交或完整校验要求。
 
+启用持久化后，生产 Worker 初始化时立即检查可回收归档缓存，此后每 30 秒按 TTL/LRU 和缓存预算独立清扫。无用户请求或 Console 断开时仍会执行；`cache_max_bytes=0` 同时关闭复用并回收已有可淘汰副本。它复用归档锁和文件 I/O 并发限制，跳过持有锁的文件，保护未提交源和未激活目标。退出等待已接受清扫与阻塞文件 I/O 完成。错误记录脱敏的待清理警告并在后续轮次重试；该周期不是硬清理时限，也不负责原生磁盘、未登记孤儿或 journal 历史压缩。无需新增 API、协议或配置，详见[同节点归档缓存](sandbox-snapshot-control.md#同节点归档缓存)。
+
 ```toml
 boxlite_home = "/var/lib/onlyboxes/terminal-home"
 
@@ -85,6 +87,8 @@ Worker 在 journal 的 `execution-store.json` 固定 home/journal 配对、store
 ### 真实 Console / S3 验收与循环快照
 
 2026-10-23 在 macOS arm64、BoxLite 0.10.7、真实 Console、MinIO 和两个独立 Worker 进程上完成多轮快照/恢复。首次快照完成并清理源实例后停止源 Worker 及其守护器，另一 Worker 从共享归档创建新实例，保持同一 session ID，文件 SHA-256、640 权限和符号链接一致。恢复后新增文件、修改内容和删除文件，再次快照及同节点恢复保留这些变化；第三轮挂起时停止所有 Worker，异步操作报告 `no_worker` 并保留原快照，重新上线后恢复成功。永久删除后的会话、Worker 和快照清理积压归零。复现入口见 [scripts 本机验收](../../../scripts/README.md#本地沙箱持久化验收)。
+
+启用周期缓存清扫的生产 Worker 也已通过 `--runtime boxlite --return-to-source` 的真实 Console/S3 循环：源节点有效旧缓存仍存在且完整 SHA-256 匹配，最新快照具有不同 snapshot ID；其他 Worker 的新增、修改、删除操作在回到源节点后完整保留。同 Worker 恢复、所有 Worker 离线时的异步 `no_worker`、重新上线恢复及永久删除后的零积压检查均通过。Rust 测试单独覆盖无新请求的周期回收、锁竞争、错误重试和退出等待；真实 runner/独立守护器/VM 验收覆盖周期任务所在生产启动与退出路径。
 
 两个 Worker 仍在同一物理宿主，不能据此声称跨物理机器或 Linux BoxLite VM 验收通过。宿主重启和未知启动结果的协调、未登记孤儿扫描及账本维护也仍需完成。
 

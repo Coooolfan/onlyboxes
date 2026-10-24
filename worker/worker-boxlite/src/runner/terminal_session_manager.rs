@@ -5090,4 +5090,6 @@ use persistence::state_recovery_allowed;
 pub(crate) use persistence::ProxyPermit;
 
 #[allow(unused_imports)]
-pub(crate) use persistence::native_control::{NativeControlConfig, NativeControlEngine};
+pub(crate) use persistence::native_control::{
+    CacheMaintenance, NativeControlConfig, NativeControlEngine,
+};

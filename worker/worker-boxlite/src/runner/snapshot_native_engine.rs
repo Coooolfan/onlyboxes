@@ -14,6 +14,7 @@ use worker_boxlite::persistence::{
 
 #[path = "snapshot_cache_engine.rs"]
 mod cache;
+pub(crate) use cache::CacheMaintenance;
 #[path = "snapshot_target_engine.rs"]
 mod target;
 

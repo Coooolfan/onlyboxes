@@ -157,6 +157,7 @@ pub async fn shutdown() {
             tracing::warn!("sandbox lifecycle dispatcher could not confirm shutdown");
         }
     }
+    persistence_startup::stop_cache_maintenance().await;
     shutdown_shared_terminal_sessions().await;
     // A drained SDK start may have completed after the first emergency scan.
     // Retained journal/executable evidence still selects its exact writer.

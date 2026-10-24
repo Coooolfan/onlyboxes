@@ -8,7 +8,9 @@ use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
-use terminal_session_manager::{NativeControlConfig, NativeControlEngine, TerminalSessionManager};
+use terminal_session_manager::{
+    CacheMaintenance, NativeControlConfig, NativeControlEngine, TerminalSessionManager,
+};
 use worker_boxlite::persistence::{
     guest_platform, ExecutionLeaseLedger, HostProcess, LeaseGuardClient, NativeRuntime,
     RuntimeHomeGuard, ARCHIVE_FORMAT, RUNTIME_VERSION,
@@ -25,6 +27,7 @@ pub(crate) struct Startup {
     engine: Arc<NativeControlEngine>,
     native: Arc<NativeRuntime>,
     dispatcher: Arc<snapshot_control::ControlDispatcher>,
+    cache_maintenance: CacheMaintenance,
 }
 fn unavailable() -> RunnerError {
     RunnerError::Message("BoxLite persistence ownership or companion is unavailable".into())
@@ -157,6 +160,7 @@ pub(crate) async fn initialize(
     .map_err(|_| unavailable())?;
     let dispatcher = snapshot_control::ControlDispatcher::new(engine.clone(), p.max_inflight)
         .map_err(|_| unavailable())?;
+    let cache_maintenance = engine.start_cache_maintenance();
     let startup = Arc::new(Startup {
         config: p.clone(),
         home: cfg.boxlite_home.clone(),
@@ -167,9 +171,17 @@ pub(crate) async fn initialize(
         engine,
         native,
         dispatcher: dispatcher.clone(),
+        cache_maintenance,
     });
-    snapshot_control::install_dispatcher(dispatcher).map_err(|_| unavailable())?;
-    SHARED.set(startup.clone()).map_err(|_| unavailable())?;
+    if snapshot_control::install_dispatcher(dispatcher).is_err()
+        || SHARED.set(startup.clone()).is_err()
+    {
+        let _ = startup
+            .engine
+            .stop_cache_maintenance(&startup.cache_maintenance)
+            .await;
+        return Err(unavailable());
+    }
     tracing::info!(
         runtime_version = RUNTIME_VERSION,
         max_inflight = p.max_inflight,
@@ -261,6 +273,19 @@ pub(crate) fn usage(cfg: &Config) -> Result<Option<SandboxPersistenceUsage>, Run
 pub(crate) fn request_shutdown_writer_stops() {
     if let Some(context) = SHARED.get() {
         context.request_writer_stops();
+    }
+}
+
+pub(crate) async fn stop_cache_maintenance() {
+    if let Some(context) = SHARED.get() {
+        if context
+            .engine
+            .stop_cache_maintenance(&context.cache_maintenance)
+            .await
+            .is_err()
+        {
+            tracing::warn!("snapshot cache maintenance could not confirm shutdown");
+        }
     }
 }
 

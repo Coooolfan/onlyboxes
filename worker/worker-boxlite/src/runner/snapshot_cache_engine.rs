@@ -2,6 +2,63 @@
 use super::*;
 use std::path::PathBuf;
 
+/// Optional archive maintenance has no native or execution authority. Stop
+/// cancels future work and joins an accepted sweep, including blocking I/O.
+pub(crate) struct CacheMaintenance {
+    cancel: CancellationToken,
+    task: Mutex<Option<tokio::task::JoinHandle<()>>>,
+}
+
+impl CacheMaintenance {
+    fn spawn<F, Work>(period: Duration, mut sweep: F) -> Self
+    where
+        F: FnMut(CancellationToken) -> Work + Send + 'static,
+        Work: std::future::Future<Output = Outcome<()>> + Send + 'static,
+    {
+        let cancel = CancellationToken::new();
+        let token = cancel.clone();
+        let task = tokio::spawn(async move {
+            let mut ticks = tokio::time::interval(period);
+            ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = token.cancelled() => return,
+                    _ = ticks.tick() => (),
+                }
+                // Do not select cancellation against accepted file work: its
+                // archive locks and I/O slots must remain owned until it ends.
+                if sweep(token.clone()).await.is_err() {
+                    tracing::warn!("snapshot cache maintenance remains pending");
+                }
+            }
+        });
+        Self {
+            cancel,
+            task: Mutex::new(Some(task)),
+        }
+    }
+
+    pub(crate) async fn stop(&self) -> Outcome<()> {
+        self.cancel.cancel();
+        // Keep the handle in its slot while joining. A canceled shutdown
+        // caller cannot detach it; another caller can continue the same join.
+        let mut task = self.task.lock().await;
+        if let Some(work) = task.as_mut() {
+            let result = work.await.map_err(|_| ControlError::Unavailable);
+            task.take();
+            result?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for CacheMaintenance {
+    fn drop(&mut self) {
+        self.cancel.cancel();
+    }
+}
+
 struct Entry {
     path: PathBuf,
     archive: worker_boxlite::persistence::Archive,
@@ -36,6 +93,28 @@ fn matches_cache(candidate: &Operation, target: &Operation, now: i64) -> bool {
 }
 
 impl NativeControlEngine {
+    pub(crate) fn start_cache_maintenance(&self) -> CacheMaintenance {
+        let journal = self.journal.clone();
+        let transfer = self.transfer.clone();
+        let budget = self.config.cache_max_bytes;
+        CacheMaintenance::spawn(Duration::from_secs(30), move |cancel| {
+            let journal = journal.clone();
+            let transfer = transfer.clone();
+            async move { trim_cache_files_until(&journal, &transfer, budget, &cancel).await }
+        })
+    }
+
+    pub(crate) async fn stop_cache_maintenance(
+        &self,
+        maintenance: &CacheMaintenance,
+    ) -> Outcome<()> {
+        let result = maintenance.stop().await;
+        // A panicked async sweep can have dropped a spawn_blocking receiver.
+        // Its I/O permit still belongs to the accepted filesystem task.
+        self.transfer.wait_io_idle().await.map_err(transfer_error)?;
+        result
+    }
+
     pub(super) async fn copy_cache(&self, action: &ActionContext, op: &Operation) -> Outcome<bool> {
         if self.config.cache_max_bytes == 0 {
             return Ok(false);
@@ -130,11 +209,23 @@ impl NativeControlEngine {
 }
 
 async fn trim_cache_files(journal: &Journal, transfer: &Transfer, budget: i64) -> Outcome<()> {
+    trim_cache_files_until(journal, transfer, budget, &CancellationToken::new()).await
+}
+
+async fn trim_cache_files_until(
+    journal: &Journal,
+    transfer: &Transfer,
+    budget: i64,
+    cancel: &CancellationToken,
+) -> Outcome<()> {
     let state = journal.snapshot().map_err(journal_error)?;
     let mut entries = Vec::new();
     let mut total = 0_i64;
     let now = now_ms()?;
     for op in state.operations.values().filter(|op| cacheable(op)) {
+        if cancel.is_cancelled() {
+            return Ok(());
+        }
         let path = journal
             .artifact_path(&op.scoped_session_id, &op.operation_id, op.generation)
             .map_err(journal_error)?;
@@ -163,6 +254,9 @@ async fn trim_cache_files(journal: &Journal, transfer: &Transfer, budget: i64) -
     }
     entries.sort_by_key(|entry| entry.accessed);
     for entry in entries {
+        if cancel.is_cancelled() {
+            return Ok(());
+        }
         if entry.expires > now && total <= budget {
             continue;
         }
@@ -382,5 +476,137 @@ mod tests {
         let mut uncommitted = source;
         uncommitted.snapshot_committed = false;
         assert!(!cacheable(&uncommitted));
+    }
+
+    async fn wait_removed(path: &std::path::Path) {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while path.exists() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("background cache sweep did not reclaim eligible bytes");
+    }
+
+    #[tokio::test]
+    async fn idle_sweeps_reopen_retry_bad_metadata_and_keep_pins_and_uncommitted_roots() {
+        let f = Fixture::new();
+        let expired = f.target("expired", Phase::Canceled, 1, 1);
+        let invalid = f.target("invalid", Phase::Active, 1, 2);
+        let pinned = f.target("pinned", Phase::Active, 1, 3);
+        let ready = f.target("ready", Phase::Ready, 1, 4);
+        let frozen = f.source("uncommitted", false);
+        let committed = f.source("committed", true);
+        let lock_path = PathBuf::from(format!("{}.lock", pinned.display()));
+        let pin = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&lock_path)
+            .unwrap();
+        pin.try_lock().unwrap();
+        let lock_inode = pin.metadata().unwrap().ino();
+        std::fs::set_permissions(&invalid, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let original = std::fs::read(f.root.join("journal.json")).unwrap();
+        f.journal.close().unwrap();
+        let reopened = Arc::new(Journal::open(&f.root, "cache-worker").unwrap());
+        let journal = reopened.clone();
+        let transfer = transfer();
+        let passes = Arc::new(AtomicU32::new(0));
+        let attempted = passes.clone();
+        let maintenance = CacheMaintenance::spawn(Duration::from_millis(10), move |cancel| {
+            let journal = journal.clone();
+            let transfer = transfer.clone();
+            let attempted = attempted.clone();
+            async move {
+                let result = trim_cache_files_until(&journal, &transfer, 0, &cancel).await;
+                attempted.fetch_add(1, Ordering::SeqCst);
+                result
+            }
+        });
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while passes.load(Ordering::SeqCst) < 2 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        // An invalid private file fails the sweep without normalizing or
+        // deleting it. A later successful pass retries the retained records.
+        assert!(expired.exists() && invalid.exists() && committed.exists());
+        std::fs::set_permissions(&invalid, std::fs::Permissions::from_mode(0o600)).unwrap();
+        wait_removed(&expired).await;
+        wait_removed(&invalid).await;
+        wait_removed(&committed).await;
+        assert!(pinned.exists() && ready.exists() && frozen.exists());
+        drop(pin);
+        wait_removed(&pinned).await;
+        maintenance.stop().await.unwrap();
+        assert!(ready.exists() && frozen.exists());
+        assert_eq!(std::fs::metadata(lock_path).unwrap().ino(), lock_inode);
+        assert_eq!(
+            std::fs::read(f.root.join("journal.json")).unwrap(),
+            original
+        );
+        reopened.close().unwrap();
+    }
+
+    #[tokio::test]
+    async fn canceled_shutdown_still_joins_accepted_io_and_never_starts_another_sweep() {
+        let entered = Arc::new(Notify::new());
+        let release = Arc::new(tokio::sync::Semaphore::new(0));
+        let finished = Arc::new(AtomicBool::new(false));
+        let calls = Arc::new(AtomicU32::new(0));
+        let maintenance = Arc::new(CacheMaintenance::spawn(Duration::from_millis(1), {
+            let entered = entered.clone();
+            let release = release.clone();
+            let finished = finished.clone();
+            let calls = calls.clone();
+            move |cancel| {
+                let entered = entered.clone();
+                let release = release.clone();
+                let finished = finished.clone();
+                let calls = calls.clone();
+                async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    entered.notify_one();
+                    let _permit = release.acquire().await.unwrap();
+                    assert!(cancel.is_cancelled());
+                    finished.store(true, Ordering::SeqCst);
+                    Ok(())
+                }
+            }
+        }));
+        tokio::time::timeout(Duration::from_secs(3), entered.notified())
+            .await
+            .unwrap();
+        let stop = {
+            let maintenance = maintenance.clone();
+            tokio::spawn(async move { maintenance.stop().await })
+        };
+        let mut stop = stop;
+        assert!(tokio::time::timeout(Duration::from_millis(20), &mut stop)
+            .await
+            .is_err());
+        stop.abort();
+        assert!(stop.await.unwrap_err().is_cancelled());
+        let mut retry = {
+            let maintenance = maintenance.clone();
+            tokio::spawn(async move { maintenance.stop().await })
+        };
+        assert!(tokio::time::timeout(Duration::from_millis(20), &mut retry)
+            .await
+            .is_err());
+        assert!(!finished.load(Ordering::SeqCst));
+        release.add_permits(1);
+        tokio::time::timeout(Duration::from_secs(3), retry)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        maintenance.stop().await.unwrap();
+        assert!(finished.load(Ordering::SeqCst));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }
