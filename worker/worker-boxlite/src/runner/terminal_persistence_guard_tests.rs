@@ -379,3 +379,205 @@ async fn guarded_creation_failure_retains_capacity_and_never_uses_legacy_creatio
     m.close_preserving().await;
     r.close().await;
 }
+
+#[tokio::test]
+async fn revoked_stopped_initial_root_is_held_without_transferring_execution() {
+    let mut r = Rig::new().await;
+    let f = Fixture::new(2).await;
+    let lease = r.client.status("restored-box").await.unwrap().unwrap();
+    // Durable metadata fixture: manager startup never verifies/copies a shim
+    // or calls native boot. The current companion RPC and writer are real.
+    let mut origin = lease.process.clone();
+    origin.writer_cgroup = None;
+    origin.signal_version = None;
+    let mut old_guard = r.client.identity().clone();
+    old_guard.epoch_id = Uuid::new_v4().to_string();
+    old_guard.process = origin.clone();
+    let executable = serde_json::from_value(serde_json::json!({
+        "home": f.root, "box_id":"restored-box",
+        "directories":vec![serde_json::json!({"device":1,"inode":1});4],
+        "image":{"device":1,"inode":1,"size":1,
+            "modified":0,"modified_ns":0,"changed":0,"changed_ns":0},
+        "sha256":"a".repeat(64)
+    }))
+    .unwrap();
+    f.journal
+        .begin_initial_boot(worker_boxlite::persistence::InitialBoot {
+            guard: old_guard.clone(),
+            authorization: worker_boxlite::persistence::BootAuthorization {
+                operation_id: "initial-test".into(),
+                box_id: lease.box_id.clone(),
+                scoped_session_id: SCOPE.into(),
+                generation: 1,
+                prior_revision: None,
+                expires_unix_ms: lease.expires_unix_ms,
+                origin,
+                executable,
+            },
+            managed: false,
+        })
+        .unwrap();
+    let adoption = f
+        .journal
+        .begin_initial_adoption(worker_boxlite::persistence::InitialAdoption {
+            guard: old_guard,
+            lease,
+            confirmed: false,
+        })
+        .unwrap();
+    f.journal.confirm_initial_adoption(&adoption).unwrap();
+    let saved = f.journal.snapshot().unwrap();
+    assert!(!stopped_initial_hold(&saved, SCOPE, "restored-box", &r.client).await);
+    r.child.kill().unwrap();
+    r.child.wait().unwrap();
+    // A dead writer alone is insufficient: wait for the real service to
+    // acknowledge revocation of its original short grant.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+    while !r
+        .client
+        .status("restored-box")
+        .await
+        .unwrap()
+        .unwrap()
+        .revoked
+    {
+        assert!(tokio::time::Instant::now() < deadline);
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let complete_writer_proof = adoption.lease.process.writers_exited().unwrap_or(false);
+    assert_eq!(
+        stopped_initial_hold(&saved, SCOPE, "restored-box", &r.client).await,
+        complete_writer_proof
+    );
+    let mut same_service = saved.clone();
+    same_service.initial_boots.get_mut(SCOPE).unwrap().guard = r.client.identity().clone();
+    same_service.adoptions.get_mut(SCOPE).unwrap().guard = r.client.identity().clone();
+    assert_eq!(
+        stopped_initial_hold(&same_service, SCOPE, "restored-box", &r.client).await,
+        complete_writer_proof
+    );
+    let mut foreign_store = r.client.identity().clone();
+    foreign_store.store_id = Uuid::new_v4().to_string();
+    let foreign = LeaseGuardClient::bind(r.control.join("control.sock"), foreign_store);
+    assert!(!stopped_initial_hold(&saved, SCOPE, "restored-box", &foreign).await);
+    for case in [
+        "managed",
+        "unconfirmed",
+        "missing-boot",
+        "live-origin",
+        "live-old-service",
+        "wrong-writer",
+        "lifecycle",
+    ] {
+        let mut invalid = saved.clone();
+        match case {
+            "managed" => invalid.initial_boots.get_mut(SCOPE).unwrap().managed = true,
+            "unconfirmed" => invalid.adoptions.get_mut(SCOPE).unwrap().confirmed = false,
+            "missing-boot" => {
+                invalid.initial_boots.clear();
+            }
+            "live-origin" => {
+                invalid
+                    .initial_boots
+                    .get_mut(SCOPE)
+                    .unwrap()
+                    .authorization
+                    .origin = HostProcess::current().unwrap()
+            }
+            "live-old-service" => {
+                let process = HostProcess::current().unwrap();
+                invalid.adoptions.get_mut(SCOPE).unwrap().guard.process = process.clone();
+                invalid.initial_boots.get_mut(SCOPE).unwrap().guard.process = process;
+            }
+            "wrong-writer" => {
+                invalid.adoptions.get_mut(SCOPE).unwrap().lease.process =
+                    HostProcess::current().unwrap()
+            }
+            "lifecycle" => {
+                invalid.current.insert(SCOPE.into(), OP.into());
+            }
+            _ => unreachable!(),
+        }
+        assert!(
+            !stopped_initial_hold(&invalid, SCOPE, "restored-box", &r.client).await,
+            "{case}"
+        );
+    }
+    f.manager
+        .install_execution_guard(Some(r.client.clone()))
+        .await
+        .unwrap();
+    let result = f.manager.install_snapshot_journal(f.journal.clone()).await;
+    if complete_writer_proof {
+        result.unwrap();
+        connect(&f.manager, CONNECTION, &[]).await;
+        let state = f.manager.sessions.lock().await;
+        assert!(!state.failed);
+        assert!(state.pending_adoptions.contains(SCOPE));
+        assert_eq!(
+            state.initial_roots.get(SCOPE).map(String::as_str),
+            Some("restored-box")
+        );
+        assert!(state.preserve(SCOPE));
+        drop(state);
+        assert_eq!(f.manager.active_session_count().await, 1);
+        for generation in [0, 1] {
+            assert!(f
+                .manager
+                .execute(request("held-initial", generation))
+                .await
+                .is_err());
+            assert!(f
+                .manager
+                .claim_proxy(SCOPE, 8080, generation, SystemTime::now())
+                .await
+                .is_err());
+        }
+        assert!(f
+            .manager
+            .renew_lease(TerminalLeaseRenewRequest {
+                session_id: SCOPE.into(),
+                generation: 0,
+                connection_id: Some(CONNECTION.into()),
+                lease_ttl_sec: 60,
+            })
+            .await
+            .is_err());
+        assert!(f
+            .manager
+            .resolve_resource(TerminalResourceRequest {
+                session_id: SCOPE.into(),
+                generation: 0,
+                connection_id: Some(CONNECTION.into()),
+                file_path: "/data".into(),
+                action: "read".into(),
+                signed_url: String::new(),
+                headers: HashMap::new(),
+                deadline_unix_ms: 0,
+            })
+            .await
+            .is_err());
+        assert!(f
+            .manager
+            .recover_one_session(SCOPE, SystemTime::now() + Duration::from_secs(60), 0)
+            .await
+            .is_err());
+        f.manager.cleanup_expired_sessions().await;
+        assert_eq!(f.manager.active_session_count().await, 1);
+        assert!(f.backend.commands.lock().await.is_empty());
+        assert!(f.backend.removed.lock().await.is_empty());
+        assert!(f.backend.pinned.lock().await.is_empty());
+        assert_eq!(f.backend.created.load(Ordering::SeqCst), 0);
+        let after = f.journal.snapshot().unwrap();
+        assert_eq!(after.initial_boots, saved.initial_boots);
+        assert_eq!(after.adoptions, saved.adoptions);
+        assert_eq!(after.probes, saved.probes);
+    } else {
+        assert!(result.is_err());
+        assert!(f.manager.sessions.lock().await.failed);
+    }
+    r.lose_service().await;
+    assert!(!stopped_initial_hold(&saved, SCOPE, "restored-box", &r.client).await);
+    f.manager.close_preserving().await;
+    r.close().await;
+}

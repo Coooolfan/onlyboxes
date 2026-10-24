@@ -63,9 +63,27 @@ BoxLite `0.10.7` 初始化时会更新恢复状态、回收没有数据库记录
 
 启动错误使用固定阶段名区分目录布局、租约账本、守护器发现/宿主身份、home 所有权、账本绑定、pythonExec home、SDK 初始化、原生适配器和控制引擎。错误不附带底层 SDK、IO 或传输错误原文，避免路径、配置及授权信息进入日志。已有 home 的 journal 打开和原生清单恢复失败另有 `journal_open`、`native_reconciliation` 阶段日志。
 
-`control_engine` 阶段中，初始会话恢复进一步区分 `initial_companion_identity`（保存的守护器身份不匹配）与 `initial_writer_lease`（同一守护器未确认匹配的运行租约）。只有 Worker ID 和 store ID 相同不足以接受新的守护服务；epoch 和进程身份同样必须匹配。守护服务重启后的安全协调尚未实现，保留旧记录并拒绝启动，不能重写 journal 绕过检查。
+`control_engine` 阶段中，初始会话恢复进一步区分 `initial_companion_identity`（保存的守护器身份不匹配）与 `initial_writer_lease`（同一守护器未确认匹配的运行租约）。只有 Worker ID 和 store ID 相同不足以授予执行权；运行恢复要求 epoch 和进程身份同样匹配。守护服务重启后的运行恢复和清理协调尚未实现，不能重写 journal 绕过检查。下述已知停止初始根可保留隔离，让 Worker 完成注册，但不会因此恢复该会话。
 
 本机旧测试目录在写满 guest 磁盘、普通会话逻辑删除及整组服务重启后，重现了 `control_engine` / `initial_companion_identity` 拒绝。配对目录和原生清单通过，当前守护器与旧记录的 Worker/store 相同，但 epoch/进程不同。更改新会话磁盘容量的同时也重启了守护器，因此该结果不能归因于磁盘容量配置。该目录的原生数据与账本继续保留；新目录中通过的快照周期不能替代旧状态恢复验收。
+
+## 已知停止初始根的保留
+
+初始会话已经确认启动，但从未进入快照生命周期时，guest 退出、租约撤销或普通会话逻辑删除可能留下受保护的本地根。启动允许将它保留为不可执行的待协调资源，前提是同时验证：
+
+- journal 保留同一 scope/Box ID 的 probe、未标记 managed 的初始 boot 和已确认 adoption；该 scope 不存在生命周期当前操作。
+- 当前独立守护器绑定的 Worker/store 与旧记录一致，SDK home 与账本目录继续通过既有绑定校验。
+- 最初发起 SDK 启动的 Worker 进程已退出；守护器身份变化时，旧守护器的精确进程身份也已确认退出。
+- 已记录的写入者及 Linux 上绑定的整个 writer cgroup 均已退出。无法取得完整退出证明时继续拒绝。
+- 对当前存活守护器的 RPC 返回同一 Box ID、scope、generation、writer 的已撤销租约，revision 和期限不早于 journal。记录丢失、无法连接、仅经过墙钟期限或仅有 stopped 状态均不满足条件。
+
+通过后保留原 boot/adoption、服务 epoch、磁盘和 probe，不修改 journal，不续租、不启动原实例、不创建替代实例，也不删除根。该 scope 的命令、文件、预览和恢复入口继续关闭；名称受 orphan 清理保护，并继续占用会话容量。Worker 可以注册并处理剩余容量中的其他会话。日志阶段为 `stopped_initial_held`。
+
+未知启动结果、未确认 adoption、缺失 boot、managed 初始根，以及已有 source/target/delete 等生命周期当前操作不适用此路径。它也不会把 Console 中看不到的会话解释为删除授权；后续运行恢复、永久清理与容量释放仍需要独立协调。
+
+本机旧目录验收先核对 journal 和 qcow2 字节指纹，再启动整组服务。此前失败的 Worker 以此路径上线，旧 Box 仍为 stopped，原 journal 与 612,499,456 字节磁盘保持一致。同一目录随后通过新的 1 MiB 会话的真实 Console/S3 跨 Worker 周期：在保留旧根的 Worker 创建新会话，挂起后停止源 Worker，在另一 Worker 恢复并校验文件，重新启动源 Worker，最后永久删除新会话并排空其清理队列。挂起约 25.25 秒、恢复约 39.32 秒，归档 40,091,612 字节。完成后旧 CID 仍 stopped、磁盘字节不变，初始 boot/adoption/probe 继续保留。新会话清理完成不表示这份旧根已被回收。
+
+该结果证明保留隔离、Worker 可注册及其他会话的跨 Worker 生命周期可用，不证明旧会话可继续执行，也不替代宿主重启或跨物理机器验收。
 
 ## 验证
 

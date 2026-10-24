@@ -447,6 +447,65 @@ pub(super) fn guard_deadline(time: SystemTime) -> Result<i64, TerminalOperationE
         ))
         .ok_or_else(unavailable)
 }
+// This proof permits only inventory/retention, never execution or deletion.
+// Keep the saved service epoch and boot receipts unchanged. A pending root
+// remains protected from orphan cleanup and consumes its existing capacity.
+async fn stopped_initial_hold(
+    snapshot: &worker_boxlite::persistence::JournalState,
+    scope: &str,
+    id: &str,
+    guard: &worker_boxlite::persistence::LeaseGuardClient,
+) -> bool {
+    let Some(boot) = snapshot.initial_boots.get(scope) else {
+        return false;
+    };
+    let Some(adoption) = snapshot.adoptions.get(scope) else {
+        return false;
+    };
+    let current = guard.identity();
+    if snapshot.current.contains_key(scope)
+        || snapshot.probes.get(scope).map(String::as_str) != Some(id)
+        || boot.managed
+        || !adoption.confirmed
+        || boot.guard != adoption.guard
+        || boot.authorization.box_id != id
+        || adoption.lease.box_id != id
+        || current.worker_id != snapshot.worker_id
+        || current.worker_id != adoption.guard.worker_id
+        || current.store_id != adoption.guard.store_id
+        || !boot
+            .authorization
+            .origin
+            .has_exited()
+            .is_ok_and(|exited| exited)
+        || (current != &adoption.guard
+            && !adoption
+                .guard
+                .process
+                .has_exited()
+                .is_ok_and(|exited| exited))
+        || !adoption
+            .lease
+            .process
+            .writers_exited()
+            .is_ok_and(|exited| exited)
+    {
+        return false;
+    }
+    // Query the already bound live service. A file on disk, missing record,
+    // unreachable service or elapsed wall clock is not a revocation receipt.
+    guard.status(id).await.is_ok_and(|lease| {
+        lease.is_some_and(|lease| {
+            lease.revoked
+                && lease.scoped_session_id == scope
+                && lease.generation == 1
+                && lease.process == adoption.lease.process
+                && lease.revision >= adoption.lease.revision
+                && lease.expires_unix_ms >= adoption.lease.expires_unix_ms
+        })
+    })
+}
+
 async fn check_guard_lease(
     guard: &worker_boxlite::persistence::LeaseGuardClient,
     scope: &str,
@@ -621,30 +680,36 @@ impl TerminalSessionManager {
                         state.fail();
                         return Err(unavailable());
                     };
-                    if guard.identity() != &adoption.guard {
-                        tracing::error!(
-                            stage = "initial_companion_identity",
-                            "BoxLite persistence recovery check failed"
-                        );
-                        state.fail();
-                        return Err(unavailable());
-                    }
-                    if adoption.confirmed {
-                        let live = guard.check_running(id).await.map_err(|_| unavailable());
-                        if !live.as_ref().is_ok_and(|live| {
+                    let same_companion = guard.identity() == &adoption.guard;
+                    let running = if same_companion && adoption.confirmed {
+                        guard.check_running(id).await.is_ok_and(|live| {
                             live.scoped_session_id == *scope
                                 && live.generation == 1
                                 && live.process == adoption.lease.process
                                 && live.expires_unix_ms >= adoption.lease.expires_unix_ms
-                        }) {
+                        })
+                    } else {
+                        false
+                    };
+                    if !same_companion || adoption.confirmed && !running {
+                        if !stopped_initial_hold(&snapshot, scope, id, &guard).await {
                             tracing::error!(
-                                stage = "initial_writer_lease",
+                                stage = if same_companion {
+                                    "initial_writer_lease"
+                                } else {
+                                    "initial_companion_identity"
+                                },
                                 "BoxLite persistence recovery check failed"
                             );
                             state.fail();
                             return Err(unavailable());
                         }
-                    } else {
+                        pending.insert(scope.clone());
+                        tracing::warn!(
+                            stage = "stopped_initial_held",
+                            "BoxLite initial root retained with execution closed"
+                        );
+                    } else if !adoption.confirmed {
                         pending.insert(scope.clone());
                     }
                 } else if let Some(boot) = snapshot.initial_boots.get(scope) {
