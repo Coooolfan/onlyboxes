@@ -7,12 +7,16 @@ import importlib.util
 import json
 import os
 import platform
+import select
+import signal
 from pathlib import Path
 import shutil
 import socket
 import stat
 import subprocess
 import sys
+import time
+import uuid
 
 SPEC = importlib.util.spec_from_file_location("dev_sandbox", Path(__file__).with_name("dev-sandbox.py"))
 dev = importlib.util.module_from_spec(SPEC)
@@ -144,12 +148,60 @@ def snapshot_evidence(service, values, operation):
     return json.loads(result.stdout)
 
 
-def crash(service):
+def start_event(raw, operation, worker):
+    if len(raw) > 16384 or not raw.endswith("\n"):
+        dev.fail("Docker 启动事件帧异常")
+    event = json.loads(raw)
+    actor = event.get("Actor", {})
+    labels = actor.get("Attributes", {})
+    cid = actor.get("ID", "")
+    if (event.get("Type") != "container" or event.get("Action") != "start" or
+            labels.get("onlyboxes.worker_id") != worker or labels.get("onlyboxes.persistence") != "true" or
+            labels.get("onlyboxes.persistence.operation_id") != operation or
+            len(cid) != 64 or any(c not in "0123456789abcdef" for c in cid)):
+        dev.fail("Docker 启动事件身份不匹配，拒绝故障注入")
+    return cid
+
+
+def crash(service, on_start=None):
+    if on_start is None:
+        return crash_selected(service)
+    if str(uuid.UUID(on_start)) != on_start:
+        dev.fail("启动故障注入需要规范 operation UUID")
+    values = dev.env_file(dev.STATE / (service + ".env"))
+    if not values.get("WORKER_ID"):
+        dev.fail("当前状态目录没有此 Docker Worker 身份")
+    deadline = time.monotonic() + 120
+    observer = subprocess.Popen(["docker", "events", "--since", str(int(time.time())-1), "--until", str(int(time.time())+120),
+        "--filter", "type=container", "--filter", "event=start", "--filter", "label=onlyboxes.persistence.operation_id=" + on_start,
+        "--filter", "label=onlyboxes.worker_id=" + values["WORKER_ID"], "--format", "{{json .}}"],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    def wait_start():
+        while time.monotonic() < deadline:
+            if select.select([observer.stdout], [], [], min(1, max(0, deadline-time.monotonic())))[0]:
+                return start_event(observer.stdout.readline(16385), on_start, values["WORKER_ID"])
+            if observer.poll() is not None:
+                break
+        dev.fail("未观察到匹配的 Docker 目标启动事件，拒绝发送 SIGKILL")
+    try:
+        return crash_selected(service, wait_start)
+    finally:
+        if observer.poll() is None:
+            observer.terminate()
+        observer.wait(timeout=10)
+        observer.stdout.close()
+
+
+def crash_selected(service, wait_start=None):
     values = dev.env_file(dev.STATE / (service + ".env"))
     if not values.get("WORKER_ID"):
         dev.fail("当前状态目录没有此 Docker Worker 身份")
     if sys.platform.startswith("linux"):
-        return dev.crash_worker(service)
+        target = wait_start() if wait_start else None
+        result = dev.crash_worker(service)
+        if target:
+            print(json.dumps({"target_container_id":target}), flush=True)
+        return result
     root = dev.STATE / service / hashlib.sha256(values["WORKER_ID"].encode()).hexdigest()[:32]
     binding = retained_volume(service, values, root)
     name = "onlyboxes-snapshot-worker-" + dev.NAMESPACE + "-" + values["WORKER_ID"]
@@ -171,6 +223,7 @@ def crash(service):
     info = endpoint.lstat()
     if not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
         dev.fail("Worker 本机控制端点异常")
+    target = wait_start() if wait_start else None
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
         client.settimeout(20)
         client.connect(str(endpoint))
@@ -187,7 +240,8 @@ def crash(service):
         receipt = json.loads(raw)
     if receipt.get("returncode") != 137 or type(receipt.get("pid")) is not int or receipt["pid"] <= 1:
         dev.fail("未确认 Docker Worker 的 SIGKILL 退出，保留现场")
-    print(json.dumps({"container_id":container, "pid":receipt["pid"], "returncode":137}), flush=True)
+    print(json.dumps({"container_id":container, "pid":receipt["pid"], "returncode":137,
+                      **({"target_container_id":target} if target else {})}), flush=True)
 
 
 def worker(service):
@@ -242,8 +296,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("worker", "crash"))
     parser.add_argument("service", choices=SERVICES)
+    parser.add_argument("--on-start", help="crash only after this exact restore operation starts a container")
     args = parser.parse_args()
-    return worker(args.service) if args.command == "worker" else crash(args.service)
+    if args.on_start and args.command != "crash":
+        parser.error("--on-start requires crash")
+    if args.on_start:
+        signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+    return worker(args.service) if args.command == "worker" else crash(args.service, args.on_start)
 
 
 if __name__ == "__main__":

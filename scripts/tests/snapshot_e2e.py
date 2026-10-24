@@ -32,8 +32,6 @@ def main():
     if args.return_to_source and scenario != "cycle":
         parser.error("--return-to-source requires --scenario cycle")
     if args.runtime == "docker":
-        if scenario not in ("cycle", "same-worker", "no-worker", "worker-restart", "console-restart"):
-            parser.error("Docker target worker-start-restart acceptance is not yet supported")
         dev.SERVICES = ("worker-docker-snapshot", "worker-docker-snapshot-peer")
         spec = importlib.util.spec_from_file_location("docker_acceptance", Path(dev.__file__).with_name("dev-docker-snapshot.py"))
         docker = importlib.util.module_from_spec(spec)
@@ -120,6 +118,17 @@ def main():
             time.sleep(1)
         raise RuntimeError("physical cleanup backlog did not drain; retained evidence requires inspection")
     restarted = {}
+    target_fault = None
+    target_guard = None
+    def close_target_fault():
+        nonlocal target_fault
+        if target_fault is not None:
+            if target_fault.poll() is None:
+                target_fault.terminate()
+            target_fault.wait(timeout=15)
+            target_fault.stdout.close()
+            target_fault = None
+    atexit.register(close_target_fault)
     def native_operation(operation_id):
         for node, service in nodes.items():
             if args.runtime == "docker":
@@ -203,6 +212,8 @@ def main():
             raise RuntimeError("new resume attempt did not become running")
         record("resume-after-start-failure", failed_generation=operation["generation"], generation=fresh["generation"], fresh_operation=True, fresh_instance=True)
     def restart_worker_during_action(kind, operation_id):
+        if args.runtime == "docker" and kind == "resume" and kind not in restarted:
+            return restart_docker_target(operation_id)
         node, native = native_operation(operation_id)
         if kind in restarted or not native:
             return
@@ -312,6 +323,54 @@ def main():
         if lease_identity(node) != guardian:
             raise RuntimeError("Docker Worker restart replaced the independent guard or store")
         restarted["suspend"] = (operation_id, native["box_id"])
+    def restart_docker_target(operation_id):
+        if target_fault.poll() is None:
+            return
+        output = target_fault.stdout.read(16385)
+        if target_fault.returncode != 0 or len(output) > 16384:
+            raise RuntimeError("Docker start-triggered Worker crash did not return a confirmed exit receipt")
+        receipt = json.loads(output.splitlines()[-1])
+        cid = receipt.get("target_container_id")
+        close_target_fault()
+        node, native = native_operation(operation_id)
+        instance = docker.inspect("container", cid) if cid else None
+        state = (instance or {}).get("State", {})
+        if node != source or not native or native.get("kind") != "target" or native.get("phase") != "importing" or native.get("box_id") != cid or not state.get("Running") or state.get("Paused"):
+            raise RuntimeError("Docker target completed before SIGKILL or lost its started instance; fault window was not exercised")
+        if lease_identity(node) != target_guard:
+            raise RuntimeError("Docker target Worker crash replaced its independent guard")
+        reply = subprocess.run(["docker", "exec", "-i", target_guard["helper_id"], "/runtime-lease-guard", "-mode", "control"],
+            input=json.dumps({"action":"status", "entry":{"container_id":cid}}), capture_output=True, text=True, timeout=10)
+        if reply.returncode:
+            raise RuntimeError("Docker started target lacks an independent lease receipt")
+        lease = json.loads(reply.stdout)
+        if (lease.get("container_id") != cid or lease.get("scope") != native.get("scoped_session_id") or
+                lease.get("generation") != native.get("generation") or lease.get("revoked") is not False or
+                lease.get("expires_unix_ms", 0) <= int(time.time()*1000) or lease.get("revision", 0) <= 0):
+            raise RuntimeError("Docker started target lease identity is invalid")
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            pane = subprocess.run(["tmux", "display-message", "-p", "-t", os.environ.get("ONLYBOXES_DEV_SESSION", "onlyboxes-dev") + ":" + nodes[node], "#{pane_dead}"], capture_output=True, text=True)
+            if pane.returncode != 0 or pane.stdout.strip() == "1":
+                break
+            time.sleep(.05)
+        else:
+            raise RuntimeError("Docker target Worker supervisor did not confirm exit")
+        offline(node)
+        record("worker-crashed-during-resume", operation_id=operation_id, worker_id=node, instance_id=cid,
+            native_phase=native["phase"], guard_binding_sha256=target_guard["binding_sha256"], lease_revision=lease["revision"], started=True)
+        services("start", nodes[node])
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            workers = require(*api("GET", "/api/v1/workers?status=all"))["items"]
+            if any(w["node_id"] == node and w["status"] == "online" for w in workers):
+                break
+            time.sleep(.2)
+        else:
+            raise RuntimeError("Docker target Worker did not reconnect after SIGKILL")
+        if lease_identity(node) != target_guard:
+            raise RuntimeError("Docker target Worker restart replaced the independent guard")
+        restarted["resume"] = (operation_id, cid)
     def restart_during_native_action(kind, operation_id, parameters, request_key):
         node, native = native_operation(operation_id)
         if not native or kind in restarted:
@@ -361,11 +420,18 @@ def main():
         record("restart-idempotency-" + kind, operation_id=operation_id, replay_status=replay_status, conflicting_status=conflict_status)
         restarted[kind] = (operation_id, native["box_id"])
     def lifecycle(kind, recovery_retry=False, capacity_retry=0):
+        nonlocal target_fault, target_guard
         parameters = {"retention_ttl_sec": 3600} if kind == "suspend" else {"lease_ttl_sec": 900}
         retained = session()["persistence"]["latest_snapshot"] if kind == "resume" else None
         request_key = str(uuid.uuid4())
+        watch_target = args.runtime == "docker" and scenario == "worker-start-restart" and kind == "resume" and not recovery_retry
+        if watch_target:
+            target_guard = lease_identity(source)
         status, result = api("POST", base + "/" + kind + query, parameters, request_key)
         require(status, result, 202)
+        if watch_target:
+            target_fault = subprocess.Popen([sys.executable, str(Path(docker.__file__)), "crash", nodes[source], "--on-start", result["operation_id"]],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         path = base + "/operations/" + result["operation_id"] + query
         deadline = time.monotonic() + 600
         phase = None
@@ -394,7 +460,7 @@ def main():
                         if fresh["operation_id"] == operation["operation_id"] or fresh["generation"] <= operation["generation"]:
                             raise RuntimeError("capacity retry reused the failed operation or generation")
                         return fresh
-                    if scenario == "worker-start-restart" and kind == "resume" and not recovery_retry and "resume" in restarted:
+                    if args.runtime == "boxlite" and scenario == "worker-start-restart" and kind == "resume" and not recovery_retry and "resume" in restarted:
                         finish_failed_start(operation, result["operation_id"])
                         return
                     raise RuntimeError("lifecycle operation failed; evidence retained")
@@ -474,8 +540,15 @@ print(json.dumps({'snapshot_id':archive['snapshot_id'],'sha256':digest.hexdigest
     if suspended["lifecycle_state"] != "suspended" or suspended["worker_id"] is not None or not suspended["persistence"]["latest_snapshot"]:
         raise RuntimeError("snapshot was not durably suspended")
     if scenario in ("same-worker", "console-restart", "worker-restart", "worker-start-restart"):
+        stopped_peer = None
+        if args.runtime == "docker" and scenario == "worker-start-restart":
+            stopped_peer = next(node for node in nodes if node != source)
+            services("stop", nodes[stopped_peer])
+            offline(stopped_peer)
         lifecycle("resume")
         verify("same-worker", source)
+        if stopped_peer:
+            services("start", nodes[stopped_peer])
         require(*api("DELETE", base + query), expected=204)
         record("deleted", status=204)
         wait_cleanup()
@@ -489,6 +562,17 @@ print(json.dumps({'snapshot_id':archive['snapshot_id'],'sha256':digest.hexdigest
             if remaining:
                 raise RuntimeError("Docker crash export helper remains after deletion acknowledgement")
             record("crash-resource-cleanup", source_removed=True, known_artifacts=0, export_helpers=0)
+        if args.runtime == "docker" and scenario == "worker-start-restart":
+            _, cleaned = native_operation(restarted["resume"][0])
+            cid = restarted["resume"][1]
+            roots = dev.run(["docker", "ps", "-a", "--no-trunc", "--filter", "id=" + cid, "--format", "{{.ID}}"])
+            if not cleaned or cleaned["known_artifact_count"] != 0 or roots:
+                raise RuntimeError("Docker interrupted target or its known archive/temp files remain after deletion acknowledgement")
+            reply = subprocess.run(["docker", "exec", "-i", target_guard["helper_id"], "/runtime-lease-guard", "-mode", "control"],
+                input=json.dumps({"action":"status", "entry":{"container_id":cid}}), capture_output=True, text=True, timeout=10)
+            if reply.returncode == 0 or json.loads(reply.stdout) != {"error":"not_found"}:
+                raise RuntimeError("Docker interrupted target lease was not confirmed forgotten after deletion")
+            record("crash-target-cleanup", target_removed=True, known_artifacts=0, lease_forgotten=True)
         return
     if scenario == "cycle":
         services("stop", nodes[source])

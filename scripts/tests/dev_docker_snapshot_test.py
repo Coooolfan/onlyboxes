@@ -106,6 +106,29 @@ class DockerWorkerCrashTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def test_start_event_requires_exact_restore_and_worker_identity(self):
+        event = {"Type":"container", "Action":"start", "Actor":{"ID":"b"*64,"Attributes":{
+            "onlyboxes.worker_id":"fixture-worker", "onlyboxes.persistence":"true", "onlyboxes.persistence.operation_id":"operation"}}}
+        self.assertEqual(adapter.start_event(json.dumps(event)+"\n", "operation", "fixture-worker"), "b"*64)
+        for change in ({"Type":"image"}, {"Action":"create"}, {"Actor":{**event["Actor"],"ID":"reusable-name"}},
+                       {"Actor":{**event["Actor"],"Attributes":{}}}):
+            with self.assertRaises(RuntimeError):
+                adapter.start_event(json.dumps({**event,**change})+"\n", "operation", "fixture-worker")
+        for operation,worker in (("another-operation","fixture-worker"),("operation","another-worker")):
+            with self.assertRaises(RuntimeError):
+                adapter.start_event(json.dumps(event)+"\n", operation, worker)
+        for raw in (json.dumps(event), "x"*16385+"\n"):
+            with self.assertRaises(RuntimeError):
+                adapter.start_event(raw,"operation","fixture-worker")
+
+    def test_invalid_start_operation_never_starts_an_observer_or_crashes_worker(self):
+        for operation in ("not-an-operation", "A"*32):
+            with patch.object(adapter.subprocess,"Popen") as observer, patch.object(adapter,"crash_selected") as crash:
+                with self.assertRaises((RuntimeError,ValueError)):
+                    adapter.crash(self.service, operation)
+                observer.assert_not_called()
+                crash.assert_not_called()
+
     def test_wrong_role_or_scope_cannot_kill_a_container(self):
         for changed in (None, {**self.worker,"Path":"/runtime-lease-guard"}, {**self.worker,"Config":{"Labels":{},"Env":[]}}, {**self.worker,"Mounts":[]}, {**self.worker,"Id":"name-not-id"}):
             with self.subTest(changed=changed is None), patch.object(adapter.sys, "platform", "darwin"), patch.object(adapter.dev, "env_file", return_value=self.values), patch.object(adapter, "retained_volume", return_value=self.binding), patch.object(adapter,"inspect",return_value=changed), patch.object(adapter.dev,"run") as kill:
