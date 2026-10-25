@@ -1,0 +1,64 @@
+{
+  "date_asia_shanghai": "2026-10-25",
+  "scope": "local Console/MinIO and two native BoxLite Workers on macOS arm64",
+  "runtime_version": "0.10.7",
+  "platform": "linux/arm64",
+  "image": "python@sha256:739ba32ae445e8d58f3d90feb85f83bebc8346f8dd280fa1eb5848f4ff1ed163",
+  "conditions": {
+    "build_profile": "release",
+    "configured_root_disk_gib": 8,
+    "worker_memory_mib": 256,
+    "worker_cpus": 1.0,
+    "integrity_mode": "readback",
+    "multipart_part_size_bytes": 67108864,
+    "archive_limit_bytes": 8589934592,
+    "expanded_limit_bytes": 17179869184,
+    "required_headroom_bytes": 81604378624,
+    "operation_timeout_seconds": 3600,
+    "operation_wait_seconds": 3600,
+    "requested_lease_ttl_seconds": 7200,
+    "command_timeout_seconds": 600,
+    "cache_state": "same payload verified and reused after quota-refused export/rollback; registry/SDK/host caches uncontrolled; not a cold-cache measurement",
+    "poll_interval_seconds": 1,
+    "timing": "API submission through observed terminal status; excludes initial seed, refused attempt, payload verification, Worker offline wait and final deletion"
+  },
+  "quota_refusal": {
+    "expanded_limit_bytes": 12884901888,
+    "observed_seconds": 32.281059291000005,
+    "error_code": "snapshot_quota_exceeded",
+    "rolled_back": true,
+    "same_source_instance_on_retry": true,
+    "retained_payload_verified_before_retry": true
+  },
+  "sample": {
+    "payload_bytes": 5368709120,
+    "payload_sha256": "e8ee1a57299725fdb71ca2bbcc8965547e2882c22bb17e05a11afccd47a7fb3c",
+    "archive_bytes": 5408235879,
+    "expanded_bytes": 14097711104,
+    "archive_sha256": "f7f22fc1fa7284f89f264ede810c086b1a08958b8dc3668a9e20b4eccf39f9ce",
+    "suspend_observed_seconds": 77.504808583,
+    "resume_observed_seconds": 94.65577608400001,
+    "committed_multipart": {
+      "parts": 81,
+      "size_bytes": 5408235879
+    },
+    "source_and_target_disk_size_gb": 8,
+    "source_and_target_restore_spec_equal": true,
+    "source_reserved_staging_bytes": 41231686041,
+    "target_reserved_staging_bytes": 53304391743,
+    "cleanup_backlog": {
+      "pending_sessions": 0,
+      "pending_workers": 0,
+      "pending_snapshots": 0
+    },
+    "guest_disks_absent_after_delete": true
+  },
+  "local_allocation_observation": {
+    "scope": "sum of st_blocks * 512 in both private Worker state trees; excludes S3 daemon and build outputs; shared/reflink blocks can be counted more than once",
+    "sample_interval_seconds": 2,
+    "samples": 75,
+    "observed_span_seconds": 158.1,
+    "peak_observed_bytes": 16792846336,
+    "coverage": "sampling started after seeding and during the retry; intervals may miss peaks; this is not a complete filesystem high-water measurement or staging-budget recommendation"
+  }
+}
