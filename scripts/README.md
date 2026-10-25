@@ -182,6 +182,8 @@ BoxLite 的 `--scenario worker-expired-restart --lease-ttl-sec 30` 验证已激�
 
 BoxLite 的 `--scenario initial-expired-delete --lease-ttl-sec 30` 验证尚未快照的普通会话回收，要求 info JSON 日志，私有 `WORKER_TERMINAL_LEASE_MIN_SEC=1`，请求 lease 在 `20..60` 秒且不被夹长。场景创建并校验 payload，在首次截止时间之前续租，跨过旧截止时间后要求原磁盘仍存在，再在首次快照之前 DELETE 路由。它等待实际最新 lease 到期及 Worker 的本地删除，核对不可变撤销回执、generation 2 拒绝栅栏、物理删盘和同一独立守护器的 owner release；随后通过 `dev.sh` 重启 Worker，要求新的已确认连接、相同删除记录、磁盘未重建及心跳容量为零。已有该场景结果时拒绝重新创建，失败保留证据；复测使用新的隔离目录。它不执行 suspend/resume，也不把此普通 TTL 权限扩展到快照管理中的会话；后者用上面的 `worker-expired-restart` 验证保留和显式删除。
 
+`--scenario initial-expired-offline --lease-ttl-sec 30` 在相同的续租及普通 DELETE 检查后，通过 `dev.sh stop` 停止当前 Worker，保留独立守护器；`initial-expired-crash` 改用 `dev.sh crash` 对受管理的该 Worker 子进程发送 SIGKILL 并取得退出回执。两者都要求原写入者在 Worker 退出后仍由同一有效独立 lease 管理，再观察该守护器撤销原 lease 和原 writer 退出。Worker 离线期间 journal 必须逐字节不变，原盘仍保留；脚本记录退出后 qcow 文件的完整 SHA-256，再通过 `dev.sh start` 重新上线并等待本地到期删除、物理清理和原守护器的 owner release。最后再次重启，核对新连接、不可变删除记录、无磁盘重建及容量为零。进程存在性检查仅用于观察，完整 kernel writer 退出证据由 Worker 和独立守护器验证；场景不重启守护器，不把未知启动或跨 epoch 状态当作可清理资源。三种初始到期场景使用各自独立的私有结果文件，已有对应结果时拒绝重新创建。
+
 BoxLite 的 `--scenario cache-copy-eviction --payload-mib 1024` 验证真实 Console/S3 恢复与跨进程缓存淘汰竞争。沿用上面的隔离配置，开启足以容纳一份归档上限的缓存及 info JSON 日志，并先构建只用于验收的原生探针：
 
 ```bash

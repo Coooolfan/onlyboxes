@@ -41,7 +41,7 @@ class LargeFixtureAdmissionTests(unittest.TestCase):
                     acceptance.quota_retry_evidence(Path("fixture"), "boxlite", 5<<30)
 
     def test_expiry_restart_refuses_a_clamped_or_long_lease_before_authentication(self):
-        for scenario in ("worker-expired-restart", "initial-expired-delete"):
+        for scenario in ("worker-expired-restart",) + acceptance.INITIAL_EXPIRY_SCENARIOS:
             for minimum, requested in ((60, 30), (1, 61), (1, 900)):
                 with patch.dict(os.environ, {}, clear=True), patch("sys.argv", ["snapshot_e2e.py", "--scenario", scenario, "--lease-ttl-sec", str(requested)]), patch.object(acceptance.dev, "env_file", return_value={"WORKER_TERMINAL_LEASE_MIN_SEC":str(minimum)}), patch.object(acceptance.dev, "console_auth") as auth:
                     with self.assertRaisesRegex(RuntimeError, "unclamped lease"):
@@ -63,10 +63,18 @@ class LargeFixtureAdmissionTests(unittest.TestCase):
                 auth.assert_not_called()
 
     def test_initial_expiry_requires_observable_logs_before_authentication(self):
-        with patch.dict(os.environ, {}, clear=True), patch("sys.argv", ["snapshot_e2e.py", "--scenario", "initial-expired-delete", "--lease-ttl-sec", "30"]), patch.object(acceptance.dev, "env_file", return_value={"WORKER_LOG_FORMAT":"text"}), patch.object(Path, "exists", return_value=False), patch.object(acceptance.dev, "console_auth") as auth:
-            with self.assertRaisesRegex(RuntimeError, "requires JSON info logs"):
-                acceptance.main()
-            auth.assert_not_called()
+        for scenario in acceptance.INITIAL_EXPIRY_SCENARIOS:
+            with patch.dict(os.environ, {}, clear=True), patch("sys.argv", ["snapshot_e2e.py", "--scenario", scenario, "--lease-ttl-sec", "30"]), patch.object(acceptance.dev, "env_file", return_value={"WORKER_LOG_FORMAT":"text"}), patch.object(Path, "exists", return_value=False), patch.object(acceptance.dev, "console_auth") as auth:
+                with self.assertRaisesRegex(RuntimeError, "requires JSON info logs"):
+                    acceptance.main()
+                auth.assert_not_called()
+
+    def test_initial_expiry_preserves_existing_scenario_evidence_before_authentication(self):
+        for scenario in acceptance.INITIAL_EXPIRY_SCENARIOS:
+            with patch.dict(os.environ, {}, clear=True), patch("sys.argv", ["snapshot_e2e.py", "--scenario", scenario, "--lease-ttl-sec", "30"]), patch.object(acceptance.dev, "env_file", return_value={}), patch.object(Path, "exists", return_value=True), patch.object(acceptance.dev, "console_auth") as auth:
+                with self.assertRaisesRegex(RuntimeError, "evidence already exists"):
+                    acceptance.main()
+                auth.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -37,6 +37,8 @@ SDK home 和 journal 建议使用本机 SSD。暂存预留按最大归档预算�
 
 2026-10-25 的全新隔离 Console/MinIO、两台本机 release Worker 验收先续租普通初始会话，跨过首个截止时间确认磁盘仍存在，再在首次快照前 DELETE；最新独立租约到期后，本地删除、物理删盘及同一守护器 owner release 均完成。重启后的新连接已确认，删除回执不变、磁盘未重建且心跳容量为零。同组另一个已激活快照目标到期及 Worker 重启后仍保留原 CID 和原盘、执行关闭，直到 Console 明确 DELETE 才完成清理。[脱敏样本](sandbox-snapshot-initial-expiry-sample-2026-10-25.json)记录两条路径；跨 epoch、未知启动和宿主重启不在本次自动回收验证范围。
 
+同日的[离线到期样本](sandbox-snapshot-initial-offline-expiry-sample-2026-10-25.json)另行覆盖 `dev.sh stop` 和 `dev.sh crash`（已确认 Worker SIGKILL 退出）。两次都确认原 writer 在 Worker 退出后仍由同一独立守护器管理；后续由守护器按最新租约到期停止，离线期间整个 journal 字节不变且磁盘保留。新 Worker 打开原 home、核对完整退出证据后完成本地到期删除与 owner release，再次重启验证新连接、回执不变、无磁盘重建及容量为零。这是已确认初始启动的同 epoch 故障恢复，不覆盖未知启动或宿主重启。
+
 ```toml
 boxlite_home = "/var/lib/onlyboxes/terminal-home"
 

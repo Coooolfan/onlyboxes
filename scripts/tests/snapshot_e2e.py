@@ -21,6 +21,7 @@ import uuid
 SPEC = importlib.util.spec_from_file_location("dev_sandbox", Path(__file__).resolve().parents[1] / "dev-sandbox.py")
 dev = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(dev)
+INITIAL_EXPIRY_SCENARIOS = ("initial-expired-delete", "initial-expired-offline", "initial-expired-crash")
 
 
 def quota_retry_evidence(path, runtime, payload_bytes):
@@ -41,7 +42,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime", choices=("boxlite", "docker"), default="boxlite")
     parser.add_argument("--return-to-source", action="store_true", help="after cross-worker mutation and no-worker failure, restore onto the original worker with its older cache")
-    parser.add_argument("--scenario", choices=("cycle", "cross-worker", "same-worker", "no-worker", "console-restart", "worker-restart", "worker-start-restart", "cache-corrupt", "cache-miss", "cache-copy-eviction", "initial-expired-delete", "worker-graceful-restart", "worker-expired-restart"), default="cycle")
+    parser.add_argument("--scenario", choices=("cycle", "cross-worker", "same-worker", "no-worker", "console-restart", "worker-restart", "worker-start-restart", "cache-corrupt", "cache-miss", "cache-copy-eviction", "worker-graceful-restart", "worker-expired-restart") + INITIAL_EXPIRY_SCENARIOS, default="cycle")
     parser.add_argument("--payload-mib", type=int, default=1, help="1..10240 MiB of independent random guest data; large runs require explicit snapshot and disk budgets")
     parser.add_argument("--operation-wait-sec", type=int, default=600, help="1..86400 seconds to observe each accepted lifecycle operation; does not change its server deadline")
     parser.add_argument("--lease-ttl-sec", type=int, default=900, help="1..86400 seconds requested for initial execution, resume and verification; must fit the configured Worker maximum")
@@ -62,16 +63,16 @@ def main():
         spec = importlib.util.spec_from_file_location("docker_acceptance", Path(dev.__file__).with_name("dev-docker-snapshot.py"))
         docker = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(docker)
-    if scenario in ("worker-graceful-restart", "worker-expired-restart", "initial-expired-delete") and args.runtime != "boxlite":
+    if scenario in ("worker-graceful-restart", "worker-expired-restart") + INITIAL_EXPIRY_SCENARIOS and args.runtime != "boxlite":
         parser.error("managed Worker restart acceptance currently requires BoxLite")
     if args.retry_quota_session and scenario != "cross-worker":
         parser.error("quota-session retry requires --scenario cross-worker")
     config = Path(os.environ.get("ONLYBOXES_DEV_ENV", dev.ROOT / "scripts/dev.env"))
     os.environ.update(dev.env_file(config))
-    if scenario == "initial-expired-delete":
+    if scenario in INITIAL_EXPIRY_SCENARIOS:
         if args.lease_ttl_sec < 20:
             parser.error("initial expiry renewal acceptance requires a 20..60 second lease")
-        if (dev.STATE / "snapshot-e2e-initial-expired-delete-result.json").exists():
+        if (dev.STATE / ("snapshot-e2e-" + scenario + "-result.json")).exists():
             raise RuntimeError("initial expiry evidence already exists; use a new isolated fixture")
         if os.environ.get("WORKER_LOG_FORMAT", "json") != "json" or os.environ.get("WORKER_LOG_LEVEL", "info") not in ("info", "debug", "trace"):
             raise RuntimeError("initial expiry restart acceptance requires JSON info logs")
@@ -87,7 +88,7 @@ def main():
                 or os.environ.get("WORKER_LOG_FORMAT", "json") != "json"
                 or os.environ.get("WORKER_LOG_LEVEL", "info") not in ("info", "debug", "trace")):
             raise RuntimeError("cache contention requires retained producer cache and JSON info logs")
-    if scenario in ("worker-expired-restart", "initial-expired-delete") and not int(os.environ.get("WORKER_TERMINAL_LEASE_MIN_SEC", "60")) <= args.lease_ttl_sec <= 60:
+    if scenario in ("worker-expired-restart",) + INITIAL_EXPIRY_SCENARIOS and not int(os.environ.get("WORKER_TERMINAL_LEASE_MIN_SEC", "60")) <= args.lease_ttl_sec <= 60:
         raise RuntimeError("expiry restart requires an explicit unclamped lease of at most 60 seconds")
     if args.lease_ttl_sec > int(os.environ.get("WORKER_TERMINAL_LEASE_MAX_SEC", "1800")):
         raise RuntimeError("requested fixture lease exceeds configured Worker maximum")
@@ -615,7 +616,7 @@ print(json.dumps({'snapshot_id':archive['snapshot_id'],'sha256':digest.hexdigest
 
     source = session()["worker_id"]
     record("quota-retry-verified" if previous else "created", worker_id=source)
-    if scenario == "initial-expired-delete":
+    if scenario in INITIAL_EXPIRY_SCENARIOS:
         root = dev.STATE / nodes[source] / hashlib.sha256(source.encode()).hexdigest()[:32]
         scope = "obx:" + account + ":" + sid
         path = root / "journal/journal.json"
@@ -646,6 +647,36 @@ print(json.dumps({'snapshot_id':archive['snapshot_id'],'sha256':digest.hexdigest
         record("initial-renewal-preserved", original_deadline_passed=True, disk_retained=True, same_guard=True)
         require(*api("DELETE", base + query), expected=204)
         record("deleted", status=204, before_first_snapshot=True)
+        if scenario in ("initial-expired-offline", "initial-expired-crash"):
+            exit_action = "crash" if scenario == "initial-expired-crash" else "stop"
+            services(exit_action, nodes[source])
+            saved_journal = path.read_bytes()
+            running = guard_exchange(source, {"action":"check_running", "box_id":box_id}, guardian).get("reply", {})
+            if running.get("type") != "running" or running.get("value", {}).get("process") != adoption["lease"]["process"]:
+                raise RuntimeError("initial Worker exit did not preserve its independently leased writer")
+            record("initial-worker-offline", action=exit_action, same_guard=True, original_writer_running=True)
+            deadline = time.monotonic() + 90
+            while time.monotonic() < deadline:
+                reply = guard_exchange(source, {"action":"status", "box_id":box_id}, guardian).get("reply", {})
+                lease = reply.get("value") or {}
+                if reply.get("type") != "status" or lease.get("process") != adoption["lease"]["process"]:
+                    raise RuntimeError("offline expiry lost the original independent lease")
+                if lease.get("revoked"):
+                    try:
+                        os.kill(adoption["lease"]["process"]["pid"], 0)  # Observation only; Worker startup verifies full kernel evidence.
+                    except ProcessLookupError:
+                        break
+                time.sleep(.1)
+            else:
+                raise RuntimeError("independent expiry did not stop the observed offline writer")
+            if path.read_bytes() != saved_journal or not disk.is_file() or lease_identity(source) != guardian:
+                raise RuntimeError("offline expiry changed the journal, disk ownership or guardian")
+            checksum = hashlib.sha256()
+            with disk.open("rb") as stream:
+                for block in iter(lambda:stream.read(1048576), b""):
+                    checksum.update(block)
+            record("initial-offline-expiry-held", journal_unchanged=True, native_disk_retained=True, original_writer_exit_observed=True, disk_bytes=disk.stat().st_size, disk_sha256=checksum.hexdigest())
+            services("start", nodes[source])
         deadline = time.monotonic() + 180
         deletion = None
         while time.monotonic() < deadline:

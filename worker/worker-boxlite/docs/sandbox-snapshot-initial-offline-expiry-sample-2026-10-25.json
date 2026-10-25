@@ -1,0 +1,81 @@
+{
+  "date_asia_shanghai": "2026-10-25",
+  "scope": "real local Console/MinIO and native macOS arm64 BoxLite; confirmed never-managed initial sessions; independent guardian retained across each Worker outage",
+  "runtime_version": "0.10.7",
+  "build_profile": "release",
+  "requested_execution_lease_seconds": 30,
+  "fixtures": [
+    {
+      "worker_exit_action": "stop",
+      "payload_bytes": 1048576,
+      "payload_sha256": "e80abc2a135ab2578595f3a33dff4cf9b508caee0a1c5aafff933b16391d3a4e",
+      "disk_observed_after_independent_expiry": {
+        "bytes": 5701632,
+        "sha256": "672f1e23e7befcf5d0ef77014e08b3fa05f148b37d8de56377044fedec2cd46a",
+        "hash_scope": "qcow file bytes after observed writer exit, before restarting Worker"
+      },
+      "verification": {
+        "full_payload_permissions_and_symlink_verified_on_renewal": true,
+        "first_deadline_passed_without_deletion": true,
+        "console_route_deleted_before_any_snapshot": true,
+        "worker_exit_acknowledged_by_dev_sh": true,
+        "same_guardian_and_original_writer_running_after_worker_exit": true,
+        "revoked_original_lease_and_writer_exit_observed_while_worker_offline": true,
+        "whole_journal_unchanged_while_worker_offline": true,
+        "native_disk_retained_until_worker_restarted": true,
+        "unmanaged_confirmed_initial_boot": true,
+        "worker_claim_requires_same_guardian_boot_latest_lease_and_complete_kernel_exit_evidence": true,
+        "immutable_revoked_expiry_proof_matches_original_writer": true,
+        "latest_renewed_deadline_respected": true,
+        "local_generation_two_deletion_completed": true,
+        "native_disk_removed_and_independent_owner_released": true,
+        "second_worker_restart_has_new_acknowledged_connection": true,
+        "same_guardian_and_immutable_receipt_after_second_restart": true,
+        "no_disk_recreated_after_second_restart": true,
+        "heartbeat_active_session_count": 0,
+        "cleanup_backlog": {
+          "pending_sessions": 0,
+          "pending_workers": 0,
+          "pending_snapshots": 0
+        }
+      }
+    },
+    {
+      "worker_exit_action": "crash",
+      "payload_bytes": 1048576,
+      "payload_sha256": "7e0be738e0d8b2cbfa43ffff7f078810ca67b545035e529423c8956499930e1a",
+      "disk_observed_after_independent_expiry": {
+        "bytes": 5701632,
+        "sha256": "6e7f84e6527954fc1e2167c39b4bc984952ebf0c6c154c6dc161ca231d0acbea",
+        "hash_scope": "qcow file bytes after observed writer exit, before restarting Worker"
+      },
+      "verification": {
+        "full_payload_permissions_and_symlink_verified_on_renewal": true,
+        "first_deadline_passed_without_deletion": true,
+        "console_route_deleted_before_any_snapshot": true,
+        "worker_exit_acknowledged_by_dev_sh": true,
+        "same_guardian_and_original_writer_running_after_worker_exit": true,
+        "revoked_original_lease_and_writer_exit_observed_while_worker_offline": true,
+        "whole_journal_unchanged_while_worker_offline": true,
+        "native_disk_retained_until_worker_restarted": true,
+        "unmanaged_confirmed_initial_boot": true,
+        "worker_claim_requires_same_guardian_boot_latest_lease_and_complete_kernel_exit_evidence": true,
+        "immutable_revoked_expiry_proof_matches_original_writer": true,
+        "latest_renewed_deadline_respected": true,
+        "local_generation_two_deletion_completed": true,
+        "native_disk_removed_and_independent_owner_released": true,
+        "second_worker_restart_has_new_acknowledged_connection": true,
+        "same_guardian_and_immutable_receipt_after_second_restart": true,
+        "no_disk_recreated_after_second_restart": true,
+        "heartbeat_active_session_count": 0,
+        "cleanup_backlog": {
+          "pending_sessions": 0,
+          "pending_workers": 0,
+          "pending_snapshots": 0
+        }
+      }
+    }
+  ],
+  "guest_qcow_disks_absent_after_both_scenarios": true,
+  "limit": "Same physical host and same guardian epoch within each scenario. Worker outages use dev.sh stop/start and dev.sh crash (SIGKILL)/start; no guardian restart or host reboot. Client PID-zero checks are observation only; Worker and independent guardian verify complete kernel writer evidence before cleanup. No snapshot suspend/resume, cross-epoch deletion or cross-machine claim."
+}
