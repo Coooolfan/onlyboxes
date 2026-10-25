@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Measure real BoxLite snapshot stages and sampled local disk accounting."""
 import argparse
+import fcntl
 import hashlib
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import stat
 import subprocess
@@ -19,6 +21,20 @@ SPEC.loader.exec_module(dev)
 START = "sandbox snapshot stage started"
 FINISH = "sandbox snapshot stage finished"
 STAGES = {"export", "upload_source_verify", "upload_parts", "remote_verify", "finalize", "cache_copy", "download", "import", "start_and_readiness"}
+
+
+def profile_lock(path):
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    stream = os.fdopen(fd, "r+b")
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077 or info.st_nlink != 1 or info.st_size:
+            raise RuntimeError("unsafe profile lock")
+        fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return stream
+    except Exception:
+        stream.close()
+        raise
 
 
 def write_metrics(path, evidence):
@@ -216,20 +232,31 @@ def main():
     parser.add_argument("--scenario", choices=("cross-worker", "same-worker"), default="cross-worker")
     parser.add_argument("--payload-mib", type=int, default=1024)
     parser.add_argument("--operation-wait-sec", type=int, default=1800)
+    parser.add_argument("--run-label", default="", help="keep distinct results while reusing the same Worker homes")
+    parser.add_argument("--target-image-cache", choices=("any", "cold", "warm"), default="any")
+    parser.add_argument("--seed-worker", choices=("worker-boxlite", "worker-boxlite-peer"))
     args = parser.parse_args()
     if not 1 <= args.payload_mib <= 10240 or not 1 <= args.operation_wait_sec <= 86400:
         parser.error("payload requires 1..10240 MiB; operation wait requires 1..86400 seconds")
+    if args.run_label and not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,31}", args.run_label):
+        parser.error("run label requires 1..32 lowercase letters/digits/hyphens")
+    if args.target_image_cache != "any" and args.scenario != "cross-worker":
+        parser.error("SDK image-cache conditions require cross-worker measurement")
+    if args.seed_worker and args.scenario != "cross-worker":
+        parser.error("source pinning requires cross-worker measurement")
     os.environ.update(dev.env_file(Path(os.environ["ONLYBOXES_DEV_ENV"])))
     if (os.environ.get("ONLYBOXES_DEV_BOXLITE_PROFILE") != "release"
             or os.environ.get("WORKER_LOG_FORMAT", "json") != "json"
             or os.environ.get("WORKER_LOG_LEVEL", "info") not in ("info", "debug", "trace")):
         raise RuntimeError("stage measurement requires release Workers and JSON info logs")
-    prefix = "snapshot-stage-metrics-" + args.scenario
+    suffix = ("-" + args.run_label) if args.run_label else ""
+    prefix = "snapshot-stage-metrics-" + args.scenario + suffix
     destination = dev.STATE / (prefix + ".json")
-    result_path = dev.STATE / ("snapshot-e2e-" + args.scenario + "-result.json")
+    result_path = dev.STATE / ("snapshot-e2e-" + args.scenario + suffix + "-result.json")
     log = dev.STATE / (prefix + ".log")
     if any(path.exists() for path in (destination, result_path, log)):
         raise RuntimeError("stage or lifecycle evidence already exists; use another isolated fixture")
+    lock = profile_lock(dev.STATE / "snapshot-stage-metrics.lock")
     nodes, roots = {}, {}
     for service in dev.SERVICES:
         credentials = dev.env_file(dev.STATE / (service + ".env"))
@@ -244,12 +271,17 @@ def main():
     fd = os.open(log, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     monitor = Monitor(nodes, roots)
     child = None
+    command = [sys.executable, str(Path(__file__).with_name("snapshot_e2e.py")), "--scenario", args.scenario,
+               "--payload-mib", str(args.payload_mib), "--operation-wait-sec", str(args.operation_wait_sec),
+               "--target-image-cache", args.target_image_cache]
+    if args.run_label:
+        command += ["--evidence-label", args.run_label]
+    if args.seed_worker:
+        command += ["--seed-worker", args.seed_worker]
     try:
         with os.fdopen(fd, "w") as stream:
             monitor.start()
-            child = subprocess.run([sys.executable, str(Path(__file__).with_name("snapshot_e2e.py")), "--scenario", args.scenario,
-                                    "--payload-mib", str(args.payload_mib), "--operation-wait-sec", str(args.operation_wait_sec)],
-                                   stdout=stream, stderr=subprocess.STDOUT)
+            child = subprocess.run(command, stdout=stream, stderr=subprocess.STDOUT)
     finally:
         if monitor.thread.ident is not None:
             try:
@@ -257,6 +289,7 @@ def main():
             except Exception:
                 monitor.failure = True
         evidence = {"runtime":"boxlite", "build_profile":"release", "scenario":args.scenario,
+                    "run_label":args.run_label, "requested_target_sdk_image_cache":args.target_image_cache,
                     "child_exit_code":None if child is None else child.returncode, "monitor_failed":monitor.failure,
                     "monitor_stopped":not monitor.thread.is_alive(),
                     "sampling_interval_target_seconds":.5, "samples":monitor.samples, "stage_events":list(monitor.events.values()),
@@ -268,6 +301,12 @@ def main():
         raise RuntimeError("lifecycle or metric capture failed; preserve private evidence")
     result = json.loads(dev.read_private(result_path))
     checks = lifecycle_checks(result)
+    if args.target_image_cache != "any":
+        before = checks.get("target-image-cache-before", {})
+        after = checks.get("target-image-cache-after", {})
+        if before.get("state") != args.target_image_cache or after.get("state") != "warm":
+            raise RuntimeError("lifecycle lacks the requested target SDK cache evidence")
+        evidence["target_sdk_image_cache"] = {"before":before, "after":after}
     source = checks["created"]["worker_id"]
     target = checks[args.scenario]["worker_id"]
     evidence["source_stages"] = summarize(evidence["stage_events"], source, checks["suspend"]["operation_id"], {"export", "upload_source_verify", "upload_parts", "remote_verify", "finalize"})
@@ -288,6 +327,7 @@ def main():
     write_metrics(destination, evidence)
     print(json.dumps({"verified":True, "samples":len(evidence["samples"]), "source_stages":evidence["source_stages"],
                       "target_stages":target_stages, "observed_peak_allocated_bytes":evidence["observed_peak_allocated_bytes"]}))
+    lock.close()
 
 
 if __name__ == "__main__":

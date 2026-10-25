@@ -11,6 +11,18 @@ SPEC.loader.exec_module(acceptance)
 
 
 class LargeFixtureAdmissionTests(unittest.TestCase):
+    def test_existing_labelled_results_refuse_before_authentication(self):
+        with patch.dict(os.environ, {}, clear=True), patch("sys.argv", ["snapshot_e2e.py", "--scenario", "cross-worker", "--evidence-label", "warm"]), patch.object(acceptance.dev, "env_file", return_value={}), patch.object(Path, "exists", return_value=True), patch.object(acceptance.dev, "console_auth") as auth:
+            with self.assertRaisesRegex(RuntimeError, "labelled lifecycle evidence already exists"):
+                acceptance.main()
+            auth.assert_not_called()
+
+    def test_image_cache_proof_requires_json_info_before_authentication(self):
+        with patch.dict(os.environ, {}, clear=True), patch("sys.argv", ["snapshot_e2e.py", "--scenario", "cross-worker", "--target-image-cache", "cold"]), patch.object(acceptance.dev, "env_file", return_value={"WORKER_LOG_FORMAT":"text"}), patch.object(acceptance.dev, "console_auth") as auth:
+            with self.assertRaisesRegex(RuntimeError, "SDK image-cache acceptance requires JSON info"):
+                acceptance.main()
+            auth.assert_not_called()
+
     def test_headroom_refusal_precedes_authentication_or_session_creation(self):
         config = {"CONSOLE_SNAPSHOT_MAX_BYTES":str(2<<30),"CONSOLE_SNAPSHOT_MAX_EXPANDED_BYTES":str(3<<30),"WORKER_TERMINAL_EXEC_DOCKER_IMAGE":"python@sha256:"+"a"*64}
         for host_free, daemon_free in ((0,"999999999999 4096"),(1<<40,"0 4096")):

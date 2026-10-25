@@ -380,4 +380,6 @@ Docker 的两个 lease guard 配置已实现，配置文件键为 `[snapshot].le
 
 BoxLite 的本机证据包括 [4 × 1 GiB 禁用归档缓存](../../worker/worker-boxlite/docs/sandbox-snapshot-s3-parallel-cold-sample-2026-10-25.json)、[4 × 1 GiB 实际缓存命中](../../worker/worker-boxlite/docs/sandbox-snapshot-s3-parallel-warm-sample-2026-10-25.json)及[恢复复制与生产淘汰 I/O 竞争](../../worker/worker-boxlite/docs/sandbox-snapshot-cache-copy-eviction-sample-2026-10-25.json)。后者在真实 Console/S3 恢复期间由独立进程调用 Worker 使用的生产淘汰函数，验证忙锁保留、复制后回收、独立目标和最终清理；周期 GC 策略与调度由另外的 Rust 测试覆盖。上述证据不等于跨物理机器、受控冷/热镜像性能矩阵或生产 SLO 验收。
 
-[1 GiB 分阶段与磁盘采样](../../worker/worker-boxlite/docs/sandbox-snapshot-stage-sample-2026-10-25.json)另行覆盖单会话跨 Worker 下载和同 Worker 缓存复制，保留逐 operation/attempt 的导出、上传、完整校验、下载/复制、导入、启动及源清理耗时，以及创建数据前至最终清理后的 SDK home/journal 计量曲线。采样、COW/reflink、既有缓存及未计入路径的限制已随样本记录；不能将其当作精确物理峰值或全部存储吞吐验收。受控镜像条件、5/10 GiB 与并发阶段曲线、跨机器及部署存储网络测量仍需完成。
+[1 GiB 分阶段与磁盘采样](../../worker/worker-boxlite/docs/sandbox-snapshot-stage-sample-2026-10-25.json)另行覆盖单会话跨 Worker 下载和同 Worker 缓存复制，保留逐 operation/attempt 的导出、上传、完整校验、下载/复制、导入、启动及源清理耗时，以及创建数据前至最终清理后的 SDK home/journal 计量曲线。采样、COW/reflink、既有缓存及未计入路径的限制已随样本记录；不能将其当作精确物理峰值或全部存储吞吐验收。
+
+[1 GiB SDK 镜像缓存样本](../../worker/worker-boxlite/docs/sandbox-snapshot-sdk-image-cache-sample-2026-10-25.json)使用相同源/目标 Worker 和 home，关闭快照归档缓存，两次均从 S3 下载。目标 SDK 冷态以空索引/空文件清单及实际拉取日志确认，热态以指定 digest 的完整索引/缓存文件及实际复用、无拉取日志确认。探针按固定 SDK 0.10.7 只读校验，不删除缓存，不控制 registry/CDN 或 OS 页缓存。这是顺序单次的 SDK 缓存条件检查；多次重复、其他体量与并发的完整镜像/归档矩阵、跨机器及部署存储网络测量仍需完成。

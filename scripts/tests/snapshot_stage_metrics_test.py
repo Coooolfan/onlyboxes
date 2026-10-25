@@ -19,6 +19,20 @@ def receipt(message, attempt="attempt", **values):
 
 
 class StageMetricTests(unittest.TestCase):
+    def test_profile_lock_serializes_distinct_labels_without_replacing_the_inode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/"profile.lock"
+            first = metrics.profile_lock(path)
+            try:
+                inode = path.stat().st_ino
+                with self.assertRaises(BlockingIOError):
+                    metrics.profile_lock(path)
+            finally:
+                first.close()
+            with metrics.profile_lock(path):
+                self.assertEqual(path.stat().st_ino, inode)
+                self.assertEqual(path.stat().st_size, 0)
+
     def test_failed_or_repeated_api_attempts_cannot_be_hidden_by_the_final_success(self):
         checks = [{"check":"suspend", "status":"succeeded"}, {"check":"resume", "status":"succeeded"}]
         self.assertEqual(set(metrics.lifecycle_checks({"checks":checks})), {"suspend", "resume"})

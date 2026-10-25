@@ -10,6 +10,7 @@ import select
 import socket
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -48,12 +49,21 @@ def main():
     parser.add_argument("--lease-ttl-sec", type=int, default=900, help="1..86400 seconds requested for initial execution, resume and verification; must fit the configured Worker maximum")
     parser.add_argument("--command-timeout-sec", type=int, default=150, help="1..600 seconds for payload seed/verification commands")
     parser.add_argument("--retry-quota-session", action="store_true", help="cross-worker only: reuse the exact session from this fixture's last quota-refused suspend, preserving its failure evidence")
+    parser.add_argument("--evidence-label", default="", help="cross/same-worker only: retain separate evidence for repeated runs in the same homes")
+    parser.add_argument("--target-image-cache", choices=("any", "cold", "warm"), default="any", help="BoxLite cross-worker only: verify SDK image-cache condition before restore")
+    parser.add_argument("--seed-worker", choices=("worker-boxlite", "worker-boxlite-peer"), help="BoxLite cross-worker only: hold the peer offline while seeding to keep source/target roles fixed")
     args = parser.parse_args()
     if not 1 <= args.operation_wait_sec <= 86400 or not 1 <= args.lease_ttl_sec <= 86400:
         parser.error("operation wait and lease TTL require 1..86400 seconds")
     if not 1 <= args.command_timeout_sec <= 600:
         parser.error("command timeout requires 1..600 seconds")
     scenario = args.scenario
+    if args.evidence_label and (not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,31}", args.evidence_label) or scenario not in ("cross-worker", "same-worker") or args.retry_quota_session):
+        parser.error("evidence labels require cross/same-worker acceptance without quota retry")
+    if args.target_image_cache != "any" and (args.runtime != "boxlite" or scenario != "cross-worker"):
+        parser.error("SDK image-cache conditions require BoxLite cross-worker acceptance")
+    if args.seed_worker and (args.runtime != "boxlite" or scenario != "cross-worker"):
+        parser.error("seed-worker pinning requires BoxLite cross-worker acceptance")
     if not 1 <= args.payload_mib <= 10240:
         parser.error("--payload-mib requires 1..10240")
     if args.return_to_source and scenario != "cycle":
@@ -69,6 +79,10 @@ def main():
         parser.error("quota-session retry requires --scenario cross-worker")
     config = Path(os.environ.get("ONLYBOXES_DEV_ENV", dev.ROOT / "scripts/dev.env"))
     os.environ.update(dev.env_file(config))
+    if args.target_image_cache != "any" and (os.environ.get("WORKER_LOG_FORMAT", "json") != "json" or os.environ.get("WORKER_LOG_LEVEL", "info") not in ("info", "debug", "trace")):
+        raise RuntimeError("SDK image-cache acceptance requires JSON info logs")
+    if args.evidence_label and (dev.STATE / ("snapshot-e2e-" + ("docker-" if args.runtime == "docker" else "") + scenario + "-" + args.evidence_label + "-result.json")).exists():
+        raise RuntimeError("labelled lifecycle evidence already exists; preserve it")
     if scenario in INITIAL_EXPIRY_SCENARIOS:
         if args.lease_ttl_sec < 20:
             parser.error("initial expiry renewal acceptance requires a 20..60 second lease")
@@ -165,6 +179,21 @@ def main():
         time.sleep(1)
     else:
         raise RuntimeError("both isolated workers must be online before acceptance")
+    def services(action, *names):
+        subprocess.run([str(dev.ROOT / "scripts/dev.sh"), action, *names], check=True)
+    def offline(node):
+        deadline = time.monotonic() + 40
+        while time.monotonic() < deadline:
+            workers = require(*api("GET", "/api/v1/workers?status=all"))["items"]
+            if not any(w["node_id"] == node and w["status"] == "online" for w in workers):
+                return
+            time.sleep(1)
+        raise RuntimeError("source worker did not become offline")
+    seed_peer = None
+    if args.seed_worker:
+        seed_peer = next(node for node, service in nodes.items() if service != args.seed_worker)
+        services("stop", nodes[seed_peer])
+        offline(seed_peer)
     payload_code = Path(__file__).with_name("snapshot_payload.py").read_text()
     if previous:
         sid = previous["session_id"]
@@ -186,6 +215,8 @@ def main():
     query = "?account_id=" + account
     evidence = {"runtime": args.runtime, "return_to_source": args.return_to_source, "payload_bytes":payload_bytes, "operation_wait_sec":args.operation_wait_sec, "command_timeout_sec":args.command_timeout_sec, "lease_ttl_sec":args.lease_ttl_sec, "boxlite_build_profile":os.environ.get("ONLYBOXES_DEV_BOXLITE_PROFILE", "debug") if args.runtime == "boxlite" else None, "session_id": sid, "account_id": account, "sha256": digest, "checks": previous["checks"] if previous else []}
     result_name = ("docker-" if args.runtime == "docker" else "") + scenario + ("-return-to-source" if args.return_to_source else "")
+    if args.evidence_label:
+        result_name += "-" + args.evidence_label
     def record(label, **values):
         evidence["checks"].append({"check": label, **values})
         dev.atomic_private(dev.STATE / ("snapshot-e2e-" + result_name + "-result.json"), json.dumps(evidence, indent=2) + "\n")
@@ -562,16 +593,6 @@ def main():
                 return operation
             time.sleep(0.05 if fault_expected and kind not in restarted else 1)
         raise RuntimeError("operation still unresolved; preserve session and inspect operation")
-    def services(action, *names):
-        subprocess.run([str(dev.ROOT / "scripts/dev.sh"), action, *names], check=True)
-    def offline(node):
-        deadline = time.monotonic() + 40
-        while time.monotonic() < deadline:
-            workers = require(*api("GET", "/api/v1/workers?status=all"))["items"]
-            if not any(w["node_id"] == node and w["status"] == "online" for w in workers):
-                return
-            time.sleep(1)
-        raise RuntimeError("source worker did not become offline")
     def verify_old_source_cache(node, operation_id):
         root = dev.STATE / nodes[node] / hashlib.sha256(node.encode()).hexdigest()[:32]
         code = """import hashlib,json,sys,time
@@ -724,6 +745,19 @@ print(json.dumps({'snapshot_id':archive['snapshot_id'],'sha256':digest.hexdigest
         record("initial-expiry-restart-verified", new_acknowledged_connection=True, same_guard=True, same_expiry_receipt=True, no_disk=True, active_session_count=0)
         wait_cleanup()
         return
+    if seed_peer:
+        if nodes[source] != args.seed_worker:
+            raise RuntimeError("seed session did not use the selected Worker")
+        services("start", nodes[seed_peer])
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            workers = require(*api("GET", "/api/v1/workers?status=all"))["items"]
+            if any(worker["node_id"] == seed_peer and worker["status"] == "online" for worker in workers):
+                break
+            time.sleep(.2)
+        else:
+            raise RuntimeError("restore peer did not return online after source seeding")
+        record("seed-worker-pinned", source_worker=source, restore_worker=seed_peer)
     original_suspend = lifecycle("suspend")
     suspended = session()
     if suspended["lifecycle_state"] != "suspended" or suspended["worker_id"] is not None or not suspended["persistence"]["latest_snapshot"]:
@@ -741,8 +775,36 @@ print(json.dumps({'snapshot_id':archive['snapshot_id'],'sha256':digest.hexdigest
     if scenario == "cross-worker":
         services("stop", nodes[source])
         offline(source)
+        image_probe = None
+        if args.target_image_cache != "any":
+            probe_spec = importlib.util.spec_from_file_location("image_cache_probe", Path(__file__).with_name("snapshot_image_cache.py"))
+            image_probe = importlib.util.module_from_spec(probe_spec); probe_spec.loader.exec_module(image_probe)
+            target = next(node for node in nodes if node != source)
+            target_home = dev.STATE / nodes[target] / hashlib.sha256(target.encode()).hexdigest()[:32] / "sdk-home"
+            source_root = dev.STATE / nodes[source] / hashlib.sha256(source.encode()).hexdigest()[:32]
+            source_state = json.loads((source_root/"journal/journal.json").read_text())
+            source_op = source_state["operations"][original_suspend["operation_id"]]
+            source_spec = source_op.get("restore_spec") or source_state["restore_specs"][source_op["restore_spec_sha256"]]
+            if source_spec["runtime"] != "boxlite" or source_spec["runtime_version"] != "0.10.7":
+                raise RuntimeError("SDK cache evidence adapter supports pinned BoxLite 0.10.7 only")
+            image = source_spec["image"]
+            before = image_probe.cache_snapshot(target_home, image)
+            if before["state"] != args.target_image_cache:
+                raise RuntimeError("target SDK image cache differs from requested condition; snapshot retained")
+            target_log = dev.STATE / (nodes[target]+".log")
+            log_info = target_log.stat(); log_offset = log_info.st_size
+            record("target-image-cache-before", requested=args.target_image_cache, **before)
         lifecycle("resume")
         verify("cross-worker", next(node for node in nodes if node != source))
+        if image_probe is not None:
+            after = image_probe.cache_snapshot(target_home, image)
+            now = target_log.stat()
+            if (now.st_dev, now.st_ino) != (log_info.st_dev, log_info.st_ino) or now.st_size < log_offset or after["state"] != "warm":
+                raise RuntimeError("target SDK cache/log evidence changed unexpectedly")
+            events = image_probe.sdk_cache_events(target_log, log_offset, set(after["equivalent_complete_references"]) | {before["reference"]})
+            if (args.target_image_cache == "cold" and not events["registry_pull"]) or (args.target_image_cache == "warm" and (not events["cache_reuse"] or events["registry_pull"])):
+                raise RuntimeError("restore did not exercise the requested SDK cache path")
+            record("target-image-cache-after", **after, sdk_events=events)
         services("start", nodes[source])
         require(*api("DELETE", base + query), expected=204)
         record("deleted", status=204)

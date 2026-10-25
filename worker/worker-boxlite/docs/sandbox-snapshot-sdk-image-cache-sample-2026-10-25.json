@@ -1,0 +1,333 @@
+{
+  "date_asia_shanghai": "2026-10-25",
+  "scope": "real local Console/MinIO and two native macOS arm64 BoxLite Workers; target SDK cache cold then warm in the same home",
+  "runtime_version": "0.10.7",
+  "build_profile": "release",
+  "conditions": {
+    "same_source_worker_and_home": true,
+    "same_target_worker_and_home": true,
+    "same_pinned_platform_image": true,
+    "archive_cache_budget_bytes_per_worker": 0,
+    "archive_limit_bytes": 2147483648,
+    "expanded_limit_bytes": 5637144576,
+    "multipart_part_size_bytes": 67108864,
+    "integrity_mode": "readback",
+    "concurrent_sessions": 1,
+    "cold": "target image_index empty and entire images file inventory empty immediately before resume; SDK registry-pull event observed",
+    "warm": "exact pinned-reference complete index and manifest/config/layer files present immediately before resume; SDK cache-reuse event observed, no pull event for the equivalent image refs in that restore window",
+    "role_control": "warm run temporarily stops the restore peer while seeding on the same original source, then starts it before suspend/restore; image/cache data are never deleted or rewritten by the probe",
+    "cache_integrity_scope": "read-only pinned-schema/index and file-presence evidence matching SDK cache lookup; no blob rehash; normal restore and guest data verification still required"
+  },
+  "fixtures": [
+    {
+      "target_sdk_image_cache": "cold",
+      "payload_bytes": 1073741824,
+      "payload_sha256": "11a94880f018cecde813864238ad07ae4afc89363c11044e2891601ddb9b0170",
+      "archive_bytes": 1112872778,
+      "archive_sha256": "59abbec6709e0b9b620928dd6e91c4fff61e51317be6f2566a06e7f8365c636f",
+      "expanded_bytes": 5506400256,
+      "multipart_parts": 17,
+      "image": "python@sha256:739ba32ae445e8d58f3d90feb85f83bebc8346f8dd280fa1eb5848f4ff1ed163",
+      "platform": "linux/arm64",
+      "root_disk_gib": 4,
+      "cpus": 1.0,
+      "memory_mib": 256,
+      "cache_before_resume": {
+        "state": "cold",
+        "reference": "docker.io/library/python@sha256:739ba32ae445e8d58f3d90feb85f83bebc8346f8dd280fa1eb5848f4ff1ed163",
+        "manifest_digest": null,
+        "indexed_images": 0,
+        "cache_file_entries": 0,
+        "requested_index_present": false,
+        "requested_complete_blobs_present": false,
+        "requested_layer_count": 0,
+        "equivalent_complete_references": [],
+        "definition": "SDK image_index plus manifest/config/layer presence per pinned 0.10.7 cache lookup; no blob rehash or OS/registry cache claim"
+      },
+      "cache_after_resume": {
+        "state": "warm",
+        "reference": "docker.io/library/python@sha256:739ba32ae445e8d58f3d90feb85f83bebc8346f8dd280fa1eb5848f4ff1ed163",
+        "manifest_digest": "sha256:739ba32ae445e8d58f3d90feb85f83bebc8346f8dd280fa1eb5848f4ff1ed163",
+        "indexed_images": 1,
+        "cache_file_entries": 6,
+        "requested_index_present": true,
+        "requested_complete_blobs_present": true,
+        "requested_layer_count": 4,
+        "equivalent_complete_references": [
+          "docker.io/library/python@sha256:739ba32ae445e8d58f3d90feb85f83bebc8346f8dd280fa1eb5848f4ff1ed163"
+        ],
+        "definition": "SDK image_index plus manifest/config/layer presence per pinned 0.10.7 cache lookup; no blob rehash or OS/registry cache claim",
+        "sdk_events": {
+          "registry_pull": 1,
+          "cache_reuse": 0
+        }
+      },
+      "source_stages": {
+        "export": {
+          "attempts": 1,
+          "succeeded": 1,
+          "failed": 0,
+          "elapsed_us_sum": 12991827,
+          "attempt_elapsed_us": [
+            12991827
+          ]
+        },
+        "upload_source_verify": {
+          "attempts": 1,
+          "succeeded": 1,
+          "failed": 0,
+          "elapsed_us_sum": 1830776,
+          "attempt_elapsed_us": [
+            1830776
+          ]
+        },
+        "upload_parts": {
+          "attempts": 5,
+          "succeeded": 5,
+          "failed": 0,
+          "elapsed_us_sum": 1124384,
+          "attempt_elapsed_us": [
+            263940,
+            228288,
+            323876,
+            234157,
+            74123
+          ]
+        },
+        "remote_verify": {
+          "attempts": 1,
+          "succeeded": 1,
+          "failed": 0,
+          "elapsed_us_sum": 1973816,
+          "attempt_elapsed_us": [
+            1973816
+          ]
+        },
+        "finalize": {
+          "attempts": 1,
+          "succeeded": 1,
+          "failed": 0,
+          "elapsed_us_sum": 59001,
+          "attempt_elapsed_us": [
+            59001
+          ]
+        }
+      },
+      "target_stages": {
+        "download": {
+          "attempts": 1,
+          "succeeded": 1,
+          "failed": 0,
+          "elapsed_us_sum": 2353161,
+          "attempt_elapsed_us": [
+            2353161
+          ]
+        },
+        "import": {
+          "attempts": 1,
+          "succeeded": 1,
+          "failed": 0,
+          "elapsed_us_sum": 16683555,
+          "attempt_elapsed_us": [
+            16683555
+          ]
+        },
+        "start_and_readiness": {
+          "attempts": 1,
+          "succeeded": 1,
+          "failed": 0,
+          "elapsed_us_sum": 4791400,
+          "attempt_elapsed_us": [
+            4791400
+          ]
+        }
+      },
+      "api_observed_seconds": {
+        "suspend": 18.174319084,
+        "resume": 24.163655500000004
+      },
+      "source_reserved_staging_bytes": 11918534246,
+      "target_reserved_staging_bytes": 17221938544,
+      "disk_accounting": {
+        "samples": 107,
+        "raced_samples": 1,
+        "coverage_seconds": 65.569521709,
+        "baseline_allocated_bytes": 491520,
+        "observed_peak_allocated_bytes": 3888238592,
+        "maximum_observed_sample_gap_seconds": 0.7697687919999989
+      },
+      "verification": {
+        "one_successful_client_operation_per_phase": true,
+        "paired_successful_worker_stages": true,
+        "full_payload_permissions_symlink_and_stable_session_verified": true,
+        "independent_native_instances_verified": true,
+        "original_and_restored_native_directories_removed": true,
+        "s3_download_used_in_both_cache_conditions": true,
+        "cleanup_backlog": {
+          "pending_sessions": 0,
+          "pending_workers": 0,
+          "pending_snapshots": 0
+        }
+      }
+    },
+    {
+      "target_sdk_image_cache": "warm",
+      "payload_bytes": 1073741824,
+      "payload_sha256": "011c898c9d948092ce15139ad39f29b81ed63601c8a996177f3263b1534cba8a",
+      "archive_bytes": 1112873147,
+      "archive_sha256": "fc4c840077f5663a09095e8f2a438f5d78e7215fe1666acc4503f0b5ad5280b3",
+      "expanded_bytes": 5506400256,
+      "multipart_parts": 17,
+      "image": "python@sha256:739ba32ae445e8d58f3d90feb85f83bebc8346f8dd280fa1eb5848f4ff1ed163",
+      "platform": "linux/arm64",
+      "root_disk_gib": 4,
+      "cpus": 1.0,
+      "memory_mib": 256,
+      "cache_before_resume": {
+        "state": "warm",
+        "reference": "docker.io/library/python@sha256:739ba32ae445e8d58f3d90feb85f83bebc8346f8dd280fa1eb5848f4ff1ed163",
+        "manifest_digest": "sha256:739ba32ae445e8d58f3d90feb85f83bebc8346f8dd280fa1eb5848f4ff1ed163",
+        "indexed_images": 1,
+        "cache_file_entries": 6,
+        "requested_index_present": true,
+        "requested_complete_blobs_present": true,
+        "requested_layer_count": 4,
+        "equivalent_complete_references": [
+          "docker.io/library/python@sha256:739ba32ae445e8d58f3d90feb85f83bebc8346f8dd280fa1eb5848f4ff1ed163"
+        ],
+        "definition": "SDK image_index plus manifest/config/layer presence per pinned 0.10.7 cache lookup; no blob rehash or OS/registry cache claim"
+      },
+      "cache_after_resume": {
+        "state": "warm",
+        "reference": "docker.io/library/python@sha256:739ba32ae445e8d58f3d90feb85f83bebc8346f8dd280fa1eb5848f4ff1ed163",
+        "manifest_digest": "sha256:739ba32ae445e8d58f3d90feb85f83bebc8346f8dd280fa1eb5848f4ff1ed163",
+        "indexed_images": 1,
+        "cache_file_entries": 6,
+        "requested_index_present": true,
+        "requested_complete_blobs_present": true,
+        "requested_layer_count": 4,
+        "equivalent_complete_references": [
+          "docker.io/library/python@sha256:739ba32ae445e8d58f3d90feb85f83bebc8346f8dd280fa1eb5848f4ff1ed163"
+        ],
+        "definition": "SDK image_index plus manifest/config/layer presence per pinned 0.10.7 cache lookup; no blob rehash or OS/registry cache claim",
+        "sdk_events": {
+          "registry_pull": 0,
+          "cache_reuse": 1
+        }
+      },
+      "source_stages": {
+        "export": {
+          "attempts": 1,
+          "succeeded": 1,
+          "failed": 0,
+          "elapsed_us_sum": 13149320,
+          "attempt_elapsed_us": [
+            13149320
+          ]
+        },
+        "upload_source_verify": {
+          "attempts": 1,
+          "succeeded": 1,
+          "failed": 0,
+          "elapsed_us_sum": 1822800,
+          "attempt_elapsed_us": [
+            1822800
+          ]
+        },
+        "upload_parts": {
+          "attempts": 5,
+          "succeeded": 5,
+          "failed": 0,
+          "elapsed_us_sum": 1007834,
+          "attempt_elapsed_us": [
+            268823,
+            228632,
+            220057,
+            216525,
+            73797
+          ]
+        },
+        "remote_verify": {
+          "attempts": 1,
+          "succeeded": 1,
+          "failed": 0,
+          "elapsed_us_sum": 1996495,
+          "attempt_elapsed_us": [
+            1996495
+          ]
+        },
+        "finalize": {
+          "attempts": 1,
+          "succeeded": 1,
+          "failed": 0,
+          "elapsed_us_sum": 56099,
+          "attempt_elapsed_us": [
+            56099
+          ]
+        }
+      },
+      "target_stages": {
+        "download": {
+          "attempts": 1,
+          "succeeded": 1,
+          "failed": 0,
+          "elapsed_us_sum": 2494224,
+          "attempt_elapsed_us": [
+            2494224
+          ]
+        },
+        "import": {
+          "attempts": 1,
+          "succeeded": 1,
+          "failed": 0,
+          "elapsed_us_sum": 16661044,
+          "attempt_elapsed_us": [
+            16661044
+          ]
+        },
+        "start_and_readiness": {
+          "attempts": 1,
+          "succeeded": 1,
+          "failed": 0,
+          "elapsed_us_sum": 916513,
+          "attempt_elapsed_us": [
+            916513
+          ]
+        }
+      },
+      "api_observed_seconds": {
+        "suspend": 19.162426375000003,
+        "resume": 20.138350000000003
+      },
+      "source_reserved_staging_bytes": 11918534246,
+      "target_reserved_staging_bytes": 17221939873,
+      "disk_accounting": {
+        "samples": 96,
+        "raced_samples": 0,
+        "coverage_seconds": 59.12315725,
+        "baseline_allocated_bytes": 545562624,
+        "observed_peak_allocated_bytes": 4007739392,
+        "maximum_observed_sample_gap_seconds": 0.6602813330000004
+      },
+      "verification": {
+        "one_successful_client_operation_per_phase": true,
+        "paired_successful_worker_stages": true,
+        "full_payload_permissions_symlink_and_stable_session_verified": true,
+        "independent_native_instances_verified": true,
+        "original_and_restored_native_directories_removed": true,
+        "s3_download_used_in_both_cache_conditions": true,
+        "cleanup_backlog": {
+          "pending_sessions": 0,
+          "pending_workers": 0,
+          "pending_snapshots": 0
+        }
+      }
+    }
+  ],
+  "guest_qcow_disks_absent_after_both_runs": true,
+  "limits": {
+    "comparison": "sequential single samples on one physical host, no randomization or repeated distribution. Registry/CDN, OS page cache and unrelated host load are uncontrolled; no cross-machine or production SLO claim",
+    "timing": "Worker stages are per awaited method and include their internal verification, permit waits and retries; start also includes authorization/readiness. API timing is POST submission through polled terminal state; phase sums omit Console/DB/scheduling/activation/inter-call gaps. Cold/warm differences are not pure registry transfer times",
+    "disk": "metadata samples of SDK homes/journals, including caches/history; excludes S3/build/other paths. Hard links deduplicated, no symlink traversal, COW/reflink may double-count shared physical blocks and short peaks/scan races can be missed. Sampling overhead not subtracted; not a physical peak or quota recommendation"
+  }
+}

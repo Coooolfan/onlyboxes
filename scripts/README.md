@@ -215,11 +215,22 @@ CONSOLE_SNAPSHOT_MAX_EXPANDED_BYTES=5637144576
 
 全部验证通过才永久删除四个会话，要求清理积压归零且两台 Worker 不再保留 guest qcow 磁盘。结果保存在私有 `snapshot-parallel-result.json`；已有该文件时拒绝再次创建一批会话。失败时等待其余已接受客户端任务结束并保留所有会话与操作，不自动删盘。无 VM 的前置检查与 journal 读取测试可运行 `python3 -m unittest scripts.tests.snapshot_parallel_e2e_test`。
 
-`python3 scripts/tests/snapshot_stage_metrics.py --scenario cross-worker --payload-mib 1024` 在同一组已通过 `dev.sh` 启动的隔离 BoxLite 服务上采集阶段耗时和本地磁盘曲线；另可选择 `same-worker`。要求 release 和 info JSON 日志，保留原有大归档空间预检、数据校验、独立实例和删除清理。已有该模式的生命周期结果、测量结果或专用日志时拒绝运行；不要删除旧结果来复测，使用新的隔离状态目录。
+`python3 scripts/tests/snapshot_stage_metrics.py --scenario cross-worker --payload-mib 1024` 在同一组已通过 `dev.sh` 启动的隔离 BoxLite 服务上采集阶段耗时和本地磁盘曲线；另可选择 `same-worker`。要求 release 和 info JSON 日志，保留原有大归档空间预检、数据校验、独立实例和删除清理。已有该模式的生命周期结果、测量结果或专用日志时拒绝运行；不要删除旧结果来复测。可用新的隔离目录，或以 `--run-label` 为同一组 home 的不同运行保留独立结果；标签限 1–32 个小写字母、数字及连字符，首字符为字母或数字。标签同步传给子验收的 `--evidence-label`，已有相同标签时仍拒绝。状态目录中的私有空锁文件固定 inode，串行化所有该目录下的测量模式和标签，不与其他测量批次竞争。
 
 夹具在认证/创建 payload 前采集 SDK home 与 journal 基线，后台持续保留阶段日志（包括 Worker 重启前的旧日志），以约 0.5 秒间隔统计 inode、逻辑字节和 `st_blocks × 512`，直到子验收完成数据校验、删除、清理及退出。符号链接只计自身，不遍历外部路径；硬链接别名按设备号/inode 去重。结果保存为私有 `snapshot-stage-metrics-<scenario>.json`，子验收日志另存同名前缀 `.log`。该基线要求 suspend/resume 各仅一次成功的客户端操作，不能隐藏客户端失败后只统计最后一次成功；Worker 内部重试单列 attempt。只有源/目标 operation 均有完整配对的成功阶段回执才标记 `verified=true`，缺失结束事件不能被当成已完成 I/O。测量失败不补写成功结论，不自行删除或修复会话。
 
 阶段以 Worker 方法 await 为边界：导出含停止/归档及校验；上传前源校验、上传批次、远程完整回读校验分别记录；下载含完整 SHA 与发布，导入含格式校验/规范化及 SDK import，启动含独立授权和 readiness；原生源清理另列。耗时含对应方法的槽位等待和内部重试，未计入的 Console/数据库/调度/激活时间不能通过阶段求和代替。采样可能漏掉短暂峰值及文件增删竞争；reflink/COW 共享块可能按多个 inode 重复计量。统计包含已有镜像缓存和 journal 历史，排除对象存储、构建产物及其他路径，不能作为精确物理峰值或缩减生产配额的依据。镜像/registry/宿主页缓存状态须随样本单独说明；本夹具不自动清空或伪装冷缓存。无 VM 验证可运行 `python3 -m unittest scripts.tests.snapshot_stage_metrics_test`。
+
+目标 SDK 镜像缓存用 `--target-image-cache cold|warm` 在跨 Worker 模式显式验收。`scripts/tests/snapshot_image_cache.py` 仅按固定 BoxLite 0.10.7 的 schema 10、image_index 和缓存目录读取证据，不打开 SDK runtime、不改数据库或缓存。冷态要求恢复前整个目标镜像索引及缓存文件清单为空；热态要求源实际恢复规格中固定 digest 对应的完整索引，以及 manifest/config/layer 文件存在且类型安全。它不重算镜像 blob SHA，不把其他镜像的缓存或不完整记录当作冷态。恢复后要求缓存完整，并在目标此次恢复窗口内记录相同 manifest 的 SDK 拉取/复用事件；冷态必须实际拉取，热态必须复用且无该镜像的拉取事件。SDK 外的 registry/CDN 与宿主页缓存不受控。
+
+同一目标 home 的顺序比较可使用下列命令。首先以全新的隔离状态启动两台 Worker，关闭快照归档缓存；两次均固定同一源 Worker，种数据时暂时停止另一 Worker、种完后重新上线，再通过 S3 恢复到相同目标。因此热态种数据不会提前在目标创建另一份普通 VM 或改变源/目标角色。
+
+```bash
+python3 scripts/tests/snapshot_stage_metrics.py --scenario cross-worker --payload-mib 1024 --run-label image-cold --target-image-cache cold --seed-worker worker-boxlite
+python3 scripts/tests/snapshot_stage_metrics.py --scenario cross-worker --payload-mib 1024 --run-label image-warm --target-image-cache warm --seed-worker worker-boxlite
+```
+
+`--seed-worker` 和镜像缓存条件只用于 BoxLite 跨 Worker 验收。冷态只能从实际空缓存开始；需要重测冷态时使用新的隔离 home，不能删除原 home、journal、账本或缓存记录伪造冷态。缓存条件不符或缺少 SDK 行为回执时失败并保留现场，不能把 S3 回源或更换目标当作满足条件。只测量一次冷/热顺序不构成百分位、网络吞吐保证或生产 SLO。探针无 VM 测试为 `python3 -m unittest scripts.tests.snapshot_image_cache_test`。
 
 ## 本地公开预览
 
