@@ -1,0 +1,109 @@
+{
+  "date_asia_shanghai": "2026-10-25",
+  "scope": "local Console/MinIO and two native BoxLite Workers on macOS arm64",
+  "runtime_version": "0.10.7",
+  "platform": "linux/arm64",
+  "image": "python@sha256:739ba32ae445e8d58f3d90feb85f83bebc8346f8dd280fa1eb5848f4ff1ed163",
+  "conditions": {
+    "build_profile": "release",
+    "concurrency": 4,
+    "worker_count": 2,
+    "seeded_sessions_per_worker": [
+      2,
+      2
+    ],
+    "configured_root_disk_gib": 4,
+    "worker_memory_mib": 256,
+    "worker_cpus": 1.0,
+    "session_slots_per_worker": 4,
+    "control_slots_per_worker": 4,
+    "execution_slots_per_worker": 2,
+    "archive_cache": "disabled; restores use S3 on each available preferred original worker",
+    "image_registry_host_cache": "fresh Worker homes; registry and host cache state uncontrolled, not a cold-image measurement",
+    "archive_limit_bytes": 2147483648,
+    "expanded_limit_bytes": 5637144576,
+    "required_headroom_bytes": 83751862272,
+    "multipart_part_size_bytes": 67108864,
+    "integrity_mode": "readback",
+    "poll_interval_seconds": 0.2,
+    "phase_barrier": "both Workers reported heartbeats newer than the completed suspend phase",
+    "per_operation_timing": "successful POST 202 response through observed terminal status; excludes request round trip, seeding, phase barrier, payload verification and deletion",
+    "fixture_timing": "after execution-token creation through drained cleanup; includes seeding, phase barrier, verification and deletion, excludes service startup/preflight/login"
+  },
+  "batch_observation": {
+    "suspend_wall_seconds": 31.018044125,
+    "resume_wall_seconds": 28.243471500000005,
+    "fixture_wall_seconds": 83.950906,
+    "suspend_peak_overlapping_api_operations": 4,
+    "resume_peak_overlapping_api_operations": 4,
+    "overlap_scope": "accepted API operation intervals, not simultaneous native IO instructions"
+  },
+  "fixtures": [
+    {
+      "fixture_index": 0,
+      "payload_bytes": 1073741824,
+      "payload_sha256": "153b4de94d2b992dcd96c1ad7b38a592f98d1e5987260c1b5943420793b94ed2",
+      "archive_bytes": 1112874005,
+      "archive_sha256": "d5471d4d564b0c8a46aa25dde055f739dd2f5ac07ffb9a71f5483f1377813061",
+      "expanded_bytes": 5506400256,
+      "committed_multipart_parts": 17,
+      "suspend_observed_seconds": 30.892676707999996,
+      "resume_observed_seconds": 28.231020500000007,
+      "restored_on_original_worker": true,
+      "target_native_id_differs_from_source": true
+    },
+    {
+      "fixture_index": 1,
+      "payload_bytes": 1073741824,
+      "payload_sha256": "67a17450db4c09568fa2ae99f0b0540e743c998ea40bd12de5aa4144e5cf1600",
+      "archive_bytes": 1112873693,
+      "archive_sha256": "2c45d94e0d1017f0cf7724b9101602b8d775045458e112e91b2b4587e613e5b6",
+      "expanded_bytes": 5506400256,
+      "committed_multipart_parts": 17,
+      "suspend_observed_seconds": 30.941482458,
+      "resume_observed_seconds": 28.161890000000007,
+      "restored_on_original_worker": true,
+      "target_native_id_differs_from_source": true
+    },
+    {
+      "fixture_index": 2,
+      "payload_bytes": 1073741824,
+      "payload_sha256": "97cac2964ffd5468f53dc8ec2d74db2f41ef0d7ef5f1a252064f9fa1dc67855a",
+      "archive_bytes": 1112874055,
+      "archive_sha256": "b147846b62ddfd0135859ea376bc8397b8c322a51c450f82d38929ea873510d8",
+      "expanded_bytes": 5506400256,
+      "committed_multipart_parts": 17,
+      "suspend_observed_seconds": 28.563952165999996,
+      "resume_observed_seconds": 28.206805666999998,
+      "restored_on_original_worker": true,
+      "target_native_id_differs_from_source": true
+    },
+    {
+      "fixture_index": 3,
+      "payload_bytes": 1073741824,
+      "payload_sha256": "b4a0e0196e9d482e7a8fc0d45afd5300e7222a186cdd4788d227d5169d2e3aae",
+      "archive_bytes": 1112870492,
+      "archive_sha256": "3e824963bd0739aff8cb68f3fc2cbf60d2a5ed455e311971437dc583f743f415",
+      "expanded_bytes": 5506334720,
+      "committed_multipart_parts": 17,
+      "suspend_observed_seconds": 26.975491416999997,
+      "resume_observed_seconds": 28.17974050000001,
+      "restored_on_original_worker": true,
+      "target_native_id_differs_from_source": true
+    }
+  ],
+  "verification": {
+    "all_four_payload_hash_mode_symlink_and_stable_session_checks_passed": true,
+    "all_four_sources_finalized_and_guest_disks_removed_before_restore": true,
+    "all_committed_multipart_receipts_cover_full_archives": true,
+    "four_unique_targets_disjoint_from_four_original_sources": true,
+    "worker_restore_specification_pools_match": true,
+    "permanent_deletion_acknowledged_for_all_four": true,
+    "guest_qcow_disks_absent_after_deletion": true,
+    "cleanup_backlog": {
+      "pending_sessions": 0,
+      "pending_workers": 0,
+      "pending_snapshots": 0
+    }
+  }
+}
