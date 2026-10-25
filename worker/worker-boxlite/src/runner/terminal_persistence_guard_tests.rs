@@ -614,3 +614,246 @@ async fn orderly_shutdown_gate_requires_healthy_journal_and_exact_guard_identity
     );
     r.close().await;
 }
+
+#[tokio::test]
+async fn stopped_managed_boot_is_retained_without_recovery_or_execution() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut r = Rig::new().await;
+    let f = Fixture::new(2).await;
+    let lease = r.client.status("restored-box").await.unwrap().unwrap();
+    let mut origin = lease.process.clone();
+    origin.writer_cgroup = None;
+    origin.signal_version = None;
+    // A metadata-only boot transport fixture. It cannot start a native VM;
+    // real SDK boot receipts are covered by the retained-home acceptance.
+    let executable = serde_json::from_value(serde_json::json!({
+        "home":f.root, "box_id":"restored-box",
+        "directories":vec![serde_json::json!({"device":1,"inode":1});4],
+        "image":{"device":1,"inode":1,"size":1,"modified":0,"modified_ns":0,"changed":0,"changed_ns":0},
+        "sha256":"a".repeat(64)
+    })).unwrap();
+    let authorization = worker_boxlite::persistence::BootAuthorization {
+        operation_id: OP.into(),
+        box_id: "restored-box".into(),
+        scoped_session_id: SCOPE.into(),
+        generation: 1,
+        prior_revision: None,
+        expires_unix_ms: lease.expires_unix_ms,
+        origin,
+        executable,
+    };
+    let identity = r.client.identity().clone();
+    let mode = Arc::new(AtomicU32::new(0));
+    let endpoint = r.control.join("held.sock");
+    let listener = tokio::net::UnixListener::bind(&endpoint).unwrap();
+    std::fs::set_permissions(&endpoint, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let client = LeaseGuardClient::bind(endpoint, identity.clone());
+    let shutdown = CancellationToken::new();
+    let stopping = shutdown.clone();
+    let mock_mode = mode.clone();
+    let auth = authorization.clone();
+    let stored = lease.clone();
+    let service = tokio::spawn(async move {
+        loop {
+            let (mut stream, _) = tokio::select! {
+                _ = stopping.cancelled() => break,
+                accepted = listener.accept() => accepted.unwrap(),
+            };
+            let size = stream.read_u32().await.unwrap();
+            assert!(size < 16384);
+            let mut bytes = vec![0; size as usize];
+            stream.read_exact(&mut bytes).await.unwrap();
+            let request: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                request["expected"],
+                serde_json::to_value(&identity).unwrap()
+            );
+            let mode = mock_mode.load(Ordering::SeqCst);
+            let reply = match request["command"]["action"].as_str().unwrap() {
+                "check_running" => serde_json::json!({"type":"rejected","value":"unavailable"}),
+                "boot_status" => {
+                    serde_json::json!({"type":"boot_status","value":if mode == 1 {None} else {Some(auth.clone())}})
+                }
+                "status" => {
+                    let mut lease = stored.clone();
+                    if mode == 2 {
+                        lease.expires_unix_ms -= 1;
+                    }
+                    if mode == 3 {
+                        lease.process = HostProcess::current().unwrap();
+                    }
+                    if mode == 4 {
+                        lease.generation += 1;
+                    }
+                    if mode == 5 {
+                        lease.revoked = true;
+                    }
+                    serde_json::json!({"type":"status","value":if mode == 6 {None} else {Some(lease)}})
+                }
+                _ => panic!("retention must not send a mutating companion request"),
+            };
+            let response = serde_json::to_vec(&serde_json::json!({"version":2,"request_id":request["request_id"],"identity":identity,"reply":reply})).unwrap();
+            stream.write_u32(response.len() as u32).await.unwrap();
+            stream.write_all(&response).await.unwrap();
+        }
+    });
+    f.journal
+        .claim(
+            serde_json::from_value(serde_json::json!({
+                "operation_id":OP,"scoped_session_id":SCOPE,"generation":1,
+                "kind":"source","phase":"preparing","box_id":"restored-box","restore_spec":spec()
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    f.journal
+        .update(OP, |op| {
+            op.phase = Phase::RollingBack;
+            op.start_attempted = true;
+            op.started_process = Some(lease.process.clone());
+            op.lease_expires_unix_ms = lease.expires_unix_ms;
+            op.boot_executable = Some(authorization.executable.clone());
+            op.boot_guard = Some(GuardedBoot {
+                guard: client.identity().clone(),
+                authorization: Some(authorization.clone()),
+            });
+            Ok(())
+        })
+        .unwrap();
+    f.journal
+        .update(OP, |op| {
+            op.phase = Phase::RolledBack;
+            Ok(())
+        })
+        .unwrap();
+    let saved = f.journal.snapshot().unwrap();
+    let op = &saved.operations[OP];
+    assert!(!stopped_managed_hold(op, "worker-a", &client).await);
+    r.child.kill().unwrap();
+    r.child.wait().unwrap();
+    let proof = lease.process.writers_exited().unwrap_or(false);
+    for value in 0..=6 {
+        mode.store(value, Ordering::SeqCst);
+        assert_eq!(
+            stopped_managed_hold(op, "worker-a", &client).await,
+            proof && matches!(value, 0 | 5),
+            "mode={value}"
+        );
+    }
+    mode.store(0, Ordering::SeqCst);
+    for missing in [
+        "attempt",
+        "writer",
+        "authorization",
+        "executable",
+        "live-origin",
+        "epoch",
+        "phase",
+    ] {
+        let mut invalid = op.clone();
+        match missing {
+            "attempt" => invalid.start_attempted = false,
+            "writer" => invalid.started_process = None,
+            "authorization" => invalid.boot_guard.as_mut().unwrap().authorization = None,
+            "executable" => invalid.boot_executable = None,
+            "live-origin" => {
+                invalid
+                    .boot_guard
+                    .as_mut()
+                    .unwrap()
+                    .authorization
+                    .as_mut()
+                    .unwrap()
+                    .origin = HostProcess::current().unwrap()
+            }
+            "epoch" => {
+                invalid.boot_guard.as_mut().unwrap().guard.epoch_id = Uuid::new_v4().to_string()
+            }
+            "phase" => invalid.phase = Phase::RollingBack,
+            _ => unreachable!(),
+        }
+        assert!(
+            !stopped_managed_hold(&invalid, "worker-a", &client).await,
+            "{missing}"
+        );
+    }
+    f.manager
+        .install_execution_guard(Some(client.clone()))
+        .await
+        .unwrap();
+    let result = f.manager.install_snapshot_journal(f.journal.clone()).await;
+    if proof {
+        result.unwrap();
+        connect(&f.manager, CONNECTION, &[]).await;
+        let state = f.manager.sessions.lock().await;
+        assert!(!state.failed);
+        assert!(state.pending_adoptions.contains(SCOPE));
+        assert!(!state.fences[SCOPE].active);
+        assert!(state.fences[SCOPE].held);
+        assert!(state
+            .protected_names
+            .contains(&terminal_session_resource_name(SCOPE)));
+        drop(state);
+        assert_eq!(f.manager.active_session_count().await, 1);
+        for generation in [0, 1] {
+            assert!(f
+                .manager
+                .execute(request("held-managed", generation))
+                .await
+                .is_err());
+            assert!(f
+                .manager
+                .claim_proxy(SCOPE, 8080, generation, SystemTime::now())
+                .await
+                .is_err());
+        }
+        assert!(f
+            .manager
+            .renew_lease(TerminalLeaseRenewRequest {
+                session_id: SCOPE.into(),
+                generation: 1,
+                connection_id: Some(CONNECTION.into()),
+                lease_ttl_sec: 60,
+            })
+            .await
+            .is_err());
+        assert!(f
+            .manager
+            .resolve_resource(TerminalResourceRequest {
+                session_id: SCOPE.into(),
+                generation: 1,
+                connection_id: Some(CONNECTION.into()),
+                file_path: "/data".into(),
+                action: "read".into(),
+                signed_url: String::new(),
+                headers: HashMap::new(),
+                deadline_unix_ms: 0,
+            })
+            .await
+            .is_err());
+        assert!(f
+            .manager
+            .recover_one_session(SCOPE, SystemTime::now() + Duration::from_secs(60), 1)
+            .await
+            .is_err());
+        f.manager.cleanup_expired_sessions().await;
+        assert_eq!(f.manager.active_session_count().await, 1);
+        assert_eq!(f.backend.created.load(Ordering::SeqCst), 0);
+        assert!(f.backend.commands.lock().await.is_empty());
+        assert!(f.backend.pinned.lock().await.is_empty());
+        assert!(f.backend.removed.lock().await.is_empty());
+        let after = f.journal.snapshot().unwrap();
+        assert_eq!(
+            serde_json::to_value(&after).unwrap(),
+            serde_json::to_value(&saved).unwrap()
+        );
+    } else {
+        assert!(result.is_err());
+        assert!(f.manager.sessions.lock().await.failed);
+    }
+    shutdown.cancel();
+    service.await.unwrap();
+    assert!(!stopped_managed_hold(op, "worker-a", &client).await);
+    f.manager.close_preserving().await;
+    r.close().await;
+}

@@ -76,7 +76,7 @@ Worker 在 journal 的 `execution-store.json` 固定 home/journal 配对、store
 
 Worker 正常退出与故障退出使用不同处理。正常请求退出后，先关闭生命周期准入并等待已接受动作、缓存 I/O 和会话任务结束，再核对 manager 未失败、journal 可读、home/store 绑定及同一独立守护器仍可服务。全部通过时保留受控 terminal writer，SDK 关闭跳过 detached Box；执行仍受原绝对 lease 约束，退出流程不续租、不重新启动、不改变所有权。其他退出、无法确认排空或任一健康检查失败，仍按上面的精确内核停止与证据保留路径处理。
 
-2026-10-25 的真实 Console/S3 `worker-graceful-restart` 验收在恢复目标已经 active 后重启其 Worker，验证同一守护器 epoch/进程、Box ID、宿主 writer PID/起始时间及完整 payload/权限/链接均保持一致，随后永久删除并排空清理。原生 Worker smoke 同时验证独立守护器丢失仍关闭门禁、停止精确 writer 并保留磁盘。该正常退出路径不恢复已经停止的托管目标，也不绕过守护器重启、宿主重启或未知启动结果的协调要求。已有 managed active 目标停止后，目前会在控制引擎初始化的运行租约核对处拒绝整个 Worker 注册，同节点其他清理也可能因此积压；磁盘及历史保留，仍需明确协调，不能删除 journal 或回退旧快照绕过。
+2026-10-25 的真实 Console/S3 `worker-graceful-restart` 验收在恢复目标已经 active 后重启其 Worker，验证同一守护器 epoch/进程、Box ID、宿主 writer PID/起始时间及完整 payload/权限/链接均保持一致，随后永久删除并排空清理。原生 Worker smoke 同时验证独立守护器丢失仍关闭门禁、停止精确 writer 并保留磁盘。该正常退出路径不恢复已经停止的托管目标，也不绕过守护器重启、宿主重启或未知启动结果的协调要求。已有托管目标停止后，若同一守护器、完整受控启动记录、原启动者及 writer 退出均可验证，Worker 可保留隔离并注册，继续处理其他 scope；该会话执行入口关闭，仍占用容量。明确的更高 generation DELETE 可走原 purge 与独立 owner release 链路，不能把上线解释为可以运行或删除。证据缺失、未知启动或守护器身份变化仍拒绝启动，不能删除 journal 或回退旧快照绕过。[托管停止根的条件及真实验收](sandbox-snapshot-startup.md#已知停止托管根的保留与清理)列出适用范围。
 
 守护器重启会撤销旧租约。对于尚未进入快照生命周期的已确认初始根，启动可在核对原控制进程、旧守护器及 writer 全部退出，并取得同一账本当前守护器的匹配撤销回执后保留隔离；该根继续占用容量，命令和恢复入口关闭，Worker 可使用剩余容量注册。此路径不改变旧服务身份、不恢复执行、不清理磁盘，详见[已知停止初始根的保留](sandbox-snapshot-startup.md#已知停止初始根的保留)。没有正向 writer 证据的未知启动结果、宿主 boot/PID namespace 变化及不一致历史保留并拒绝开放，不通过创建空白根恢复服务。这些异常的自动协调、账本维护/压缩和完整跨机器验收仍待完成；不能把此配置入口视为已经覆盖所有故障恢复。
 

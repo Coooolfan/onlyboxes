@@ -40,7 +40,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime", choices=("boxlite", "docker"), default="boxlite")
     parser.add_argument("--return-to-source", action="store_true", help="after cross-worker mutation and no-worker failure, restore onto the original worker with its older cache")
-    parser.add_argument("--scenario", choices=("cycle", "cross-worker", "same-worker", "no-worker", "console-restart", "worker-restart", "worker-start-restart", "cache-corrupt", "cache-miss", "worker-graceful-restart"), default="cycle")
+    parser.add_argument("--scenario", choices=("cycle", "cross-worker", "same-worker", "no-worker", "console-restart", "worker-restart", "worker-start-restart", "cache-corrupt", "cache-miss", "worker-graceful-restart", "worker-expired-restart"), default="cycle")
     parser.add_argument("--payload-mib", type=int, default=1, help="1..10240 MiB of independent random guest data; large runs require explicit snapshot and disk budgets")
     parser.add_argument("--operation-wait-sec", type=int, default=600, help="1..86400 seconds to observe each accepted lifecycle operation; does not change its server deadline")
     parser.add_argument("--lease-ttl-sec", type=int, default=900, help="1..86400 seconds requested for initial execution, resume and verification; must fit the configured Worker maximum")
@@ -61,12 +61,14 @@ def main():
         spec = importlib.util.spec_from_file_location("docker_acceptance", Path(dev.__file__).with_name("dev-docker-snapshot.py"))
         docker = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(docker)
-    if scenario == "worker-graceful-restart" and args.runtime != "boxlite":
-        parser.error("graceful restart acceptance currently requires BoxLite")
+    if scenario in ("worker-graceful-restart", "worker-expired-restart") and args.runtime != "boxlite":
+        parser.error("managed Worker restart acceptance currently requires BoxLite")
     if args.retry_quota_session and scenario != "cross-worker":
         parser.error("quota-session retry requires --scenario cross-worker")
     config = Path(os.environ.get("ONLYBOXES_DEV_ENV", dev.ROOT / "scripts/dev.env"))
     os.environ.update(dev.env_file(config))
+    if scenario == "worker-expired-restart" and not int(os.environ.get("WORKER_TERMINAL_LEASE_MIN_SEC", "60")) <= args.lease_ttl_sec <= 60:
+        raise RuntimeError("expiry restart requires an explicit unclamped lease of at most 60 seconds")
     if args.lease_ttl_sec > int(os.environ.get("WORKER_TERMINAL_LEASE_MAX_SEC", "1800")):
         raise RuntimeError("requested fixture lease exceeds configured Worker maximum")
     payload_bytes = args.payload_mib * 1024 * 1024
@@ -617,7 +619,7 @@ print(json.dumps({'snapshot_id':archive['snapshot_id'],'sha256':digest.hexdigest
         record("deleted", status=204)
         wait_cleanup()
         return
-    if scenario in ("same-worker", "console-restart", "worker-restart", "worker-start-restart", "cache-corrupt", "cache-miss", "worker-graceful-restart"):
+    if scenario in ("same-worker", "console-restart", "worker-restart", "worker-start-restart", "cache-corrupt", "cache-miss", "worker-graceful-restart", "worker-expired-restart"):
         stopped_peer = None
         cache_fault = scenario in ("cache-corrupt", "cache-miss")
         if (args.runtime == "docker" and scenario == "worker-start-restart") or cache_fault:
@@ -691,12 +693,79 @@ print(json.dumps({'snapshot_id':archive['snapshot_id'],'sha256':digest.hexdigest
             if lease_identity(source) != guardian or not after or after.get("box_id") != before["box_id"] or after.get("started_process") != writer or running.get("type") != "running" or running.get("value", {}).get("process") != writer:
                 raise RuntimeError("graceful restart replaced the companion, native instance or kernel writer")
             record("orderly-restart-preserved", instance_id=before["box_id"], same_guard=True, same_kernel_writer=True, same_payload=True)
-        verify("same-worker", source)
+        expired_proof = None
+        if scenario == "worker-expired-restart":
+            verify("before-expiry", source)
+            node, before = native_operation(restored["operation_id"])
+            if node != source or not before or not before.get("started_process") or before.get("phase") != "active":
+                raise RuntimeError("expiry restart requires a pinned active target")
+            guardian = lease_identity(source)
+            writer = before["started_process"]
+            if not 1 < writer["pid"] <= 2147483647:
+                raise RuntimeError("invalid retained writer identity")
+            deadline = time.monotonic() + 90
+            while time.monotonic() < deadline:
+                reply = guard_exchange(source, {"action":"status", "box_id":before["box_id"]}, guardian).get("reply", {})
+                lease = reply.get("value") or {}
+                if reply.get("type") != "status" or lease.get("process") != writer:
+                    raise RuntimeError("expiry observation lost the exact companion lease")
+                if lease.get("revoked"):
+                    try:
+                        os.kill(writer["pid"], 0)  # Observation only; never signal or stop a writer here.
+                    except ProcessLookupError:
+                        break
+                time.sleep(.1)
+            else:
+                raise RuntimeError("companion expiry did not stop the observed writer")
+            root = dev.STATE / nodes[source] / hashlib.sha256(source.encode()).hexdigest()[:32]
+            disk = root / "sdk-home/boxes" / before["box_id"] / "disks/disk.qcow2"
+            def disk_digest():
+                digest = hashlib.sha256()
+                with disk.open("rb") as stream:
+                    for chunk in iter(lambda:stream.read(1048576), b""):
+                        digest.update(chunk)
+                return digest.hexdigest()
+            checksum = disk_digest()
+            services("restart", nodes[source])
+            deadline = time.monotonic() + 90
+            while time.monotonic() < deadline:
+                messages = []; stages = []
+                for line in (dev.STATE / (nodes[source] + ".log")).read_text().splitlines():
+                    try:
+                        fields = json.loads(line).get("fields", {})
+                        messages.append(fields.get("message")); stages.append(fields.get("stage"))
+                    except ValueError:
+                        pass
+                if "stopped_managed_held" in stages and "worker connected" in messages:
+                    break
+                time.sleep(.2)
+            else:
+                raise RuntimeError("Worker did not register with its stopped managed root held")
+            _, after = native_operation(restored["operation_id"])
+            if after != before or disk_digest() != checksum or lease_identity(source) != guardian:
+                raise RuntimeError("stopped managed retention changed its journal, disk or companion")
+            status, _ = api("POST", "/api/v1/commands/terminal", {"command":"printf must-not-execute", "session_id":sid, "create_if_missing":False, "lease_ttl_sec":args.lease_ttl_sec, "timeout_ms":10000})
+            if status not in (404, 409, 503):
+                raise RuntimeError("stopped managed scope did not return a recognized closed-route result")
+            record("expired-managed-held", same_instance=True, same_disk=True, same_guard=True, execution_closed=True, http_status=status)
+            expired_proof = (before, root, disk, guardian)
+        else:
+            verify("same-worker", source)
         if stopped_peer:
             services("start", nodes[stopped_peer])
         require(*api("DELETE", base + query), expected=204)
         record("deleted", status=204)
         wait_cleanup()
+        if expired_proof:
+            before, root, disk, guardian = expired_proof
+            journal = json.loads((root / "journal/journal.json").read_text())
+            deletion = journal["operations"][journal["current"][before["scoped_session_id"]]]
+            reply = guard_exchange(source, {"action":"retirement_status", "box_id":before["box_id"]}, guardian).get("reply", {})
+            receipt = reply.get("value") or {}
+            retirement = receipt.get("retirement") or {}
+            if deletion.get("kind") != "delete" or deletion.get("phase") != "deleted" or deletion["generation"] <= before["generation"] or disk.exists() or reply.get("type") != "retirement_status" or not receipt.get("released") or retirement.get("cleanup_generation") != deletion["generation"] or retirement.get("box_id") != before["box_id"] or retirement.get("scoped_session_id") != before["scoped_session_id"]:
+                raise RuntimeError("held managed root lacks higher-generation deletion and ownership release")
+            record("held-managed-purged", higher_generation=True, disk_removed=True, ownership_released=True)
         if args.runtime == "docker" and scenario == "worker-restart":
             _, cleaned = native_operation(original_suspend["operation_id"])
             roots = dev.run(["docker", "ps", "-a", "--no-trunc", "--filter", "id=" + restarted["suspend"][1], "--format", "{{.ID}}"])

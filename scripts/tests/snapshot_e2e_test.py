@@ -40,6 +40,13 @@ class LargeFixtureAdmissionTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "matching private evidence"):
                     acceptance.quota_retry_evidence(Path("fixture"), "boxlite", 5<<30)
 
+    def test_expiry_restart_refuses_a_clamped_or_long_lease_before_authentication(self):
+        for minimum, requested in ((60, 30), (1, 61), (1, 900)):
+            with patch.dict(os.environ, {}, clear=True), patch("sys.argv", ["snapshot_e2e.py", "--scenario", "worker-expired-restart", "--lease-ttl-sec", str(requested)]), patch.object(acceptance.dev, "env_file", return_value={"WORKER_TERMINAL_LEASE_MIN_SEC":str(minimum)}), patch.object(acceptance.dev, "console_auth") as auth:
+                with self.assertRaisesRegex(RuntimeError, "unclamped lease"):
+                    acceptance.main()
+                auth.assert_not_called()
+
     def test_explicit_archive_and_expanded_budgets_are_required(self):
         with patch.dict(os.environ,{},clear=True), patch("sys.argv",["snapshot_e2e.py","--payload-mib","1024"]), patch.object(acceptance.dev,"env_file",return_value={}), patch.object(acceptance.dev,"console_auth") as auth:
             with self.assertRaisesRegex(RuntimeError,"explicit archive/expanded limits"):

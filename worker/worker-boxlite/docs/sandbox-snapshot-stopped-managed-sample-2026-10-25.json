@@ -1,0 +1,50 @@
+{
+  "date_asia_shanghai": "2026-10-25",
+  "scope": "local Console/MinIO and native BoxLite Workers on macOS arm64",
+  "runtime_version": "0.10.7",
+  "control_protocol": 2,
+  "existing_stopped_target": {
+    "journal_unchanged_during_startup": true,
+    "disk_bytes": 1211535360,
+    "disk_sha256": "efaeca0a8e1e7c26065804abec1cea1a287d73352ed0838bc2ddd985aef0315b",
+    "disk_and_instance_retained_on_registration": true,
+    "kernel_state_after_registration": "stopped",
+    "unrelated_cleanup_pending_before": 2,
+    "unrelated_cleanup_pending_after": 0,
+    "execution_http_status": 503,
+    "explicit_delete_http_status": 204,
+    "previous_generation": 2,
+    "cleanup_generation": 3,
+    "same_companion_ownership_released": true,
+    "disk_removed_after_authorized_delete": true,
+    "cleanup_backlog": {
+      "pending_sessions": 0,
+      "pending_workers": 0,
+      "pending_snapshots": 0
+    }
+  },
+  "repeatable_expiry_regression": {
+    "scenario": "worker-expired-restart",
+    "build_profile": "release",
+    "requested_lease_seconds": 30,
+    "configured_min_lease_seconds": 1,
+    "payload_bytes": 1048576,
+    "same_instance": true,
+    "same_disk": true,
+    "same_guard": true,
+    "execution_closed": true,
+    "explicit_higher_generation_delete": true,
+    "ownership_released": true,
+    "cleanup_backlog": {
+      "pending_sessions": 0,
+      "pending_workers": 0,
+      "pending_snapshots": 0
+    }
+  },
+  "limits": [
+    "retention does not rearm, renew, execute or delete a root",
+    "cleanup requires explicit Console intent, higher generation, native verification and independent release",
+    "not recovery of running execution or changed companion epochs",
+    "not host-reboot, Linux VM or cross-physical-host acceptance"
+  ]
+}

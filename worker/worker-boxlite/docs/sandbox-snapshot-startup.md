@@ -85,11 +85,23 @@ BoxLite `0.10.7` 初始化时会更新恢复状态、回收没有数据库记录
 
 该结果证明保留隔离、Worker 可注册及其他会话的跨 Worker 生命周期可用，不证明旧会话可继续执行，也不替代宿主重启或跨物理机器验收。
 
+## 已知停止托管根的保留与清理
+
+已完成受控启动的 target active 或 source rolled_back，可能在 journal 仍为 active 时因到期或其他原因停止。它可在**同一守护器 epoch** 下保留隔离，让 Worker 注册并处理其他 scope；运行恢复仍关闭。此路径要求当前操作有完整 `start_attempted`、`started_process`、`boot_executable` 和 `boot_guard.authorization`，授权的 operation/scope/generation/Box ID 与操作一致，可执行文件证据一致，原启动 Worker 已退出，精确 writer 及 Linux writer cgroup 已退出。
+
+当前已绑定守护器还必须返回同一启动授权，以及同一 scope/generation/writer 的 lease；lease revision 必须晚于启动授权的前驱，期限不能短于 journal。缺记录、RPC 不可用、身份变化、未完成启动、ready/importing 等状态均继续拒绝。这里核对的是已知停止根的归属，不要求该 lease 仍可执行，也不续租或重绑定。
+
+通过后只把内存门禁设为 held/pending：保留 journal 的原阶段、CID、boot 及 lease 证据，关闭执行、续租、资源、预览和普通恢复，不调用 SDK start 或创建替代根。该根仍占用容量，其名称受 orphan 清理保护。Worker 上线不表示这份会话恢复可执行；它可以核对库存并处理其他 scope 的清理。旧共享快照不会自动替换当前磁盘。
+
+Console 明确撤销路由并接受更高 generation 的永久 DELETE 后，原有 purge 协议仍核对全部历史、精确规格/名称、writer 退出、原生删除和独立 lease retirement/release 回执，才能报告完成。保留本身不授权删除，无法证明的根继续保留。
+
+2026-10-25 在真实 Console/S3 保留现场中，该 Worker 上线前后整个 journal 与 1,211,535,360 字节磁盘的 SHA-256 不变，原 CID 仍 stopped；其他 scope 的清理积压从两项归零，而这份磁盘仍在。执行请求返回 503。随后显式 DELETE 返回 204，generation 从 2 推进到 3，原盘删除，同一守护器确认 cleanup generation 3 的 owner 已释放。另一个 `worker-expired-restart` 场景由独立守护器按 30 秒租约到期停止实际目标，再重启 Worker，验证原操作和磁盘不变、执行关闭及后续授权清理。见[脱敏验收记录](sandbox-snapshot-stopped-managed-sample-2026-10-25.json)。
+
 ## 正常 Worker 退出
 
 正常退出先排空受控任务，再确认 journal/home/store 和同一独立守护器仍健康，才保留 detached terminal writer。新 Worker 仍须完成原 CID、实际 writer、有效 lease 和 Console 恢复 ACK 的核对，不凭旧目录自动启动已停止实例。退出路径的只读健康检查不会续租。故障退出、journal/绑定失败、守护器不可用或无法确认排空仍请求精确停止；守护器自身的关闭仍会停止它管理的写入者。
 
-真实 Console/S3 在 active 恢复目标上的正常 Worker 重启，已验证守护器身份、原生 ID、内核 writer 与业务文件均保持一致，并完成后续删除清理。已被旧退出策略或其他原因停止的 managed active 目标仍不适用初始根保留路径，保留现场并拒绝自动运行；其协调和清理仍待完成。
+真实 Console/S3 在 active 恢复目标上的正常 Worker 重启，已验证守护器身份、原生 ID、内核 writer 与业务文件均保持一致，并完成后续删除清理。已停止的托管目标不会自动运行；具备完整受控启动及退出证据时，按上面的托管根保留路径注册，再由明确授权完成清理。运行恢复和不同守护器 epoch 的协调仍待完成。
 
 ## 验证
 

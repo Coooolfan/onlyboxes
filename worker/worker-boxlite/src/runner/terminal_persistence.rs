@@ -447,6 +447,58 @@ pub(super) fn guard_deadline(time: SystemTime) -> Result<i64, TerminalOperationE
         ))
         .ok_or_else(unavailable)
 }
+// A known completed boot may have stopped while its managed scope remains
+// active in the durable journal. Retention permits registration and explicit
+// higher-generation purge only; it never rearms that boot or opens its gates.
+async fn stopped_managed_hold(
+    op: &worker_boxlite::persistence::Operation,
+    worker: &str,
+    guard: &worker_boxlite::persistence::LeaseGuardClient,
+) -> bool {
+    let Some(binding) = &op.boot_guard else {
+        return false;
+    };
+    let Some(authorization) = &binding.authorization else {
+        return false;
+    };
+    let Some(process) = &op.started_process else {
+        return false;
+    };
+    if !op.active()
+        || !matches!(op.kind, Kind::Source | Kind::Target)
+        || !op.start_attempted
+        || guard.identity().worker_id != worker
+        || &binding.guard != guard.identity()
+        || authorization.operation_id != op.operation_id
+        || authorization.scoped_session_id != op.scoped_session_id
+        || authorization.generation != op.generation
+        || authorization.box_id != op.box_id
+        || op.boot_executable.as_ref() != Some(&authorization.executable)
+        || !authorization.origin.has_exited().is_ok_and(|exited| exited)
+        || !process.writers_exited().is_ok_and(|exited| exited)
+    {
+        return false;
+    }
+    // Both responses must come from the exact already-bound live companion.
+    // Missing history, a new epoch or an old writer's mere absence is not proof.
+    if !guard
+        .boot_status(&op.box_id)
+        .await
+        .is_ok_and(|saved| saved.as_ref() == Some(authorization))
+    {
+        return false;
+    }
+    guard.status(&op.box_id).await.is_ok_and(|saved| {
+        saved.is_some_and(|lease| {
+            lease.scoped_session_id == op.scoped_session_id
+                && lease.generation == op.generation
+                && lease.process == *process
+                && lease.expires_unix_ms >= op.lease_expires_unix_ms
+                && lease.revision > authorization.prior_revision.unwrap_or(0)
+        })
+    })
+}
+
 // This proof permits only inventory/retention, never execution or deletion.
 // Keep the saved service epoch and boot receipts unchanged. A pending root
 // remains protected from orphan cleanup and consumes its existing capacity.
@@ -627,6 +679,7 @@ impl TerminalSessionManager {
         if self.closed.load(Ordering::SeqCst) {
             return Err(unavailable());
         }
+        let mut pending = HashSet::new();
         for (scope, id) in &snapshot.current {
             let op = &snapshot.operations[id];
             if !op.terminal()
@@ -640,8 +693,19 @@ impl TerminalSessionManager {
                     .await
                     .is_err()
             {
-                state.fail();
-                return Err(unavailable());
+                let held = match &state.execution_guard {
+                    Some(guard) => stopped_managed_hold(op, &snapshot.worker_id, guard).await,
+                    None => false,
+                };
+                if !held {
+                    state.fail();
+                    return Err(unavailable());
+                }
+                pending.insert(scope.clone());
+                tracing::warn!(
+                    stage = "stopped_managed_held",
+                    "BoxLite managed root retained with execution closed"
+                );
             }
             if state.entries.get(scope).is_some_and(|s| {
                 !s.box_id.is_empty() && !op.box_id.is_empty() && s.box_id != op.box_id
@@ -672,8 +736,8 @@ impl TerminalSessionManager {
                     operation: op.operation_id.clone(),
                     generation: op.generation,
                     box_id: op.box_id.clone(),
-                    active: op.active(),
-                    held: op.held(),
+                    active: op.active() && !pending.contains(scope),
+                    held: op.held() || pending.contains(scope),
                     capacity: !op.terminal(),
                     terminal: op.terminal(),
                     permanent: op.kind == Kind::Delete,
@@ -688,7 +752,6 @@ impl TerminalSessionManager {
                 }
             }
         }
-        let mut pending = HashSet::new();
         for (scope, id) in &snapshot.probes {
             if !snapshot.current.contains_key(scope) {
                 if let Some(adoption) = snapshot.adoptions.get(scope) {

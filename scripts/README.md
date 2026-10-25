@@ -178,6 +178,8 @@ scripts/dev.sh start sandbox-persistence
 
 BoxLite 的 `--scenario worker-graceful-restart` 在快照恢复目标已经 active 后执行 `dev.sh restart`，要求守护器身份、原生 CID、真实 kernel writer 和业务文件均保持一致；没有发生预定重启或重新启动了 VM 均不能通过。完成后永久删除并排空清理。此场景验证正常 Worker 退出与独立租约的衔接，不覆盖守护器重启或已停止托管目标的运行恢复。
 
+BoxLite 的 `--scenario worker-expired-restart --lease-ttl-sec 30` 验证已激活目标正常到期后的 Worker 重启。私有配置须将 `WORKER_TERMINAL_LEASE_MIN_SEC=1` 并重启对应测试 Worker；场景要求租约不被最小值夹长且不超过 60 秒。它等待原守护器撤销租约并观察原进程停止，重启后要求 Worker 在验证完整 writer 退出证据后保留同一 CID、原操作和磁盘，拒绝执行，再显式 DELETE，核对更高 generation、物理删除与同一守护器的 owner release，最后清理归零。客户端的进程观察不作为退出或删除授权；真正的退出核对仍在 Worker 中执行。此场景不使用直接 PID 停止或新启动授权。
+
 四会话 BoxLite 并发验收由 `python3 scripts/tests/snapshot_parallel_e2e.py` 执行，读取同一组隔离会话/配置/状态目录变量。它要求 release 构建、两个 Worker 各四个会话及管理槽位、各两个执行槽位、关闭归档缓存，并在创建会话前同时检查主机和 S3 daemon 的全批次空间预留。`--payload-mib` 默认 1024，`--operation-wait-sec` 默认 1800。以下是固定同一镜像、4 GiB 根盘的 4 × 1 GiB 本机样本配置；展开预算应随实际归档调整，不是通用生产默认值：
 
 ```dotenv
