@@ -53,6 +53,14 @@ class LargeFixtureAdmissionTests(unittest.TestCase):
                 acceptance.main()
             auth.assert_not_called()
 
+    def test_cache_contention_refuses_disabled_cache_or_unobservable_logs_before_auth(self):
+        for cache, log_format in (("0", "json"), (str(4<<30), "text")):
+            config = {"CONSOLE_SNAPSHOT_MAX_BYTES":str(2<<30), "WORKER_PERSISTENCE_CACHE_MAX_BYTES":cache, "WORKER_LOG_FORMAT":log_format}
+            with patch.dict(os.environ, {}, clear=True), patch("sys.argv", ["snapshot_e2e.py", "--scenario", "cache-copy-eviction", "--payload-mib", "1024"]), patch.object(acceptance.dev, "env_file", return_value=config), patch.object(Path, "is_file", return_value=True), patch.object(Path, "exists", return_value=False), patch.object(acceptance.os, "access", return_value=True), patch.object(acceptance.dev, "console_auth") as auth:
+                with self.assertRaisesRegex(RuntimeError, "retained producer cache and JSON info logs"):
+                    acceptance.main()
+                auth.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

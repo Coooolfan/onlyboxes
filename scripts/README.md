@@ -180,6 +180,16 @@ BoxLite 的 `--scenario worker-graceful-restart` 在快照恢复目标已经 act
 
 BoxLite 的 `--scenario worker-expired-restart --lease-ttl-sec 30` 验证已激活目标正常到期后的 Worker 重启。私有配置须将 `WORKER_TERMINAL_LEASE_MIN_SEC=1` 并重启对应测试 Worker；场景要求租约不被最小值夹长且不超过 60 秒。它等待原守护器撤销租约并观察原进程停止，重启后要求 Worker 在验证完整 writer 退出证据后保留同一 CID、原操作和磁盘，拒绝执行，再显式 DELETE，核对更高 generation、物理删除与同一守护器的 owner release，最后清理归零。客户端的进程观察不作为退出或删除授权；真正的退出核对仍在 Worker 中执行。此场景不使用直接 PID 停止或新启动授权。
 
+BoxLite 的 `--scenario cache-copy-eviction --payload-mib 1024` 验证真实 Console/S3 恢复与跨进程缓存淘汰竞争。沿用上面的隔离配置，开启足以容纳一份归档上限的缓存及 info JSON 日志，并先构建只用于验收的原生探针：
+
+```bash
+cargo build --manifest-path worker/worker-boxlite/Cargo.toml --release --locked --example snapshot_cache_eviction_probe
+python3 -m unittest scripts.tests.snapshot_cache_eviction_probe_test
+python3 scripts/tests/snapshot_e2e.py --scenario cache-copy-eviction --payload-mib 1024
+```
+
+场景要求至少 1 GiB 随机 payload，保留大归档空间预检；确认共享提交、源实例物理删除和独立所有权释放后，停止另一 Worker，校验源缓存完整性并启动探针。探针观察恢复持锁期间调用生产 `Transfer::evict_cached_archive`，必须取得忙锁重试并确认源文件未变；恢复操作必须有逐 operation/snapshot/bytes 匹配的本地复制回执、新原生实例和完整业务校验。随后再请求同一生产路径淘汰源缓存，要求成功；目标独立归档和业务数据仍须完整，最后永久删除并排空清理。未观察到锁竞争、回退 S3、提前删掉源缓存都不能通过。探针不启动 SDK、不改 journal 或 lease，不删除原生盘；失败只结束该探针并保留会话证据。已有该场景结果时拒绝重建；使用新的隔离目录复测。本检查验证恢复与生产淘汰 I/O 的竞争，周期 GC 的 TTL/LRU 选择、调度及退出等待由独立 Rust 测试覆盖，不声称同一次服务检查触发了 30 秒定时清扫。
+
 四会话 BoxLite 并发验收由 `python3 scripts/tests/snapshot_parallel_e2e.py` 执行，读取同一组隔离会话/配置/状态目录变量。它要求 release 构建、两个 Worker 各四个会话及管理槽位、各两个执行槽位，并在创建会话前同时检查主机和 S3 daemon 的全批次空间预留。默认 `--archive-cache disabled` 要求关闭归档缓存。`--payload-mib` 默认 1024，`--operation-wait-sec` 默认 1800。以下是固定同一镜像、4 GiB 根盘的 4 × 1 GiB 本机样本配置；展开预算应随实际归档调整，不是通用生产默认值：
 
 ```dotenv

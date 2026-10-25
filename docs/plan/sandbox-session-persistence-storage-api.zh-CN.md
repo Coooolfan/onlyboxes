@@ -2,7 +2,7 @@
 
 ## 状态与范围
 
-本文补充[持久化与跨 Worker 唤醒时序](sandbox-session-persistence-lifecycle.zh-CN.md)，定义共享存储的职责、首期部署目标以及需要新增或调整的 API、配置和内部协议。本文描述首期完整设计，不表示所有验收项均已完成。已接入的接口与配置以[统一 API](../API.zh-CN.md#75-挂起--唤醒-session)、[Console 配置](../../console/docs/config-file.md#sandbox-persistence)及 [Docker 生命周期说明](../../worker/worker-docker/docs/sandbox-snapshot-controller.md)为准。Docker 已接入独立 lease 守护器，并通过实际 Worker 进程 SIGKILL 后到期停止、保留可写层的本机测试；BoxLite 已接入生产 runner 与独立 lease，真实 Console/S3 的本机跨 Worker 恢复、循环快照、无 Worker 后恢复与最终回收已通过；未登记孤儿资源扫描、异常协调和跨物理机器验收仍需完成。
+本文补充[持久化与跨 Worker 唤醒时序](sandbox-session-persistence-lifecycle.zh-CN.md)，定义共享存储的职责、首期部署目标以及需要新增或调整的 API、配置和内部协议。本文描述首期完整设计，不表示所有验收项均已完成。已接入的接口与配置以[统一 API](../API.zh-CN.md#75-挂起--唤醒-session)、[Console 配置](../../console/docs/config-file.md#sandbox-persistence)及 [Docker 生命周期说明](../../worker/worker-docker/docs/sandbox-snapshot-controller.md)为准。Docker 已接入独立 lease 守护器，并通过实际 Worker 进程 SIGKILL 后到期停止、保留可写层的本机测试；BoxLite 已接入生产 runner 与独立 lease，真实 Console/S3 的本机跨 Worker 恢复、循环快照、无 Worker 后恢复与最终回收已通过；原生孤儿资源的安全协调和跨物理机器验收仍需完成。共享存储中未登记的已完成对象已有受宽限期与数据库准入隔离保护的扫描和清理，范围见 [Console 孤儿对象说明](../../console/docs/config-file.md#unregistered-storage-objects)。
 
 首期仅支持 Docker → Docker、BoxLite → BoxLite，恢复为新启动的执行实例。共享存储保存约定的文件系统归档；Console 数据库保存会话、快照引用和所有权。共享对象存储不承担会话调度、分布式锁或运行中沙箱的文件读写。
 
@@ -303,7 +303,7 @@ MinIO 的 multipart 列举按完整对象键查询；启动探针据此验证已
 
 ### 现有实现可复用的部分
 
-[`console/internal/objectstore`](../../console/internal/objectstore/objectstore.go) 中的 `Store` 提供用户文件 PUT/GET 预签名，使用 `CONSOLE_EXPORT_FILE_*` 配置服务于 `exportFile`。`SnapshotStore` 提供 multipart、HEAD/GET 校验、不可变描述对象、按版本删除与启动能力探测；持久化删除任务及已登记无引用快照 GC 已接入，未登记孤儿对象/上传扫描仍需完成。
+[`console/internal/objectstore`](../../console/internal/objectstore/objectstore.go) 中的 `Store` 提供用户文件 PUT/GET 预签名，使用 `CONSOLE_EXPORT_FILE_*` 配置服务于 `exportFile`。`SnapshotStore` 提供 multipart、HEAD/GET 校验、不可变描述对象、按版本删除与启动能力探测；持久化删除任务、已登记无引用快照 GC 及专用命名空间内未登记的已完成对象扫描已接入。孤儿对象清理会中止其精确 key 的未完成 multipart；只有未完成上传、尚无可列举已完成对象的 key 仍依赖 bucket 的未完成 multipart 生命周期策略，不能据对象扫描推断全部遗留上传已回收。
 
 可以复用 AWS SDK 依赖、客户端构建和签名基础，新增 snapshot store 接口；不要把 `exportFile` 用户文件导出的保留期、凭据或返回 URL 直接当作 session snapshot 契约。建议 snapshot 使用独立 bucket，至少使用独立 prefix 和生命周期规则。`exportFile` 现有配置与行为保持独立。
 
@@ -377,3 +377,5 @@ Docker 的两个 lease guard 配置已实现，配置文件键为 `[snapshot].le
 - `202` 后轮询成功/失败、幂等重试、跨账号隔离、挂起列表可见、续租冲突、删除期间取消与物理清理积压均有明确结果。
 - 覆盖同节点缓存命中、缓存被淘汰、字节损坏、快照版本不匹配、原节点满载，以及恢复期间缓存淘汰竞争；核实不会读取旧快照或恢复出第二个有效实例。
 - 根据实际 1/5/10 GiB、冷/热镜像与归档缓存及并发数据，确定操作时限、临时盘和吞吐配置，再承诺挂起/唤醒 SLO。
+
+BoxLite 的本机证据包括 [4 × 1 GiB 禁用归档缓存](../../worker/worker-boxlite/docs/sandbox-snapshot-s3-parallel-cold-sample-2026-10-25.json)、[4 × 1 GiB 实际缓存命中](../../worker/worker-boxlite/docs/sandbox-snapshot-s3-parallel-warm-sample-2026-10-25.json)及[恢复复制与生产淘汰 I/O 竞争](../../worker/worker-boxlite/docs/sandbox-snapshot-cache-copy-eviction-sample-2026-10-25.json)。后者在真实 Console/S3 恢复期间由独立进程调用 Worker 使用的生产淘汰函数，验证忙锁保留、复制后回收、独立目标和最终清理；周期 GC 策略与调度由另外的 Rust 测试覆盖。上述证据不等于跨物理机器、受控冷/热镜像性能矩阵或生产 SLO 验收。

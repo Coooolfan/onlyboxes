@@ -6,6 +6,7 @@ import argparse
 import shlex
 import hashlib
 import sqlite3
+import select
 import socket
 import json
 import os
@@ -40,7 +41,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime", choices=("boxlite", "docker"), default="boxlite")
     parser.add_argument("--return-to-source", action="store_true", help="after cross-worker mutation and no-worker failure, restore onto the original worker with its older cache")
-    parser.add_argument("--scenario", choices=("cycle", "cross-worker", "same-worker", "no-worker", "console-restart", "worker-restart", "worker-start-restart", "cache-corrupt", "cache-miss", "worker-graceful-restart", "worker-expired-restart"), default="cycle")
+    parser.add_argument("--scenario", choices=("cycle", "cross-worker", "same-worker", "no-worker", "console-restart", "worker-restart", "worker-start-restart", "cache-corrupt", "cache-miss", "cache-copy-eviction", "worker-graceful-restart", "worker-expired-restart"), default="cycle")
     parser.add_argument("--payload-mib", type=int, default=1, help="1..10240 MiB of independent random guest data; large runs require explicit snapshot and disk budgets")
     parser.add_argument("--operation-wait-sec", type=int, default=600, help="1..86400 seconds to observe each accepted lifecycle operation; does not change its server deadline")
     parser.add_argument("--lease-ttl-sec", type=int, default=900, help="1..86400 seconds requested for initial execution, resume and verification; must fit the configured Worker maximum")
@@ -67,6 +68,18 @@ def main():
         parser.error("quota-session retry requires --scenario cross-worker")
     config = Path(os.environ.get("ONLYBOXES_DEV_ENV", dev.ROOT / "scripts/dev.env"))
     os.environ.update(dev.env_file(config))
+    if scenario == "cache-copy-eviction":
+        race_binary = dev.ROOT / "worker/worker-boxlite/target/release/examples/snapshot_cache_eviction_probe"
+        if (dev.STATE / "snapshot-e2e-cache-copy-eviction-result.json").exists():
+            raise RuntimeError("cache contention evidence already exists; preserve it and use a new isolated fixture")
+        if args.runtime != "boxlite" or args.payload_mib < 1024:
+            parser.error("cache copy contention requires BoxLite and at least 1024 MiB payload")
+        if not race_binary.is_file() or not os.access(race_binary, os.X_OK):
+            raise RuntimeError("build the release snapshot_cache_eviction_probe example before acceptance")
+        if (int(os.environ.get("WORKER_PERSISTENCE_CACHE_MAX_BYTES", "0")) < int(os.environ.get("CONSOLE_SNAPSHOT_MAX_BYTES", "0"))
+                or os.environ.get("WORKER_LOG_FORMAT", "json") != "json"
+                or os.environ.get("WORKER_LOG_LEVEL", "info") not in ("info", "debug", "trace")):
+            raise RuntimeError("cache contention requires retained producer cache and JSON info logs")
     if scenario == "worker-expired-restart" and not int(os.environ.get("WORKER_TERMINAL_LEASE_MIN_SEC", "60")) <= args.lease_ttl_sec <= 60:
         raise RuntimeError("expiry restart requires an explicit unclamped lease of at most 60 seconds")
     if args.lease_ttl_sec > int(os.environ.get("WORKER_TERMINAL_LEASE_MAX_SEC", "1800")):
@@ -619,9 +632,9 @@ print(json.dumps({'snapshot_id':archive['snapshot_id'],'sha256':digest.hexdigest
         record("deleted", status=204)
         wait_cleanup()
         return
-    if scenario in ("same-worker", "console-restart", "worker-restart", "worker-start-restart", "cache-corrupt", "cache-miss", "worker-graceful-restart", "worker-expired-restart"):
+    if scenario in ("same-worker", "console-restart", "worker-restart", "worker-start-restart", "cache-corrupt", "cache-miss", "cache-copy-eviction", "worker-graceful-restart", "worker-expired-restart"):
         stopped_peer = None
-        cache_fault = scenario in ("cache-corrupt", "cache-miss")
+        cache_fault = scenario in ("cache-corrupt", "cache-miss", "cache-copy-eviction")
         if (args.runtime == "docker" and scenario == "worker-start-restart") or cache_fault:
             stopped_peer = next(node for node in nodes if node != source)
             services("stop", nodes[stopped_peer])
@@ -653,20 +666,60 @@ print(json.dumps({'snapshot_id':archive['snapshot_id'],'sha256':digest.hexdigest
                 if result.returncode:
                     raise RuntimeError("BoxLite operation-scoped cache acceptance failed; preserve state")
                 return json.loads(result.stdout)
-            injected = cache_probe(original_suspend["operation_id"], "corrupt" if scenario == "cache-corrupt" else "evict")
+            injected = cache_probe(original_suspend["operation_id"], {"cache-corrupt":"corrupt", "cache-miss":"evict", "cache-copy-eviction":"source-valid"}[scenario])
             if scenario == "cache-corrupt" and injected.get("valid") is not False:
                 raise RuntimeError("source cache corruption was not confirmed")
             if scenario == "cache-miss" and injected.get("present") is not False:
                 raise RuntimeError("source cache eviction was not confirmed")
-            record("cache-fault-injected", scenario=scenario, source_removed=True, **injected)
-        restored = lifecycle("resume")
+            record("cache-contention-source-verified" if scenario == "cache-copy-eviction" else "cache-fault-injected", scenario=scenario, source_removed=True, **injected)
+        if scenario == "cache-copy-eviction":
+            source_path = root / "journal/artifacts" / native["artifact"]
+            # Only this owned acceptance helper is terminated on failure; all
+            # Worker/guardian/session state is retained for reconciliation.
+            with subprocess.Popen([str(race_binary)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as contender:
+                try:
+                    contender.stdin.write(json.dumps({"source":str(source_path), "archive":native["archive"], "wait_seconds":args.operation_wait_sec}) + "\n")
+                    contender.stdin.flush()
+                    ready, _, _ = select.select([contender.stdout], [], [], 30)
+                    if not ready or json.loads(contender.stdout.readline()) != {"event":"armed"}:
+                        raise RuntimeError("cache eviction contender did not arm")
+                    record("cache-eviction-contender-armed")
+                    restored = lifecycle("resume")
+                    # The Worker receipt proves this operation actually used
+                    # the source cache; successful S3 fallback cannot pass.
+                    receipts = []
+                    for line in (dev.STATE / (nodes[source] + ".log")).read_text().splitlines():
+                        try:
+                            item = json.loads(line)
+                        except ValueError:
+                            continue
+                        fields = item.get("fields", {}) if isinstance(item, dict) else {}
+                        if isinstance(fields, dict) and fields.get("message") == "verified snapshot archive copied from local cache" and fields.get("operation_id") == restored["operation_id"]:
+                            receipts.append({"snapshot_id":fields.get("snapshot_id"), "bytes":fields.get("bytes")})
+                    expected = {"snapshot_id":latest["snapshot_id"], "bytes":native["archive"]["size_bytes"]}
+                    if not receipts or any(receipt != expected for receipt in receipts):
+                        raise RuntimeError("contended restore lacks operation-matched verified cache copy")
+                    node, target = native_operation(restored["operation_id"])
+                    if node != source or not target or target.get("phase") != "active" or not target.get("box_id") or target["box_id"] == native["box_id"]:
+                        raise RuntimeError("contended restore did not select an independent active target")
+                    verify("cache-copy-before-source-eviction", source)
+                    output, _ = contender.communicate("evict\n", timeout=30)
+                    if contender.returncode != 0 or [json.loads(line) for line in output.splitlines()] != [{"event":"busy_eviction_deferred"}, {"event":"evicted_after_copy"}]:
+                        raise RuntimeError("production cache eviction did not defer during copy and succeed afterwards")
+                    record("cache-copy-eviction-verified", busy_eviction_deferred=True, source_cache_evicted_after_copy=True, verified_local_cache_copy=True, independent_target=True)
+                finally:
+                    if contender.poll() is None:
+                        contender.kill()
+                        contender.wait()
+        else:
+            restored = lifecycle("resume")
         if cache_fault:
             if session()["persistence"]["latest_snapshot"] != latest:
                 raise RuntimeError("cache fallback changed the committed snapshot reference")
             valid = cache_probe(restored["operation_id"], "target-valid")
             if valid.get("valid") is not True:
                 raise RuntimeError("restored target lacks the verified committed archive")
-            record("cache-fallback-verified", **valid, snapshot_retained=True)
+            record("cache-target-verified" if scenario == "cache-copy-eviction" else "cache-fallback-verified", **valid, snapshot_retained=True)
         if scenario == "worker-graceful-restart":
             verify("before-orderly-restart", source)
             node, before = native_operation(restored["operation_id"])

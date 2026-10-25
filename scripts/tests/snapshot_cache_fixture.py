@@ -18,7 +18,7 @@ def probe(root, operation, worker, action, snapshot, expected, runtime="docker")
 
 def probe_locked(root, operation, worker, action, snapshot, expected, runtime, stack):
     assert runtime in ("docker", "boxlite")
-    assert action in ("corrupt", "evict", "source-corrupt", "source-missing", "target-valid")
+    assert action in ("corrupt", "evict", "source-valid", "source-corrupt", "source-missing", "target-valid")
     root = Path(root)
     info = root.lstat()
     assert stat.S_ISDIR(info.st_mode) and info.st_mode & 0o077 == 0
@@ -102,7 +102,7 @@ def main():
     parser.add_argument("root")
     parser.add_argument("operation")
     parser.add_argument("worker")
-    parser.add_argument("action", choices=("corrupt", "evict", "source-corrupt", "source-missing", "target-valid"))
+    parser.add_argument("action", choices=("corrupt", "evict", "source-valid", "source-corrupt", "source-missing", "target-valid"))
     parser.add_argument("snapshot")
     parser.add_argument("sha256")
     parser.add_argument("--runtime", choices=("docker", "boxlite"), default="docker")

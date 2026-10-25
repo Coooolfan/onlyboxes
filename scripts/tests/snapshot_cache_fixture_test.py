@@ -54,6 +54,17 @@ class CacheFaultFixtureTests(unittest.TestCase):
         self.assertEqual(self.probe("source-corrupt")["sha256"],result["sha256"])
         self.assertNotIn("private-fixture",json.dumps(result))
 
+    def test_source_validation_requires_finalized_commit_and_preserves_bytes(self):
+        self.boxlite()
+        saved = self.journal.read_bytes()
+        result = fixture.probe(self.root,"op","worker","source-valid","snapshot",self.sha,"boxlite")
+        self.assertTrue(result["valid"])
+        self.assertEqual(self.file.read_bytes(), self.data)
+        self.assertEqual(self.journal.read_bytes(), saved)
+        self.op["snapshot_committed"] = False; self.save()
+        with self.assertRaises(AssertionError):
+            fixture.probe(self.root,"op","worker","source-valid","snapshot",self.sha,"boxlite")
+
     def test_missing_cache_and_valid_target_require_positive_evidence(self):
         saved = self.journal.read_bytes()
         self.assertFalse(self.probe("evict")["present"])

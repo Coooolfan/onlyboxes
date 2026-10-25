@@ -1,0 +1,49 @@
+{
+  "date_asia_shanghai": "2026-10-25",
+  "scope": "real local Console/MinIO and native macOS arm64 BoxLite Worker; independent native eviction contender",
+  "runtime_version": "0.10.7",
+  "payload_bytes": 1073741824,
+  "payload_sha256": "c25dbb7b70d4ac8705bc413cafb9187aa5d316e3b05b658fd94a01d44f6847d4",
+  "archive_bytes": 1112874012,
+  "archive_sha256": "a45d2a5ed14844ff006eb13c37b0f8236e2a28ca5e2d9f0d521672713e421c0d",
+  "expanded_bytes": 5506400256,
+  "multipart_parts": 17,
+  "conditions": {
+    "build_profile": "release",
+    "configured_root_disk_gib": 4,
+    "archive_limit_bytes": 2147483648,
+    "expanded_limit_bytes": 5637144576,
+    "cache_budget_bytes_per_worker": 4294967296,
+    "integrity_mode": "readback",
+    "required_headroom_bytes": 24159191040,
+    "contender": "release snapshot_cache_eviction_probe example; Transfer::evict_cached_archive production implementation",
+    "lock_observation": "1 ms nonblocking cross-process lock polling before the production eviction attempt",
+    "timing": "POST submission through observed terminal status; includes request round trip, 0.2 second polling"
+  },
+  "observation": {
+    "suspend_seconds": 19.505694541999997,
+    "resume_seconds": 22.171808458999998
+  },
+  "verification": {
+    "source_committed_archive_hash_checked_before_contender": true,
+    "source_native_removed_and_independent_ownership_released_before_restore": true,
+    "contender_armed_before_resume": true,
+    "production_eviction_returned_retry_during_copy": true,
+    "source_inode_size_and_mtime_unchanged_after_deferred_eviction": true,
+    "operation_snapshot_size_matched_worker_copy_receipt": true,
+    "target_native_instance_differs_from_source": true,
+    "full_payload_hash_permissions_and_symlink_verified_before_and_after_source_cache_eviction": true,
+    "production_eviction_succeeded_after_copy": true,
+    "independent_target_archive_full_sha256_verified": true,
+    "shared_snapshot_reference_unchanged": true,
+    "permanent_delete_acknowledged": true,
+    "higher_generation_delete_terminal": true,
+    "guest_qcow_disks_absent_after_delete": true,
+    "cleanup_backlog": {
+      "pending_sessions": 0,
+      "pending_workers": 0,
+      "pending_snapshots": 0
+    }
+  },
+  "limit": "This live Console/S3 test exercises the production eviction I/O path from an independent contender, not the 30-second GC timer or its TTL/LRU policy. Those policy and cancellation paths have separate Rust tests. Same host, no cross-machine or performance-SLO claim."
+}
