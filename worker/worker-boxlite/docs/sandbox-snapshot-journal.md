@@ -17,6 +17,8 @@ BoxLite 的私有 journal 使用磁盘格式 v2，将恢复规格按 SHA-256 共
 
 公开 API、registry 协议、快照归档格式、配置以及 home/Worker/lease-store 的配对身份均不改变。归档中携带的恢复规格与 journal 的私有引用编码相互独立。
 
+`initial_creations` 另记录 SDK 创建前的初始会话意图及不可替换的选定原生 ID，随 v2 编码完整保留，不放入恢复规格共享表，也不因创建结果未知而丢弃。其选项摘要、创建者、守护器、scope、期限及 boot 关联的约束见[初始创建意图](sandbox-snapshot-startup.md#初始创建意图)。只保存该摘要不能授予启动、采纳或删除权限；未完成意图在 SDK 初始化前拒绝开放。
+
 ## 读取、升级与失败
 
 Worker 可读取完整规格形式的 v1 和共享规格形式的 v2。只读重开 v1 不重写文件；下一次成功持久化变更写入 v2。新 journal 从首次持久化起使用 v2。旧 Worker 不能打开 v2，升级后不能直接降级使用旧二进制；禁止通过删除 journal、改写版本号或更换 owner 标记绕过检查。
@@ -37,6 +39,7 @@ v2 完整编码大小 + 所有操作所引用规格的编码大小之和
 
 ```bash
 cargo test --locked codec_tests -- --nocapture
+cargo test --locked creation_tests
 cargo test --locked
 cargo build --locked --bin boxlite-lease-guard
 cargo run --locked --example boxlite_lifecycle_controls_smoke
@@ -45,6 +48,8 @@ cargo run --locked --example boxlite_lifecycle_controls_smoke
 共享规格测试包含 120 条重复 16 KiB 环境配置的准备记录，以及已完成源、准备目标、运行采纳、永久删除和不同规格的记录。完整逻辑序列化为 2,167,755 bytes，磁盘 v2 为 112,233 bytes；重开后完整逻辑序列化逐字节一致。该数字是元数据样例，不是归档吞吐或生产性能保证。
 
 失败注入覆盖升级替换前失败、替换后的应答丢失、引用/摘要/表项异常，以及 5,000 条引用形成的超限展开。超限写入关闭准入且不替换已有文件；超限读取在复制共享规格前拒绝，保留原始字节。运行时非法引用不能通过 claim/update。
+
+创建意图测试覆盖 ID 未知时落盘和重开、空 SDK home 仍拒绝开放、同一意图重放、选定 ID 不可替换、跨 scope ID/operation 冒用拒绝、boot 精确关联和损坏关联的加载拒绝。另核对 SDK 选项规范化的幂等性、配置 JSON 往返及超限编码拒绝；原生清单直接核对保存的选项，内存或 SDK 派生文件写入上限发生变化均拒绝，不能再次规范化后隐藏变化。正常创建、跨 Worker 生命周期及已确认初始根的离线到期回收另有[真实服务回归](sandbox-snapshot-initial-creation-sample-2026-10-25.json)。
 
 原生生命周期验收通过初始采纳、回滚、管理器重建、分片传输、回读确认、同节点缓存恢复、损坏缓存回源、守护器重开后的回收回执、普通执行/续租/资源读取和永久删除重放，退出后的原生清单继续接受 journal 中固定的名称占位。
 

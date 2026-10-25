@@ -1,0 +1,61 @@
+{
+  "date_asia_shanghai": "2026-10-25",
+  "scope": "real local Console/MinIO and two native release BoxLite Workers; cross-worker snapshot and separate initial-session offline-expiry regression",
+  "runtime_version": "0.10.7",
+  "platform": "macOS arm64 host, Linux arm64 guest",
+  "creation_record": {
+    "intent_native_id_and_boot_identity_match": true,
+    "scope_operation_creator_guard_and_original_deadline_match_boot": true,
+    "confirmed_adoption_matches_original_native_id_guard_and_deadline": true,
+    "effective_options_sha256_verified_during_create": true,
+    "normalization": "SDK BoxOptions.sanitize before intent; canonical JSON with recursively sorted object keys and ordered arrays; actual stored options hashed without re-normalizing",
+    "original_creation_records_retained_after_physical_cleanup": true
+  },
+  "cross_worker": {
+    "payload_bytes": 1048576,
+    "archive_bytes": 40092047,
+    "api_observed_seconds": {
+      "suspend": 5.066172375000001,
+      "resume": 8.024991334
+    },
+    "target_sdk_image_cache": "cold before restore, warm after restore; checked by the pinned SDK cache probe and pull/reuse log receipts",
+    "archive_cache_budget_bytes_per_worker": 0,
+    "same_session_and_complete_content_mode_symlink_verification": true,
+    "independent_native_instance_and_both_native_directories_removed": true,
+    "cleanup_backlog": {
+      "pending_sessions": 0,
+      "pending_workers": 0,
+      "pending_snapshots": 0
+    }
+  },
+  "initial_expiry_offline": {
+    "requested_lease_seconds": 30,
+    "renewal_preserved_beyond_original_deadline": true,
+    "worker_stopped_with_original_writer_still_running": true,
+    "independent_guard_stopped_writer_while_worker_offline": true,
+    "journal_and_disk_retained_during_outage": true,
+    "same_home_restart_verified_original_configuration_and_completed_authorized_expiry_cleanup": true,
+    "owner_release_and_zero_capacity_after_second_worker_restart_verified": true,
+    "original_native_directory_removed": true,
+    "cleanup_backlog": {
+      "pending_sessions": 0,
+      "pending_workers": 0,
+      "pending_snapshots": 0
+    }
+  },
+  "verification": {
+    "all_targets_passed": {
+      "library_tests": 196,
+      "worker_tests": 137,
+      "companion_process_tests": 2
+    },
+    "additional_focused_stored_option_drift_regression": "startup_census_checks_the_original_creation_options_digest",
+    "guest_qcow_disks_absent_after_cleanup": true
+  },
+  "limits": [
+    "Both Workers are on one physical host; no cross-physical-host or Linux VM acceptance claim.",
+    "These runs complete ordinary creation, snapshot/resume and known initial-expiry cleanup. Interruption within create-to-ID-selection/boot windows is modeled by durable journal/reopen tests, not an actual SDK instruction-level crash in these runs.",
+    "Unfinished creation intents retain data and reject SDK initialization, including an empty SDK home. Automatic coordination/termination of those intents, unknown native roots and history maintenance remain incomplete.",
+    "A 1 MiB correctness regression with cold target SDK cache is not a performance matrix, percentile or production SLO."
+  ]
+}

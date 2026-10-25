@@ -9,6 +9,9 @@ use std::sync::{Arc, Barrier};
 #[path = "journal_codec_tests.rs"]
 mod codec_tests;
 
+#[path = "initial_creation_tests.rs"]
+mod creation_tests;
+
 struct Root(PathBuf);
 impl Root {
     fn new() -> Self {

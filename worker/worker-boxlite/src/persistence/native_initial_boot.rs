@@ -1,7 +1,9 @@
 //! The caller owns SDK create/start through completion and serializes the scope.
 //! Errors retain the selected root and boot authority for explicit reconciliation.
 use super::*;
-use crate::persistence::{BootAuthorization, HostProcess, InitialAdoption, InitialBoot};
+use crate::persistence::{
+    BootAuthorization, HostProcess, InitialAdoption, InitialBoot, InitialCreation,
+};
 impl NativeRuntime {
     pub async fn create_initial_session(
         &self,
@@ -19,11 +21,34 @@ impl NativeRuntime {
             || state.probes.contains_key(scope)
             || state.adoptions.contains_key(scope)
             || state.initial_boots.contains_key(scope)
+            || state.initial_creations.contains_key(scope)
         {
             return Err(NativeError::Conflict);
         }
         // Verify the configured service before accepting SDK create work.
         guard.status("initial-service-check").await.map_err(error)?;
+        // The local SDK derives effective limits (including RLIMIT_FSIZE)
+        // before persisting config. Bind that effective configuration, then
+        // require SDK create's own normalization to produce the same bytes.
+        let options = tokio::task::spawn_blocking(move || {
+            let mut options = options;
+            options.sanitize().map_err(|_| NativeError::Unsupported)?;
+            Ok::<_, NativeError>(options)
+        })
+        .await
+        .map_err(|_| NativeError::Unavailable)??;
+        let creation = InitialCreation {
+            operation_id: format!("initial-{}", uuid::Uuid::new_v4()),
+            scoped_session_id: scope.into(),
+            guard: guard.identity().clone(),
+            origin: HostProcess::current().map_err(error)?,
+            expires_unix_ms,
+            options_sha256: InitialCreation::options_digest(&options).map_err(error)?,
+            box_id: String::new(),
+        };
+        journal
+            .begin_initial_creation(creation.clone())
+            .map_err(error)?;
         let native = self
             .runtime
             .create(options, Some(terminal_name(scope)))
@@ -37,6 +62,16 @@ impl NativeRuntime {
         {
             return Err(NativeError::Conflict);
         }
+        // Configured SDK rows precede creation of their physical box directory.
+        let persisted = read_config_mode(&self.home, id, false)?;
+        if InitialCreation::options_digest(&persisted.options).map_err(error)?
+            != creation.options_sha256
+        {
+            return Err(NativeError::Conflict);
+        }
+        journal
+            .select_initial_creation(&creation, id)
+            .map_err(error)?;
         // SDK create persists only configuration. Materialize its still-empty
         // box directory so the shim can be pinned before SDK start creates it.
         for directory in [self.home.join("boxes"), self.home.join("boxes").join(id)] {
@@ -52,13 +87,13 @@ impl NativeRuntime {
             }
         }
         let authorization = BootAuthorization {
-            operation_id: format!("initial-{}", uuid::Uuid::new_v4()),
+            operation_id: creation.operation_id,
             box_id: id.into(),
             scoped_session_id: scope.into(),
             generation: 1,
             prior_revision: None,
             expires_unix_ms,
-            origin: HostProcess::current().map_err(error)?,
+            origin: creation.origin,
             executable: self.boot_executable(id, true)?,
         };
         journal

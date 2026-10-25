@@ -119,7 +119,113 @@ fn census_state(f: &Fixture) -> crate::persistence::JournalState {
         probes: Default::default(),
         adoptions: Default::default(),
         initial_boots: Default::default(),
+        initial_creations: Default::default(),
     }
+}
+
+#[test]
+fn configured_creation_options_are_read_before_materializing_the_box_directory() {
+    let f = Fixture::new();
+    fs::remove_dir(&f.config.box_home).unwrap();
+    assert!(read_config(&f.home, f.config.id.as_str()).is_err());
+    let configured = read_config_mode(&f.home, f.config.id.as_str(), false).unwrap();
+    assert_eq!(
+        crate::persistence::InitialCreation::options_digest(&configured.options).unwrap(),
+        crate::persistence::InitialCreation::options_digest(&f.config.options).unwrap()
+    );
+    assert!(!f.config.box_home.exists());
+}
+
+#[test]
+fn startup_census_checks_the_original_creation_options_digest() {
+    use crate::persistence::{
+        BootAuthorization, BootExecutable, HostProcess, InitialBoot, InitialCreation,
+        LeaseGuardIdentity,
+    };
+    let mut f = Fixture::new();
+    let mut journal = census_state(&f);
+    let process = HostProcess::current().unwrap();
+    let scope = "obx:owner:session";
+    let id = f.config.id.to_string();
+    let guard = LeaseGuardIdentity {
+        worker_id: "worker".into(),
+        store_id: uuid::Uuid::new_v4().to_string(),
+        epoch_id: uuid::Uuid::new_v4().to_string(),
+        process: process.clone(),
+    };
+    let creation = InitialCreation {
+        operation_id: "initial-census".into(),
+        scoped_session_id: scope.into(),
+        guard: guard.clone(),
+        origin: process.clone(),
+        expires_unix_ms: 10000,
+        options_sha256: InitialCreation::options_digest(&f.config.options).unwrap(),
+        box_id: id.clone(),
+    };
+    journal
+        .initial_creations
+        .insert(scope.into(), creation.clone());
+    journal.initial_boots.insert(
+        scope.into(),
+        InitialBoot {
+            guard,
+            managed: false,
+            authorization: BootAuthorization {
+                operation_id: creation.operation_id,
+                scoped_session_id: scope.into(),
+                box_id: id.clone(),
+                origin: process,
+                expires_unix_ms: 10000,
+                generation: 1,
+                prior_revision: None,
+                executable: BootExecutable::prepare(&f.home, &id, Path::new("/bin/sleep"), true)
+                    .unwrap(),
+            },
+        },
+    );
+    journal.probes.insert(scope.into(), id);
+    preflight_home(&f.home, &journal).unwrap();
+    let original = f.config.options.memory_mib;
+    f.config.options.memory_mib = Some(original.unwrap() + 1);
+    f.save();
+    let db = f.home.join("db/boxlite.db");
+    let before = fs::read(&db).unwrap();
+    assert_eq!(
+        preflight_home(&f.home, &journal),
+        Err(NativeError::Conflict)
+    );
+    assert_eq!(fs::read(&db).unwrap(), before);
+    f.config.options.memory_mib = original;
+    f.save();
+    preflight_home(&f.home, &journal).unwrap();
+    // Re-normalizing persisted options would overwrite this changed limit
+    // and hide drift. Census must hash the actual stored configuration.
+    let limit = f
+        .config
+        .options
+        .advanced
+        .security
+        .resource_limits
+        .max_file_size;
+    f.config
+        .options
+        .advanced
+        .security
+        .resource_limits
+        .max_file_size = Some(limit.unwrap_or(0) + 1);
+    f.save();
+    assert_eq!(
+        preflight_home(&f.home, &journal),
+        Err(NativeError::Conflict)
+    );
+    f.config
+        .options
+        .advanced
+        .security
+        .resource_limits
+        .max_file_size = limit;
+    f.save();
+    preflight_home(&f.home, &journal).unwrap();
 }
 
 #[test]

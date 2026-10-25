@@ -25,12 +25,35 @@ pub struct JournalState {
     pub adoptions: BTreeMap<String, super::InitialAdoption>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub initial_boots: BTreeMap<String, super::InitialBoot>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub initial_creations: BTreeMap<String, super::InitialCreation>,
 }
 
 impl JournalState {
     fn validate(&self, worker: &str) -> Result<()> {
         if self.version != 1 || self.worker_id != worker {
             return Err(Error::Unavailable);
+        }
+        let mut creation_ids = std::collections::BTreeSet::new();
+        let mut creation_operations = std::collections::BTreeSet::new();
+        for (scope, intent) in &self.initial_creations {
+            intent.validate().map_err(|_| Error::Unavailable)?;
+            if scope != &intent.scoped_session_id
+                || intent.guard.worker_id != worker
+                || match self.initial_boots.get(scope) {
+                    Some(boot) => !intent.matches_boot(boot),
+                    None => {
+                        self.current.contains_key(scope)
+                            || self.probes.contains_key(scope)
+                            || self.adoptions.contains_key(scope)
+                    }
+                }
+                || (!intent.box_id.is_empty() && !creation_ids.insert(&intent.box_id))
+                || !creation_operations.insert(&intent.operation_id)
+                || self.operations.contains_key(&intent.operation_id)
+            {
+                return Err(Error::Unavailable);
+            }
         }
         for (id, op) in &self.operations {
             if let Some(expiry) = &op.initial_expiry {
@@ -218,6 +241,7 @@ impl Journal {
                 probes: BTreeMap::new(),
                 adoptions: BTreeMap::new(),
                 initial_boots: BTreeMap::new(),
+                initial_creations: BTreeMap::new(),
             };
             persist_state(&root, &state)?;
             state

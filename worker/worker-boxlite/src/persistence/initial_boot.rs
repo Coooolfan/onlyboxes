@@ -42,6 +42,13 @@ impl Journal {
             if state.worker_id != boot.guard.worker_id || state.current.contains_key(scope) {
                 return Err(Error::Conflict);
             }
+            if state
+                .initial_creations
+                .get(scope)
+                .is_some_and(|intent| !intent.matches_boot(&boot))
+            {
+                return Err(Error::Conflict);
+            }
             if let Some(prior) = state.initial_boots.get(scope) {
                 return if prior == &boot {
                     Ok(())

@@ -18,6 +18,8 @@ struct StoredState {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     initial_boots: BTreeMap<String, super::super::InitialBoot>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    initial_creations: BTreeMap<String, super::super::InitialCreation>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     restore_specs: BTreeMap<String, super::super::RestoreSpec>,
 }
 
@@ -119,6 +121,7 @@ impl StoredState {
             probes: self.probes,
             adoptions: self.adoptions,
             initial_boots: self.initial_boots,
+            initial_creations: self.initial_creations,
         })
     }
 }
@@ -145,6 +148,7 @@ pub(super) fn encode(state: &JournalState) -> Result<Vec<u8>> {
         probes: state.probes.clone(),
         adoptions: state.adoptions.clone(),
         initial_boots: state.initial_boots.clone(),
+        initial_creations: state.initial_creations.clone(),
         restore_specs: BTreeMap::new(),
     };
     for (id, op) in &state.operations {

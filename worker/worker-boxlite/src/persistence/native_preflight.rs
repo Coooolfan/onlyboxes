@@ -12,10 +12,25 @@ pub(super) fn scan_home(
     journal: &JournalState,
     reconcile: bool,
 ) -> Result<Vec<String>> {
+    // A recorded create may have completed without returning its ID. Until
+    // explicit reconciliation binds that outcome, even an empty inventory
+    // cannot authorize SDK initialization or another creation for the scope.
+    if journal
+        .initial_creations
+        .keys()
+        .any(|scope| !journal.initial_boots.contains_key(scope))
+    {
+        return Err(NativeError::Conflict);
+    }
     let host = HostProcess::capture(std::process::id()).map_err(|_| NativeError::Unavailable)?;
     let mut expected = BTreeMap::new();
     let mut known_names = BTreeSet::new();
     let mut markers = BTreeMap::new();
+    let creations: BTreeMap<_, _> = journal
+        .initial_creations
+        .values()
+        .map(|intent| (intent.box_id.as_str(), intent))
+        .collect();
     for boot in journal.initial_boots.values() {
         boot.authorization
             .executable
@@ -226,6 +241,14 @@ pub(super) fn scan_home(
         }
         if let Some(expected_name) = expected.get(&id) {
             if name.as_ref() != Some(expected_name) {
+                return Err(NativeError::Conflict);
+            }
+        }
+        if let Some(intent) = creations.get(id.as_str()) {
+            if crate::persistence::InitialCreation::options_digest(&config.options)
+                .map_err(|_| NativeError::Conflict)?
+                != intent.options_sha256
+            {
                 return Err(NativeError::Conflict);
             }
         }

@@ -12,6 +12,7 @@ mod host_process;
 mod host_signal;
 mod initial_adoption;
 mod initial_boot;
+mod initial_creation;
 mod journal;
 mod native;
 mod space;
@@ -31,6 +32,7 @@ pub use home::RuntimeHomeGuard;
 pub use host_process::HostProcess;
 pub use initial_adoption::InitialAdoption;
 pub use initial_boot::InitialBoot;
+pub use initial_creation::InitialCreation;
 pub use journal::{Journal, JournalState};
 pub use native::{
     guest_platform, target_name, terminal_name, NativeError, NativeInstance, NativeRuntime,
