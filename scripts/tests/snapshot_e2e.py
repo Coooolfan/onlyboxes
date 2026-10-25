@@ -28,7 +28,14 @@ def main():
     parser.add_argument("--return-to-source", action="store_true", help="after cross-worker mutation and no-worker failure, restore onto the original worker with its older cache")
     parser.add_argument("--scenario", choices=("cycle", "cross-worker", "same-worker", "no-worker", "console-restart", "worker-restart", "worker-start-restart", "cache-corrupt", "cache-miss"), default="cycle")
     parser.add_argument("--payload-mib", type=int, default=1, help="1..10240 MiB of independent random guest data; large runs require explicit snapshot and disk budgets")
+    parser.add_argument("--operation-wait-sec", type=int, default=600, help="1..86400 seconds to observe each accepted lifecycle operation; does not change its server deadline")
+    parser.add_argument("--lease-ttl-sec", type=int, default=900, help="1..86400 seconds requested for initial execution, resume and verification; must fit the configured Worker maximum")
+    parser.add_argument("--command-timeout-sec", type=int, default=150, help="1..600 seconds for payload seed/verification commands")
     args = parser.parse_args()
+    if not 1 <= args.operation_wait_sec <= 86400 or not 1 <= args.lease_ttl_sec <= 86400:
+        parser.error("operation wait and lease TTL require 1..86400 seconds")
+    if not 1 <= args.command_timeout_sec <= 600:
+        parser.error("command timeout requires 1..600 seconds")
     scenario = args.scenario
     if not 1 <= args.payload_mib <= 10240:
         parser.error("--payload-mib requires 1..10240")
@@ -41,6 +48,8 @@ def main():
         spec.loader.exec_module(docker)
     config = Path(os.environ.get("ONLYBOXES_DEV_ENV", dev.ROOT / "scripts/dev.env"))
     os.environ.update(dev.env_file(config))
+    if args.lease_ttl_sec > int(os.environ.get("WORKER_TERMINAL_LEASE_MAX_SEC", "1800")):
+        raise RuntimeError("requested fixture lease exceeds configured Worker maximum")
     payload_bytes = args.payload_mib * 1024 * 1024
     if args.payload_mib > 1:
         archive_limit = int(os.environ.get("CONSOLE_SNAPSHOT_MAX_BYTES", "0"))
@@ -77,7 +86,7 @@ def main():
         request = urllib.request.Request(dev.console_base() + path, data=None if value is None else json.dumps(value).encode(),
             headers={**({"Authorization": "Bearer " + execution["token"]} if path.startswith("/api/v1/commands/") else ({} if path.startswith("/api/v1/tokens/") else headers)), "Content-Type": "application/json", **({"Idempotency-Key": key} if key else {})}, method=method)
         try:
-            with opener.open(request, timeout=180) as response:
+            with opener.open(request, timeout=max(180, args.command_timeout_sec + 30)) as response:
                 return response.status, None if response.status == 204 else json.load(response)
         except urllib.error.HTTPError as error:
             body = json.load(error)
@@ -111,13 +120,13 @@ def main():
         raise RuntimeError("both isolated workers must be online before acceptance")
     payload_code = Path(__file__).with_name("snapshot_payload.py").read_text()
     command = "python3 -c " + shlex.quote(payload_code) + " seed " + str(payload_bytes)
-    first = require(*api("POST", "/api/v1/commands/terminal", {"command": command, "lease_ttl_sec": 900, "timeout_ms": 150000}))
+    first = require(*api("POST", "/api/v1/commands/terminal", {"command": command, "lease_ttl_sec": args.lease_ttl_sec, "timeout_ms": args.command_timeout_sec * 1000}))
     if first.get("exit_code") != 0:
         raise RuntimeError("initial command failed")
     sid, digest = first["session_id"], first["stdout"].strip()
     base = "/api/v1/sessions/" + sid
     query = "?account_id=" + account
-    evidence = {"runtime": args.runtime, "return_to_source": args.return_to_source, "payload_bytes":payload_bytes, "session_id": sid, "account_id": account, "sha256": digest, "checks": []}
+    evidence = {"runtime": args.runtime, "return_to_source": args.return_to_source, "payload_bytes":payload_bytes, "operation_wait_sec":args.operation_wait_sec, "command_timeout_sec":args.command_timeout_sec, "lease_ttl_sec":args.lease_ttl_sec, "boxlite_build_profile":os.environ.get("ONLYBOXES_DEV_BOXLITE_PROFILE", "debug") if args.runtime == "boxlite" else None, "session_id": sid, "account_id": account, "sha256": digest, "checks": []}
     result_name = ("docker-" if args.runtime == "docker" else "") + scenario + ("-return-to-source" if args.return_to_source else "")
     def record(label, **values):
         evidence["checks"].append({"check": label, **values})
@@ -438,7 +447,7 @@ def main():
         restarted[kind] = (operation_id, native["box_id"])
     def lifecycle(kind, recovery_retry=False, capacity_retry=0):
         nonlocal target_fault, target_guard
-        parameters = {"retention_ttl_sec": 3600} if kind == "suspend" else {"lease_ttl_sec": 900}
+        parameters = {"retention_ttl_sec": 3600} if kind == "suspend" else {"lease_ttl_sec": args.lease_ttl_sec}
         retained = session()["persistence"]["latest_snapshot"] if kind == "resume" else None
         request_key = str(uuid.uuid4())
         watch_target = args.runtime == "docker" and scenario == "worker-start-restart" and kind == "resume" and not recovery_retry
@@ -451,7 +460,7 @@ def main():
             target_fault = subprocess.Popen([sys.executable, str(Path(docker.__file__)), "crash", nodes[source], "--on-start", result["operation_id"]],
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         path = base + "/operations/" + result["operation_id"] + query
-        deadline = time.monotonic() + 600
+        deadline = time.monotonic() + args.operation_wait_sec
         phase = None
         while time.monotonic() < deadline:
             operation = require(*api("GET", path))
@@ -541,7 +550,7 @@ print(json.dumps({'snapshot_id':archive['snapshot_id'],'sha256':digest.hexdigest
         if current["lifecycle_state"] != "running" or (expected_worker and current["worker_id"] != expected_worker):
             raise RuntimeError("unexpected restored session route")
         check = "python3 -c " + shlex.quote(payload_code) + " verify " + str(payload_bytes) + (" --mutated" if mutated else "")
-        result = require(*api("POST", "/api/v1/commands/terminal", {"command": check, "session_id": sid, "lease_ttl_sec": 900, "timeout_ms": 60000}))
+        result = require(*api("POST", "/api/v1/commands/terminal", {"command": check, "session_id": sid, "lease_ttl_sec": args.lease_ttl_sec, "timeout_ms": args.command_timeout_sec * 1000}))
         if result.get("exit_code") != 0 or result.get("stdout", "").strip() != digest or result.get("created"):
             raise RuntimeError("restored file/hash/mode/symlink/session identity check failed")
         record(label, worker_id=current["worker_id"], session_id=sid, sha256=digest)
@@ -655,7 +664,7 @@ print(json.dumps({'snapshot_id':archive['snapshot_id'],'sha256':digest.hexdigest
         lifecycle("resume")
         target = verify("cross-worker", next(node for node in nodes if node != source))
         mutation = "python3 -c " + shlex.quote("from pathlib import Path; import os; p=Path('/root/snapshot-e2e'); (p/'new-file').write_bytes(b'created after restore'); (p/'modified-file').write_text('second version'); (p/'remove-me').unlink(); os.sync()")
-        result = require(*api("POST", "/api/v1/commands/terminal", {"command": mutation, "session_id": sid, "lease_ttl_sec": 900, "timeout_ms": 60000}))
+        result = require(*api("POST", "/api/v1/commands/terminal", {"command": mutation, "session_id": sid, "lease_ttl_sec": args.lease_ttl_sec, "timeout_ms": args.command_timeout_sec * 1000}))
         if result.get("exit_code") != 0:
             raise RuntimeError("restored filesystem mutation failed")
         mutated = True
@@ -670,7 +679,7 @@ print(json.dumps({'snapshot_id':archive['snapshot_id'],'sha256':digest.hexdigest
         services("stop", *dev.SERVICES)
         for node in nodes:
             offline(node)
-    status, body = api("POST", base + "/resume" + query, {"lease_ttl_sec": 900}, str(uuid.uuid4()))
+    status, body = api("POST", base + "/resume" + query, {"lease_ttl_sec": args.lease_ttl_sec}, str(uuid.uuid4()))
     submission_status = status
     outcome_code = body.get("code")
     if status == 202:

@@ -197,12 +197,18 @@ def node_paths(service, values):
 
 
 def build_boxlite():
+    profile = os.environ.get("ONLYBOXES_DEV_BOXLITE_PROFILE", "debug")
+    if profile not in ("debug", "release"):
+        raise RuntimeError("ONLYBOXES_DEV_BOXLITE_PROFILE requires debug or release")
     private_dir(STATE)
     with (STATE / "boxlite-build.lock").open("a+") as lock:
         os.chmod(lock.name, 0o600)
         fcntl.flock(lock, fcntl.LOCK_EX)
-        subprocess.run(["cargo", "build", "--locked", "--bins"], cwd=ROOT / "worker/worker-boxlite", check=True)
-    return ROOT / "worker/worker-boxlite/target/debug"
+        command = ["cargo", "build", "--locked", "--bins"]
+        if profile == "release":
+            command.append("--release")
+        subprocess.run(command, cwd=ROOT / "worker/worker-boxlite", check=True)
+    return ROOT / "worker/worker-boxlite/target" / profile
 
 
 def worker_environment():

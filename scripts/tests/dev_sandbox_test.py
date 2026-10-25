@@ -33,6 +33,18 @@ class AdapterTests(unittest.TestCase):
         self.bind.stop()
         self.temp.cleanup()
 
+    def test_boxlite_profile_builds_and_returns_the_same_profile_for_worker_and_guard(self):
+        for profile in ("debug", "release"):
+            with self.subTest(profile=profile), patch.dict(os.environ, {"ONLYBOXES_DEV_BOXLITE_PROFILE":profile}), patch.object(dev.subprocess, "run") as build:
+                binaries = dev.build_boxlite()
+                self.assertEqual(binaries, dev.ROOT / "worker/worker-boxlite/target" / profile)
+                expected = ["cargo", "build", "--locked", "--bins"] + (["--release"] if profile == "release" else [])
+                self.assertEqual(build.call_args.args[0], expected)
+        with patch.dict(os.environ, {"ONLYBOXES_DEV_BOXLITE_PROFILE":"invalid"}), patch.object(dev.subprocess, "run") as build:
+            with self.assertRaisesRegex(RuntimeError, "requires debug or release"):
+                dev.build_boxlite()
+            build.assert_not_called()
+
     def test_private_env_roundtrip_does_not_follow_links_or_expand_shell_values(self):
         path = self.state / "worker-boxlite.env"
         values = {"WORKER_SECRET": "space ' $(touch should-not-exist) `echo no`", "WORKER_ID": "worker-a"}

@@ -155,7 +155,7 @@ Docker 使用 `scripts/dev.sh crash worker-docker-snapshot` 或 `worker-docker-s
 
 编排回归可运行 `python3 -m unittest discover -s scripts/tests -p '*test.py'`。测试包含真实 Unix socket 的遗留/错误回执与总交互超时、启动期间的信号交付、Ping 期间子进程退出时凭据不变、独立 Worker/守护进程隔离，以及实际 Bash 管道的退出码保留；这些测试不启动沙盒 VM。
 
-单独 `stop worker-boxlite` 或 `stop worker-boxlite-peer` 会依次停止该 Worker 和其守护器，Console 与对象存储继续运行。再次 `start` 复用相同 Worker 身份和持久目录。Console 数据库重建后创建新身份，旧 SDK home 和账本保留，不会交给新 Worker 使用。
+单独 `stop worker-boxlite` 或 `stop worker-boxlite-peer` 只停止该 Worker，保留独立守护器，Console 与对象存储继续运行。再次 `start` 复用相同 Worker 身份和持久目录。Console 数据库重建后创建新身份，旧 SDK home 和账本保留，不会交给新 Worker 使用。
 
 S3 AK/SK 自动生成并存于 `snapshot-store.env`（600），只交给 Console；Worker 不继承 Console 管理密钥或 S3 长期凭据。容器名称和数据卷按状态目录隔离，`stop` 保留数据卷与本机凭据。不要单独删除凭据后复用原数据卷。
 
@@ -169,6 +169,10 @@ scripts/dev.sh start sandbox-persistence
 ```
 
 状态目录须属于当前用户且权限为 700；首次创建会自动设置。验收脚本同样读取这三个变量。服务配置仍从配置文件加载。模板使用 18089 / 15051 / 19000 端口及独立 SQLite 路径；需要时调整以避免冲突。
+
+大归档验收可在私有配置中指定 `ONLYBOXES_DEV_BOXLITE_PROFILE=release`；默认 `debug`。Worker 与守护器始终从同一构建 profile 目录启动，其他值明确报错。构建仍由 `dev.sh` 编排，不自行启动 Worker。
+
+验收脚本支持 `--operation-wait-sec`（默认 600，最大 86400）、`--lease-ttl-sec`（默认 900，最大 86400）和 `--command-timeout-sec`（默认 150，最大 600）。等待时间只改变客户端观察期限；服务端生命周期 deadline 仍由 `CONSOLE_PERSISTENCE_OPERATION_TIMEOUT_SEC` 控制。长租约还须在配置中相应提高 `WORKER_TERMINAL_LEASE_MAX_SEC`，脚本在认证或创建会话前拒绝超出该配置的请求。命令超时也覆盖大文件完整哈希校验，并留出 HTTP 响应余量。这些值不改变空间预检、完整校验或失败时保留证据的要求。结果文件记录所用等待时间、租约、命令期限和 BoxLite 构建 profile，性能比较时须同时注明这些条件。
 
 ## 本地公开预览
 
