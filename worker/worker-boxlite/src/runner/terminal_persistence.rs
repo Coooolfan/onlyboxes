@@ -572,6 +572,22 @@ impl TerminalSessionManager {
             self.disconnect_persistence(&connection).await;
         }
     }
+    pub(crate) async fn healthy_guarded_shutdown(
+        &self,
+        identity: &worker_boxlite::persistence::LeaseGuardIdentity,
+    ) -> bool {
+        let state = self.sessions.lock().await;
+        !state.failed
+            && state
+                .execution_guard
+                .as_ref()
+                .is_some_and(|guard| guard.identity() == identity)
+            && state
+                .journal
+                .as_ref()
+                .is_some_and(|journal| journal.snapshot().is_ok())
+    }
+
     pub(crate) async fn has_snapshot_journal(&self) -> bool {
         self.sessions.lock().await.journal.is_some()
     }

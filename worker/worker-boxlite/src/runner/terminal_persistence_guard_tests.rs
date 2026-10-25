@@ -581,3 +581,36 @@ async fn revoked_stopped_initial_root_is_held_without_transferring_execution() {
     f.manager.close_preserving().await;
     r.close().await;
 }
+
+#[tokio::test]
+async fn orderly_shutdown_gate_requires_healthy_journal_and_exact_guard_identity() {
+    let r = Rig::new().await;
+    assert!(
+        r.f.manager
+            .healthy_guarded_shutdown(r.client.identity())
+            .await
+    );
+    let mut changed = r.client.identity().clone();
+    changed.epoch_id = Uuid::new_v4().to_string();
+    assert!(!r.f.manager.healthy_guarded_shutdown(&changed).await);
+    r.f.manager.close_preserving().await;
+    assert!(
+        r.f.manager
+            .healthy_guarded_shutdown(r.client.identity())
+            .await
+    );
+    assert!(r.client.check_running("restored-box").await.is_ok());
+    r.f.manager.fail_persistence().await;
+    assert!(
+        !r.f.manager
+            .healthy_guarded_shutdown(r.client.identity())
+            .await
+    );
+    r.f.journal.close().unwrap();
+    assert!(
+        !r.f.manager
+            .healthy_guarded_shutdown(r.client.identity())
+            .await
+    );
+    r.close().await;
+}

@@ -22,7 +22,8 @@ async fn main() {
     let result = runner::run(shutdown.clone(), cfg).await;
     shutdown.cancel();
     shutdown_watcher.abort();
-    runner::shutdown().await;
+    let orderly = matches!(&result, Ok(()) | Err(runner::RunnerError::Cancelled));
+    runner::shutdown(orderly).await;
     boxlite_runtime::shutdown().await;
 
     match result {

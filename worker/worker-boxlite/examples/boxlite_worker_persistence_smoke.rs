@@ -171,7 +171,7 @@ async fn main() -> Result<()> {
             .map_err(|_| "runner did not report companion failure")??;
         if result.is_ok() { return Err("Worker ignored companion loss".into()); }
         println!("PASS: companion loss closes and fails the production runner");
-        runner::shutdown().await; boxlite_runtime::shutdown().await;
+        runner::shutdown(false).await; boxlite_runtime::shutdown().await;
         let state = journal(&root)?;
         let writer = state.operations["worker-snapshot"].started_process.as_ref().ok_or("writer identity missing")?;
         tokio::time::timeout(Duration::from_secs(5), async {
@@ -196,7 +196,7 @@ async fn main() -> Result<()> {
     if !worker.is_finished() {
         let _ = tokio::time::timeout(Duration::from_secs(10), &mut worker).await;
     }
-    runner::shutdown().await;
+    runner::shutdown(false).await;
     boxlite_runtime::shutdown().await;
     if !killed {
         let _ = guard.shutdown().await;

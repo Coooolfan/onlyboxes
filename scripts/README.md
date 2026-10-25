@@ -176,6 +176,8 @@ scripts/dev.sh start sandbox-persistence
 
 `--retry-quota-session --scenario cross-worker` 只复用同一私有状态目录中上一次 `snapshot_quota_exceeded` 挂起失败留下的会话。脚本要求 runtime、payload 字节数和账号一致，确认会话仍在隔离 Worker 运行，再以 `create_if_missing=false` 完整校验原 payload；不会重新写入或创建替代会话。旧失败记录保留在结果的 checks 中，再执行新的挂起/跨 Worker 恢复与最终清理。其他错误、已完成操作或不同样本不能使用此参数。BoxLite 展开预算包含 qcow 文件长度、虚拟磁盘容量及 manifest 余量；例如 5 GiB 数据和 8 GiB 虚拟盘不能使用 12 GiB 展开预算。
 
+BoxLite 的 `--scenario worker-graceful-restart` 在快照恢复目标已经 active 后执行 `dev.sh restart`，要求守护器身份、原生 CID、真实 kernel writer 和业务文件均保持一致；没有发生预定重启或重新启动了 VM 均不能通过。完成后永久删除并排空清理。此场景验证正常 Worker 退出与独立租约的衔接，不覆盖守护器重启或已停止托管目标的运行恢复。
+
 四会话 BoxLite 并发验收由 `python3 scripts/tests/snapshot_parallel_e2e.py` 执行，读取同一组隔离会话/配置/状态目录变量。它要求 release 构建、两个 Worker 各四个会话及管理槽位、各两个执行槽位、关闭归档缓存，并在创建会话前同时检查主机和 S3 daemon 的全批次空间预留。`--payload-mib` 默认 1024，`--operation-wait-sec` 默认 1800。以下是固定同一镜像、4 GiB 根盘的 4 × 1 GiB 本机样本配置；展开预算应随实际归档调整，不是通用生产默认值：
 
 ```dotenv

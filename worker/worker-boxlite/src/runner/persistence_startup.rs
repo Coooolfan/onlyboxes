@@ -277,9 +277,29 @@ pub(crate) fn usage(cfg: &Config) -> Result<Option<SandboxPersistenceUsage>, Run
     }))
 }
 
-pub(crate) fn request_shutdown_writer_stops() {
+pub(crate) async fn finish_shutdown(orderly_and_drained: bool) {
     if let Some(context) = SHARED.get() {
-        context.request_writer_stops();
+        let preserve = orderly_and_drained
+            && context
+                .manager
+                .healthy_guarded_shutdown(context.client.identity())
+                .await
+            && context
+                .owner
+                .verify_execution_store(
+                    Path::new(&context.config.lease_state_dir),
+                    &context.config.lease_store_id,
+                )
+                .is_ok()
+            && context.client.status("worker-shutdown-check").await.is_ok();
+        if preserve {
+            // All accepted work is joined. The same independent service still
+            // owns every boot/lease; it enforces expiry across this restart.
+            // SDK shutdown separately skips detached terminal instances.
+            tracing::info!("persistent BoxLite roots retained under independent execution leases");
+        } else {
+            context.request_writer_stops();
+        }
     }
 }
 

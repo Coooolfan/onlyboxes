@@ -40,7 +40,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime", choices=("boxlite", "docker"), default="boxlite")
     parser.add_argument("--return-to-source", action="store_true", help="after cross-worker mutation and no-worker failure, restore onto the original worker with its older cache")
-    parser.add_argument("--scenario", choices=("cycle", "cross-worker", "same-worker", "no-worker", "console-restart", "worker-restart", "worker-start-restart", "cache-corrupt", "cache-miss"), default="cycle")
+    parser.add_argument("--scenario", choices=("cycle", "cross-worker", "same-worker", "no-worker", "console-restart", "worker-restart", "worker-start-restart", "cache-corrupt", "cache-miss", "worker-graceful-restart"), default="cycle")
     parser.add_argument("--payload-mib", type=int, default=1, help="1..10240 MiB of independent random guest data; large runs require explicit snapshot and disk budgets")
     parser.add_argument("--operation-wait-sec", type=int, default=600, help="1..86400 seconds to observe each accepted lifecycle operation; does not change its server deadline")
     parser.add_argument("--lease-ttl-sec", type=int, default=900, help="1..86400 seconds requested for initial execution, resume and verification; must fit the configured Worker maximum")
@@ -61,6 +61,8 @@ def main():
         spec = importlib.util.spec_from_file_location("docker_acceptance", Path(dev.__file__).with_name("dev-docker-snapshot.py"))
         docker = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(docker)
+    if scenario == "worker-graceful-restart" and args.runtime != "boxlite":
+        parser.error("graceful restart acceptance currently requires BoxLite")
     if args.retry_quota_session and scenario != "cross-worker":
         parser.error("quota-session retry requires --scenario cross-worker")
     config = Path(os.environ.get("ONLYBOXES_DEV_ENV", dev.ROOT / "scripts/dev.env"))
@@ -615,7 +617,7 @@ print(json.dumps({'snapshot_id':archive['snapshot_id'],'sha256':digest.hexdigest
         record("deleted", status=204)
         wait_cleanup()
         return
-    if scenario in ("same-worker", "console-restart", "worker-restart", "worker-start-restart", "cache-corrupt", "cache-miss"):
+    if scenario in ("same-worker", "console-restart", "worker-restart", "worker-start-restart", "cache-corrupt", "cache-miss", "worker-graceful-restart"):
         stopped_peer = None
         cache_fault = scenario in ("cache-corrupt", "cache-miss")
         if (args.runtime == "docker" and scenario == "worker-start-restart") or cache_fault:
@@ -663,6 +665,32 @@ print(json.dumps({'snapshot_id':archive['snapshot_id'],'sha256':digest.hexdigest
             if valid.get("valid") is not True:
                 raise RuntimeError("restored target lacks the verified committed archive")
             record("cache-fallback-verified", **valid, snapshot_retained=True)
+        if scenario == "worker-graceful-restart":
+            verify("before-orderly-restart", source)
+            node, before = native_operation(restored["operation_id"])
+            writer = before.get("started_process") if before else None
+            if node != source or not writer or before.get("phase") != "active":
+                raise RuntimeError("graceful restart requires a pinned active target")
+            guardian = lease_identity(node)
+            services("restart", nodes[source])
+            deadline = time.monotonic() + 90
+            check = "python3 -c " + shlex.quote(payload_code) + " verify " + str(payload_bytes)
+            while time.monotonic() < deadline:
+                status, result = api("POST", "/api/v1/commands/terminal", {"command":check, "session_id":sid, "create_if_missing":False, "lease_ttl_sec":args.lease_ttl_sec, "timeout_ms":args.command_timeout_sec*1000})
+                if status == 200:
+                    if result.get("exit_code") != 0 or result.get("created") or result.get("session_id") != sid or result.get("stdout", "").strip() != digest:
+                        raise RuntimeError("graceful restart changed the retained payload/session")
+                    break
+                if status not in (409, 503):
+                    require(status, result)
+                time.sleep(.2)
+            else:
+                raise RuntimeError("active session did not become executable after graceful Worker restart")
+            _, after = native_operation(restored["operation_id"])
+            running = guard_exchange(source, {"action":"check_running", "box_id":before["box_id"]}, guardian).get("reply", {})
+            if lease_identity(source) != guardian or not after or after.get("box_id") != before["box_id"] or after.get("started_process") != writer or running.get("type") != "running" or running.get("value", {}).get("process") != writer:
+                raise RuntimeError("graceful restart replaced the companion, native instance or kernel writer")
+            record("orderly-restart-preserved", instance_id=before["box_id"], same_guard=True, same_kernel_writer=True, same_payload=True)
         verify("same-worker", source)
         if stopped_peer:
             services("start", nodes[stopped_peer])

@@ -151,17 +151,21 @@ async fn run_connected(shutdown: CancellationToken, cfg: Config) -> Result<(), R
     }
 }
 
-pub async fn shutdown() {
-    if let Some(dispatcher) = snapshot_control::shared_dispatcher() {
-        if dispatcher.close().await.is_err() {
+pub async fn shutdown(orderly: bool) {
+    let drained = if let Some(dispatcher) = snapshot_control::shared_dispatcher() {
+        let drained = dispatcher.close().await.is_ok();
+        if !drained {
             tracing::warn!("sandbox lifecycle dispatcher could not confirm shutdown");
         }
-    }
+        drained
+    } else {
+        true
+    };
     persistence_startup::stop_cache_maintenance().await;
     shutdown_shared_terminal_sessions().await;
     // A drained SDK start may have completed after the first emergency scan.
     // Retained journal/executable evidence still selects its exact writer.
-    persistence_startup::request_shutdown_writer_stops();
+    persistence_startup::finish_shutdown(orderly && drained).await;
 }
 
 pub(crate) fn validate_terminal_max_active_sessions(
