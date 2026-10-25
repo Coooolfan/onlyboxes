@@ -45,6 +45,59 @@ class PayloadTests(unittest.TestCase):
         (self.root/"payload").write_bytes(b"short")
         with self.assertRaises(AssertionError): fixture.payload(self.root,"verify",31,True)
 
+    def seed_small(self, count=257):
+        with patch.object(fixture.os, "sync") as sync:
+            digest = fixture.payload(self.root, "seed", 31, small_files=count)
+            sync.assert_called_once()
+        return digest
+
+    def test_small_file_data_metadata_links_and_manifest_are_verified(self):
+        digest = self.seed_small()
+        self.assertEqual(fixture.payload(self.root, "verify", 31, small_files=257), digest)
+        self.assertNotEqual(hashlib.sha256((self.root/"payload").read_bytes()).hexdigest(), digest)
+        file = self.root/"small-files/0001/00000100"
+        file.write_bytes(b"x"*fixture.SMALL_BYTES)
+        with self.assertRaises(AssertionError):
+            fixture.payload(self.root, "verify", 31, small_files=257)
+
+    def test_small_file_links_and_extra_entries_cannot_be_replaced_silently(self):
+        self.seed_small(1)
+        shard = self.root/"small-files/0000"
+        alias = shard/"hardlink"
+        original = (shard/"00000000").read_bytes()
+        alias.unlink(); alias.write_bytes(original)
+        with self.assertRaises(AssertionError): fixture.payload(self.root, "verify", 31, small_files=1)
+        alias.unlink(); fixture.os.link(shard/"00000000", alias)
+        (shard/"extra").write_bytes(b"unexpected")
+        with self.assertRaises(AssertionError): fixture.payload(self.root, "verify", 31, small_files=1)
+        (shard/"extra").unlink(); (shard/"shortcut").unlink(); (shard/"shortcut").symlink_to("other")
+        with self.assertRaises(AssertionError): fixture.payload(self.root, "verify", 31, small_files=1)
+
+    def test_self_consistent_manifest_tampering_changes_the_external_fingerprint(self):
+        digest = self.seed_small(1)
+        file = self.root/"small-files/0000/00000000"
+        data = b"x"*fixture.SMALL_BYTES; file.write_bytes(data)
+        manifest = self.root/"small-files.manifest"
+        with manifest.open("r+b") as stream:
+            stream.seek(16)
+            stream.write(fixture.SMALL_RECORD.pack(0, 0o600, hashlib.sha256(data).digest()))
+        self.assertNotEqual(fixture.payload(self.root,"verify",31,small_files=1),digest)
+
+    def test_guest_inode_refusal_precedes_payload_creation(self):
+        from types import SimpleNamespace
+        for count, free in ((1,1), (65536,65536+256+8)):
+            with patch.object(fixture.os,"statvfs",return_value=SimpleNamespace(f_favail=free)):
+                with self.assertRaisesRegex(AssertionError,"guest inodes"):
+                    fixture.payload(self.root,"seed",31,small_files=count)
+        self.assertFalse(self.root.exists())
+
+    def test_guest_disk_refusal_precedes_payload_creation(self):
+        from types import SimpleNamespace
+        with patch.object(fixture.os,"statvfs",return_value=SimpleNamespace(f_favail=10000,f_frsize=4096,f_bavail=1)):
+            with self.assertRaisesRegex(AssertionError,"guest space"):
+                fixture.payload(self.root,"seed",31,small_files=1)
+        self.assertFalse(self.root.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

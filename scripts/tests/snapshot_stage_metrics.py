@@ -231,6 +231,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scenario", choices=("cross-worker", "same-worker"), default="cross-worker")
     parser.add_argument("--payload-mib", type=int, default=1024)
+    parser.add_argument("--small-files", type=int, default=0)
+    parser.add_argument("--command-timeout-sec", type=int, default=150)
     parser.add_argument("--operation-wait-sec", type=int, default=1800)
     parser.add_argument("--run-label", default="", help="keep distinct results while reusing the same Worker homes")
     parser.add_argument("--target-image-cache", choices=("any", "cold", "warm"), default="any")
@@ -238,6 +240,8 @@ def main():
     args = parser.parse_args()
     if not 1 <= args.payload_mib <= 10240 or not 1 <= args.operation_wait_sec <= 86400:
         parser.error("payload requires 1..10240 MiB; operation wait requires 1..86400 seconds")
+    if not 0 <= args.small_files <= 65536 or not 1 <= args.command_timeout_sec <= 600:
+        parser.error("small-file count requires 0..65536; command timeout requires 1..600 seconds")
     if args.run_label and not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,31}", args.run_label):
         parser.error("run label requires 1..32 lowercase letters/digits/hyphens")
     if args.target_image_cache != "any" and args.scenario != "cross-worker":
@@ -273,6 +277,7 @@ def main():
     child = None
     command = [sys.executable, str(Path(__file__).with_name("snapshot_e2e.py")), "--scenario", args.scenario,
                "--payload-mib", str(args.payload_mib), "--operation-wait-sec", str(args.operation_wait_sec),
+               "--small-files", str(args.small_files), "--command-timeout-sec", str(args.command_timeout_sec),
                "--target-image-cache", args.target_image_cache]
     if args.run_label:
         command += ["--evidence-label", args.run_label]
@@ -322,6 +327,8 @@ def main():
         raise RuntimeError("insufficient complete disk samples")
     evidence.update(verified=True, source_worker=source, target_worker=target,
                     payload_bytes=result["payload_bytes"], archive_bytes=checks["committed-archive"]["size_bytes"],
+                    small_files=result.get("small_files",0), dataset_bytes=result.get("dataset_bytes",result["payload_bytes"]),
+                    fingerprint_definition=result.get("fingerprint_definition","SHA-256(main payload bytes)"),
                     baseline_allocated_bytes=evidence["samples"][0]["total_allocated_bytes"],
                     observed_peak_allocated_bytes=max(value["total_allocated_bytes"] for value in valid_samples))
     write_metrics(destination, evidence)

@@ -383,3 +383,5 @@ BoxLite 的本机证据包括 [4 × 1 GiB 禁用归档缓存](../../worker/worke
 [1 GiB 分阶段与磁盘采样](../../worker/worker-boxlite/docs/sandbox-snapshot-stage-sample-2026-10-25.json)另行覆盖单会话跨 Worker 下载和同 Worker 缓存复制，保留逐 operation/attempt 的导出、上传、完整校验、下载/复制、导入、启动及源清理耗时，以及创建数据前至最终清理后的 SDK home/journal 计量曲线。采样、COW/reflink、既有缓存及未计入路径的限制已随样本记录；不能将其当作精确物理峰值或全部存储吞吐验收。
 
 [1 GiB SDK 镜像缓存样本](../../worker/worker-boxlite/docs/sandbox-snapshot-sdk-image-cache-sample-2026-10-25.json)使用相同源/目标 Worker 和 home，关闭快照归档缓存，两次均从 S3 下载。目标 SDK 冷态以空索引/空文件清单及实际拉取日志确认，热态以指定 digest 的完整索引/缓存文件及实际复用、无拉取日志确认。探针按固定 SDK 0.10.7 只读校验，不删除缓存，不控制 registry/CDN 或 OS 页缓存。这是顺序单次的 SDK 缓存条件检查；多次重复、其他体量与并发的完整镜像/归档矩阵、跨机器及部署存储网络测量仍需完成。
+
+[大量小文件样本](../../worker/worker-boxlite/docs/sandbox-snapshot-small-files-sample-2026-10-25.json)另以 1 GiB 主文件和 65,536 个独立随机 1 KiB 文件验证真实 Console/S3 的跨 Worker 生命周期，逐个核对内容、权限、UID/GID、链接和 inode 身份，并以客户端保留的复合指纹绑定清单。阶段计时、资源预算、采样范围和最终物理清理证据随样本记录；更多体量、并发、重复及跨机器矩阵仍需完成。

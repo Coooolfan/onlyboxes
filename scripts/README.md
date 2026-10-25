@@ -232,6 +232,18 @@ python3 scripts/tests/snapshot_stage_metrics.py --scenario cross-worker --payloa
 
 `--seed-worker` 和镜像缓存条件只用于 BoxLite 跨 Worker 验收。冷态只能从实际空缓存开始；需要重测冷态时使用新的隔离 home，不能删除原 home、journal、账本或缓存记录伪造冷态。缓存条件不符或缺少 SDK 行为回执时失败并保留现场，不能把 S3 回源或更换目标当作满足条件。只测量一次冷/热顺序不构成百分位、网络吞吐保证或生产 SLO。探针无 VM 测试为 `python3 -m unittest scripts.tests.snapshot_image_cache_test`。
 
+大量小文件样本可在生命周期或阶段夹具追加 `--small-files 65536`，范围为 `0..65536`。它在主随机文件外创建独立随机 1 KiB 文件，每 256 个分一目录；每目录还生成一个硬链接和一个相对符号链接。小文件依次使用 `0600/0640/0644`，恢复时逐个验证完整内容、大小、权限、当前 guest 用户的 UID/GID、链接计数与 inode 身份，以及目录内的精确名称集合。小文件清单使用固定宽度的索引/mode/SHA-256 记录；结果 `sha256` 在此模式下是主文件字节、带计数/大小的版本域和所有清单记录的复合指纹，客户端保留的原指纹必须与恢复后相同。即使沙盒中的文件与清单同时被修改，也不能只凭新的清单通过检查。`--small-files 0` 保留原单文件 SHA-256 行为。
+
+guest 在创建数据前检查 inode 和块空间，inode 预留包括小文件、分目录、符号链接及主文件/清单等；硬链接共享原 inode。小文件按 1 KiB、主文件按至多 1 MiB 的缓冲生成和读取，目录比较一次最多 256 个数据文件名。数据生成后在 guest 执行 `sync`，主文件及清单另有 `fsync`，没有每个小文件分别 `fsync` 的计时。主机/daemon 的空间预检将小文件内容计入总数据字节，归档及展开上限仍须另计目录/inode/链接和 qcow 虚拟容量。配额失败后的同会话重试也要求小文件数量相同。
+
+本机 1 GiB 主文件加 65,536 小文件（另有 64 MiB 内容）的样本使用 4 GiB 根盘、3 GiB 归档上限、6 GiB 展开上限、关闭归档缓存，以及完整数据和独立实例校验。其主机/daemon 预检各要求 26,306,674,688 字节空闲。guest 命令期限可用 `--command-timeout-sec 600` 指定；操作观察期限独立配置。这些是样本参数，配额仍按实际归档和展开量核对。示例在已经启动并配置好 SDK 热缓存的隔离环境中运行：
+
+```bash
+python3 scripts/tests/snapshot_stage_metrics.py --scenario cross-worker --payload-mib 1024 --small-files 65536 --command-timeout-sec 600 --run-label small-files --target-image-cache warm --seed-worker worker-boxlite
+```
+
+小文件内容和元数据测试可运行 `python3 -m unittest scripts.tests.snapshot_payload_test`；它使用自己的临时目录并替代本机全局 `sync`，真正的 guest `sync` 由实际 VM 验收覆盖。
+
 ## 本地公开预览
 
 `public-preview` 是 `console / worker-docker / nginx` 的组合服务：

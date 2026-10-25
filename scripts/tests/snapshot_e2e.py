@@ -25,12 +25,12 @@ SPEC.loader.exec_module(dev)
 INITIAL_EXPIRY_SCENARIOS = ("initial-expired-delete", "initial-expired-offline", "initial-expired-crash")
 
 
-def quota_retry_evidence(path, runtime, payload_bytes):
+def quota_retry_evidence(path, runtime, payload_bytes, small_files=0):
     evidence = json.loads(dev.read_private(path))
     checks = evidence.get("checks", [])
     failed = checks[-1] if checks else {}
     digest = evidence.get("sha256", "")
-    if (evidence.get("runtime") != runtime or evidence.get("payload_bytes") != payload_bytes
+    if (evidence.get("runtime") != runtime or evidence.get("payload_bytes") != payload_bytes or evidence.get("small_files", 0) != small_files
             or not evidence.get("session_id") or not evidence.get("account_id")
             or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest)
             or failed.get("check") != "suspend" or failed.get("status") != "failed"
@@ -45,6 +45,7 @@ def main():
     parser.add_argument("--return-to-source", action="store_true", help="after cross-worker mutation and no-worker failure, restore onto the original worker with its older cache")
     parser.add_argument("--scenario", choices=("cycle", "cross-worker", "same-worker", "no-worker", "console-restart", "worker-restart", "worker-start-restart", "cache-corrupt", "cache-miss", "cache-copy-eviction", "worker-graceful-restart", "worker-expired-restart") + INITIAL_EXPIRY_SCENARIOS, default="cycle")
     parser.add_argument("--payload-mib", type=int, default=1, help="1..10240 MiB of independent random guest data; large runs require explicit snapshot and disk budgets")
+    parser.add_argument("--small-files", type=int, default=0, help="0..65536 additional random 1 KiB files with metadata/link checks")
     parser.add_argument("--operation-wait-sec", type=int, default=600, help="1..86400 seconds to observe each accepted lifecycle operation; does not change its server deadline")
     parser.add_argument("--lease-ttl-sec", type=int, default=900, help="1..86400 seconds requested for initial execution, resume and verification; must fit the configured Worker maximum")
     parser.add_argument("--command-timeout-sec", type=int, default=150, help="1..600 seconds for payload seed/verification commands")
@@ -66,6 +67,8 @@ def main():
         parser.error("seed-worker pinning requires BoxLite cross-worker acceptance")
     if not 1 <= args.payload_mib <= 10240:
         parser.error("--payload-mib requires 1..10240")
+    if not 0 <= args.small_files <= 65536:
+        parser.error("--small-files requires 0..65536")
     if args.return_to_source and scenario != "cycle":
         parser.error("--return-to-source requires --scenario cycle")
     if args.runtime == "docker":
@@ -107,15 +110,16 @@ def main():
     if args.lease_ttl_sec > int(os.environ.get("WORKER_TERMINAL_LEASE_MAX_SEC", "1800")):
         raise RuntimeError("requested fixture lease exceeds configured Worker maximum")
     payload_bytes = args.payload_mib * 1024 * 1024
+    dataset_bytes = payload_bytes + args.small_files * 1024
     previous = None
     if args.retry_quota_session:
-        previous = quota_retry_evidence(dev.STATE / ("snapshot-e2e-" + ("docker-" if args.runtime == "docker" else "") + "cross-worker-result.json"), args.runtime, payload_bytes)
-    if args.payload_mib > 1:
+        previous = quota_retry_evidence(dev.STATE / ("snapshot-e2e-" + ("docker-" if args.runtime == "docker" else "") + "cross-worker-result.json"), args.runtime, payload_bytes, args.small_files)
+    if args.payload_mib > 1 or args.small_files:
         archive_limit = int(os.environ.get("CONSOLE_SNAPSHOT_MAX_BYTES", "0"))
         expanded_limit = int(os.environ.get("CONSOLE_SNAPSHOT_MAX_EXPANDED_BYTES", "0"))
-        if archive_limit <= payload_bytes or expanded_limit <= payload_bytes:
+        if archive_limit <= dataset_bytes or expanded_limit <= dataset_bytes:
             raise RuntimeError("large payload requires explicit archive/expanded limits above the payload size")
-        required = 8 * payload_bytes + 2 * expanded_limit + (4 << 30)
+        required = 8 * dataset_bytes + 2 * expanded_limit + (4 << 30)
         space = os.statvfs(dev.STATE)
         if space.f_bavail * space.f_frsize < required:
             raise RuntimeError(f"large fixture host filesystem requires {required} free bytes before session creation")
@@ -195,18 +199,19 @@ def main():
         services("stop", nodes[seed_peer])
         offline(seed_peer)
     payload_code = Path(__file__).with_name("snapshot_payload.py").read_text()
+    payload_arguments = str(payload_bytes) + (" --small-files " + str(args.small_files) if args.small_files else "")
     if previous:
         sid = previous["session_id"]
         current = require(*api("GET", "/api/v1/sessions/" + sid + "?account_id=" + account))
         if current["lifecycle_state"] != "running" or current["worker_id"] not in nodes:
             raise RuntimeError("quota retry requires the retained running session on an isolated worker")
-        command = "python3 -c " + shlex.quote(payload_code) + " verify " + str(payload_bytes)
+        command = "python3 -c " + shlex.quote(payload_code) + " verify " + payload_arguments
         first = require(*api("POST", "/api/v1/commands/terminal", {"command":command, "session_id":sid, "create_if_missing":False, "lease_ttl_sec":args.lease_ttl_sec, "timeout_ms":args.command_timeout_sec * 1000}))
         if first.get("exit_code") != 0 or first.get("created") or first.get("session_id") != sid or first.get("stdout", "").strip() != previous["sha256"]:
             raise RuntimeError("quota retry retained payload or session identity check failed")
         digest = previous["sha256"]
     else:
-        command = "python3 -c " + shlex.quote(payload_code) + " seed " + str(payload_bytes)
+        command = "python3 -c " + shlex.quote(payload_code) + " seed " + payload_arguments
         first = require(*api("POST", "/api/v1/commands/terminal", {"command": command, "lease_ttl_sec": args.lease_ttl_sec, "timeout_ms": args.command_timeout_sec * 1000}))
         if first.get("exit_code") != 0:
             raise RuntimeError("initial command failed")
@@ -214,6 +219,8 @@ def main():
     base = "/api/v1/sessions/" + sid
     query = "?account_id=" + account
     evidence = {"runtime": args.runtime, "return_to_source": args.return_to_source, "payload_bytes":payload_bytes, "operation_wait_sec":args.operation_wait_sec, "command_timeout_sec":args.command_timeout_sec, "lease_ttl_sec":args.lease_ttl_sec, "boxlite_build_profile":os.environ.get("ONLYBOXES_DEV_BOXLITE_PROFILE", "debug") if args.runtime == "boxlite" else None, "session_id": sid, "account_id": account, "sha256": digest, "checks": previous["checks"] if previous else []}
+    evidence.update(small_files=args.small_files, small_file_bytes=1024, dataset_bytes=dataset_bytes,
+                    fingerprint_definition="SHA-256(main payload bytes || NUL-delimited small-file-v1 domain || big-endian count/size || ordered index/mode/content-SHA256 records)" if args.small_files else "SHA-256(main payload bytes)")
     result_name = ("docker-" if args.runtime == "docker" else "") + scenario + ("-return-to-source" if args.return_to_source else "")
     if args.evidence_label:
         result_name += "-" + args.evidence_label
@@ -628,7 +635,7 @@ print(json.dumps({'snapshot_id':archive['snapshot_id'],'sha256':digest.hexdigest
         current = session()
         if current["lifecycle_state"] != "running" or (expected_worker and current["worker_id"] != expected_worker):
             raise RuntimeError("unexpected restored session route")
-        check = "python3 -c " + shlex.quote(payload_code) + " verify " + str(payload_bytes) + (" --mutated" if mutated else "")
+        check = "python3 -c " + shlex.quote(payload_code) + " verify " + payload_arguments + (" --mutated" if mutated else "")
         result = require(*api("POST", "/api/v1/commands/terminal", {"command": check, "session_id": sid, "lease_ttl_sec": args.lease_ttl_sec, "timeout_ms": args.command_timeout_sec * 1000}))
         if result.get("exit_code") != 0 or result.get("stdout", "").strip() != digest or result.get("created"):
             raise RuntimeError("restored file/hash/mode/symlink/session identity check failed")
@@ -907,7 +914,7 @@ print(json.dumps({'snapshot_id':archive['snapshot_id'],'sha256':digest.hexdigest
             guardian = lease_identity(node)
             services("restart", nodes[source])
             deadline = time.monotonic() + 90
-            check = "python3 -c " + shlex.quote(payload_code) + " verify " + str(payload_bytes)
+            check = "python3 -c " + shlex.quote(payload_code) + " verify " + payload_arguments
             while time.monotonic() < deadline:
                 status, result = api("POST", "/api/v1/commands/terminal", {"command":check, "session_id":sid, "create_if_missing":False, "lease_ttl_sec":args.lease_ttl_sec, "timeout_ms":args.command_timeout_sec*1000})
                 if status == 200:

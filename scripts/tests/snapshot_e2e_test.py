@@ -11,6 +11,14 @@ SPEC.loader.exec_module(acceptance)
 
 
 class LargeFixtureAdmissionTests(unittest.TestCase):
+    def test_small_file_bytes_are_included_before_host_admission(self):
+        config = {"CONSOLE_SNAPSHOT_MAX_BYTES":str(3<<30),"CONSOLE_SNAPSHOT_MAX_EXPANDED_BYTES":str(6<<30)}
+        required = 8*((1<<20)+65536*1024)+2*(6<<30)+(4<<30)
+        with patch.dict(os.environ,{},clear=True), patch("sys.argv",["snapshot_e2e.py","--payload-mib","1","--small-files","65536"]), patch.object(acceptance.dev,"env_file",return_value=config), patch.object(acceptance.os,"statvfs",return_value=SimpleNamespace(f_bavail=0,f_frsize=4096)), patch.object(acceptance.dev,"console_auth") as auth:
+            with self.assertRaisesRegex(RuntimeError,str(required)):
+                acceptance.main()
+            auth.assert_not_called()
+
     def test_existing_labelled_results_refuse_before_authentication(self):
         with patch.dict(os.environ, {}, clear=True), patch("sys.argv", ["snapshot_e2e.py", "--scenario", "cross-worker", "--evidence-label", "warm"]), patch.object(acceptance.dev, "env_file", return_value={}), patch.object(Path, "exists", return_value=True), patch.object(acceptance.dev, "console_auth") as auth:
             with self.assertRaisesRegex(RuntimeError, "labelled lifecycle evidence already exists"):
@@ -45,6 +53,8 @@ class LargeFixtureAdmissionTests(unittest.TestCase):
             for runtime, size in (("docker", 5<<30), ("boxlite", 1<<30)):
                 with self.assertRaisesRegex(RuntimeError, "matching private evidence"):
                     acceptance.quota_retry_evidence(Path("fixture"), runtime, size)
+            with self.assertRaisesRegex(RuntimeError, "matching private evidence"):
+                acceptance.quota_retry_evidence(Path("fixture"), "boxlite", 5<<30, 65536)
         for last in ({"check":"resume", "status":"failed", "error":{"code":"snapshot_quota_exceeded"}},
                      {"check":"suspend", "status":"succeeded"},
                      {"check":"suspend", "status":"failed", "error":{"code":"snapshot_invalid"}}):

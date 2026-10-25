@@ -1,0 +1,174 @@
+{
+  "date_asia_shanghai": "2026-10-25",
+  "scope": "real local Console/MinIO and two native macOS arm64 BoxLite Workers, one cross-worker filesystem snapshot with 65536 small files",
+  "runtime_version": "0.10.7",
+  "build_profile": "release",
+  "image": "python@sha256:739ba32ae445e8d58f3d90feb85f83bebc8346f8dd280fa1eb5848f4ff1ed163",
+  "platform": "linux/arm64",
+  "dataset": {
+    "main_random_file_bytes": 1073741824,
+    "additional_independent_random_files": 65536,
+    "small_file_bytes_each": 1024,
+    "small_file_data_bytes": 67108864,
+    "main_and_small_content_bytes": 1140850688,
+    "directory_shards": 256,
+    "files_per_full_shard": 256,
+    "additional_hardlink_paths": 256,
+    "additional_relative_symlink_paths": 256,
+    "small_file_modes_octal": [
+      "0600",
+      "0640",
+      "0644"
+    ],
+    "ownership": "each small file must match the guest execution UID/GID",
+    "manifest_bytes": 2752528,
+    "dataset_fingerprint_sha256": "1fadbd6491faab6f12eb95a3bd525b047f4a6990385624b2d8f23e064a2c1541",
+    "fingerprint": {
+      "algorithm": "SHA-256(main file bytes || domain || uint64be file_count || uint64be small_file_bytes || ordered records)",
+      "domain_hex": "006f6e6c79626f7865732d736d616c6c2d66696c65732d763100",
+      "record": "uint64be index || uint16be mode || 32 content-SHA256 bytes"
+    },
+    "persistence_flush": "main file and manifest fsync; guest-wide sync after creating all small-file data and directory/link metadata",
+    "memory": "main data streams in <=1 MiB blocks; small data in 1 KiB blocks, fixed-width manifest records, <=256-entry directory comparisons"
+  },
+  "conditions": {
+    "cpus": 1.0,
+    "memory_mib": 256,
+    "root_disk_gib": 4,
+    "archive_limit_bytes": 3221225472,
+    "expanded_limit_bytes": 6442450944,
+    "source_reserved_staging_bytes": 15461882265,
+    "target_reserved_staging_bytes": 18223392422,
+    "archive_cache_budget_bytes_per_worker": 0,
+    "target_sdk_image_cache": "warm; exact reference/index/blob presence and one SDK reuse, zero pull events in restore window",
+    "multipart_part_size_bytes": 67108864,
+    "integrity_mode": "readback",
+    "client_command_timeout_seconds": 600,
+    "requested_execution_lease_seconds": 900,
+    "required_host_and_daemon_headroom_bytes": 26306674688,
+    "guest_preflight_required_inodes": 66056,
+    "guest_preflight_bytes": "main bytes + small_file_count*max(1024,filesystem fragment size) + manifest record bytes + 32 MiB margin",
+    "source_and_target_roles_pinned": true
+  },
+  "archive": {
+    "bytes": 1186014112,
+    "sha256": "5512f9864ed022a558fc40576f8eb46459da546ceba4e53d2dac731ae159060b",
+    "expanded_bytes": 5813960704,
+    "committed_multipart_parts": 18
+  },
+  "api_observed_seconds": {
+    "suspend": 21.206284584000002,
+    "resume": 24.181367417000004
+  },
+  "source_stages": {
+    "export": {
+      "attempts": 1,
+      "succeeded": 1,
+      "failed": 0,
+      "elapsed_us_sum": 15115820,
+      "attempt_elapsed_us": [
+        15115820
+      ]
+    },
+    "upload_source_verify": {
+      "attempts": 1,
+      "succeeded": 1,
+      "failed": 0,
+      "elapsed_us_sum": 1968656,
+      "attempt_elapsed_us": [
+        1968656
+      ]
+    },
+    "upload_parts": {
+      "attempts": 5,
+      "succeeded": 5,
+      "failed": 0,
+      "elapsed_us_sum": 1332690,
+      "attempt_elapsed_us": [
+        265565,
+        335723,
+        340197,
+        250040,
+        141165
+      ]
+    },
+    "remote_verify": {
+      "attempts": 1,
+      "succeeded": 1,
+      "failed": 0,
+      "elapsed_us_sum": 2113919,
+      "attempt_elapsed_us": [
+        2113919
+      ]
+    },
+    "finalize": {
+      "attempts": 1,
+      "succeeded": 1,
+      "failed": 0,
+      "elapsed_us_sum": 65819,
+      "attempt_elapsed_us": [
+        65819
+      ]
+    }
+  },
+  "target_stages": {
+    "download": {
+      "attempts": 1,
+      "succeeded": 1,
+      "failed": 0,
+      "elapsed_us_sum": 2548270,
+      "attempt_elapsed_us": [
+        2548270
+      ]
+    },
+    "import": {
+      "attempts": 1,
+      "succeeded": 1,
+      "failed": 0,
+      "elapsed_us_sum": 19828223,
+      "attempt_elapsed_us": [
+        19828223
+      ]
+    },
+    "start_and_readiness": {
+      "attempts": 1,
+      "succeeded": 1,
+      "failed": 0,
+      "elapsed_us_sum": 961668,
+      "attempt_elapsed_us": [
+        961668
+      ]
+    }
+  },
+  "disk_accounting": {
+    "sample_count": 114,
+    "raced_sample_count": 1,
+    "coverage_seconds": 69.85430283400001,
+    "requested_sample_interval_seconds": 0.5,
+    "maximum_observed_sample_gap_seconds": 0.6571921669999996,
+    "baseline_allocated_bytes": 546291712,
+    "observed_peak_allocated_bytes": 4701335552,
+    "observed_peak_logical_bytes": 5717154204
+  },
+  "verification": {
+    "external_seed_fingerprint_matches_restored_dataset": true,
+    "all_small_file_contents_sizes_modes_uid_gid_verified": true,
+    "all_shard_and_file_names_verified": true,
+    "hardlink_inode_identity_and_link_counts_verified": true,
+    "relative_symlink_targets_verified": true,
+    "manifest_header_record_count_and_external_fingerprint_binding_verified": true,
+    "same_session_and_independent_native_instance_verified": true,
+    "source_and_restored_native_directories_removed": true,
+    "guest_qcow_disks_absent_after_delete": true,
+    "cleanup_backlog": {
+      "pending_sessions": 0,
+      "pending_workers": 0,
+      "pending_snapshots": 0
+    }
+  },
+  "limits": {
+    "comparison": "one published sequential sample on one host; registry/CDN, OS page cache and unrelated host load uncontrolled. Additional small-file data, inode/directory and link metadata are all part of this dataset; not a fixed-byte single-variable file-count comparison or a production SLO",
+    "timing": "Worker times are per awaited method, including internal checks/permit waits/retries; API times span POST submission through polled terminal state. Stage sums omit Console/DB/scheduling/activation and inter-call gaps",
+    "disk": "metadata accounting of SDK homes/journals from before authentication/seed through verification/deletion/cleanup and child exit. Includes existing caches/history; excludes S3/build/other paths. Hard links deduplicated, symlinks not followed; COW/reflink shared blocks may be multiply counted and short peaks/races missed. Sampling overhead not subtracted; not a hard physical peak or quota recommendation"
+  }
+}
