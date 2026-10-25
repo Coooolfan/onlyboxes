@@ -176,6 +176,25 @@ scripts/dev.sh start sandbox-persistence
 
 `--retry-quota-session --scenario cross-worker` 只复用同一私有状态目录中上一次 `snapshot_quota_exceeded` 挂起失败留下的会话。脚本要求 runtime、payload 字节数和账号一致，确认会话仍在隔离 Worker 运行，再以 `create_if_missing=false` 完整校验原 payload；不会重新写入或创建替代会话。旧失败记录保留在结果的 checks 中，再执行新的挂起/跨 Worker 恢复与最终清理。其他错误、已完成操作或不同样本不能使用此参数。BoxLite 展开预算包含 qcow 文件长度、虚拟磁盘容量及 manifest 余量；例如 5 GiB 数据和 8 GiB 虚拟盘不能使用 12 GiB 展开预算。
 
+四会话 BoxLite 并发验收由 `python3 scripts/tests/snapshot_parallel_e2e.py` 执行，读取同一组隔离会话/配置/状态目录变量。它要求 release 构建、两个 Worker 各四个会话及管理槽位、各两个执行槽位、关闭归档缓存，并在创建会话前同时检查主机和 S3 daemon 的全批次空间预留。`--payload-mib` 默认 1024，`--operation-wait-sec` 默认 1800。以下是固定同一镜像、4 GiB 根盘的 4 × 1 GiB 本机样本配置；展开预算应随实际归档调整，不是通用生产默认值：
+
+```dotenv
+ONLYBOXES_DEV_BOXLITE_PROFILE=release
+WORKER_TERMINAL_EXEC_BOXLITE_DISK_SIZE_GB=4
+WORKER_TERMINAL_MAX_ACTIVE_SESSIONS=4
+WORKER_PERSISTENCE_MAX_INFLIGHT=4
+WORKER_TERMINAL_EXEC_MAX_INFLIGHT=2
+WORKER_PERSISTENCE_CACHE_MAX_BYTES=0
+CONSOLE_SNAPSHOT_MAX_BYTES=2147483648
+CONSOLE_SNAPSHOT_MAX_EXPANDED_BYTES=5637144576
+```
+
+每 Worker 四个会话/管理槽位为两个目标及心跳与 Console 预留的保守重叠留出余量；两个执行槽位用于约束初始写入分布。它不放宽生产调度器的容量检查。
+
+脚本并发生成四份独立随机 payload，要求会话均匀落在两台 Worker；同时提交四个挂起，核对共享提交、完整 multipart 回执及原 guest 盘回收，等到两个 Worker 均上报挂起完成后的新心跳，再同时恢复四个会话并验证完整文件哈希、权限、链接、稳定 SID 和不同的目标原生 ID。归档缓存关闭，恢复仍优先使用可用原 Worker；这是同节点 S3 下载的四并发验收，不能替代跨物理机器或冷镜像验收。结果中的峰值重叠数来自 API 操作接受到终态观察的时间区间，不声称所有原生 IO 指令在同一瞬间并行。
+
+全部验证通过才永久删除四个会话，要求清理积压归零且两台 Worker 不再保留 guest qcow 磁盘。结果保存在私有 `snapshot-parallel-result.json`；已有该文件时拒绝再次创建一批会话。失败时等待其余已接受客户端任务结束并保留所有会话与操作，不自动删盘。无 VM 的前置检查与 journal 读取测试可运行 `python3 -m unittest scripts.tests.snapshot_parallel_e2e_test`。
+
 ## 本地公开预览
 
 `public-preview` 是 `console / worker-docker / nginx` 的组合服务：
