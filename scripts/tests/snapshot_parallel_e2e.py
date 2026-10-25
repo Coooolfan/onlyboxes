@@ -59,10 +59,26 @@ def read_journal(path):
     return json.loads(data)
 
 
+def cache_copy_receipts(path):
+    receipts = {}
+    for line in path.read_text().splitlines():
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        fields = record.get("fields", {}) if isinstance(record, dict) else {}
+        if not isinstance(fields, dict):
+            continue
+        if fields.get("message") == "verified snapshot archive copied from local cache":
+            receipts.setdefault(fields.get("operation_id"), []).append({"snapshot_id":fields.get("snapshot_id"), "bytes":fields.get("bytes")})
+    return receipts
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--payload-mib", type=int, default=1024)
     parser.add_argument("--operation-wait-sec", type=int, default=1800)
+    parser.add_argument("--archive-cache", choices=("disabled", "warm"), default="disabled", help="warm requires retained producer archives and operation-matched Worker copy receipts")
     args = parser.parse_args()
     if not 1 <= args.payload_mib <= 10240 or not 1 <= args.operation_wait_sec <= 86400:
         parser.error("payload requires 1..10240 MiB and operation wait requires 1..86400 seconds")
@@ -74,8 +90,13 @@ def main():
         raise RuntimeError("parallel acceptance requires explicit archive/expanded limits above each payload")
     if os.environ.get("ONLYBOXES_DEV_BOXLITE_PROFILE") != "release":
         raise RuntimeError("parallel baseline requires the configured release profile")
-    if os.environ.get("WORKER_PERSISTENCE_CACHE_MAX_BYTES") != "0":
-        raise RuntimeError("this parallel baseline requires archive cache disabled on both Workers")
+    cache_budget = int(os.environ.get("WORKER_PERSISTENCE_CACHE_MAX_BYTES", "-1"))
+    if args.archive_cache == "disabled" and cache_budget != 0:
+        raise RuntimeError("disabled-cache parallel baseline requires archive cache disabled on both Workers")
+    if args.archive_cache == "warm" and cache_budget < 2 * archive:
+        raise RuntimeError("warm-cache parallel baseline requires budget for both producer archives on each Worker")
+    if args.archive_cache == "warm" and (os.environ.get("WORKER_LOG_FORMAT", "json") != "json" or os.environ.get("WORKER_LOG_LEVEL", "info") not in ("info", "debug", "trace")):
+        raise RuntimeError("warm-cache acceptance requires JSON Worker logs at info or a more verbose level")
     if (os.environ.get("WORKER_TERMINAL_MAX_ACTIVE_SESSIONS") != "4"
             or os.environ.get("WORKER_PERSISTENCE_MAX_INFLIGHT") != "4"
             or os.environ.get("WORKER_TERMINAL_EXEC_MAX_INFLIGHT") != "2"):
@@ -104,7 +125,7 @@ def main():
     origin = time.monotonic()
     evidence = {"runtime":"boxlite", "build_profile":"release", "concurrency":4, "payload_bytes_per_session":payload,
                 "archive_limit_bytes":archive, "expanded_limit_bytes":expanded, "required_headroom_bytes":required,
-                "archive_cache":"disabled", "worker_session_slots":4, "worker_control_slots":4, "worker_execution_slots":2,
+                "archive_cache":args.archive_cache, "cache_budget_bytes_per_worker":cache_budget, "worker_session_slots":4, "worker_control_slots":4, "worker_execution_slots":2,
                 "root_disk_gib":int(os.environ.get("WORKER_TERMINAL_EXEC_BOXLITE_DISK_SIZE_GB", "0")), "operation_wait_seconds":args.operation_wait_sec, "sessions":[{} for _ in range(4)], "checks":[]}
 
     def save(label, **values):
@@ -242,6 +263,13 @@ def main():
                 raise RuntimeError("parallel multipart receipts do not cover their committed archive")
             with lock:
                 entry.update(archive=op["archive"], multipart_parts=parts, source_instance=op["box_id"])
+            if args.archive_cache == "warm":
+                artifact = op["artifact"]
+                if not artifact or Path(artifact).name != artifact or op["cache_until_unix_ms"] <= time.time()*1000:
+                    raise RuntimeError("warm-cache source lacks retained unexpired archive evidence")
+                info = (root/"journal/artifacts"/artifact).lstat()
+                if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_nlink != 1 or info.st_mode & 0o077 or info.st_size != archive["size_bytes"]:
+                    raise RuntimeError("warm-cache producer archive is missing or unsafe")
             save("source-finalized", index=index)
 
         # A terminal operation result can precede the capacity heartbeat.
@@ -275,6 +303,14 @@ def main():
                 entry.update(target_instance=op["box_id"], restored_worker=current["worker_id"])
             save("restored-verified", index=index)
         batch(verify)
+        for index, entry in enumerate(evidence["sessions"]):
+            receipts = cache_copy_receipts(dev.STATE/(nodes[entry["restored_worker"]] + ".log")).get(entry["resume"]["operation_id"], [])
+            expected = {"snapshot_id":entry["archive"]["snapshot_id"], "bytes":entry["archive"]["size_bytes"]}
+            if (args.archive_cache == "warm" and (not receipts or any(value != expected for value in receipts))) or (args.archive_cache == "disabled" and receipts):
+                raise RuntimeError("parallel restore cache-copy receipts differ from the requested cache condition")
+            with lock:
+                entry["verified_local_cache_copy"] = bool(receipts)
+            save("cache-copy-verified", index=index, local_copy=bool(receipts))
         for entry in evidence["sessions"]:
             require(api("DELETE", "/api/v1/sessions/" + entry["session_id"] + query), 204)
         deadline = time.monotonic() + 120

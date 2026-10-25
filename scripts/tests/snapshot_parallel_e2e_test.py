@@ -41,6 +41,24 @@ class ParallelAdmissionTests(unittest.TestCase):
         workers[1]["last_seen_at"] = "invalid"
         self.assertFalse(parallel.fresh_heartbeats(workers, ["a", "b"], threshold))
 
+    def test_cache_receipts_require_the_exact_operation_and_success_message(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root)/"worker.log"
+            lines = ["noise", "[]", json.dumps({"fields":None}),
+                     json.dumps({"fields":{"message":"other event", "operation_id":"restore"}}),
+                     json.dumps({"fields":{"message":"verified snapshot archive copied from local cache", "operation_id":"restore", "snapshot_id":"snapshot", "bytes":123}})]
+            path.write_text("\n".join(lines))
+            self.assertEqual(parallel.cache_copy_receipts(path), {"restore":[{"snapshot_id":"snapshot", "bytes":123}]})
+            self.assertNotIn("different-restore", parallel.cache_copy_receipts(path))
+
+    def test_warm_cache_budget_refusal_precedes_authentication(self):
+        config = {"CONSOLE_SNAPSHOT_MAX_BYTES":str(2<<30), "CONSOLE_SNAPSHOT_MAX_EXPANDED_BYTES":str(21<<28),
+                  "ONLYBOXES_DEV_BOXLITE_PROFILE":"release", "WORKER_PERSISTENCE_CACHE_MAX_BYTES":str(2<<30)}
+        with patch.dict(os.environ, {"ONLYBOXES_DEV_ENV":"fixture"}, clear=True), patch("sys.argv", ["snapshot_parallel_e2e.py", "--archive-cache", "warm"]), patch.object(parallel.dev, "env_file", return_value=config), patch.object(parallel.dev, "console_auth") as auth:
+            with self.assertRaisesRegex(RuntimeError, "both producer archives"):
+                parallel.main()
+            auth.assert_not_called()
+
     def test_native_journal_supports_deduplicated_history_and_rejects_unsafe_inputs(self):
         with tempfile.TemporaryDirectory() as root:
             path = Path(root)/"journal.json"

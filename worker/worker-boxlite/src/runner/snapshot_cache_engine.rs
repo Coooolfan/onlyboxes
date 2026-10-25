@@ -152,6 +152,12 @@ impl NativeControlEngine {
             {
                 Ok(copied) => {
                     drop(copied);
+                    tracing::info!(
+                        operation_id = %op.operation_id,
+                        snapshot_id = %archive.snapshot_id,
+                        bytes = archive.size_bytes,
+                        "verified snapshot archive copied from local cache"
+                    );
                     return Ok(true);
                 }
                 Err(TransferError::Integrity) => {

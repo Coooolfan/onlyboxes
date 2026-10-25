@@ -180,7 +180,7 @@ BoxLite 的 `--scenario worker-graceful-restart` 在快照恢复目标已经 act
 
 BoxLite 的 `--scenario worker-expired-restart --lease-ttl-sec 30` 验证已激活目标正常到期后的 Worker 重启。私有配置须将 `WORKER_TERMINAL_LEASE_MIN_SEC=1` 并重启对应测试 Worker；场景要求租约不被最小值夹长且不超过 60 秒。它等待原守护器撤销租约并观察原进程停止，重启后要求 Worker 在验证完整 writer 退出证据后保留同一 CID、原操作和磁盘，拒绝执行，再显式 DELETE，核对更高 generation、物理删除与同一守护器的 owner release，最后清理归零。客户端的进程观察不作为退出或删除授权；真正的退出核对仍在 Worker 中执行。此场景不使用直接 PID 停止或新启动授权。
 
-四会话 BoxLite 并发验收由 `python3 scripts/tests/snapshot_parallel_e2e.py` 执行，读取同一组隔离会话/配置/状态目录变量。它要求 release 构建、两个 Worker 各四个会话及管理槽位、各两个执行槽位、关闭归档缓存，并在创建会话前同时检查主机和 S3 daemon 的全批次空间预留。`--payload-mib` 默认 1024，`--operation-wait-sec` 默认 1800。以下是固定同一镜像、4 GiB 根盘的 4 × 1 GiB 本机样本配置；展开预算应随实际归档调整，不是通用生产默认值：
+四会话 BoxLite 并发验收由 `python3 scripts/tests/snapshot_parallel_e2e.py` 执行，读取同一组隔离会话/配置/状态目录变量。它要求 release 构建、两个 Worker 各四个会话及管理槽位、各两个执行槽位，并在创建会话前同时检查主机和 S3 daemon 的全批次空间预留。默认 `--archive-cache disabled` 要求关闭归档缓存。`--payload-mib` 默认 1024，`--operation-wait-sec` 默认 1800。以下是固定同一镜像、4 GiB 根盘的 4 × 1 GiB 本机样本配置；展开预算应随实际归档调整，不是通用生产默认值：
 
 ```dotenv
 ONLYBOXES_DEV_BOXLITE_PROFILE=release
@@ -196,6 +196,8 @@ CONSOLE_SNAPSHOT_MAX_EXPANDED_BYTES=5637144576
 每 Worker 四个会话/管理槽位为两个目标及心跳与 Console 预留的保守重叠留出余量；两个执行槽位用于约束初始写入分布。它不放宽生产调度器的容量检查。
 
 脚本并发生成四份独立随机 payload，要求会话均匀落在两台 Worker；同时提交四个挂起，核对共享提交、完整 multipart 回执及原 guest 盘回收，等到两个 Worker 均上报挂起完成后的新心跳，再同时恢复四个会话并验证完整文件哈希、权限、链接、稳定 SID 和不同的目标原生 ID。归档缓存关闭，恢复仍优先使用可用原 Worker；这是同节点 S3 下载的四并发验收，不能替代跨物理机器或冷镜像验收。结果中的峰值重叠数来自 API 操作接受到终态观察的时间区间，不声称所有原生 IO 指令在同一瞬间并行。
+
+`--archive-cache warm` 使用相同的四会话流程，但要求每 Worker 的缓存预算至少容纳两份归档上限（上述 2 GiB 归档设置对应至少 `WORKER_PERSISTENCE_CACHE_MAX_BYTES=4294967296`）。在挂起完成后检查源归档仍存在且未过期；恢复后必须在对应 Worker 的 info JSON 日志中找到逐 operation/snapshot/bytes 匹配的已验证本地复制事件，否则验收失败。仅有文件或启用缓存配置不足以通过。`disabled` 场景则拒绝出现该操作的本地复制回执。运行前应重启 Worker 使缓存及日志配置生效；两种模式都完整校验数据、独立实例及最终清理，不把缓存命中当作恢复成功或绕过共享提交。
 
 全部验证通过才永久删除四个会话，要求清理积压归零且两台 Worker 不再保留 guest qcow 磁盘。结果保存在私有 `snapshot-parallel-result.json`；已有该文件时拒绝再次创建一批会话。失败时等待其余已接受客户端任务结束并保留所有会话与操作，不自动删盘。无 VM 的前置检查与 journal 读取测试可运行 `python3 -m unittest scripts.tests.snapshot_parallel_e2e_test`。
 
