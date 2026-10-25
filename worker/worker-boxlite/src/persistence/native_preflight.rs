@@ -229,6 +229,12 @@ pub(super) fn scan_home(
                 return Err(NativeError::Conflict);
             }
         }
+        // A protected terminal home has no untracked one-shot runtime. Its
+        // Python boxes live in a separate home. Neither a familiar name nor
+        // an unnamed SDK row proves ownership of a writable root.
+        if name.is_none() {
+            return Err(NativeError::Conflict);
+        }
         if let Some(name) = name.as_deref() {
             if !names.insert(name.to_owned()) {
                 return Err(NativeError::Conflict);
@@ -263,16 +269,7 @@ pub(super) fn scan_home(
                     && matches!(state.status, BoxStatus::Configured | BoxStatus::Stopped)
                     && pid.is_none()
             });
-            let ordinary = name
-                .strip_prefix("onlyboxes-terminal-v1-")
-                .is_some_and(|suffix| {
-                    suffix.len() == 64
-                        && suffix
-                            .bytes()
-                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-                })
-                && !known_names.contains(name);
-            if !known && !pending_import && !pending_marker && !ordinary {
+            if !known && !pending_import && !pending_marker {
                 return Err(NativeError::Conflict);
             }
             let recorded_marker = markers.contains_key(&id);

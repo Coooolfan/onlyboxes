@@ -174,6 +174,20 @@ async fn child(mode: &str, root: &Path) -> Result<()> {
         }
         let info = native.info().await?;
         let id = info.id.to_string();
+        // This live root has no journal/probe entry yet. A Console reconnect
+        // with an empty inventory cannot turn its name into delete authority.
+        if boxlite_runtime::cleanup_orphan_terminal_session_boxes(
+            &cfg,
+            &std::collections::HashSet::new(),
+        )
+        .await
+            != 0
+            || sdk.get(&id).await?.is_none()
+            || native.info().await?.pid != info.pid
+        {
+            return Err("ordinary orphan cleanup removed a protected unregistered root".into());
+        }
+        println!("PASS: empty Console inventory cannot delete an unregistered live root in the protected home");
         journal.probe(SCOPE, &id)?;
         let pid = boxlite::util::PidRecord::decode(&std::fs::read(
             home.join("boxes").join(&id).join("shim.pid"),

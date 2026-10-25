@@ -123,9 +123,40 @@ fn census_state(f: &Fixture) -> crate::persistence::JournalState {
 }
 
 #[test]
+fn startup_census_preserves_unregistered_database_roots_regardless_of_name() {
+    for name in [
+        Some(terminal_name("obx:unknown:session")),
+        Some("unregistered".into()),
+        None,
+    ] {
+        let mut f = Fixture::new();
+        f.config.name = name;
+        f.save();
+        let mut journal = census_state(&f);
+        journal.probes.clear();
+        let disk = f.config.box_home.join("disk.qcow2");
+        fs::write(&disk, b"unique-unregistered-writable-data").unwrap();
+        let db = f.home.join("db/boxlite.db");
+        let before = fs::read(&db).unwrap();
+        assert_eq!(
+            preflight_home(&f.home, &journal),
+            Err(NativeError::Conflict)
+        );
+        assert_eq!(fs::read(&db).unwrap(), before);
+        assert_eq!(
+            fs::read(&disk).unwrap(),
+            b"unique-unregistered-writable-data"
+        );
+    }
+}
+
+#[test]
 fn startup_census_preserves_orphans_and_never_migrates_unsupported_schema() {
     let f = Fixture::new();
-    let journal = census_state(&f);
+    let mut journal = census_state(&f);
+    journal
+        .probes
+        .insert("obx:owner:session".into(), f.config.id.to_string());
     preflight_home(&f.home, &journal).unwrap();
     let orphan = f.home.join("boxes/unrecorded");
     fs::create_dir(&orphan).unwrap();

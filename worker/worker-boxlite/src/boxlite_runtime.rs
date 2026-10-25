@@ -303,6 +303,12 @@ pub(crate) async fn cleanup_orphan_terminal_session_boxes(
     cfg: &Config,
     expected_names: &HashSet<String>,
 ) -> usize {
+    // Console inventory absence and a deterministic terminal name do not
+    // authorize deleting persistent data. Only the journal/lease lifecycle
+    // may reclaim roots in a protected home, including initial TTL cleanup.
+    if cfg.persistence.enabled || HOME_OWNER.get().is_some() {
+        return 0;
+    }
     let Ok(runtime) = runtime(cfg) else {
         return 0;
     };
