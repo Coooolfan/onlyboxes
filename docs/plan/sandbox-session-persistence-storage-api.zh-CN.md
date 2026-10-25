@@ -379,3 +379,5 @@ Docker 的两个 lease guard 配置已实现，配置文件键为 `[snapshot].le
 - 根据实际 1/5/10 GiB、冷/热镜像与归档缓存及并发数据，确定操作时限、临时盘和吞吐配置，再承诺挂起/唤醒 SLO。
 
 BoxLite 的本机证据包括 [4 × 1 GiB 禁用归档缓存](../../worker/worker-boxlite/docs/sandbox-snapshot-s3-parallel-cold-sample-2026-10-25.json)、[4 × 1 GiB 实际缓存命中](../../worker/worker-boxlite/docs/sandbox-snapshot-s3-parallel-warm-sample-2026-10-25.json)及[恢复复制与生产淘汰 I/O 竞争](../../worker/worker-boxlite/docs/sandbox-snapshot-cache-copy-eviction-sample-2026-10-25.json)。后者在真实 Console/S3 恢复期间由独立进程调用 Worker 使用的生产淘汰函数，验证忙锁保留、复制后回收、独立目标和最终清理；周期 GC 策略与调度由另外的 Rust 测试覆盖。上述证据不等于跨物理机器、受控冷/热镜像性能矩阵或生产 SLO 验收。
+
+[1 GiB 分阶段与磁盘采样](../../worker/worker-boxlite/docs/sandbox-snapshot-stage-sample-2026-10-25.json)另行覆盖单会话跨 Worker 下载和同 Worker 缓存复制，保留逐 operation/attempt 的导出、上传、完整校验、下载/复制、导入、启动及源清理耗时，以及创建数据前至最终清理后的 SDK home/journal 计量曲线。采样、COW/reflink、既有缓存及未计入路径的限制已随样本记录；不能将其当作精确物理峰值或全部存储吞吐验收。受控镜像条件、5/10 GiB 与并发阶段曲线、跨机器及部署存储网络测量仍需完成。

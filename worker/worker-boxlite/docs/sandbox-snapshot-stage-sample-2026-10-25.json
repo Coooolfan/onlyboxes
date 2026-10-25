@@ -1,0 +1,4672 @@
+{
+  "date_asia_shanghai": "2026-10-25",
+  "scope": "real local Console/MinIO and two native macOS arm64 BoxLite Workers, separate single 1 GiB snapshot cycles",
+  "runtime_version": "0.10.7",
+  "build_profile": "release",
+  "conditions": {
+    "worker_count": 2,
+    "concurrent_sessions_per_run": 1,
+    "cache_budget_bytes_per_worker": 4294967296,
+    "archive_limit_bytes": 2147483648,
+    "expanded_limit_bytes": 5637144576,
+    "multipart_part_size_bytes": 67108864,
+    "integrity_mode": "readback",
+    "required_headroom_bytes": 24159191040,
+    "image_cache": "existing Worker homes with the same pinned SDK image used by prior tests; no image eviction; registry, host page cache and unrelated host load uncontrolled",
+    "monitor": "read-only metadata sampling and stage-log capture; sampling overhead not subtracted and monitor CPU time not measured"
+  },
+  "fixtures": [
+    {
+      "scenario": "cross-worker",
+      "source_worker": "worker_b",
+      "target_worker": "worker_a",
+      "payload_bytes": 1073741824,
+      "payload_sha256": "8879d1002d299937d7a30e7620bef5ddee9b466c3bf092bcd363db04ab051acd",
+      "archive_bytes": 1112872731,
+      "archive_sha256": "839cd71e687d047baae13f5d0395f1adcafc8093e5e76fc9138f89874e18adaa",
+      "expanded_bytes": 5506400256,
+      "multipart_parts": 17,
+      "image": "python@sha256:739ba32ae445e8d58f3d90feb85f83bebc8346f8dd280fa1eb5848f4ff1ed163",
+      "platform": "linux/arm64",
+      "root_disk_gib": 4,
+      "api_observed_seconds": {
+        "suspend": 20.274288667,
+        "resume": 21.164844542000004,
+        "timing": "POST submission through observed terminal status, includes request round trip and 0.2 second polling"
+      },
+      "source_worker_stages": {
+        "export": {
+          "attempts": 1,
+          "succeeded": 1,
+          "failed": 0,
+          "elapsed_us_sum": 13687449,
+          "attempt_elapsed_us": [
+            13687449
+          ]
+        },
+        "upload_source_verify": {
+          "attempts": 1,
+          "succeeded": 1,
+          "failed": 0,
+          "elapsed_us_sum": 1859283,
+          "attempt_elapsed_us": [
+            1859283
+          ]
+        },
+        "upload_parts": {
+          "attempts": 5,
+          "succeeded": 5,
+          "failed": 0,
+          "elapsed_us_sum": 1609240,
+          "attempt_elapsed_us": [
+            281901,
+            561000,
+            354105,
+            330917,
+            81317
+          ]
+        },
+        "remote_verify": {
+          "attempts": 1,
+          "succeeded": 1,
+          "failed": 0,
+          "elapsed_us_sum": 1984190,
+          "attempt_elapsed_us": [
+            1984190
+          ]
+        },
+        "finalize": {
+          "attempts": 1,
+          "succeeded": 1,
+          "failed": 0,
+          "elapsed_us_sum": 71140,
+          "attempt_elapsed_us": [
+            71140
+          ]
+        }
+      },
+      "target_worker_stages": {
+        "download": {
+          "attempts": 1,
+          "succeeded": 1,
+          "failed": 0,
+          "elapsed_us_sum": 2808832,
+          "attempt_elapsed_us": [
+            2808832
+          ]
+        },
+        "import": {
+          "attempts": 1,
+          "succeeded": 1,
+          "failed": 0,
+          "elapsed_us_sum": 16704474,
+          "attempt_elapsed_us": [
+            16704474
+          ]
+        },
+        "start_and_readiness": {
+          "attempts": 1,
+          "succeeded": 1,
+          "failed": 0,
+          "elapsed_us_sum": 1013932,
+          "attempt_elapsed_us": [
+            1013932
+          ]
+        }
+      },
+      "archive_mib_per_summed_stage_second": {
+        "source/upload_parts": 659.5151381916816,
+        "source/remote_verify": 534.8873550333293,
+        "target/download": 377.8503452622234
+      },
+      "disk_observation": {
+        "requested_interval_seconds": 0.5,
+        "sample_count": 82,
+        "complete_sample_count": 82,
+        "raced_sample_count": 0,
+        "coverage_seconds": 55.799547042,
+        "min_observed_gap_seconds": 0.2356710419999999,
+        "max_observed_gap_seconds": 0.7529704160000001,
+        "baseline_allocated_bytes": 880058368,
+        "observed_peak_allocated_bytes": 5452726272,
+        "observed_peak_logical_bytes": 7074844687,
+        "timeline": [
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262195681,
+                "allocated_bytes": 439623680,
+                "inodes": 7424
+              },
+              "worker_b/journal": {
+                "logical_bytes": 11251,
+                "allocated_bytes": 24576,
+                "inodes": 7
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 2524617821,
+            "total_allocated_bytes": 880058368,
+            "elapsed_seconds": 0.24230112499999998
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262245345,
+                "allocated_bytes": 439689216,
+                "inodes": 7427
+              },
+              "worker_b/journal": {
+                "logical_bytes": 11251,
+                "allocated_bytes": 24576,
+                "inodes": 7
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 2524667485,
+            "total_allocated_bytes": 880123904,
+            "elapsed_seconds": 0.904687084
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1309689767,
+                "allocated_bytes": 487141376,
+                "inodes": 7448
+              },
+              "worker_b/journal": {
+                "logical_bytes": 12817,
+                "allocated_bytes": 24576,
+                "inodes": 7
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 2572113473,
+            "total_allocated_bytes": 927576064,
+            "elapsed_seconds": 1.578571542
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1309693277,
+                "allocated_bytes": 487149568,
+                "inodes": 7454
+              },
+              "worker_b/journal": {
+                "logical_bytes": 12817,
+                "allocated_bytes": 24576,
+                "inodes": 7
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 2572116983,
+            "total_allocated_bytes": 927584256,
+            "elapsed_seconds": 2.2766569999999997
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1564399866,
+                "allocated_bytes": 755466240,
+                "inodes": 7456
+              },
+              "worker_b/journal": {
+                "logical_bytes": 13669,
+                "allocated_bytes": 28672,
+                "inodes": 7
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 2826824424,
+            "total_allocated_bytes": 1195905024,
+            "elapsed_seconds": 2.9686690419999997
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1975572730,
+                "allocated_bytes": 1158119424,
+                "inodes": 7456
+              },
+              "worker_b/journal": {
+                "logical_bytes": 13669,
+                "allocated_bytes": 28672,
+                "inodes": 7
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 3237997288,
+            "total_allocated_bytes": 1598558208,
+            "elapsed_seconds": 3.653185084
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 2386811130,
+                "allocated_bytes": 1577549824,
+                "inodes": 7456
+              },
+              "worker_b/journal": {
+                "logical_bytes": 13669,
+                "allocated_bytes": 28672,
+                "inodes": 7
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 3649235688,
+            "total_allocated_bytes": 2017988608,
+            "elapsed_seconds": 4.321152584
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 2387796854,
+                "allocated_bytes": 1577549824,
+                "inodes": 7456
+              },
+              "worker_b/journal": {
+                "logical_bytes": 14703,
+                "allocated_bytes": 28672,
+                "inodes": 7
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 3650222446,
+            "total_allocated_bytes": 2017988608,
+            "elapsed_seconds": 5.026634792
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 2387862390,
+                "allocated_bytes": 1577549824,
+                "inodes": 7456
+              },
+              "worker_b/journal": {
+                "logical_bytes": 14703,
+                "allocated_bytes": 28672,
+                "inodes": 7
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 3650287982,
+            "total_allocated_bytes": 2017988608,
+            "elapsed_seconds": 5.757961750000001
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 2387927926,
+                "allocated_bytes": 1577549824,
+                "inodes": 7456
+              },
+              "worker_b/journal": {
+                "logical_bytes": 14703,
+                "allocated_bytes": 28672,
+                "inodes": 7
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 3650353518,
+            "total_allocated_bytes": 2017988608,
+            "elapsed_seconds": 6.467197209
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 2766097585,
+                "allocated_bytes": 1955827712,
+                "inodes": 7458
+              },
+              "worker_b/journal": {
+                "logical_bytes": 14830,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4028523304,
+            "total_allocated_bytes": 2396266496,
+            "elapsed_seconds": 7.167038584
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 3599322289,
+                "allocated_bytes": 2788986880,
+                "inodes": 7458
+              },
+              "worker_b/journal": {
+                "logical_bytes": 14830,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4861748008,
+            "total_allocated_bytes": 3229425664,
+            "elapsed_seconds": 7.845614375
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 3599324236,
+                "allocated_bytes": 2788990976,
+                "inodes": 7459
+              },
+              "worker_b/journal": {
+                "logical_bytes": 191955604,
+                "allocated_bytes": 192004096,
+                "inodes": 10
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 5053690729,
+            "total_allocated_bytes": 3421405184,
+            "elapsed_seconds": 8.546009042
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 2387956780,
+                "allocated_bytes": 1577623552,
+                "inodes": 7458
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112884977,
+                "allocated_bytes": 1112899584,
+                "inodes": 10
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4763252646,
+            "total_allocated_bytes": 3130933248,
+            "elapsed_seconds": 9.248845375
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 2387954737,
+                "allocated_bytes": 1577619456,
+                "inodes": 7456
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112884977,
+                "allocated_bytes": 1112899584,
+                "inodes": 10
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4763250603,
+            "total_allocated_bytes": 3130929152,
+            "elapsed_seconds": 9.941232417
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 2387954737,
+                "allocated_bytes": 1577619456,
+                "inodes": 7456
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112884977,
+                "allocated_bytes": 1112899584,
+                "inodes": 10
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4763250603,
+            "total_allocated_bytes": 3130929152,
+            "elapsed_seconds": 10.629622125000001
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 2387954737,
+                "allocated_bytes": 1577619456,
+                "inodes": 7456
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112884977,
+                "allocated_bytes": 1112899584,
+                "inodes": 10
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4763250603,
+            "total_allocated_bytes": 3130929152,
+            "elapsed_seconds": 11.313432584000001
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 2387954737,
+                "allocated_bytes": 1577619456,
+                "inodes": 7456
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112884977,
+                "allocated_bytes": 1112899584,
+                "inodes": 10
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4763250603,
+            "total_allocated_bytes": 3130929152,
+            "elapsed_seconds": 11.990996917
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 2387954737,
+                "allocated_bytes": 1577619456,
+                "inodes": 7456
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112884977,
+                "allocated_bytes": 1112899584,
+                "inodes": 10
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4763250603,
+            "total_allocated_bytes": 3130929152,
+            "elapsed_seconds": 12.672865459
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 2387954737,
+                "allocated_bytes": 1577619456,
+                "inodes": 7456
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112884977,
+                "allocated_bytes": 1112899584,
+                "inodes": 10
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4763250603,
+            "total_allocated_bytes": 3130929152,
+            "elapsed_seconds": 13.363657375
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 2387954737,
+                "allocated_bytes": 1577619456,
+                "inodes": 7456
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1183932001,
+                "allocated_bytes": 1196789760,
+                "inodes": 10
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4834297627,
+            "total_allocated_bytes": 3214819328,
+            "elapsed_seconds": 14.043618584
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 2387954737,
+                "allocated_bytes": 1577619456,
+                "inodes": 7456
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1504035615,
+                "allocated_bytes": 1515556864,
+                "inodes": 10
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 5154401241,
+            "total_allocated_bytes": 3533586432,
+            "elapsed_seconds": 14.731851
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 2387954737,
+                "allocated_bytes": 1577619456,
+                "inodes": 7456
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1812135793,
+                "allocated_bytes": 1817546752,
+                "inodes": 10
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 5462501419,
+            "total_allocated_bytes": 3835576320,
+            "elapsed_seconds": 15.416422334
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 2387954737,
+                "allocated_bytes": 1577619456,
+                "inodes": 7456
+              },
+              "worker_b/journal": {
+                "logical_bytes": 2141143499,
+                "allocated_bytes": 2153091072,
+                "inodes": 10
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 5791509125,
+            "total_allocated_bytes": 4171120640,
+            "elapsed_seconds": 16.110541374999997
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 2387954737,
+                "allocated_bytes": 1577619456,
+                "inodes": 7456
+              },
+              "worker_b/journal": {
+                "logical_bytes": 2225757708,
+                "allocated_bytes": 2236977152,
+                "inodes": 10
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 5876123334,
+            "total_allocated_bytes": 4255006720,
+            "elapsed_seconds": 16.803538542
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 2387954737,
+                "allocated_bytes": 1577619456,
+                "inodes": 7456
+              },
+              "worker_b/journal": {
+                "logical_bytes": 2225757708,
+                "allocated_bytes": 2236977152,
+                "inodes": 10
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 5876123334,
+            "total_allocated_bytes": 4255006720,
+            "elapsed_seconds": 17.490902875
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 2387954737,
+                "allocated_bytes": 1577619456,
+                "inodes": 7456
+              },
+              "worker_b/journal": {
+                "logical_bytes": 2225757708,
+                "allocated_bytes": 2236977152,
+                "inodes": 10
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 5876123334,
+            "total_allocated_bytes": 4255006720,
+            "elapsed_seconds": 18.173513209
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 2387954737,
+                "allocated_bytes": 1577619456,
+                "inodes": 7456
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112887756,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4763253382,
+            "total_allocated_bytes": 3142135808,
+            "elapsed_seconds": 18.872388083999997
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 2387954737,
+                "allocated_bytes": 1577619456,
+                "inodes": 7456
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112887756,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4763253382,
+            "total_allocated_bytes": 3142135808,
+            "elapsed_seconds": 19.542976833999997
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 2387954737,
+                "allocated_bytes": 1577619456,
+                "inodes": 7456
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112887756,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4763253382,
+            "total_allocated_bytes": 3142135808,
+            "elapsed_seconds": 20.295947249999998
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 2387954737,
+                "allocated_bytes": 1577619456,
+                "inodes": 7456
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112887756,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4763253382,
+            "total_allocated_bytes": 3142135808,
+            "elapsed_seconds": 20.987663459
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 2387954737,
+                "allocated_bytes": 1577619456,
+                "inodes": 7456
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112887756,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4763253382,
+            "total_allocated_bytes": 3142135808,
+            "elapsed_seconds": 21.654049999999998
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 2387954737,
+                "allocated_bytes": 1577619456,
+                "inodes": 7456
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112887756,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4763253382,
+            "total_allocated_bytes": 3142135808,
+            "elapsed_seconds": 22.342800542
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 2387954737,
+                "allocated_bytes": 1577619456,
+                "inodes": 7456
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112887756,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4763253382,
+            "total_allocated_bytes": 3142135808,
+            "elapsed_seconds": 23.028908124999997
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 2387954737,
+                "allocated_bytes": 1577619456,
+                "inodes": 7456
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112887756,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4763253382,
+            "total_allocated_bytes": 3142135808,
+            "elapsed_seconds": 23.716886
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 3637693177,
+            "total_allocated_bytes": 2004336640,
+            "elapsed_seconds": 24.437222499999997
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 3637693177,
+            "total_allocated_bytes": 2004336640,
+            "elapsed_seconds": 25.134183916999998
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 3637693177,
+            "total_allocated_bytes": 2004336640,
+            "elapsed_seconds": 25.842268917
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 3637693177,
+            "total_allocated_bytes": 2004336640,
+            "elapsed_seconds": 26.547535084
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 3637693177,
+            "total_allocated_bytes": 2004336640,
+            "elapsed_seconds": 27.231922667
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 3637693177,
+            "total_allocated_bytes": 2004336640,
+            "elapsed_seconds": 27.93675325
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 3637693177,
+            "total_allocated_bytes": 2004336640,
+            "elapsed_seconds": 28.634664917
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 17426,
+                "allocated_bytes": 28672,
+                "inodes": 9
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 3637693177,
+            "total_allocated_bytes": 2004336640,
+            "elapsed_seconds": 29.332652999999997
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 161376654,
+                "allocated_bytes": 161394688,
+                "inodes": 12
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 3799052405,
+            "total_allocated_bytes": 2165702656,
+            "elapsed_seconds": 30.047120375
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 822692222,
+                "allocated_bytes": 822710272,
+                "inodes": 12
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4460367973,
+            "total_allocated_bytes": 2827018240,
+            "elapsed_seconds": 30.735857292
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112891561,
+                "allocated_bytes": 1112911872,
+                "inodes": 12
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4750567312,
+            "total_allocated_bytes": 3117219840,
+            "elapsed_seconds": 31.430651166999997
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112891561,
+                "allocated_bytes": 1112911872,
+                "inodes": 12
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4750567312,
+            "total_allocated_bytes": 3117219840,
+            "elapsed_seconds": 32.117848584
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112891445,
+                "allocated_bytes": 1112907776,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4750567196,
+            "total_allocated_bytes": 3117215744,
+            "elapsed_seconds": 32.800168417
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112891445,
+                "allocated_bytes": 1112907776,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4750567196,
+            "total_allocated_bytes": 3117215744,
+            "elapsed_seconds": 33.491884667
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112891445,
+                "allocated_bytes": 1112907776,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4750567196,
+            "total_allocated_bytes": 3117215744,
+            "elapsed_seconds": 34.170716959
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112891445,
+                "allocated_bytes": 1112907776,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4750567196,
+            "total_allocated_bytes": 3117215744,
+            "elapsed_seconds": 34.831960834
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112891445,
+                "allocated_bytes": 1112907776,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4750567196,
+            "total_allocated_bytes": 3117215744,
+            "elapsed_seconds": 35.534191792
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112891445,
+                "allocated_bytes": 1112907776,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4750567196,
+            "total_allocated_bytes": 3117215744,
+            "elapsed_seconds": 36.223970875
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112891445,
+                "allocated_bytes": 1112907776,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4750567196,
+            "total_allocated_bytes": 3117215744,
+            "elapsed_seconds": 36.917359292
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112891445,
+                "allocated_bytes": 1112907776,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4750567196,
+            "total_allocated_bytes": 3117215744,
+            "elapsed_seconds": 37.608094209
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112891445,
+                "allocated_bytes": 1112907776,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4750567196,
+            "total_allocated_bytes": 3117215744,
+            "elapsed_seconds": 38.301849209000004
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112891445,
+                "allocated_bytes": 1112907776,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4750567196,
+            "total_allocated_bytes": 3117215744,
+            "elapsed_seconds": 39.001932292
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112891445,
+                "allocated_bytes": 1112907776,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4750567196,
+            "total_allocated_bytes": 3117215744,
+            "elapsed_seconds": 39.693085125
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112891445,
+                "allocated_bytes": 1112907776,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4750567196,
+            "total_allocated_bytes": 3117215744,
+            "elapsed_seconds": 40.3817085
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112891445,
+                "allocated_bytes": 1112907776,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4750567196,
+            "total_allocated_bytes": 3117215744,
+            "elapsed_seconds": 41.067906584
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1153135145,
+                "allocated_bytes": 1153806336,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4790810896,
+            "total_allocated_bytes": 3158114304,
+            "elapsed_seconds": 41.752394084
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1466684853,
+                "allocated_bytes": 1482010624,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 5104360604,
+            "total_allocated_bytes": 3486318592,
+            "elapsed_seconds": 42.4304945
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1781207853,
+                "allocated_bytes": 1784000512,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 5418883604,
+            "total_allocated_bytes": 3788308480,
+            "elapsed_seconds": 43.113649792000004
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2090618605,
+                "allocated_bytes": 2102767616,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 5728294356,
+            "total_allocated_bytes": 4107075584,
+            "elapsed_seconds": 43.802074209000004
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2225764176,
+                "allocated_bytes": 2236985344,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 5863439927,
+            "total_allocated_bytes": 4241293312,
+            "elapsed_seconds": 44.491537042000004
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2225764176,
+                "allocated_bytes": 2236985344,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 5863439927,
+            "total_allocated_bytes": 4241293312,
+            "elapsed_seconds": 45.168486917
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262393463,
+                "allocated_bytes": 440381440,
+                "inodes": 7425
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2225764176,
+                "allocated_bytes": 2236985344,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 5863439927,
+            "total_allocated_bytes": 4241293312,
+            "elapsed_seconds": 45.842362625
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1835348804,
+                "allocated_bytes": 1013342208,
+                "inodes": 7428
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2225764176,
+                "allocated_bytes": 2236985344,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 6436395268,
+            "total_allocated_bytes": 4814254080,
+            "elapsed_seconds": 46.529966625
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2473762435,
+                "allocated_bytes": 1651752960,
+                "inodes": 7428
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2225764176,
+                "allocated_bytes": 2236985344,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 7074808899,
+            "total_allocated_bytes": 5452664832,
+            "elapsed_seconds": 47.21624425
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2473798223,
+                "allocated_bytes": 1651814400,
+                "inodes": 7429
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2225764176,
+                "allocated_bytes": 2236985344,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 7074844687,
+            "total_allocated_bytes": 5452726272,
+            "elapsed_seconds": 47.912841834000005
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2473798223,
+                "allocated_bytes": 1651814400,
+                "inodes": 7429
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2225764176,
+                "allocated_bytes": 2236985344,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 7074844687,
+            "total_allocated_bytes": 5452726272,
+            "elapsed_seconds": 48.6090715
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2473798223,
+                "allocated_bytes": 1651814400,
+                "inodes": 7429
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2225764176,
+                "allocated_bytes": 2236985344,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 7074844687,
+            "total_allocated_bytes": 5452726272,
+            "elapsed_seconds": 49.305681709000005
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2520981533,
+                "allocated_bytes": 1699012608,
+                "inodes": 7452
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112893299,
+                "allocated_bytes": 1112907776,
+                "inodes": 11
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 6009157120,
+            "total_allocated_bytes": 4375846912,
+            "elapsed_seconds": 49.987008959
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2521004947,
+                "allocated_bytes": 1699024896,
+                "inodes": 7457
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112893520,
+                "allocated_bytes": 1112907776,
+                "inodes": 11
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 6009180755,
+            "total_allocated_bytes": 4375859200,
+            "elapsed_seconds": 50.694293667000004
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2521018461,
+                "allocated_bytes": 1699024896,
+                "inodes": 7457
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112893520,
+                "allocated_bytes": 1112907776,
+                "inodes": 11
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 6009194269,
+            "total_allocated_bytes": 4375859200,
+            "elapsed_seconds": 51.367991167
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2521018666,
+                "allocated_bytes": 1699024896,
+                "inodes": 7457
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112893520,
+                "allocated_bytes": 1112907776,
+                "inodes": 11
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 6009194474,
+            "total_allocated_bytes": 4375859200,
+            "elapsed_seconds": 52.062098125000006
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2521018666,
+                "allocated_bytes": 1699024896,
+                "inodes": 7457
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112893520,
+                "allocated_bytes": 1112907776,
+                "inodes": 11
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262393473,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 6009194474,
+            "total_allocated_bytes": 4375859200,
+            "elapsed_seconds": 52.75569075
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2521019778,
+                "allocated_bytes": 1699024896,
+                "inodes": 7457
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112894637,
+                "allocated_bytes": 1112907776,
+                "inodes": 11
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 6009200823,
+            "total_allocated_bytes": 4375859200,
+            "elapsed_seconds": 53.446498334000005
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2521019778,
+                "allocated_bytes": 1699024896,
+                "inodes": 7457
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112894637,
+                "allocated_bytes": 1112907776,
+                "inodes": 11
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 6009200823,
+            "total_allocated_bytes": 4375859200,
+            "elapsed_seconds": 54.149237125
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2521019778,
+                "allocated_bytes": 1699024896,
+                "inodes": 7457
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112894637,
+                "allocated_bytes": 1112907776,
+                "inodes": 11
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 1112888815,
+                "allocated_bytes": 1124106240,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 6009200823,
+            "total_allocated_bytes": 4375859200,
+            "elapsed_seconds": 54.860466
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262599527,
+                "allocated_bytes": 440578048,
+                "inodes": 7427
+              },
+              "worker_a/journal": {
+                "logical_bytes": 22954,
+                "allocated_bytes": 36864,
+                "inodes": 10
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 2525037914,
+            "total_allocated_bytes": 880467968,
+            "elapsed_seconds": 55.563876
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262599527,
+                "allocated_bytes": 440578048,
+                "inodes": 7427
+              },
+              "worker_a/journal": {
+                "logical_bytes": 22954,
+                "allocated_bytes": 36864,
+                "inodes": 10
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 2525037914,
+            "total_allocated_bytes": 880467968,
+            "elapsed_seconds": 55.799547042
+          }
+        ]
+      },
+      "verification": {
+        "all_required_operation_stage_attempts_have_paired_start_finish": true,
+        "full_payload_permissions_symlink_and_session_checks_passed": true,
+        "committed_source_and_independent_target_native_ids_verified": true,
+        "source_and_target_guest_disks_removed": true,
+        "matching_operation_snapshot_size_local_copy_receipt": null,
+        "cleanup_backlog": {
+          "pending_sessions": 0,
+          "pending_workers": 0,
+          "pending_snapshots": 0
+        },
+        "original_and_restored_native_directories_absent": true,
+        "single_successful_client_operation_per_phase": true
+      },
+      "resources": {
+        "cpus": 1.0,
+        "memory_mib": 256,
+        "max_processes": 128
+      },
+      "source_reserved_staging_bytes": 11918534246,
+      "target_reserved_staging_bytes": 17221938375
+    },
+    {
+      "scenario": "same-worker",
+      "source_worker": "worker_a",
+      "target_worker": "worker_a",
+      "payload_bytes": 1073741824,
+      "payload_sha256": "085afa21f4e015c47ed05952fb39d864a87af2479302c74ea9deab773393570d",
+      "archive_bytes": 1112873317,
+      "archive_sha256": "bab75ea567afe416b5ae66283aed0ff90167d9e28f786a25bf6093dfa34d2953",
+      "expanded_bytes": 5506400256,
+      "multipart_parts": 17,
+      "image": "python@sha256:739ba32ae445e8d58f3d90feb85f83bebc8346f8dd280fa1eb5848f4ff1ed163",
+      "platform": "linux/arm64",
+      "root_disk_gib": 4,
+      "api_observed_seconds": {
+        "suspend": 19.252630417,
+        "resume": 22.154577208000003,
+        "timing": "POST submission through observed terminal status, includes request round trip and 0.2 second polling"
+      },
+      "source_worker_stages": {
+        "export": {
+          "attempts": 1,
+          "succeeded": 1,
+          "failed": 0,
+          "elapsed_us_sum": 13237867,
+          "attempt_elapsed_us": [
+            13237867
+          ]
+        },
+        "upload_source_verify": {
+          "attempts": 1,
+          "succeeded": 1,
+          "failed": 0,
+          "elapsed_us_sum": 1851394,
+          "attempt_elapsed_us": [
+            1851394
+          ]
+        },
+        "upload_parts": {
+          "attempts": 5,
+          "succeeded": 5,
+          "failed": 0,
+          "elapsed_us_sum": 1215315,
+          "attempt_elapsed_us": [
+            361974,
+            336291,
+            214609,
+            228751,
+            73690
+          ]
+        },
+        "remote_verify": {
+          "attempts": 1,
+          "succeeded": 1,
+          "failed": 0,
+          "elapsed_us_sum": 1982172,
+          "attempt_elapsed_us": [
+            1982172
+          ]
+        },
+        "finalize": {
+          "attempts": 1,
+          "succeeded": 1,
+          "failed": 0,
+          "elapsed_us_sum": 63073,
+          "attempt_elapsed_us": [
+            63073
+          ]
+        }
+      },
+      "target_worker_stages": {
+        "cache_copy": {
+          "attempts": 1,
+          "succeeded": 1,
+          "failed": 0,
+          "elapsed_us_sum": 3992943,
+          "attempt_elapsed_us": [
+            3992943
+          ]
+        },
+        "import": {
+          "attempts": 1,
+          "succeeded": 1,
+          "failed": 0,
+          "elapsed_us_sum": 16799490,
+          "attempt_elapsed_us": [
+            16799490
+          ]
+        },
+        "start_and_readiness": {
+          "attempts": 1,
+          "succeeded": 1,
+          "failed": 0,
+          "elapsed_us_sum": 844780,
+          "attempt_elapsed_us": [
+            844780
+          ]
+        }
+      },
+      "archive_mib_per_summed_stage_second": {
+        "source/upload_parts": 873.2869254775354,
+        "source/remote_verify": 535.4321924821513,
+        "target/cache_copy": 265.7986101571525
+      },
+      "disk_observation": {
+        "requested_interval_seconds": 0.5,
+        "sample_count": 74,
+        "complete_sample_count": 74,
+        "raced_sample_count": 0,
+        "coverage_seconds": 50.031511417,
+        "min_observed_gap_seconds": 0.20449612499999859,
+        "max_observed_gap_seconds": 0.7242769160000009,
+        "baseline_allocated_bytes": 880467968,
+        "observed_peak_allocated_bytes": 5454049280,
+        "observed_peak_logical_bytes": 7075237515,
+        "timeline": [
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262599527,
+                "allocated_bytes": 440578048,
+                "inodes": 7427
+              },
+              "worker_a/journal": {
+                "logical_bytes": 22954,
+                "allocated_bytes": 36864,
+                "inodes": 10
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 2525037914,
+            "total_allocated_bytes": 880467968,
+            "elapsed_seconds": 0.13257891700000002
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262636735,
+                "allocated_bytes": 440643584,
+                "inodes": 7429
+              },
+              "worker_a/journal": {
+                "logical_bytes": 22954,
+                "allocated_bytes": 36864,
+                "inodes": 10
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 2525075122,
+            "total_allocated_bytes": 880533504,
+            "elapsed_seconds": 0.793392917
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1310082316,
+                "allocated_bytes": 488103936,
+                "inodes": 7454
+              },
+              "worker_a/journal": {
+                "logical_bytes": 24515,
+                "allocated_bytes": 36864,
+                "inodes": 10
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 2572522264,
+            "total_allocated_bytes": 927993856,
+            "elapsed_seconds": 1.4742927499999998
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1371853350,
+                "allocated_bytes": 550375424,
+                "inodes": 7459
+              },
+              "worker_a/journal": {
+                "logical_bytes": 25368,
+                "allocated_bytes": 36864,
+                "inodes": 10
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 2634294151,
+            "total_allocated_bytes": 990265344,
+            "elapsed_seconds": 2.163407709
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1808060966,
+                "allocated_bytes": 991301632,
+                "inodes": 7459
+              },
+              "worker_a/journal": {
+                "logical_bytes": 25368,
+                "allocated_bytes": 36864,
+                "inodes": 10
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 3070501767,
+            "total_allocated_bytes": 1431191552,
+            "elapsed_seconds": 2.855018459
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2269434406,
+                "allocated_bytes": 1461063680,
+                "inodes": 7459
+              },
+              "worker_a/journal": {
+                "logical_bytes": 25368,
+                "allocated_bytes": 36864,
+                "inodes": 10
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 3531875207,
+            "total_allocated_bytes": 1900953600,
+            "elapsed_seconds": 3.556023417
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2387991714,
+                "allocated_bytes": 1578504192,
+                "inodes": 7459
+              },
+              "worker_a/journal": {
+                "logical_bytes": 26403,
+                "allocated_bytes": 40960,
+                "inodes": 10
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 3650433550,
+            "total_allocated_bytes": 2018398208,
+            "elapsed_seconds": 4.258190084000001
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2388319394,
+                "allocated_bytes": 1578504192,
+                "inodes": 7459
+              },
+              "worker_a/journal": {
+                "logical_bytes": 26403,
+                "allocated_bytes": 40960,
+                "inodes": 10
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 3650761230,
+            "total_allocated_bytes": 2018398208,
+            "elapsed_seconds": 4.969662584
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2388319394,
+                "allocated_bytes": 1578504192,
+                "inodes": 7459
+              },
+              "worker_a/journal": {
+                "logical_bytes": 26403,
+                "allocated_bytes": 40960,
+                "inodes": 10
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 3650761230,
+            "total_allocated_bytes": 2018398208,
+            "elapsed_seconds": 5.686415084
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2391152020,
+                "allocated_bytes": 1580736512,
+                "inodes": 7461
+              },
+              "worker_a/journal": {
+                "logical_bytes": 26530,
+                "allocated_bytes": 40960,
+                "inodes": 12
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 3653593983,
+            "total_allocated_bytes": 2020630528,
+            "elapsed_seconds": 6.396118375
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 3599713756,
+                "allocated_bytes": 2789941248,
+                "inodes": 7461
+              },
+              "worker_a/journal": {
+                "logical_bytes": 26530,
+                "allocated_bytes": 40960,
+                "inodes": 12
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4862155719,
+            "total_allocated_bytes": 3229835264,
+            "elapsed_seconds": 7.080903417
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 3599715703,
+                "allocated_bytes": 2789945344,
+                "inodes": 7462
+              },
+              "worker_a/journal": {
+                "logical_bytes": 376232117,
+                "allocated_bytes": 376250368,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 5238363253,
+            "total_allocated_bytes": 3606048768,
+            "elapsed_seconds": 7.7723105420000005
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2388346204,
+                "allocated_bytes": 1578573824,
+                "inodes": 7459
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112897494,
+                "allocated_bytes": 1112915968,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4763659131,
+            "total_allocated_bytes": 3131342848,
+            "elapsed_seconds": 8.463313459
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2388346204,
+                "allocated_bytes": 1578573824,
+                "inodes": 7459
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112897494,
+                "allocated_bytes": 1112915968,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4763659131,
+            "total_allocated_bytes": 3131342848,
+            "elapsed_seconds": 9.182225917
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2388346204,
+                "allocated_bytes": 1578573824,
+                "inodes": 7459
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112897494,
+                "allocated_bytes": 1112915968,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4763659131,
+            "total_allocated_bytes": 3131342848,
+            "elapsed_seconds": 9.871448834
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2388346204,
+                "allocated_bytes": 1578573824,
+                "inodes": 7459
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112897494,
+                "allocated_bytes": 1112915968,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4763659131,
+            "total_allocated_bytes": 3131342848,
+            "elapsed_seconds": 10.558032584000001
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2388346204,
+                "allocated_bytes": 1578573824,
+                "inodes": 7459
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112897494,
+                "allocated_bytes": 1112915968,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4763659131,
+            "total_allocated_bytes": 3131342848,
+            "elapsed_seconds": 11.253560084
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2388346204,
+                "allocated_bytes": 1578573824,
+                "inodes": 7459
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112897494,
+                "allocated_bytes": 1112915968,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4763659131,
+            "total_allocated_bytes": 3131342848,
+            "elapsed_seconds": 11.945973084
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2388346204,
+                "allocated_bytes": 1578573824,
+                "inodes": 7459
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1123671997,
+                "allocated_bytes": 1124454400,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4774433634,
+            "total_allocated_bytes": 3142881280,
+            "elapsed_seconds": 12.623680459000001
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2388346204,
+                "allocated_bytes": 1578573824,
+                "inodes": 7459
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1268490275,
+                "allocated_bytes": 1280692224,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4919251912,
+            "total_allocated_bytes": 3299119104,
+            "elapsed_seconds": 13.316925834000001
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2388346204,
+                "allocated_bytes": 1578573824,
+                "inodes": 7459
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1586693527,
+                "allocated_bytes": 1599459328,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 5237455164,
+            "total_allocated_bytes": 3617886208,
+            "elapsed_seconds": 14.003007334000001
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2388346204,
+                "allocated_bytes": 1578573824,
+                "inodes": 7459
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1897940576,
+                "allocated_bytes": 1901449216,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 5548702213,
+            "total_allocated_bytes": 3919876096,
+            "elapsed_seconds": 14.677544709000001
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2388346204,
+                "allocated_bytes": 1578573824,
+                "inodes": 7459
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2219410167,
+                "allocated_bytes": 2220216320,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 5870171804,
+            "total_allocated_bytes": 4238643200,
+            "elapsed_seconds": 15.368803542
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2388346204,
+                "allocated_bytes": 1578573824,
+                "inodes": 7459
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2225770811,
+                "allocated_bytes": 2236993536,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 5876532448,
+            "total_allocated_bytes": 4255420416,
+            "elapsed_seconds": 16.053262625
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2388346204,
+                "allocated_bytes": 1578573824,
+                "inodes": 7459
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2225770811,
+                "allocated_bytes": 2236993536,
+                "inodes": 13
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 5876532448,
+            "total_allocated_bytes": 4255420416,
+            "elapsed_seconds": 16.731693584
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2388346204,
+                "allocated_bytes": 1578573824,
+                "inodes": 7459
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112900042,
+                "allocated_bytes": 1124118528,
+                "inodes": 11
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4763661679,
+            "total_allocated_bytes": 3142545408,
+            "elapsed_seconds": 17.410655416999997
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2388346204,
+                "allocated_bytes": 1578573824,
+                "inodes": 7459
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112900042,
+                "allocated_bytes": 1124118528,
+                "inodes": 11
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4763661679,
+            "total_allocated_bytes": 3142545408,
+            "elapsed_seconds": 18.085204417
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2388346204,
+                "allocated_bytes": 1578573824,
+                "inodes": 7459
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112900042,
+                "allocated_bytes": 1124118528,
+                "inodes": 11
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4763661679,
+            "total_allocated_bytes": 3142545408,
+            "elapsed_seconds": 18.759854334
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2388346204,
+                "allocated_bytes": 1578573824,
+                "inodes": 7459
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112900042,
+                "allocated_bytes": 1124118528,
+                "inodes": 11
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4763661679,
+            "total_allocated_bytes": 3142545408,
+            "elapsed_seconds": 19.4434425
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2388346204,
+                "allocated_bytes": 1578573824,
+                "inodes": 7459
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112900042,
+                "allocated_bytes": 1124118528,
+                "inodes": 11
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4763661679,
+            "total_allocated_bytes": 3142545408,
+            "elapsed_seconds": 20.155262709
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2388346204,
+                "allocated_bytes": 1578573824,
+                "inodes": 7459
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112900042,
+                "allocated_bytes": 1124118528,
+                "inodes": 11
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4763661679,
+            "total_allocated_bytes": 3142545408,
+            "elapsed_seconds": 20.818427542
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2388346204,
+                "allocated_bytes": 1578573824,
+                "inodes": 7459
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112900042,
+                "allocated_bytes": 1124118528,
+                "inodes": 11
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4763661679,
+            "total_allocated_bytes": 3142545408,
+            "elapsed_seconds": 21.499864624999997
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2388346204,
+                "allocated_bytes": 1578573824,
+                "inodes": 7459
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112900042,
+                "allocated_bytes": 1124118528,
+                "inodes": 11
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4763661679,
+            "total_allocated_bytes": 3142545408,
+            "elapsed_seconds": 22.178823625
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262760239,
+                "allocated_bytes": 441757696,
+                "inodes": 7428
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112901102,
+                "allocated_bytes": 1124118528,
+                "inodes": 11
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 3638076774,
+            "total_allocated_bytes": 2005729280,
+            "elapsed_seconds": 22.860342334
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262760239,
+                "allocated_bytes": 441757696,
+                "inodes": 7428
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112902017,
+                "allocated_bytes": 1124118528,
+                "inodes": 12
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 3638077689,
+            "total_allocated_bytes": 2005729280,
+            "elapsed_seconds": 23.536847584
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262760239,
+                "allocated_bytes": 441757696,
+                "inodes": 7428
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112902017,
+                "allocated_bytes": 1124118528,
+                "inodes": 12
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 3638077689,
+            "total_allocated_bytes": 2005729280,
+            "elapsed_seconds": 24.230862834
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262760239,
+                "allocated_bytes": 441757696,
+                "inodes": 7428
+              },
+              "worker_a/journal": {
+                "logical_bytes": 1112902017,
+                "allocated_bytes": 1124118528,
+                "inodes": 12
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 3638077689,
+            "total_allocated_bytes": 2005729280,
+            "elapsed_seconds": 24.919017167
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262760239,
+                "allocated_bytes": 441757696,
+                "inodes": 7428
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2225775642,
+                "allocated_bytes": 2236997632,
+                "inodes": 15
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4750951314,
+            "total_allocated_bytes": 3118608384,
+            "elapsed_seconds": 25.594224584
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262760239,
+                "allocated_bytes": 441757696,
+                "inodes": 7428
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2225775642,
+                "allocated_bytes": 2236997632,
+                "inodes": 15
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4750951314,
+            "total_allocated_bytes": 3118608384,
+            "elapsed_seconds": 26.290615875
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262760239,
+                "allocated_bytes": 441757696,
+                "inodes": 7428
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2225775642,
+                "allocated_bytes": 2236997632,
+                "inodes": 15
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4750951314,
+            "total_allocated_bytes": 3118608384,
+            "elapsed_seconds": 26.977840041999997
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262760239,
+                "allocated_bytes": 441757696,
+                "inodes": 7428
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2225775526,
+                "allocated_bytes": 2236993536,
+                "inodes": 16
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4750951198,
+            "total_allocated_bytes": 3118604288,
+            "elapsed_seconds": 27.663887959
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262760239,
+                "allocated_bytes": 441757696,
+                "inodes": 7428
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2225775526,
+                "allocated_bytes": 2236993536,
+                "inodes": 16
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4750951198,
+            "total_allocated_bytes": 3118604288,
+            "elapsed_seconds": 28.362868209
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262760239,
+                "allocated_bytes": 441757696,
+                "inodes": 7428
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2225775526,
+                "allocated_bytes": 2236993536,
+                "inodes": 16
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4750951198,
+            "total_allocated_bytes": 3118604288,
+            "elapsed_seconds": 29.063581209
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262760239,
+                "allocated_bytes": 441757696,
+                "inodes": 7428
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2225775526,
+                "allocated_bytes": 2236993536,
+                "inodes": 16
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4750951198,
+            "total_allocated_bytes": 3118604288,
+            "elapsed_seconds": 29.747386458999998
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262760239,
+                "allocated_bytes": 441757696,
+                "inodes": 7428
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2225775526,
+                "allocated_bytes": 2236993536,
+                "inodes": 16
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4750951198,
+            "total_allocated_bytes": 3118604288,
+            "elapsed_seconds": 30.430736417
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262760239,
+                "allocated_bytes": 441757696,
+                "inodes": 7428
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2225775526,
+                "allocated_bytes": 2236993536,
+                "inodes": 16
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4750951198,
+            "total_allocated_bytes": 3118604288,
+            "elapsed_seconds": 31.116392041999998
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262760239,
+                "allocated_bytes": 441757696,
+                "inodes": 7428
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2225775526,
+                "allocated_bytes": 2236993536,
+                "inodes": 16
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4750951198,
+            "total_allocated_bytes": 3118604288,
+            "elapsed_seconds": 31.794583583999998
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262760239,
+                "allocated_bytes": 441757696,
+                "inodes": 7428
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2225775526,
+                "allocated_bytes": 2236993536,
+                "inodes": 16
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4750951198,
+            "total_allocated_bytes": 3118604288,
+            "elapsed_seconds": 32.472641417
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262760239,
+                "allocated_bytes": 441757696,
+                "inodes": 7428
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2225775526,
+                "allocated_bytes": 2236993536,
+                "inodes": 16
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4750951198,
+            "total_allocated_bytes": 3118604288,
+            "elapsed_seconds": 33.143282166999995
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262760239,
+                "allocated_bytes": 441757696,
+                "inodes": 7428
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2225775526,
+                "allocated_bytes": 2236993536,
+                "inodes": 16
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4750951198,
+            "total_allocated_bytes": 3118604288,
+            "elapsed_seconds": 33.840680417
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262760239,
+                "allocated_bytes": 441757696,
+                "inodes": 7428
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2225775526,
+                "allocated_bytes": 2236993536,
+                "inodes": 16
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4750951198,
+            "total_allocated_bytes": 3118604288,
+            "elapsed_seconds": 34.523453542
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262760239,
+                "allocated_bytes": 441757696,
+                "inodes": 7428
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2225775526,
+                "allocated_bytes": 2236993536,
+                "inodes": 16
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4750951198,
+            "total_allocated_bytes": 3118604288,
+            "elapsed_seconds": 35.222018167
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262760239,
+                "allocated_bytes": 441757696,
+                "inodes": 7428
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2250703551,
+                "allocated_bytes": 2262163456,
+                "inodes": 16
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4775879223,
+            "total_allocated_bytes": 3143774208,
+            "elapsed_seconds": 35.919373667
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262760239,
+                "allocated_bytes": 441757696,
+                "inodes": 7428
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2466513608,
+                "allocated_bytes": 2488655872,
+                "inodes": 16
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 4991689280,
+            "total_allocated_bytes": 3370266624,
+            "elapsed_seconds": 36.59735575
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262760239,
+                "allocated_bytes": 441757696,
+                "inodes": 7428
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2787984803,
+                "allocated_bytes": 2807422976,
+                "inodes": 16
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 5313160475,
+            "total_allocated_bytes": 3689033728,
+            "elapsed_seconds": 37.289680374999996
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262760239,
+                "allocated_bytes": 441757696,
+                "inodes": 7428
+              },
+              "worker_a/journal": {
+                "logical_bytes": 3086581692,
+                "allocated_bytes": 3109412864,
+                "inodes": 16
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 5611757364,
+            "total_allocated_bytes": 3991023616,
+            "elapsed_seconds": 37.951658459
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262760239,
+                "allocated_bytes": 441757696,
+                "inodes": 7428
+              },
+              "worker_a/journal": {
+                "logical_bytes": 3338648843,
+                "allocated_bytes": 3361071104,
+                "inodes": 16
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 5863824515,
+            "total_allocated_bytes": 4242681856,
+            "elapsed_seconds": 38.639107542
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262760239,
+                "allocated_bytes": 441757696,
+                "inodes": 7428
+              },
+              "worker_a/journal": {
+                "logical_bytes": 3338648843,
+                "allocated_bytes": 3361071104,
+                "inodes": 16
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 5863824515,
+            "total_allocated_bytes": 4242681856,
+            "elapsed_seconds": 39.342729834
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262760239,
+                "allocated_bytes": 441757696,
+                "inodes": 7428
+              },
+              "worker_a/journal": {
+                "logical_bytes": 3338648843,
+                "allocated_bytes": 3361071104,
+                "inodes": 16
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 5863824515,
+            "total_allocated_bytes": 4242681856,
+            "elapsed_seconds": 40.029500167
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1468124475,
+                "allocated_bytes": 647135232,
+                "inodes": 7431
+              },
+              "worker_a/journal": {
+                "logical_bytes": 3338648843,
+                "allocated_bytes": 3361071104,
+                "inodes": 16
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 6069188751,
+            "total_allocated_bytes": 4448059392,
+            "elapsed_seconds": 40.733595209
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2358275387,
+                "allocated_bytes": 1537277952,
+                "inodes": 7431
+              },
+              "worker_a/journal": {
+                "logical_bytes": 3338648843,
+                "allocated_bytes": 3361071104,
+                "inodes": 16
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 6959339663,
+            "total_allocated_bytes": 5338202112,
+            "elapsed_seconds": 41.428563125
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2474173239,
+                "allocated_bytes": 1653125120,
+                "inodes": 7432
+              },
+              "worker_a/journal": {
+                "logical_bytes": 3338648843,
+                "allocated_bytes": 3361071104,
+                "inodes": 16
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 7075237515,
+            "total_allocated_bytes": 5454049280,
+            "elapsed_seconds": 42.116352792
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2474173239,
+                "allocated_bytes": 1653125120,
+                "inodes": 7432
+              },
+              "worker_a/journal": {
+                "logical_bytes": 3338648843,
+                "allocated_bytes": 3361071104,
+                "inodes": 16
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 7075237515,
+            "total_allocated_bytes": 5454049280,
+            "elapsed_seconds": 42.813102834
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2474173239,
+                "allocated_bytes": 1653125120,
+                "inodes": 7432
+              },
+              "worker_a/journal": {
+                "logical_bytes": 3338648843,
+                "allocated_bytes": 3361071104,
+                "inodes": 16
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 7075237515,
+            "total_allocated_bytes": 5454049280,
+            "elapsed_seconds": 43.498197042
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2497591335,
+                "allocated_bytes": 1676546048,
+                "inodes": 7434
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2225777382,
+                "allocated_bytes": 2236997632,
+                "inodes": 14
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 5985784150,
+            "total_allocated_bytes": 4353396736,
+            "elapsed_seconds": 44.199477875
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2521378963,
+                "allocated_bytes": 1700331520,
+                "inodes": 7460
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2225777604,
+                "allocated_bytes": 2236997632,
+                "inodes": 14
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 6009572000,
+            "total_allocated_bytes": 4377182208,
+            "elapsed_seconds": 44.898856
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2521393476,
+                "allocated_bytes": 1700335616,
+                "inodes": 7460
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2225777604,
+                "allocated_bytes": 2236997632,
+                "inodes": 14
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 6009586513,
+            "total_allocated_bytes": 4377186304,
+            "elapsed_seconds": 45.594919833999995
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2521393681,
+                "allocated_bytes": 1700335616,
+                "inodes": 7460
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2225777604,
+                "allocated_bytes": 2236997632,
+                "inodes": 14
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 6009586718,
+            "total_allocated_bytes": 4377186304,
+            "elapsed_seconds": 46.319196749999996
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2521394793,
+                "allocated_bytes": 1700335616,
+                "inodes": 7460
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2225779771,
+                "allocated_bytes": 2236997632,
+                "inodes": 14
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 6009589997,
+            "total_allocated_bytes": 4377186304,
+            "elapsed_seconds": 47.025026875
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2521394793,
+                "allocated_bytes": 1700335616,
+                "inodes": 7460
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2225779771,
+                "allocated_bytes": 2236997632,
+                "inodes": 14
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 6009589997,
+            "total_allocated_bytes": 4377186304,
+            "elapsed_seconds": 47.736774917
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 2521394793,
+                "allocated_bytes": 1700335616,
+                "inodes": 7460
+              },
+              "worker_a/journal": {
+                "logical_bytes": 2225779771,
+                "allocated_bytes": 2236997632,
+                "inodes": 14
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 6009589997,
+            "total_allocated_bytes": 4377186304,
+            "elapsed_seconds": 48.441942874999995
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262953911,
+                "allocated_bytes": 441757696,
+                "inodes": 7429
+              },
+              "worker_a/journal": {
+                "logical_bytes": 34029,
+                "allocated_bytes": 45056,
+                "inodes": 12
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 2525403373,
+            "total_allocated_bytes": 881655808,
+            "elapsed_seconds": 49.136634
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262953911,
+                "allocated_bytes": 441757696,
+                "inodes": 7429
+              },
+              "worker_a/journal": {
+                "logical_bytes": 34029,
+                "allocated_bytes": 45056,
+                "inodes": 12
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 2525403373,
+            "total_allocated_bytes": 881655808,
+            "elapsed_seconds": 49.827015292
+          },
+          {
+            "roots": {
+              "worker_a/sdk-home": {
+                "logical_bytes": 1262953911,
+                "allocated_bytes": 441757696,
+                "inodes": 7429
+              },
+              "worker_a/journal": {
+                "logical_bytes": 34029,
+                "allocated_bytes": 45056,
+                "inodes": 12
+              },
+              "worker_b/sdk-home": {
+                "logical_bytes": 1262397593,
+                "allocated_bytes": 439820288,
+                "inodes": 7425
+              },
+              "worker_b/journal": {
+                "logical_bytes": 17840,
+                "allocated_bytes": 32768,
+                "inodes": 8
+              }
+            },
+            "raced_with_filesystem_change": false,
+            "total_logical_bytes": 2525403373,
+            "total_allocated_bytes": 881655808,
+            "elapsed_seconds": 50.031511417
+          }
+        ]
+      },
+      "verification": {
+        "all_required_operation_stage_attempts_have_paired_start_finish": true,
+        "full_payload_permissions_symlink_and_session_checks_passed": true,
+        "committed_source_and_independent_target_native_ids_verified": true,
+        "source_and_target_guest_disks_removed": true,
+        "matching_operation_snapshot_size_local_copy_receipt": true,
+        "cleanup_backlog": {
+          "pending_sessions": 0,
+          "pending_workers": 0,
+          "pending_snapshots": 0
+        },
+        "original_and_restored_native_directories_absent": true,
+        "single_successful_client_operation_per_phase": true
+      },
+      "resources": {
+        "cpus": 1.0,
+        "memory_mib": 256,
+        "max_processes": 128
+      },
+      "source_reserved_staging_bytes": 11918534246,
+      "target_reserved_staging_bytes": 17221940485
+    }
+  ],
+  "limits": {
+    "stage_times": "per awaited Worker call; include permit waits, internal verification/retries, SDK normalization/image work; multiple batches and replays are separate attempts. Sums omit Console/DB/scheduling/activation and inter-call gaps; not end-to-end latency or percentiles",
+    "rates": "archive MiB divided by summed awaited transfer-stage seconds. Excludes inter-call signing/scheduling gaps and is not measured wire throughput or provider/network capacity; cache_copy is local IO",
+    "disk": "inode-based metadata accounting of both SDK homes and journals from before child authentication/seed through cleanup/exit. Includes pre-existing image caches/history, excludes S3/build/other paths. No symlink traversal; hard-link aliases deduplicated; COW/reflink blocks can be multiply counted; brief peaks and scan races can be missed. Observed accounting, not an exact physical peak or quota recommendation",
+    "comparison": "separate single runs on one host; no controlled cold/hot image comparison, cross-machine proof, repeated distribution or production SLO claim"
+  }
+}

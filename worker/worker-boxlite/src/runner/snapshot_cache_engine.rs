@@ -147,15 +147,17 @@ impl NativeControlEngine {
                     candidate.generation,
                 )
                 .map_err(journal_error)?;
-            match self
-                .transfer
-                .copy_cached_archive(
+            match measure(
+                &op.operation_id,
+                Stage::CacheCopy,
+                self.transfer.copy_cached_archive(
                     source.clone(),
                     archive,
                     destination.clone(),
                     action.cancel.clone(),
-                )
-                .await
+                ),
+            )
+            .await
             {
                 Ok(copied) => {
                     drop(copied);

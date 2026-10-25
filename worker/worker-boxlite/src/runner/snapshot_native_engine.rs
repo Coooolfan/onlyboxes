@@ -17,6 +17,9 @@ mod cache;
 pub(crate) use cache::CacheMaintenance;
 #[path = "snapshot_initial_expiry.rs"]
 mod initial_expiry;
+#[path = "snapshot_stage_metrics.rs"]
+mod stage_metrics;
+use stage_metrics::{measure, Stage};
 #[path = "snapshot_target_engine.rs"]
 mod target;
 
@@ -258,17 +261,20 @@ impl NativeControlEngine {
             }
             if op.phase == Phase::Frozen {
                 let archive = op.archive.as_ref().ok_or(ControlError::Conflict)?;
-                self.native
-                    .export_source(
+                measure(
+                    &op.operation_id,
+                    Stage::Export,
+                    self.native.export_source(
                         self.journal.clone(),
                         &op.operation_id,
                         ArchiveLimits {
                             max_bytes: archive.size_bytes,
                             max_expanded_bytes: archive.expanded_bytes,
                         },
-                    )
-                    .await
-                    .map_err(native_error)?;
+                    ),
+                )
+                .await
+                .map_err(native_error)?;
             }
             let mut response = result(op);
             if op.phase == Phase::RolledBack {
@@ -492,10 +498,14 @@ impl NativeControlEngine {
             }
         }
         self.authorize(action).await?;
-        self.native
-            .export_source(self.journal.clone(), &op.operation_id, limits)
-            .await
-            .map_err(native_error)?;
+        measure(
+            &op.operation_id,
+            Stage::Export,
+            self.native
+                .export_source(self.journal.clone(), &op.operation_id, limits),
+        )
+        .await
+        .map_err(native_error)?;
         self.manager
             .sync_snapshot_operation(&op.operation_id)
             .await
@@ -517,10 +527,14 @@ impl NativeControlEngine {
         } else {
             let file = self.archive_file(&op)?;
             let source = Arc::new(
-                self.transfer
-                    .source(file, archive.clone(), action.cancel.clone())
-                    .await
-                    .map_err(transfer_error)?,
+                measure(
+                    &op.operation_id,
+                    Stage::UploadSourceVerify,
+                    self.transfer
+                        .source(file, archive.clone(), action.cancel.clone()),
+                )
+                .await
+                .map_err(transfer_error)?,
             );
             self.pins
                 .lock()
@@ -528,11 +542,14 @@ impl NativeControlEngine {
                 .insert(op.operation_id.clone(), source.clone());
             source
         };
-        let parts = self
-            .transfer
-            .upload(&source, &action.payload.parts, action.cancel.clone())
-            .await
-            .map_err(transfer_error)?;
+        let parts = measure(
+            &op.operation_id,
+            Stage::UploadParts,
+            self.transfer
+                .upload(&source, &action.payload.parts, action.cancel.clone()),
+        )
+        .await
+        .map_err(transfer_error)?;
         let mut response = result(&op);
         response.parts = parts;
         Ok(response)
@@ -543,8 +560,10 @@ impl NativeControlEngine {
         if action.payload.archive.as_ref() != Some(archive) {
             return Err(ControlError::Conflict);
         }
-        self.transfer
-            .verify_remote(
+        measure(
+            &op.operation_id,
+            Stage::RemoteVerify,
+            self.transfer.verify_remote(
                 action
                     .payload
                     .download
@@ -552,9 +571,10 @@ impl NativeControlEngine {
                     .ok_or(ControlError::Conflict)?,
                 archive,
                 action.cancel.clone(),
-            )
-            .await
-            .map_err(transfer_error)?;
+            ),
+        )
+        .await
+        .map_err(transfer_error)?;
         self.journal
             .update(&op.operation_id, |current| {
                 current.remote_verified = true;
@@ -600,10 +620,13 @@ impl NativeControlEngine {
         self.transfer.wait_io_idle().await.map_err(transfer_error)?;
         self.authorize(action).await?;
         // This accepted cleanup is awaited through SDK acknowledgement loss.
-        self.native
-            .finalize_source(&self.journal, &op.operation_id)
-            .await
-            .map_err(native_error)?;
+        measure(
+            &op.operation_id,
+            Stage::Finalize,
+            self.native.finalize_source(&self.journal, &op.operation_id),
+        )
+        .await
+        .map_err(native_error)?;
         self.retain_cache(&op.operation_id)?;
         self.manager
             .sync_snapshot_operation(&op.operation_id)

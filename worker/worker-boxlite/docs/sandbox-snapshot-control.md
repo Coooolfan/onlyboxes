@@ -88,3 +88,11 @@ purge_session 使用更高 generation 的 Delete 意图永久封锁 scope。该�
 退出先关闭生命周期准入并等待已接受动作，再取消周期清扫、等待已接受的清扫及实际阻塞文件 I/O，之后才关闭会话管理器和 SDK。取消清扫只阻止下一项新工作，不丢弃已经接受的文件任务；即使等待退出的调用方被取消，JoinHandle 仍保留，可继续等待同一任务。启动注册失败也会停止并等待已创建的清扫任务。锁竞争或慢文件系统可能推迟回收与退出，不能把 30 秒周期当作物理清理时限。
 
 无 VM 测试覆盖独立 inode、副本重放、坏字节回源、损坏的已发布下载修复、取消/锁竞争、链接拒绝、TTL/LRU、禁用预算，以及未提交源和 ready 目标不被淘汰。周期任务测试重开原 journal 后，在无生命周期交付的条件下验证元数据错误重试、解锁后自动回收、journal 字节不变、空锁 inode 保留，以及退出等待被取消后继续等待同一在途任务。原生生命周期验收额外记录 HTTP GET 次数：同节点缓存命中在没有 GET 授权的情况下导入并启动新 VM；破坏所有可用匹配缓存后，恢复通过一次完整 GET 获取原快照并保留业务文件。
+
+## 阶段计时
+
+原生引擎为 `export`、`upload_source_verify`、`upload_parts`、`remote_verify`、`finalize`、`cache_copy`、`download`、`import` 和 `start_and_readiness` 记录 info 事件 `sandbox snapshot stage started` / `sandbox snapshot stage finished`。字段只包含 operation ID、每次调用独立的 attempt ID、固定阶段名；完成事件另有单调时钟测得的 `elapsed_us` 和成功布尔值，不输出规格、scope、路径、URL、授权、返回值或底层错误。开始日志写出后开始计时，在方法 await 返回后结束，不改变原有等待、错误或取消行为。被丢弃的等待者没有完成事件；该开始记录不能证明实际阻塞 I/O 已停止。
+
+同一阶段的续签、重放或多次上传批次有各自 attempt，不能只取最后一条或把失败记录丢弃。阶段以方法边界定义，可能包含槽位等待、完整校验、内部重试和镜像处理；不单独推算纯网络/CPU 时间。原生导出包含停止及归档校验，下载和导入各保留各自要求的校验，启动包含 readiness；Console 提交、数据库、调度、最终路由激活和各调用之间的等待不属于这些事件。阶段累计不是端到端挂起/恢复耗时，也不是百分位或 SLO。
+
+[阶段验收夹具](../../../scripts/README.md)在真实 Console/S3 会话前后保留逐 operation 配对记录和 SDK home/journal 磁盘采样，使用 `scripts/tests/snapshot_stage_metrics.py` 复现。它不会清空已有镜像或宿主缓存；磁盘样本按 inode 计量而非精确物理块归属，保留采样竞争及 COW/reflink 限制，不据此降低暂存预留。

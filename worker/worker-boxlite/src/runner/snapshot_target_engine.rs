@@ -173,9 +173,10 @@ impl NativeControlEngine {
                 .journal
                 .artifact_path(&op.scoped_session_id, &op.operation_id, op.generation)
                 .map_err(journal_error)?;
-            let downloaded = self
-                .transfer
-                .download(
+            let downloaded = measure(
+                &op.operation_id,
+                Stage::Download,
+                self.transfer.download(
                     action
                         .payload
                         .download
@@ -184,9 +185,10 @@ impl NativeControlEngine {
                     archive,
                     path,
                     action.cancel.clone(),
-                )
-                .await
-                .map_err(transfer_error)?;
+                ),
+            )
+            .await
+            .map_err(transfer_error)?;
             // Close the cache lock before native normalization. Its result has
             // already passed full SHA; native import separately verifies format,
             // spec and scope, and pins the selected disk before it can boot.
@@ -194,10 +196,14 @@ impl NativeControlEngine {
         }
         self.authorize(action).await?;
         let limits = target_limits(archive)?;
-        self.native
-            .import_target(self.journal.clone(), &op.operation_id, limits)
-            .await
-            .map_err(native_error)?;
+        measure(
+            &op.operation_id,
+            Stage::Import,
+            self.native
+                .import_target(self.journal.clone(), &op.operation_id, limits),
+        )
+        .await
+        .map_err(native_error)?;
         self.manager
             .sync_snapshot_operation(&op.operation_id)
             .await
@@ -214,15 +220,18 @@ impl NativeControlEngine {
                 .checked_add(i64::from(op.lease_ttl_sec) * 1000)
                 .ok_or(ControlError::Conflict)?
         };
-        self.native
-            .start_target(
+        measure(
+            &op.operation_id,
+            Stage::Start,
+            self.native.start_target(
                 &self.journal,
                 &op.operation_id,
                 lease,
                 self.config.readiness_timeout,
-            )
-            .await
-            .map_err(native_error)?;
+            ),
+        )
+        .await
+        .map_err(native_error)?;
         self.retain_cache(&op.operation_id)?;
         self.manager
             .sync_snapshot_operation(&op.operation_id)
