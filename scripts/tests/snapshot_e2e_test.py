@@ -24,6 +24,22 @@ class LargeFixtureAdmissionTests(unittest.TestCase):
                 acceptance.main()
             auth.assert_not_called()
 
+    def test_quota_retry_accepts_only_the_same_payload_runtime_and_failed_suspend(self):
+        import json
+        evidence = {"runtime":"boxlite", "payload_bytes":5<<30, "session_id":"retained-session", "account_id":"owner", "sha256":"a"*64,
+                    "checks":[{"check":"suspend", "status":"failed", "error":{"code":"snapshot_quota_exceeded"}}]}
+        with patch.object(acceptance.dev, "read_private", return_value=json.dumps(evidence)):
+            self.assertEqual(acceptance.quota_retry_evidence(Path("fixture"), "boxlite", 5<<30), evidence)
+            for runtime, size in (("docker", 5<<30), ("boxlite", 1<<30)):
+                with self.assertRaisesRegex(RuntimeError, "matching private evidence"):
+                    acceptance.quota_retry_evidence(Path("fixture"), runtime, size)
+        for last in ({"check":"resume", "status":"failed", "error":{"code":"snapshot_quota_exceeded"}},
+                     {"check":"suspend", "status":"succeeded"},
+                     {"check":"suspend", "status":"failed", "error":{"code":"snapshot_invalid"}}):
+            with patch.object(acceptance.dev, "read_private", return_value=json.dumps({**evidence, "checks":[last]})):
+                with self.assertRaisesRegex(RuntimeError, "matching private evidence"):
+                    acceptance.quota_retry_evidence(Path("fixture"), "boxlite", 5<<30)
+
     def test_explicit_archive_and_expanded_budgets_are_required(self):
         with patch.dict(os.environ,{},clear=True), patch("sys.argv",["snapshot_e2e.py","--payload-mib","1024"]), patch.object(acceptance.dev,"env_file",return_value={}), patch.object(acceptance.dev,"console_auth") as auth:
             with self.assertRaisesRegex(RuntimeError,"explicit archive/expanded limits"):

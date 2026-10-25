@@ -174,6 +174,8 @@ scripts/dev.sh start sandbox-persistence
 
 验收脚本支持 `--operation-wait-sec`（默认 600，最大 86400）、`--lease-ttl-sec`（默认 900，最大 86400）和 `--command-timeout-sec`（默认 150，最大 600）。等待时间只改变客户端观察期限；服务端生命周期 deadline 仍由 `CONSOLE_PERSISTENCE_OPERATION_TIMEOUT_SEC` 控制。长租约还须在配置中相应提高 `WORKER_TERMINAL_LEASE_MAX_SEC`，脚本在认证或创建会话前拒绝超出该配置的请求。命令超时也覆盖大文件完整哈希校验，并留出 HTTP 响应余量。这些值不改变空间预检、完整校验或失败时保留证据的要求。结果文件记录所用等待时间、租约、命令期限和 BoxLite 构建 profile，性能比较时须同时注明这些条件。
 
+`--retry-quota-session --scenario cross-worker` 只复用同一私有状态目录中上一次 `snapshot_quota_exceeded` 挂起失败留下的会话。脚本要求 runtime、payload 字节数和账号一致，确认会话仍在隔离 Worker 运行，再以 `create_if_missing=false` 完整校验原 payload；不会重新写入或创建替代会话。旧失败记录保留在结果的 checks 中，再执行新的挂起/跨 Worker 恢复与最终清理。其他错误、已完成操作或不同样本不能使用此参数。BoxLite 展开预算包含 qcow 文件长度、虚拟磁盘容量及 manifest 余量；例如 5 GiB 数据和 8 GiB 虚拟盘不能使用 12 GiB 展开预算。
+
 ## 本地公开预览
 
 `public-preview` 是 `console / worker-docker / nginx` 的组合服务：

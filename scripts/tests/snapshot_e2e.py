@@ -22,6 +22,20 @@ dev = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(dev)
 
 
+def quota_retry_evidence(path, runtime, payload_bytes):
+    evidence = json.loads(dev.read_private(path))
+    checks = evidence.get("checks", [])
+    failed = checks[-1] if checks else {}
+    digest = evidence.get("sha256", "")
+    if (evidence.get("runtime") != runtime or evidence.get("payload_bytes") != payload_bytes
+            or not evidence.get("session_id") or not evidence.get("account_id")
+            or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest)
+            or failed.get("check") != "suspend" or failed.get("status") != "failed"
+            or (failed.get("error") or {}).get("code") != "snapshot_quota_exceeded"):
+        raise RuntimeError("quota retry requires matching private evidence of a failed suspend")
+    return evidence
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime", choices=("boxlite", "docker"), default="boxlite")
@@ -31,6 +45,7 @@ def main():
     parser.add_argument("--operation-wait-sec", type=int, default=600, help="1..86400 seconds to observe each accepted lifecycle operation; does not change its server deadline")
     parser.add_argument("--lease-ttl-sec", type=int, default=900, help="1..86400 seconds requested for initial execution, resume and verification; must fit the configured Worker maximum")
     parser.add_argument("--command-timeout-sec", type=int, default=150, help="1..600 seconds for payload seed/verification commands")
+    parser.add_argument("--retry-quota-session", action="store_true", help="cross-worker only: reuse the exact session from this fixture's last quota-refused suspend, preserving its failure evidence")
     args = parser.parse_args()
     if not 1 <= args.operation_wait_sec <= 86400 or not 1 <= args.lease_ttl_sec <= 86400:
         parser.error("operation wait and lease TTL require 1..86400 seconds")
@@ -46,11 +61,16 @@ def main():
         spec = importlib.util.spec_from_file_location("docker_acceptance", Path(dev.__file__).with_name("dev-docker-snapshot.py"))
         docker = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(docker)
+    if args.retry_quota_session and scenario != "cross-worker":
+        parser.error("quota-session retry requires --scenario cross-worker")
     config = Path(os.environ.get("ONLYBOXES_DEV_ENV", dev.ROOT / "scripts/dev.env"))
     os.environ.update(dev.env_file(config))
     if args.lease_ttl_sec > int(os.environ.get("WORKER_TERMINAL_LEASE_MAX_SEC", "1800")):
         raise RuntimeError("requested fixture lease exceeds configured Worker maximum")
     payload_bytes = args.payload_mib * 1024 * 1024
+    previous = None
+    if args.retry_quota_session:
+        previous = quota_retry_evidence(dev.STATE / ("snapshot-e2e-" + ("docker-" if args.runtime == "docker" else "") + "cross-worker-result.json"), args.runtime, payload_bytes)
     if args.payload_mib > 1:
         archive_limit = int(os.environ.get("CONSOLE_SNAPSHOT_MAX_BYTES", "0"))
         expanded_limit = int(os.environ.get("CONSOLE_SNAPSHOT_MAX_EXPANDED_BYTES", "0"))
@@ -99,6 +119,8 @@ def main():
         return body
 
     account = require(*api("GET", "/api/v1/auth/session"))["account"]["account_id"]
+    if previous and previous["account_id"] != account:
+        raise RuntimeError("quota retry account differs from the retained session evidence")
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
         credentials = {service: dev.env_file(dev.STATE / (service + ".env")) for service in dev.SERVICES}
@@ -119,14 +141,25 @@ def main():
     else:
         raise RuntimeError("both isolated workers must be online before acceptance")
     payload_code = Path(__file__).with_name("snapshot_payload.py").read_text()
-    command = "python3 -c " + shlex.quote(payload_code) + " seed " + str(payload_bytes)
-    first = require(*api("POST", "/api/v1/commands/terminal", {"command": command, "lease_ttl_sec": args.lease_ttl_sec, "timeout_ms": args.command_timeout_sec * 1000}))
-    if first.get("exit_code") != 0:
-        raise RuntimeError("initial command failed")
-    sid, digest = first["session_id"], first["stdout"].strip()
+    if previous:
+        sid = previous["session_id"]
+        current = require(*api("GET", "/api/v1/sessions/" + sid + "?account_id=" + account))
+        if current["lifecycle_state"] != "running" or current["worker_id"] not in nodes:
+            raise RuntimeError("quota retry requires the retained running session on an isolated worker")
+        command = "python3 -c " + shlex.quote(payload_code) + " verify " + str(payload_bytes)
+        first = require(*api("POST", "/api/v1/commands/terminal", {"command":command, "session_id":sid, "create_if_missing":False, "lease_ttl_sec":args.lease_ttl_sec, "timeout_ms":args.command_timeout_sec * 1000}))
+        if first.get("exit_code") != 0 or first.get("created") or first.get("session_id") != sid or first.get("stdout", "").strip() != previous["sha256"]:
+            raise RuntimeError("quota retry retained payload or session identity check failed")
+        digest = previous["sha256"]
+    else:
+        command = "python3 -c " + shlex.quote(payload_code) + " seed " + str(payload_bytes)
+        first = require(*api("POST", "/api/v1/commands/terminal", {"command": command, "lease_ttl_sec": args.lease_ttl_sec, "timeout_ms": args.command_timeout_sec * 1000}))
+        if first.get("exit_code") != 0:
+            raise RuntimeError("initial command failed")
+        sid, digest = first["session_id"], first["stdout"].strip()
     base = "/api/v1/sessions/" + sid
     query = "?account_id=" + account
-    evidence = {"runtime": args.runtime, "return_to_source": args.return_to_source, "payload_bytes":payload_bytes, "operation_wait_sec":args.operation_wait_sec, "command_timeout_sec":args.command_timeout_sec, "lease_ttl_sec":args.lease_ttl_sec, "boxlite_build_profile":os.environ.get("ONLYBOXES_DEV_BOXLITE_PROFILE", "debug") if args.runtime == "boxlite" else None, "session_id": sid, "account_id": account, "sha256": digest, "checks": []}
+    evidence = {"runtime": args.runtime, "return_to_source": args.return_to_source, "payload_bytes":payload_bytes, "operation_wait_sec":args.operation_wait_sec, "command_timeout_sec":args.command_timeout_sec, "lease_ttl_sec":args.lease_ttl_sec, "boxlite_build_profile":os.environ.get("ONLYBOXES_DEV_BOXLITE_PROFILE", "debug") if args.runtime == "boxlite" else None, "session_id": sid, "account_id": account, "sha256": digest, "checks": previous["checks"] if previous else []}
     result_name = ("docker-" if args.runtime == "docker" else "") + scenario + ("-return-to-source" if args.return_to_source else "")
     def record(label, **values):
         evidence["checks"].append({"check": label, **values})
@@ -557,7 +590,7 @@ print(json.dumps({'snapshot_id':archive['snapshot_id'],'sha256':digest.hexdigest
         return current["worker_id"]
 
     source = session()["worker_id"]
-    record("created", worker_id=source)
+    record("quota-retry-verified" if previous else "created", worker_id=source)
     original_suspend = lifecycle("suspend")
     suspended = session()
     if suspended["lifecycle_state"] != "suspended" or suspended["worker_id"] is not None or not suspended["persistence"]["latest_snapshot"]:
