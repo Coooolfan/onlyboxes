@@ -41,7 +41,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime", choices=("boxlite", "docker"), default="boxlite")
     parser.add_argument("--return-to-source", action="store_true", help="after cross-worker mutation and no-worker failure, restore onto the original worker with its older cache")
-    parser.add_argument("--scenario", choices=("cycle", "cross-worker", "same-worker", "no-worker", "console-restart", "worker-restart", "worker-start-restart", "cache-corrupt", "cache-miss", "cache-copy-eviction", "worker-graceful-restart", "worker-expired-restart"), default="cycle")
+    parser.add_argument("--scenario", choices=("cycle", "cross-worker", "same-worker", "no-worker", "console-restart", "worker-restart", "worker-start-restart", "cache-corrupt", "cache-miss", "cache-copy-eviction", "initial-expired-delete", "worker-graceful-restart", "worker-expired-restart"), default="cycle")
     parser.add_argument("--payload-mib", type=int, default=1, help="1..10240 MiB of independent random guest data; large runs require explicit snapshot and disk budgets")
     parser.add_argument("--operation-wait-sec", type=int, default=600, help="1..86400 seconds to observe each accepted lifecycle operation; does not change its server deadline")
     parser.add_argument("--lease-ttl-sec", type=int, default=900, help="1..86400 seconds requested for initial execution, resume and verification; must fit the configured Worker maximum")
@@ -62,12 +62,19 @@ def main():
         spec = importlib.util.spec_from_file_location("docker_acceptance", Path(dev.__file__).with_name("dev-docker-snapshot.py"))
         docker = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(docker)
-    if scenario in ("worker-graceful-restart", "worker-expired-restart") and args.runtime != "boxlite":
+    if scenario in ("worker-graceful-restart", "worker-expired-restart", "initial-expired-delete") and args.runtime != "boxlite":
         parser.error("managed Worker restart acceptance currently requires BoxLite")
     if args.retry_quota_session and scenario != "cross-worker":
         parser.error("quota-session retry requires --scenario cross-worker")
     config = Path(os.environ.get("ONLYBOXES_DEV_ENV", dev.ROOT / "scripts/dev.env"))
     os.environ.update(dev.env_file(config))
+    if scenario == "initial-expired-delete":
+        if args.lease_ttl_sec < 20:
+            parser.error("initial expiry renewal acceptance requires a 20..60 second lease")
+        if (dev.STATE / "snapshot-e2e-initial-expired-delete-result.json").exists():
+            raise RuntimeError("initial expiry evidence already exists; use a new isolated fixture")
+        if os.environ.get("WORKER_LOG_FORMAT", "json") != "json" or os.environ.get("WORKER_LOG_LEVEL", "info") not in ("info", "debug", "trace"):
+            raise RuntimeError("initial expiry restart acceptance requires JSON info logs")
     if scenario == "cache-copy-eviction":
         race_binary = dev.ROOT / "worker/worker-boxlite/target/release/examples/snapshot_cache_eviction_probe"
         if (dev.STATE / "snapshot-e2e-cache-copy-eviction-result.json").exists():
@@ -80,7 +87,7 @@ def main():
                 or os.environ.get("WORKER_LOG_FORMAT", "json") != "json"
                 or os.environ.get("WORKER_LOG_LEVEL", "info") not in ("info", "debug", "trace")):
             raise RuntimeError("cache contention requires retained producer cache and JSON info logs")
-    if scenario == "worker-expired-restart" and not int(os.environ.get("WORKER_TERMINAL_LEASE_MIN_SEC", "60")) <= args.lease_ttl_sec <= 60:
+    if scenario in ("worker-expired-restart", "initial-expired-delete") and not int(os.environ.get("WORKER_TERMINAL_LEASE_MIN_SEC", "60")) <= args.lease_ttl_sec <= 60:
         raise RuntimeError("expiry restart requires an explicit unclamped lease of at most 60 seconds")
     if args.lease_ttl_sec > int(os.environ.get("WORKER_TERMINAL_LEASE_MAX_SEC", "1800")):
         raise RuntimeError("requested fixture lease exceeds configured Worker maximum")
@@ -608,6 +615,84 @@ print(json.dumps({'snapshot_id':archive['snapshot_id'],'sha256':digest.hexdigest
 
     source = session()["worker_id"]
     record("quota-retry-verified" if previous else "created", worker_id=source)
+    if scenario == "initial-expired-delete":
+        root = dev.STATE / nodes[source] / hashlib.sha256(source.encode()).hexdigest()[:32]
+        scope = "obx:" + account + ":" + sid
+        path = root / "journal/journal.json"
+        initial = json.loads(path.read_text())
+        adoption = initial["adoptions"].get(scope)
+        if not adoption:
+            raise RuntimeError("initial expiry lacks one exact session adoption")
+        boot = initial["initial_boots"][scope]
+        if boot["managed"] or not adoption["confirmed"] or scope in initial["current"]:
+            raise RuntimeError("initial expiry scenario must never enter snapshot management")
+        box_id = adoption["lease"]["box_id"]
+        disk = root / "sdk-home/boxes" / box_id / "disks/disk.qcow2"
+        if Path(box_id).name != box_id or not disk.is_file():
+            raise RuntimeError("initial root disk identity is unavailable")
+        guardian = lease_identity(source)
+        first_expiry = adoption["lease"]["expires_unix_ms"]
+        time.sleep(args.lease_ttl_sec / 2)
+        verify("initial-renewed", source)
+        reply = guard_exchange(source, {"action":"status", "box_id":box_id}, guardian).get("reply", {})
+        renewed = reply.get("value") or {}
+        if reply.get("type") != "status" or renewed.get("revoked") or renewed.get("process") != adoption["lease"]["process"] or renewed.get("expires_unix_ms", 0) <= first_expiry + 1000:
+            raise RuntimeError("initial lease renewal was not independently confirmed")
+        while time.time()*1000 <= first_expiry + 500:
+            time.sleep(.1)
+        current = json.loads(path.read_text())
+        if not disk.is_file() or scope in current["current"] or time.time()*1000 >= renewed["expires_unix_ms"]:
+            raise RuntimeError("initial cleanup ignored the latest renewed deadline")
+        record("initial-renewal-preserved", original_deadline_passed=True, disk_retained=True, same_guard=True)
+        require(*api("DELETE", base + query), expected=204)
+        record("deleted", status=204, before_first_snapshot=True)
+        deadline = time.monotonic() + 180
+        deletion = None
+        while time.monotonic() < deadline:
+            current = json.loads(path.read_text())
+            selected = current["operations"].get(current["current"].get(scope))
+            if selected and selected.get("kind") == "delete" and selected.get("phase") == "deleted":
+                deletion = selected
+                break
+            time.sleep(.2)
+        if not deletion or deletion.get("initial_expiry", {}).get("process") != adoption["lease"]["process"] or not deletion["initial_expiry"]["revoked"] or deletion["initial_expiry"]["expires_unix_ms"] < renewed["expires_unix_ms"] or deletion["generation"] != 2 or disk.exists():
+            raise RuntimeError("initial root lacks completed local expiry and physical deletion evidence")
+        receipt = guard_exchange(source, {"action":"retirement_status", "box_id":box_id}, guardian).get("reply", {})
+        value = receipt.get("value") or {}
+        retirement = value.get("retirement") or {}
+        if receipt.get("type") != "retirement_status" or not value.get("released") or retirement.get("operation_id") != deletion["operation_id"] or retirement.get("cleanup_generation") != 2 or retirement.get("process") != adoption["lease"]["process"]:
+            raise RuntimeError("initial expiry lacks exact independent ownership release")
+        record("initial-expiry-reclaimed", renewed_deadline_respected=True, native_disk_removed=True, ownership_released=True, local_generation=2)
+        def connection_ids():
+            found = set()
+            for line in (dev.STATE / (nodes[source] + ".log")).read_text().splitlines():
+                try:
+                    item = json.loads(line)
+                except ValueError:
+                    continue
+                fields = item.get("fields", {}) if isinstance(item, dict) else {}
+                if isinstance(fields, dict) and fields.get("message") == "worker connected" and fields.get("node_id") == source and fields.get("session_id"):
+                    found.add(fields["session_id"])
+            return found
+        prior_connections = connection_ids()
+        if not prior_connections:
+            raise RuntimeError("initial expiry restart requires the prior acknowledged Worker connection")
+        services("restart", nodes[source])
+        deadline = time.monotonic() + 90
+        while time.monotonic() < deadline:
+            workers = require(*api("GET", "/api/v1/workers?status=all"))["items"]
+            usage = require(*api("GET", "/api/v1/workers/inflight"))["workers"]
+            if connection_ids() - prior_connections and any(worker["node_id"] == source and worker["status"] == "online" for worker in workers) and any(worker["node_id"] == source and worker.get("active_session_count") == 0 for worker in usage):
+                break
+            time.sleep(.2)
+        else:
+            raise RuntimeError("initial expiry did not release capacity after Worker restart")
+        current = json.loads(path.read_text())
+        if current["operations"][deletion["operation_id"]] != deletion or current["initial_boots"][scope] != boot or lease_identity(source) != guardian or disk.exists():
+            raise RuntimeError("initial expiry restart changed retained authority or recreated disk")
+        record("initial-expiry-restart-verified", new_acknowledged_connection=True, same_guard=True, same_expiry_receipt=True, no_disk=True, active_session_count=0)
+        wait_cleanup()
+        return
     original_suspend = lifecycle("suspend")
     suspended = session()
     if suspended["lifecycle_state"] != "suspended" or suspended["worker_id"] is not None or not suspended["persistence"]["latest_snapshot"]:

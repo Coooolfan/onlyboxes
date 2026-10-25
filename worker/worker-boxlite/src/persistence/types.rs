@@ -215,6 +215,10 @@ pub struct Operation {
     pub generation: i64,
     pub kind: Kind,
     pub phase: Phase,
+    /// Local expiry authority applies only to a confirmed, never-managed first
+    /// boot. Snapshot-managed scopes always require Console deletion authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_expiry: Option<super::ExecutionLease>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub restore_spec: Option<RestoreSpec>,
     /// Only the private on-disk journal codec uses references. Runtime views
@@ -436,6 +440,17 @@ impl Operation {
             Kind::Delete => matches!(self.phase, Phase::Deleting | Phase::Deleted),
             Kind::Cancel => false,
         };
+        if self.initial_expiry.as_ref().is_some_and(|lease| {
+            lease.validate().is_err()
+                || self.kind != Kind::Delete
+                || self.generation != 2
+                || !lease.revoked
+                || lease.generation != 1
+                || lease.scoped_session_id != self.scoped_session_id
+                || lease.box_id != self.box_id
+        }) {
+            return Err(Error::Conflict);
+        }
         if !valid_phase
             || (!self.artifact.is_empty()
                 && self.artifact
@@ -506,6 +521,7 @@ impl Operation {
                 .iter()
                 .all(|(id, receipt)| next.lease_retirements.get(id) == Some(receipt))
             && self.staging_bytes == next.staging_bytes
+            && self.initial_expiry == next.initial_expiry
             && self.lease_ttl_sec == next.lease_ttl_sec
             && (self.box_id.is_empty() || self.box_id == next.box_id)
             && (self.tombstone_box_id.is_empty() || self.tombstone_box_id == next.tombstone_box_id)

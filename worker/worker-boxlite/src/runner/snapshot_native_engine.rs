@@ -15,6 +15,8 @@ use worker_boxlite::persistence::{
 #[path = "snapshot_cache_engine.rs"]
 mod cache;
 pub(crate) use cache::CacheMaintenance;
+#[path = "snapshot_initial_expiry.rs"]
+mod initial_expiry;
 #[path = "snapshot_target_engine.rs"]
 mod target;
 
@@ -46,6 +48,7 @@ pub(crate) struct NativeControlEngine {
     reservations: std::sync::Mutex<HashMap<String, Reservation>>,
     pins: std::sync::Mutex<HashMap<String, Arc<VerifiedSource>>>,
     failed: AtomicBool,
+    initial_expiry_cursor: std::sync::atomic::AtomicUsize,
 }
 impl NativeControlEngine {
     pub(crate) async fn new(
@@ -88,6 +91,7 @@ impl NativeControlEngine {
             reservations: Default::default(),
             pins: Default::default(),
             failed: AtomicBool::new(false),
+            initial_expiry_cursor: std::sync::atomic::AtomicUsize::new(0),
         }))
     }
 

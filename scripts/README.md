@@ -180,6 +180,8 @@ BoxLite 的 `--scenario worker-graceful-restart` 在快照恢复目标已经 act
 
 BoxLite 的 `--scenario worker-expired-restart --lease-ttl-sec 30` 验证已激活目标正常到期后的 Worker 重启。私有配置须将 `WORKER_TERMINAL_LEASE_MIN_SEC=1` 并重启对应测试 Worker；场景要求租约不被最小值夹长且不超过 60 秒。它等待原守护器撤销租约并观察原进程停止，重启后要求 Worker 在验证完整 writer 退出证据后保留同一 CID、原操作和磁盘，拒绝执行，再显式 DELETE，核对更高 generation、物理删除与同一守护器的 owner release，最后清理归零。客户端的进程观察不作为退出或删除授权；真正的退出核对仍在 Worker 中执行。此场景不使用直接 PID 停止或新启动授权。
 
+BoxLite 的 `--scenario initial-expired-delete --lease-ttl-sec 30` 验证尚未快照的普通会话回收，要求 info JSON 日志，私有 `WORKER_TERMINAL_LEASE_MIN_SEC=1`，请求 lease 在 `20..60` 秒且不被夹长。场景创建并校验 payload，在首次截止时间之前续租，跨过旧截止时间后要求原磁盘仍存在，再在首次快照之前 DELETE 路由。它等待实际最新 lease 到期及 Worker 的本地删除，核对不可变撤销回执、generation 2 拒绝栅栏、物理删盘和同一独立守护器的 owner release；随后通过 `dev.sh` 重启 Worker，要求新的已确认连接、相同删除记录、磁盘未重建及心跳容量为零。已有该场景结果时拒绝重新创建，失败保留证据；复测使用新的隔离目录。它不执行 suspend/resume，也不把此普通 TTL 权限扩展到快照管理中的会话；后者用上面的 `worker-expired-restart` 验证保留和显式删除。
+
 BoxLite 的 `--scenario cache-copy-eviction --payload-mib 1024` 验证真实 Console/S3 恢复与跨进程缓存淘汰竞争。沿用上面的隔离配置，开启足以容纳一份归档上限的缓存及 info JSON 日志，并先构建只用于验收的原生探针：
 
 ```bash

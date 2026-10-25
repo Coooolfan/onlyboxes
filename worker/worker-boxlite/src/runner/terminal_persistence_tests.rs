@@ -264,6 +264,7 @@ fn target() -> Operation {
         generation: 2,
         kind: Kind::Target,
         phase: Phase::Prepared,
+        initial_expiry: None,
         restore_spec_sha256: None,
         restore_spec: Some(spec()),
         archive: Some(Archive {

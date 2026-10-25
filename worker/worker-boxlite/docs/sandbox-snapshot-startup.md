@@ -81,6 +81,8 @@ BoxLite `0.10.7` 初始化时会更新恢复状态、回收没有数据库记录
 
 未知启动结果、未确认 adoption、缺失 boot、managed 初始根，以及已有 source/target/delete 等生命周期当前操作不适用此路径。它也不会把 Console 中看不到的会话解释为删除授权；后续运行恢复、永久清理与容量释放仍需要独立协调。
 
+同一守护器 epoch 下，已确认且尚未进入快照管理的普通初始根可另行满足[独立执行 TTL 回收条件](sandbox-snapshot-deployment.md)：最新撤销租约到期、完整 writer 退出、命令和预览排空后，周期维护写入带不可变 `initial_expiry` 回执的本地 generation 2 删除意图，再完成原生删除与 owner release。保留检查本身不授予此权限；旧守护器 epoch 的根、未知启动和快照管理中的根不能使用这条自动回收路径。已写入的删除意图和名称栅栏跨 Worker 重启保留，不能据磁盘已不存在清空历史或重新创建同一 scope。
+
 本机旧目录验收先核对 journal 和 qcow2 字节指纹，再启动整组服务。此前失败的 Worker 以此路径上线，旧 Box 仍为 stopped，原 journal 与 612,499,456 字节磁盘保持一致。同一目录随后通过新的 1 MiB 会话的真实 Console/S3 跨 Worker 周期：在保留旧根的 Worker 创建新会话，挂起后停止源 Worker，在另一 Worker 恢复并校验文件，重新启动源 Worker，最后永久删除新会话并排空其清理队列。挂起约 25.25 秒、恢复约 39.32 秒，归档 40,091,612 字节。完成后旧 CID 仍 stopped、磁盘字节不变，初始 boot/adoption/probe 继续保留。新会话清理完成不表示这份旧根已被回收。
 
 该结果证明保留隔离、Worker 可注册及其他会话的跨 Worker 生命周期可用，不证明旧会话可继续执行，也不替代宿主重启或跨物理机器验收。

@@ -39,6 +39,7 @@ fn source() -> Operation {
         generation: 1,
         kind: Kind::Source,
         phase: Phase::Preparing,
+        initial_expiry: None,
         restore_spec_sha256: None,
         restore_spec: Some(RestoreSpec {
             runtime: "boxlite".into(),
@@ -1599,4 +1600,150 @@ fn held_staging_usage_survives_reopen_and_releases_only_on_completed_lifecycle()
         })
         .unwrap();
     assert_eq!(journal.retained_staging_bytes().unwrap(), 0);
+}
+
+fn confirmed_initial(journal: &Journal, root: &Root) -> crate::persistence::ExecutionLease {
+    use crate::persistence::{
+        BootAuthorization, BootExecutable, ExecutionLease, HostProcess, InitialAdoption,
+        InitialBoot, LeaseGuardIdentity,
+    };
+    let home = root.0.join("initial-native");
+    private_directory(&home).unwrap();
+    private_directory(&home.join("boxes")).unwrap();
+    let source = source();
+    private_directory(&home.join("boxes").join(&source.box_id)).unwrap();
+    let process = HostProcess::current().unwrap();
+    let guard = LeaseGuardIdentity {
+        worker_id: "worker-a".into(),
+        store_id: uuid::Uuid::new_v4().to_string(),
+        epoch_id: uuid::Uuid::new_v4().to_string(),
+        process: process.clone(),
+    };
+    journal
+        .begin_initial_boot(InitialBoot {
+            guard: guard.clone(),
+            managed: false,
+            authorization: BootAuthorization {
+                operation_id: "first-boot".into(),
+                box_id: source.box_id.clone(),
+                scoped_session_id: source.scoped_session_id.clone(),
+                generation: 1,
+                prior_revision: None,
+                expires_unix_ms: 10000,
+                origin: process.clone(),
+                executable: BootExecutable::prepare(
+                    &home,
+                    &source.box_id,
+                    Path::new("/bin/sleep"),
+                    true,
+                )
+                .unwrap(),
+            },
+        })
+        .unwrap();
+    let lease = ExecutionLease {
+        box_id: source.box_id,
+        scoped_session_id: source.scoped_session_id,
+        generation: 1,
+        revision: 1,
+        expires_unix_ms: 10000,
+        process,
+        revoked: false,
+    };
+    let adoption = InitialAdoption {
+        guard,
+        lease: lease.clone(),
+        confirmed: false,
+    };
+    journal.begin_initial_adoption(adoption.clone()).unwrap();
+    journal.confirm_initial_adoption(&adoption).unwrap();
+    lease
+}
+
+#[test]
+fn local_initial_expiry_retains_deny_authority_and_rejects_proof_changes_on_reopen() {
+    let root = Root::new();
+    let journal = root.open();
+    let mut lease = confirmed_initial(&journal, &root);
+    lease.revoked = true;
+    lease.revision = 3;
+    lease.expires_unix_ms = 20000;
+    let mut op = deletion();
+    op.initial_expiry = Some(lease.clone());
+    journal.claim(op.clone()).unwrap();
+    journal.claim(op.clone()).unwrap();
+    assert!(journal.snapshot().unwrap().probes.is_empty());
+    assert!(journal.manage_initial_boot(&op.scoped_session_id).is_err());
+    assert!(journal
+        .update(&op.operation_id, |saved| {
+            saved.initial_expiry = None;
+            Ok(())
+        })
+        .is_err());
+    let mut changed = op.clone();
+    changed.initial_expiry.as_mut().unwrap().revision += 1;
+    assert!(journal.claim(changed).is_err());
+    drop(journal);
+    let journal = root.open();
+    let state = journal.snapshot().unwrap();
+    assert_eq!(
+        state.operations[&op.operation_id].initial_expiry.as_ref(),
+        Some(&lease)
+    );
+    assert_eq!(state.current[&op.scoped_session_id], op.operation_id);
+    assert!(!state.initial_boots[&op.scoped_session_id].managed);
+}
+
+#[test]
+fn local_initial_expiry_never_replaces_snapshot_work_or_unconfirmed_or_managed_roots() {
+    for case in [
+        "no-boot",
+        "unconfirmed",
+        "managed",
+        "current-operation",
+        "not-revoked",
+        "wrong-box",
+        "wrong-writer",
+        "shorter-expiry",
+        "wrong-generation",
+    ] {
+        let root = Root::new();
+        let journal = root.open();
+        let mut lease = confirmed_initial(&journal, &root);
+        lease.revoked = true;
+        let mut op = deletion();
+        match case {
+            "no-boot" => journal
+                .transaction(|state| {
+                    state.initial_boots.clear();
+                    Ok(())
+                })
+                .unwrap(),
+            "unconfirmed" => journal
+                .transaction(|state| {
+                    state.adoptions.values_mut().next().unwrap().confirmed = false;
+                    Ok(())
+                })
+                .unwrap(),
+            "managed" => journal.manage_initial_boot(&op.scoped_session_id).unwrap(),
+            "current-operation" => journal.claim(source()).unwrap(),
+            "not-revoked" => lease.revoked = false,
+            "wrong-box" => {
+                lease.box_id = "unrelated-box".into();
+                op.box_id = lease.box_id.clone();
+            }
+            "wrong-writer" => lease.process.start_time += 1,
+            "shorter-expiry" => lease.expires_unix_ms -= 1,
+            "wrong-generation" => op.generation += 1,
+            _ => unreachable!(),
+        }
+        op.initial_expiry = Some(lease);
+        let before = fs::read(root.journal().join("journal.json")).unwrap();
+        assert!(journal.claim(op).is_err(), "{case}");
+        assert_eq!(
+            fs::read(root.journal().join("journal.json")).unwrap(),
+            before,
+            "{case}"
+        );
+    }
 }

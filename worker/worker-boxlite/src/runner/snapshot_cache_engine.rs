@@ -2,8 +2,9 @@
 use super::*;
 use std::path::PathBuf;
 
-/// Optional archive maintenance has no native or execution authority. Stop
-/// cancels future work and joins an accepted sweep, including blocking I/O.
+/// Joined maintenance reclaims optional archives and positively expired,
+/// never-managed initial roots. It never grants execution authority. Stop
+/// cancels future work and joins an accepted sweep, including native/blocking IO.
 pub(crate) struct CacheMaintenance {
     cancel: CancellationToken,
     task: Mutex<Option<tokio::task::JoinHandle<()>>>,
@@ -29,7 +30,7 @@ impl CacheMaintenance {
                 // Do not select cancellation against accepted file work: its
                 // archive locks and I/O slots must remain owned until it ends.
                 if sweep(token.clone()).await.is_err() {
-                    tracing::warn!("snapshot cache maintenance remains pending");
+                    tracing::warn!("snapshot persistence maintenance remains pending");
                 }
             }
         });
@@ -93,14 +94,20 @@ fn matches_cache(candidate: &Operation, target: &Operation, now: i64) -> bool {
 }
 
 impl NativeControlEngine {
-    pub(crate) fn start_cache_maintenance(&self) -> CacheMaintenance {
+    pub(crate) fn start_cache_maintenance(self: &Arc<Self>) -> CacheMaintenance {
         let journal = self.journal.clone();
         let transfer = self.transfer.clone();
         let budget = self.config.cache_max_bytes;
+        let engine = self.clone();
         CacheMaintenance::spawn(Duration::from_secs(30), move |cancel| {
             let journal = journal.clone();
             let transfer = transfer.clone();
-            async move { trim_cache_files_until(&journal, &transfer, budget, &cancel).await }
+            let engine = engine.clone();
+            async move {
+                let cache = trim_cache_files_until(&journal, &transfer, budget, &cancel).await;
+                let initial = engine.expire_initials(&cancel).await;
+                cache.and(initial)
+            }
         })
     }
 

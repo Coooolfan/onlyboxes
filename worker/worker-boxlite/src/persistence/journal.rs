@@ -33,6 +33,26 @@ impl JournalState {
             return Err(Error::Unavailable);
         }
         for (id, op) in &self.operations {
+            if let Some(expiry) = &op.initial_expiry {
+                let boot = self
+                    .initial_boots
+                    .get(&op.scoped_session_id)
+                    .ok_or(Error::Unavailable)?;
+                let adoption = self
+                    .adoptions
+                    .get(&op.scoped_session_id)
+                    .ok_or(Error::Unavailable)?;
+                if boot.managed
+                    || !adoption.confirmed
+                    || !boot.matches_adoption(adoption)
+                    || expiry.process != adoption.lease.process
+                    || expiry.box_id != adoption.lease.box_id
+                    || expiry.revision < adoption.lease.revision
+                    || expiry.expires_unix_ms < adoption.lease.expires_unix_ms
+                {
+                    return Err(Error::Unavailable);
+                }
+            }
             if op
                 .boot_guard
                 .as_ref()
@@ -280,6 +300,14 @@ impl Journal {
             return Err(Error::Conflict);
         }
         self.transaction(|state| {
+            if op.initial_expiry.is_some()
+                && state
+                    .current
+                    .get(&op.scoped_session_id)
+                    .is_some_and(|id| id != &op.operation_id)
+            {
+                return Err(Error::Conflict);
+            }
             if op.generation == 1
                 && matches!(op.kind, Kind::Source | Kind::Adopt)
                 && state
@@ -294,6 +322,7 @@ impl Journal {
                     || prior.scoped_session_id != op.scoped_session_id
                     || prior.generation != op.generation
                     || prior.kind != op.kind
+                    || prior.initial_expiry != op.initial_expiry
                     || prior.restore_spec != op.restore_spec
                     || prior.staging_bytes != op.staging_bytes
                     || prior.lease_ttl_sec != op.lease_ttl_sec
@@ -388,6 +417,7 @@ impl Journal {
                 kind: Kind::Cancel,
                 phase: Phase::Canceled,
                 restore_spec: None,
+                initial_expiry: None,
                 restore_spec_sha256: None,
                 archive: None,
                 artifact: String::new(),

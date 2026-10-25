@@ -6,9 +6,10 @@ use crate::persistence::{Error, HostProcess};
 use std::collections::{BTreeMap, BTreeSet};
 
 impl NativeRuntime {
-    /// Console must have revoked routing/ownership and durably advanced the
-    /// deletion generation. Caller closes all scope gates and joins owned work
-    /// before this call. Never removes journal history or shared-store objects.
+    /// Snapshot-managed deletion requires Console's durable ownership fence.
+    /// A never-managed initial root can instead carry validated local TTL
+    /// expiry authority. Caller closes scope gates and joins owned work first.
+    /// Never removes journal history or shared-store objects.
     pub async fn purge_session(&self, journal: Arc<Journal>, operation: &str) -> Result<()> {
         let (state, deletion) = cleanup_operation(&journal, operation)?;
         if deletion.kind != Kind::Delete

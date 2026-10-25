@@ -1,0 +1,47 @@
+{
+  "date_asia_shanghai": "2026-10-25",
+  "scope": "real local Console/MinIO and two native macOS arm64 BoxLite Workers; no suspend or resume for the ordinary initial-root scenario",
+  "runtime_version": "0.10.7",
+  "build_profile": "release",
+  "requested_execution_lease_seconds": 30,
+  "worker_minimum_execution_lease_seconds": 1,
+  "maintenance_period_seconds": 30,
+  "max_expiry_scopes_attempted_per_sweep": 4,
+  "expiry_candidate_order": "round-robin",
+  "payload_bytes": 1048576,
+  "payload_sha256": "2de685095677e5961f03cd7329ecf772113b67fbb2ad5fa30798906b0257687d",
+  "observed_expiry_revision": 2,
+  "observed_expiry_extension_over_first_grant_ms": 24042,
+  "ordinary_initial_root": {
+    "boot_never_managed_by_snapshot": true,
+    "initial_adoption_confirmed": true,
+    "renewal_confirmed_by_same_guardian": true,
+    "disk_retained_beyond_first_deadline": true,
+    "delete_before_first_snapshot_acknowledged": true,
+    "latest_independent_lease_revocation_persisted": true,
+    "same_guardian_boot_and_lease_identity_verified_before_claim": true,
+    "complete_kernel_writer_exit_required_before_claim": true,
+    "local_generation_two_deny_fence_and_terminal_deletion": true,
+    "independent_owner_release_confirmed": true,
+    "new_worker_connection_acknowledged_after_restart": true,
+    "same_guardian_and_expiry_receipt_after_restart": true,
+    "disk_not_recreated": true,
+    "heartbeat_active_session_count_after_restart": 0,
+    "console_persistent_session_rows": 0,
+    "full_payload_hash_permissions_and_symlink_verified_on_renewal": true
+  },
+  "managed_snapshot_target_regression": {
+    "same_native_id_and_disk_retained_after_expiry_and_worker_restart": true,
+    "same_guardian": true,
+    "execution_closed": true,
+    "ordinary_ttl_did_not_grant_local_deletion": true,
+    "explicit_console_higher_generation_delete_removed_disk_and_released_owner": true
+  },
+  "guest_qcow_disks_absent_after_both_scenarios": true,
+  "cleanup_backlog": {
+    "pending_sessions": 0,
+    "pending_workers": 0,
+    "pending_snapshots": 0
+  },
+  "limit": "Same physical host and same guardian epochs; no unknown-boot, cross-epoch or host-reboot automatic cleanup claim. Ordinary Console DELETE removes its transient route; this test observes independent execution-TTL native cleanup, outside the Console snapshot deletion queue. The 30-second maintenance period is not a hard cleanup deadline."
+}
