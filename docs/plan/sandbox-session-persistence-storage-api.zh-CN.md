@@ -1,5 +1,7 @@
 # 沙箱持久化：对象存储、性能与接口设计
 
+当前实现、证据范围、未完成验收及接手步骤统一记录在[实施状态与接手指南](sandbox-session-persistence-status.zh-CN.md)。以下设计和起始配置不能当作生产性能承诺。
+
 ## 状态与范围
 
 本文补充[持久化与跨 Worker 唤醒时序](sandbox-session-persistence-lifecycle.zh-CN.md)，定义共享存储的职责、首期部署目标以及需要新增或调整的 API、配置和内部协议。本文描述首期完整设计，不表示所有验收项均已完成。已接入的接口与配置以[统一 API](../API.zh-CN.md#75-挂起--唤醒-session)、[Console 配置](../../console/docs/config-file.md#sandbox-persistence)及 [Docker 生命周期说明](../../worker/worker-docker/docs/sandbox-snapshot-controller.md)为准。Docker 已接入独立 lease 守护器，并通过实际 Worker 进程 SIGKILL 后到期停止、保留可写层的本机测试；BoxLite 已接入生产 runner 与独立 lease，真实 Console/S3 的本机跨 Worker 恢复、循环快照、无 Worker 后恢复与最终回收已通过；原生孤儿资源的安全协调和跨物理机器验收仍需完成。共享存储中未登记的已完成对象已有受宽限期与数据库准入隔离保护的扫描和清理，范围见 [Console 孤儿对象说明](../../console/docs/config-file.md#unregistered-storage-objects)。

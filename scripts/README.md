@@ -244,6 +244,18 @@ python3 scripts/tests/snapshot_stage_metrics.py --scenario cross-worker --payloa
 
 小文件内容和元数据测试可运行 `python3 -m unittest scripts.tests.snapshot_payload_test`；它使用自己的临时目录并替代本机全局 `sync`，真正的 guest `sync` 由实际 VM 验收覆盖。
 
+### BoxLite 尚未启动的创建恢复
+
+`--abandoned-initial-target` 只适用于带标签的 BoxLite `cross-worker` 场景。先在 `worker/worker-boxlite` 构建 `cargo build --locked --release --example boxlite_initial_creation_recovery_smoke --bin boxlite-lease-guard`；隔离服务需使用 release Worker，配置与启动见本节开头。阶段夹具使用 `--run-label`，直接调用生命周期脚本则使用 `--evidence-label`。
+
+```bash
+python3 scripts/tests/snapshot_stage_metrics.py --scenario cross-worker --payload-mib 1 --run-label creation-recovery --seed-worker worker-boxlite-peer --abandoned-initial-target
+```
+
+源快照共享提交并清理源实例后，夹具通过 `dev.sh` 停止目标 Worker、保留原独立守护器；私有规格驱动原生 SDK 前缀子进程写入创建意图、固定 Configured 实例并准备 shim，尚未登记 boot 时 SIGKILL 自己持有的子进程并等待退出回执。随后由真实生产 Worker 启动自动清理，核对原目录消失、不可变意图及守护器身份保留、无 boot/lease/retirement 历史、容量为零，再从共享快照恢复较高 generation 的独立实例。业务校验、永久删除、清理归零和再次重启后，还须确认原创建回执不变且没有重建磁盘。
+
+此注入模拟目标上同 scope 的一次失败初始创建，不是在真实 Worker 初始创建方法的随机指令处杀进程，也不启动注入实例的 VM。`node-prefix` 是夹具内部模式，不能用它改写已有失败意图。私有 spec/ready/log 保留在当前独立状态目录，已有对应结果或前缀证据时拒绝复用；失败保留源快照和现场。独立原生 14 用例可通过 `cargo run --locked --example boxlite_initial_creation_recovery_smoke` 执行，覆盖正向清理/重放及有磁盘、选项不符、启动历史、换 epoch、迟到记录和混入未知资源的拒绝。
+
 ## 本地公开预览
 
 `public-preview` 是 `console / worker-docker / nginx` 的组合服务：

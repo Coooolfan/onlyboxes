@@ -1,5 +1,7 @@
 # 沙箱会话持久化与跨 Worker 唤醒流程
 
+当前实现、已验证范围、剩余工作及接手步骤见[实施状态与接手指南](sandbox-session-persistence-status.zh-CN.md)；本文中的跨机器流程是目标契约，不代表跨物理宿主验收已完成。
+
 ## 范围
 
 本文定义第一阶段的目标流程：一个正在 Worker A 上运行的沙箱会话，生成文件系统快照并停止运行，随后在另一台机器的 Worker B 上启动。A 与 B 使用相同 runtime，OS/CPU 架构、归档格式及版本满足恢复兼容条件。本文为首期完整设计；当前实现与剩余验收边界见 [Console 配置](../../console/docs/config-file.md#sandbox-persistence)及 [Docker 生命周期说明](../../worker/worker-docker/docs/sandbox-snapshot-controller.md)，不能据此认定跨机器验收已完成。

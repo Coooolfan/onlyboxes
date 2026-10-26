@@ -45,6 +45,7 @@ impl RuntimeHomeGuard {
                     || !journal.probes.is_empty()
                     || !journal.initial_boots.is_empty()
                     || !journal.adoptions.is_empty()
+                    || !journal.initial_creations.is_empty()
                 {
                     return Err(Error::Unavailable);
                 }
@@ -73,6 +74,49 @@ impl RuntimeHomeGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn creation_intent_alone_forbids_recreating_a_missing_store_binding() {
+        let root =
+            std::env::temp_dir().join(format!("onlyboxes-creation-store-{}", uuid::Uuid::new_v4()));
+        private_directory(&root).unwrap();
+        let state = root.join("leases");
+        let ledger = ExecutionLeaseLedger::open(&state, "worker-a").unwrap();
+        let owner =
+            RuntimeHomeGuard::open(root.join("home"), root.join("journal"), "worker-a").unwrap();
+        owner
+            .bind_execution_store(&state, ledger.store_id())
+            .unwrap();
+        let process = HostProcess::current().unwrap();
+        owner
+            .journal()
+            .begin_initial_creation(crate::persistence::InitialCreation {
+                operation_id: "initial-create".into(),
+                scoped_session_id: "obx:owner:session".into(),
+                guard: crate::persistence::LeaseGuardIdentity {
+                    worker_id: "worker-a".into(),
+                    store_id: ledger.store_id().into(),
+                    epoch_id: uuid::Uuid::new_v4().to_string(),
+                    process: process.clone(),
+                },
+                origin: process,
+                expires_unix_ms: 10000,
+                options_sha256: "a".repeat(64),
+                box_id: String::new(),
+                abandoned: false,
+                cleanup_complete: false,
+            })
+            .unwrap();
+        let before = fs::read(root.join("journal/journal.json")).unwrap();
+        fs::remove_file(root.join("journal").join(STORE)).unwrap();
+        assert!(owner
+            .bind_execution_store(&state, ledger.store_id())
+            .is_err());
+        assert!(!root.join("journal").join(STORE).exists());
+        assert_eq!(fs::read(root.join("journal/journal.json")).unwrap(), before);
+        drop(owner);
+        drop(ledger);
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn live_external_store_is_read_only_and_home_pairing_cannot_change_or_reset() {
         let root =

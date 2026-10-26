@@ -716,6 +716,32 @@ impl TerminalSessionManager {
         }
         let mut fences = HashMap::new();
         let mut names = HashSet::new();
+        for intent in snapshot
+            .initial_creations
+            .values()
+            .filter(|intent| intent.abandoned)
+        {
+            if !intent.cleanup_complete {
+                state.fail();
+                return Err(unavailable());
+            }
+            // Deny bare initial creation without inventing a Console delete.
+            // An explicit newer-generation snapshot restore may replace it.
+            names.insert(terminal_session_resource_name(&intent.scoped_session_id));
+            fences.insert(
+                intent.scoped_session_id.clone(),
+                Fence {
+                    operation: intent.operation_id.clone(),
+                    generation: 1,
+                    box_id: intent.box_id.clone(),
+                    active: false,
+                    held: false,
+                    capacity: false,
+                    terminal: true,
+                    permanent: false,
+                },
+            );
+        }
         for (scope, id) in &snapshot.current {
             let op = &snapshot.operations[id];
             names.insert(terminal_session_resource_name(scope));

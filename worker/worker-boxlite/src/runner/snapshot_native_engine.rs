@@ -76,6 +76,10 @@ impl NativeControlEngine {
         }
         let transfer = Transfer::new(config.transfer_concurrency, config.transfer_idle)
             .map_err(transfer_error)?;
+        native
+            .cleanup_abandoned_initial_creations(&journal)
+            .await
+            .map_err(native_error)?;
         manager
             .install_execution_guard(native.execution_guard().cloned())
             .await

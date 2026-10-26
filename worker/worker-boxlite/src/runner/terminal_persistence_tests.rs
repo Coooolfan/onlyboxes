@@ -336,6 +336,95 @@ fn hint(operation: &str, generation: i64) -> SandboxPersistenceRecoveryCandidate
 }
 
 #[tokio::test]
+async fn completed_creation_cleanup_denies_bare_recreation_but_allows_newer_snapshot_restore() {
+    use worker_boxlite::persistence::{HostProcess, InitialCreation, LeaseGuardIdentity};
+    let mut f = Fixture::new(1).await;
+    let mut saved = f.journal.snapshot().unwrap();
+    let process = HostProcess::current().unwrap();
+    saved.initial_creations.insert(
+        SCOPE.into(),
+        InitialCreation {
+            operation_id: "abandoned-create".into(),
+            scoped_session_id: SCOPE.into(),
+            guard: LeaseGuardIdentity {
+                worker_id: "worker-a".into(),
+                store_id: Uuid::new_v4().to_string(),
+                epoch_id: Uuid::new_v4().to_string(),
+                process: process.clone(),
+            },
+            origin: process,
+            expires_unix_ms: 10000,
+            options_sha256: "a".repeat(64),
+            box_id: "never-started".into(),
+            abandoned: true,
+            cleanup_complete: true,
+        },
+    );
+    f.journal.close().unwrap();
+    std::fs::write(
+        f.root.join("journal/journal.json"),
+        serde_json::to_vec(&saved).unwrap(),
+    )
+    .unwrap();
+    f.journal = Arc::new(Journal::open(f.root.join("journal"), "worker-a").unwrap());
+    f.backend = Arc::new(Backend {
+        journal: Some(f.journal.clone()),
+        ..Default::default()
+    });
+    f.manager = manager(f.backend.clone(), 2);
+    f.manager
+        .install_snapshot_journal(f.journal.clone())
+        .await
+        .unwrap();
+    connect(&f.manager, CONNECTION, &[]).await;
+    for generation in [0, 1, 2] {
+        assert!(f
+            .manager
+            .execute(request("must-not-create", generation))
+            .await
+            .is_err());
+    }
+    assert!(f
+        .manager
+        .claim_proxy(SCOPE, 8080, 0, SystemTime::now())
+        .await
+        .is_err());
+    let recovery = f
+        .manager
+        .recover_sessions(&[TerminalSessionRecoveryCandidate {
+            session_id: SCOPE.into(),
+            lease_expires_unix_ms: future(30),
+            generation: 0,
+        }])
+        .await;
+    assert_eq!(
+        recovery[0].status,
+        terminal_session_recovery_result::Status::Invalid as i32
+    );
+    assert_eq!(f.backend.created.load(Ordering::SeqCst), 0);
+    assert!(f.backend.pinned.lock().await.is_empty());
+    assert_eq!(f.manager.active_session_count().await, 0);
+    let mut fresh = request("new-scope", 0);
+    fresh.session_id = "obx:owner:fresh".into();
+    f.manager.execute(fresh).await.unwrap();
+    assert_eq!(f.backend.created.load(Ordering::SeqCst), 1);
+    assert_eq!(f.manager.active_session_count().await, 1);
+    f.active().await;
+    f.manager
+        .execute(request("restored-data", 2))
+        .await
+        .unwrap();
+    assert!(f
+        .manager
+        .execute(request("stale-initial", 0))
+        .await
+        .is_err());
+    assert_eq!(f.backend.created.load(Ordering::SeqCst), 1);
+    assert_eq!(f.manager.active_session_count().await, 2);
+    f.manager.close().await;
+}
+
+#[tokio::test]
 async fn source_hold_closes_all_admission_and_drains_accepted_work_and_proxies() {
     let f = Fixture::new(1).await;
     f.manager.execute(request("seed", 0)).await.unwrap();

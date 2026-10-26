@@ -22,6 +22,7 @@ pub(in crate::persistence) fn reconcile_home(home: &Path, journal: &Journal) -> 
 }
 
 pub(super) fn authorize_residue(home: &Path, state: &JournalState, id: &str) -> Result<()> {
+    if super::creation_recovery::authorize_residue(home,state,id)? { return Ok(()); }
     let mut owner = None;
     for current in state.current.values().map(|op| &state.operations[op]) {
         if !current.cleanup_box_ids.contains(id) {

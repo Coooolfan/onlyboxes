@@ -161,6 +161,8 @@ fn startup_census_checks_the_original_creation_options_digest() {
         expires_unix_ms: 10000,
         options_sha256: InitialCreation::options_digest(&f.config.options).unwrap(),
         box_id: id.clone(),
+        abandoned: false,
+        cleanup_complete: false,
     };
     journal
         .initial_creations

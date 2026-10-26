@@ -115,8 +115,15 @@ pub(crate) async fn initialize(
     }
     let client = LeaseGuardClient::bind(socket, identity);
     let owner = Arc::new(
-        RuntimeHomeGuard::open(&paths[0], &paths[1], &cfg.worker_id)
-            .map_err(|_| startup_unavailable("home_ownership"))?,
+        RuntimeHomeGuard::open_with_execution_guard(
+            &paths[0],
+            &paths[1],
+            &cfg.worker_id,
+            &paths[2],
+            &client,
+        )
+        .await
+        .map_err(|_| startup_unavailable("home_ownership"))?,
     );
     owner
         .bind_execution_store(&paths[2], &cfg.persistence.lease_store_id)

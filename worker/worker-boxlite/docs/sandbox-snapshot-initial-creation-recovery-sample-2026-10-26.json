@@ -1,0 +1,87 @@
+{
+  "date": "2026-10-26",
+  "runtime": "boxlite",
+  "sdk_version": "0.10.7",
+  "environment": {
+    "host": "macOS arm64",
+    "guest": "linux/arm64",
+    "workers": 2,
+    "physical_hosts": 1,
+    "build_profile": "release",
+    "console": "real local service",
+    "object_store": "local MinIO",
+    "archive_cache_enabled": false,
+    "target_sdk_image_cache": "warm"
+  },
+  "native_fixture": {
+    "example": "boxlite_initial_creation_recovery_smoke",
+    "passed": 14,
+    "positive_cases": [
+      "intent-only",
+      "unselected ID",
+      "selected ID",
+      "prepared shim",
+      "partial shim copy",
+      "paired shim hardlink installation",
+      "DB-first cleanup residue replay"
+    ],
+    "refusal_cases": [
+      "guest disk present",
+      "options digest mismatch",
+      "external boot history",
+      "guard epoch changed",
+      "late row after empty abandonment",
+      "original row after cleanup completion",
+      "mixed unknown SDK record"
+    ],
+    "issuer_exit": "owned child SIGKILL with wait receipt",
+    "negative_assertions": [
+      "SDK runtime not initialized",
+      "main database/WAL and journal unchanged",
+      "sentinel bytes preserved"
+    ]
+  },
+  "service_acceptance": {
+    "scenario": "cross-worker with --abandoned-initial-target",
+    "payload_bytes": 1048576,
+    "payload_sha256": "b7926f0c2dfaee9eecf13227c7cfecf42e0c0d898270c3752a63728b76d9d7fc",
+    "archive_bytes": 40092508,
+    "suspend_seconds": 5.071896417000001,
+    "resume_seconds": 3.026610082999998,
+    "prefix_issuer_sigkill_confirmed": true,
+    "same_guard": true,
+    "unbooted_original_directory_removed": true,
+    "no_execution_ownership_for_failed_create": true,
+    "stable_session_and_full_payload_permissions_symlink_verified": true,
+    "higher_generation_restore": true,
+    "independent_restore_instance": true,
+    "source_and_target_disks_removed": true,
+    "cleanup_pending": {
+      "pending_sessions": 0,
+      "pending_workers": 0,
+      "pending_snapshots": 0
+    },
+    "post_delete_restart": {
+      "restored_session_deleted": true,
+      "retained_creation_receipt": true,
+      "no_recreation": true,
+      "active_session_count": 0
+    },
+    "stage_metrics_verified": true
+  },
+  "limits": [
+    "Service injection kills an owned native SDK prefix actor before initial_boot; it does not kill the full Worker at arbitrary create instructions.",
+    "DB-first directory residue is reconstructed by the native fixture.",
+    "The two Workers run on one physical host; cross-physical-host and Linux host BoxLite VM acceptance remain open.",
+    "Initial boot already persisted, guard epoch changes, host reboot and unregistered guest data are outside automatic cleanup authorization.",
+    "One 1 MiB correctness run and one SDK-warm condition are not a performance matrix or SLO."
+  ],
+  "reproduction": {
+    "native": [
+      "cargo build --locked --bin boxlite-lease-guard",
+      "cargo run --locked --example boxlite_initial_creation_recovery_smoke"
+    ],
+    "service_prerequisites": "An isolated dev.sh sandbox-persistence group with release Workers, the release recovery example, no archive cache and a warm target SDK image cache. Set the matching dev session/state/env before invoking the harness.",
+    "service_command": "python3 scripts/tests/snapshot_stage_metrics.py --scenario cross-worker --payload-mib 1 --run-label creation-recovery --target-image-cache warm --seed-worker worker-boxlite-peer --abandoned-initial-target"
+  }
+}

@@ -559,5 +559,9 @@ pub(super) use recovery::reconcile_home;
 #[path = "native_initial_boot.rs"]
 mod initial_boot;
 
+#[path = "native_creation_recovery.rs"]
+mod creation_recovery;
+pub(super) use creation_recovery::abandon_creations;
+
 #[path = "native_emergency_stop.rs"]
 mod emergency_stop;

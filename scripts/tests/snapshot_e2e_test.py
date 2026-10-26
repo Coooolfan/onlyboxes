@@ -1,5 +1,6 @@
 import importlib.util
 import os
+import io
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -11,6 +12,20 @@ SPEC.loader.exec_module(acceptance)
 
 
 class LargeFixtureAdmissionTests(unittest.TestCase):
+    def test_abandoned_initial_target_requires_labelled_boxlite_cross_worker_before_auth(self):
+        for argv in (["--abandoned-initial-target"], ["--abandoned-initial-target","--evidence-label","probe","--scenario","same-worker"], ["--abandoned-initial-target","--evidence-label","probe","--scenario","cross-worker","--runtime","docker"]):
+            with patch("sys.argv",["snapshot_e2e.py",*argv]), patch("sys.stderr",new=io.StringIO()), patch.object(acceptance.dev,"console_auth") as auth:
+                with self.assertRaises(SystemExit) as raised:
+                    acceptance.main()
+                self.assertEqual(raised.exception.code,2)
+                auth.assert_not_called()
+
+    def test_abandoned_initial_target_requires_release_helper_before_auth(self):
+        with patch.dict(os.environ,{},clear=True), patch("sys.argv",["snapshot_e2e.py","--scenario","cross-worker","--evidence-label","probe","--abandoned-initial-target"]), patch.object(acceptance.dev,"env_file",return_value={}), patch.object(acceptance.dev,"console_auth") as auth:
+            with self.assertRaisesRegex(RuntimeError,"release initial-creation recovery example"):
+                acceptance.main()
+            auth.assert_not_called()
+
     def test_small_file_bytes_are_included_before_host_admission(self):
         config = {"CONSOLE_SNAPSHOT_MAX_BYTES":str(3<<30),"CONSOLE_SNAPSHOT_MAX_EXPANDED_BYTES":str(6<<30)}
         required = 8*((1<<20)+65536*1024)+2*(6<<30)+(4<<30)

@@ -72,8 +72,50 @@ impl RuntimeHomeGuard {
         journal_root: impl AsRef<Path>,
         worker: &str,
     ) -> Result<Self> {
-        let home = home.as_ref();
-        let journal_root = journal_root.as_ref();
+        Self::open_inner(home.as_ref(), journal_root.as_ref(), worker, false)
+    }
+
+    /// Startup recovery remains before SDK initialization and never starts a
+    /// pending create. Only the bound live guard and exited issuer can seal
+    /// an unbooted intent for subsequent configuration-only SDK cleanup.
+    pub async fn open_with_execution_guard(
+        home: impl AsRef<Path>,
+        journal_root: impl AsRef<Path>,
+        worker: &str,
+        lease_state: &Path,
+        client: &super::LeaseGuardClient,
+    ) -> Result<Self> {
+        if client.identity().worker_id != worker {
+            return Err(Error::Unavailable);
+        }
+        let owner = Self::open_inner(home.as_ref(), journal_root.as_ref(), worker, true)?;
+        client.status("initial-creation-store-check").await?;
+        owner.bind_execution_store(lease_state, &client.identity().store_id)?;
+        super::native::abandon_creations(&owner.owner.home.path, &owner.journal, client)
+            .await
+            .map_err(|_| {
+                tracing::error!(
+                    stage = "initial_creation_recovery",
+                    "BoxLite persistence recovery check failed"
+                );
+                Error::Unavailable
+            })?;
+        super::native::reconcile_home(&owner.owner.home.path, &owner.journal).map_err(|_| {
+            tracing::error!(
+                stage = "native_reconciliation",
+                "BoxLite persistence home check failed"
+            );
+            Error::Unavailable
+        })?;
+        Ok(owner)
+    }
+
+    fn open_inner(
+        home: &Path,
+        journal_root: &Path,
+        worker: &str,
+        defer_census: bool,
+    ) -> Result<Self> {
         if !home.is_absolute()
             || !journal_root.is_absolute()
             || worker.is_empty()
@@ -132,13 +174,15 @@ impl RuntimeHomeGuard {
                 );
                 error
             })?);
-            super::native::reconcile_home(&home.path, &journal).map_err(|_| {
-                tracing::error!(
-                    stage = "native_reconciliation",
-                    "BoxLite persistence home check failed"
-                );
-                Error::Unavailable
-            })?;
+            if !defer_census {
+                super::native::reconcile_home(&home.path, &journal).map_err(|_| {
+                    tracing::error!(
+                        stage = "native_reconciliation",
+                        "BoxLite persistence home check failed"
+                    );
+                    Error::Unavailable
+                })?;
+            }
             (owner, journal)
         } else {
             // There is no adoption-by-empty-journal path. A new pair starts

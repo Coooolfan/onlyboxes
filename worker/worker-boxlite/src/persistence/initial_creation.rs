@@ -14,6 +14,10 @@ pub struct InitialCreation {
     pub options_sha256: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub box_id: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub abandoned: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub cleanup_complete: bool,
 }
 
 impl InitialCreation {
@@ -44,6 +48,9 @@ impl InitialCreation {
             || self.guard.process.host_id != self.origin.host_id
             || self.guard.process.boot_id != self.origin.boot_id
             || self.guard.process.process_namespace != self.origin.process_namespace
+            || self.origin.writer_cgroup.is_some()
+            || self.origin.signal_version.is_some()
+            || (self.cleanup_complete && !self.abandoned)
         {
             return Err(Error::Conflict);
         }
@@ -51,7 +58,8 @@ impl InitialCreation {
     }
 
     pub(super) fn matches_boot(&self, boot: &InitialBoot) -> bool {
-        !self.box_id.is_empty()
+        !self.abandoned
+            && !self.box_id.is_empty()
             && self.operation_id == boot.authorization.operation_id
             && self.scoped_session_id == boot.authorization.scoped_session_id
             && self.guard == boot.guard
@@ -64,7 +72,7 @@ impl InitialCreation {
 impl Journal {
     pub fn begin_initial_creation(&self, intent: InitialCreation) -> Result<(), Error> {
         intent.validate()?;
-        if !intent.box_id.is_empty() {
+        if !intent.box_id.is_empty() || intent.abandoned || intent.cleanup_complete {
             return Err(Error::Conflict);
         }
         self.transaction(|state| {
@@ -95,7 +103,7 @@ impl Journal {
         box_id: &str,
     ) -> Result<(), Error> {
         expected.validate()?;
-        if !expected.box_id.is_empty() || !super::types::valid_id(box_id) {
+        if !expected.box_id.is_empty() || expected.abandoned || !super::types::valid_id(box_id) {
             return Err(Error::Conflict);
         }
         self.transaction(|state| {
@@ -115,6 +123,63 @@ impl Journal {
                 return Err(Error::Conflict);
             }
             state.initial_creations.insert(scope.clone(), selected);
+            Ok(())
+        })
+    }
+
+    pub(crate) fn abandon_initial_creations(
+        &self,
+        expected: &std::collections::BTreeMap<String, InitialCreation>,
+        bindings: &std::collections::BTreeMap<String, String>,
+    ) -> Result<(), Error> {
+        self.transaction(|state| {
+            for (scope, original) in expected {
+                if state.initial_creations.get(scope) != Some(original)
+                    || state.initial_boots.contains_key(scope)
+                    || state.current.contains_key(scope)
+                    || state.probes.contains_key(scope)
+                    || state.adoptions.contains_key(scope)
+                    || original.cleanup_complete
+                {
+                    return Err(Error::Conflict);
+                }
+                let mut abandoned = original.clone();
+                if let Some(id) = bindings.get(scope) {
+                    if (original.abandoned && original.box_id.is_empty())
+                        || !super::types::valid_id(id)
+                        || (!abandoned.box_id.is_empty() && abandoned.box_id != *id)
+                    {
+                        return Err(Error::Conflict);
+                    }
+                    abandoned.box_id = id.clone();
+                }
+                abandoned.abandoned = true;
+                state.initial_creations.insert(scope.clone(), abandoned);
+            }
+            if bindings.keys().any(|scope| !expected.contains_key(scope)) {
+                return Err(Error::Conflict);
+            }
+            Ok(())
+        })
+    }
+
+    pub(crate) fn complete_initial_creation_cleanup(
+        &self,
+        expected: &InitialCreation,
+    ) -> Result<(), Error> {
+        if !expected.abandoned || expected.cleanup_complete {
+            return Err(Error::Conflict);
+        }
+        self.transaction(|state| {
+            let scope = &expected.scoped_session_id;
+            if state.initial_creations.get(scope) != Some(expected) {
+                return Err(Error::Conflict);
+            }
+            state
+                .initial_creations
+                .get_mut(scope)
+                .ok_or(Error::Conflict)?
+                .cleanup_complete = true;
             Ok(())
         })
     }

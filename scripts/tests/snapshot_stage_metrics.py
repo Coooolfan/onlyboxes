@@ -237,6 +237,7 @@ def main():
     parser.add_argument("--run-label", default="", help="keep distinct results while reusing the same Worker homes")
     parser.add_argument("--target-image-cache", choices=("any", "cold", "warm"), default="any")
     parser.add_argument("--seed-worker", choices=("worker-boxlite", "worker-boxlite-peer"))
+    parser.add_argument("--abandoned-initial-target", action="store_true")
     args = parser.parse_args()
     if not 1 <= args.payload_mib <= 10240 or not 1 <= args.operation_wait_sec <= 86400:
         parser.error("payload requires 1..10240 MiB; operation wait requires 1..86400 seconds")
@@ -248,6 +249,8 @@ def main():
         parser.error("SDK image-cache conditions require cross-worker measurement")
     if args.seed_worker and args.scenario != "cross-worker":
         parser.error("source pinning requires cross-worker measurement")
+    if args.abandoned_initial_target and (args.scenario != "cross-worker" or not args.run_label):
+        parser.error("abandoned-initial target acceptance requires labelled cross-worker measurement")
     os.environ.update(dev.env_file(Path(os.environ["ONLYBOXES_DEV_ENV"])))
     if (os.environ.get("ONLYBOXES_DEV_BOXLITE_PROFILE") != "release"
             or os.environ.get("WORKER_LOG_FORMAT", "json") != "json"
@@ -283,6 +286,8 @@ def main():
         command += ["--evidence-label", args.run_label]
     if args.seed_worker:
         command += ["--seed-worker", args.seed_worker]
+    if args.abandoned_initial_target:
+        command += ["--abandoned-initial-target"]
     try:
         with os.fdopen(fd, "w") as stream:
             monitor.start()

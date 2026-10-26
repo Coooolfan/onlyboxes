@@ -8,6 +8,7 @@ import hashlib
 import sqlite3
 import select
 import socket
+import signal
 import json
 import os
 import re
@@ -53,12 +54,15 @@ def main():
     parser.add_argument("--evidence-label", default="", help="cross/same-worker only: retain separate evidence for repeated runs in the same homes")
     parser.add_argument("--target-image-cache", choices=("any", "cold", "warm"), default="any", help="BoxLite cross-worker only: verify SDK image-cache condition before restore")
     parser.add_argument("--seed-worker", choices=("worker-boxlite", "worker-boxlite-peer"), help="BoxLite cross-worker only: hold the peer offline while seeding to keep source/target roles fixed")
+    parser.add_argument("--abandoned-initial-target", action="store_true", help="labelled BoxLite cross-worker: inject an unbooted configured create on the target and verify production startup cleanup before restore")
     args = parser.parse_args()
     if not 1 <= args.operation_wait_sec <= 86400 or not 1 <= args.lease_ttl_sec <= 86400:
         parser.error("operation wait and lease TTL require 1..86400 seconds")
     if not 1 <= args.command_timeout_sec <= 600:
         parser.error("command timeout requires 1..600 seconds")
     scenario = args.scenario
+    if args.abandoned_initial_target and (args.runtime != "boxlite" or scenario != "cross-worker" or not args.evidence_label):
+        parser.error("abandoned-initial target acceptance requires labelled BoxLite cross-worker acceptance")
     if args.evidence_label and (not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,31}", args.evidence_label) or scenario not in ("cross-worker", "same-worker") or args.retry_quota_session):
         parser.error("evidence labels require cross/same-worker acceptance without quota retry")
     if args.target_image_cache != "any" and (args.runtime != "boxlite" or scenario != "cross-worker"):
@@ -82,6 +86,10 @@ def main():
         parser.error("quota-session retry requires --scenario cross-worker")
     config = Path(os.environ.get("ONLYBOXES_DEV_ENV", dev.ROOT / "scripts/dev.env"))
     os.environ.update(dev.env_file(config))
+    if args.abandoned_initial_target:
+        prefix_binary = dev.ROOT / "worker/worker-boxlite/target/release/examples/boxlite_initial_creation_recovery_smoke"
+        if os.environ.get("ONLYBOXES_DEV_BOXLITE_PROFILE") != "release" or not prefix_binary.is_file() or not os.access(prefix_binary, os.X_OK):
+            raise RuntimeError("build the release initial-creation recovery example before acceptance")
     if args.target_image_cache != "any" and (os.environ.get("WORKER_LOG_FORMAT", "json") != "json" or os.environ.get("WORKER_LOG_LEVEL", "info") not in ("info", "debug", "trace")):
         raise RuntimeError("SDK image-cache acceptance requires JSON info logs")
     if args.evidence_label and (dev.STATE / ("snapshot-e2e-" + ("docker-" if args.runtime == "docker" else "") + scenario + "-" + args.evidence_label + "-result.json")).exists():
@@ -299,6 +307,71 @@ def main():
         if reply.get("reply", {}).get("type") != "ready":
             raise RuntimeError("independent guard is unavailable")
         return reply["identity"]
+    def online_without_sessions(node):
+        deadline = time.monotonic() + 90
+        while time.monotonic() < deadline:
+            workers = require(*api("GET", "/api/v1/workers?status=all"))["items"]
+            usage = require(*api("GET", "/api/v1/workers/inflight"))["workers"]
+            if any(w["node_id"] == node and w["status"] == "online" for w in workers) and any(w["node_id"] == node and w.get("active_session_count") == 0 for w in usage):
+                return
+            time.sleep(.2)
+        raise RuntimeError("recovered target did not acknowledge zero session capacity usage")
+    def check_abandoned_initial(node, original, guardian, after_delete=False):
+        scope = "obx:" + account + ":" + sid
+        root = dev.STATE / nodes[node] / hashlib.sha256(node.encode()).hexdigest()[:32]
+        state = json.loads((root / "journal/journal.json").read_text())
+        current = state["initial_creations"].get(scope)
+        if not current or not current.get("abandoned") or not current.get("cleanup_complete") or {k:v for k,v in current.items() if k not in ("abandoned", "cleanup_complete")} != {k:v for k,v in original.items() if k not in ("abandoned", "cleanup_complete")}:
+            raise RuntimeError("creation recovery changed its immutable identity or lacks cleanup completion")
+        if scope in state["initial_boots"] or scope in state["probes"] or (root / "sdk-home/boxes" / original["box_id"]).exists() or lease_identity(node) != guardian:
+            raise RuntimeError("creation recovery booted, recreated or retained the unstarted root")
+        for action, kind in (("status", "status"), ("boot_status", "boot_status"), ("retirement_status", "retirement_status")):
+            reply = guard_exchange(node, {"action":action, "box_id":original["box_id"]}, guardian)
+            if reply.get("identity") != guardian or reply.get("reply", {}).get("type") != kind or reply["reply"].get("value") is not None:
+                raise RuntimeError("unstarted cleanup borrowed or fabricated execution ownership")
+        selected = state["operations"].get(state["current"].get(scope))
+        if after_delete:
+            if not selected or selected["kind"] != "delete" or selected["phase"] != "deleted" or selected["generation"] <= 2:
+                raise RuntimeError("newer restored session lacks completed higher-generation deletion")
+        elif selected is not None:
+            raise RuntimeError("local unstarted cleanup invented a Console lifecycle operation")
+    def inject_abandoned_initial(node):
+        scope = "obx:" + account + ":" + sid
+        values = dev.env_file(dev.STATE / (nodes[node] + ".env"))
+        root, control = dev.node_paths(nodes[node], values)
+        guardian = lease_identity(node)
+        prefix = dev.STATE / ("snapshot-e2e-" + result_name + "-initial-prefix")
+        specification, ready, log = (prefix.with_suffix(suffix) for suffix in (".json", ".ready", ".log"))
+        if any(path.exists() or path.is_symlink() for path in (specification, ready, log)):
+            raise RuntimeError("initial-prefix evidence exists; preserve it")
+        online_without_sessions(node)
+        services("stop", nodes[node]); offline(node)
+        dev.atomic_private(specification, json.dumps({"worker_id":node, "scoped_session_id":scope, "home":str(root/"sdk-home"), "journal":str(root/"journal"), "lease_state":str(root/"leases"), "socket":str(control/"control.sock"), "guard":guardian, "ready":str(ready)}) + "\n")
+        fd = os.open(log, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as output:
+            actor = subprocess.Popen([str(prefix_binary), "node-prefix", str(specification)], stdout=output, stderr=output)
+            try:
+                deadline = time.monotonic() + 60
+                while not ready.exists():
+                    if actor.poll() is not None or time.monotonic() >= deadline:
+                        raise RuntimeError("native initial prefix did not reach its pre-boot boundary; preserve source snapshot and private logs")
+                    time.sleep(.02)
+                actor.kill()
+                if actor.wait(timeout=15) != -signal.SIGKILL:
+                    raise RuntimeError("native initial prefix lacks an owned SIGKILL exit receipt")
+            finally:
+                if actor.poll() is None:
+                    actor.kill(); actor.wait(timeout=15)
+        native_id = json.loads(dev.read_private(ready))["id"]
+        state = json.loads((root / "journal/journal.json").read_text())
+        original = state["initial_creations"][scope]
+        if not re.fullmatch(r"[A-Za-z0-9]{12}", native_id) or original["box_id"] != native_id or original.get("abandoned") or scope in state["initial_boots"] or not (root/"sdk-home/boxes"/native_id/"bin/boxlite-shim").is_file():
+            raise RuntimeError("native prefix did not preserve the selected/prepared unbooted window")
+        record("abandoned-initial-target-created", worker_id=node, native_id=native_id, issuer_sigkill_confirmed=True, selected_and_prepared=True, no_boot=True)
+        services("start", nodes[node]); online_without_sessions(node)
+        check_abandoned_initial(node, original, guardian)
+        record("abandoned-initial-target-reclaimed", worker_id=node, same_guard=True, original_native_directory_removed=True, no_execution_ownership=True, active_session_count=0)
+        return node, original, guardian
     def finish_failed_start(operation, operation_id):
         if not (operation.get("error") or {}).get("retryable"):
             raise RuntimeError("unknown-start failure was not reported as retryable")
@@ -782,6 +855,7 @@ print(json.dumps({'snapshot_id':archive['snapshot_id'],'sha256':digest.hexdigest
     if scenario == "cross-worker":
         services("stop", nodes[source])
         offline(source)
+        abandoned_target = inject_abandoned_initial(next(node for node in nodes if node != source)) if args.abandoned_initial_target else None
         image_probe = None
         if args.target_image_cache != "any":
             probe_spec = importlib.util.spec_from_file_location("image_cache_probe", Path(__file__).with_name("snapshot_image_cache.py"))
@@ -801,8 +875,14 @@ print(json.dumps({'snapshot_id':archive['snapshot_id'],'sha256':digest.hexdigest
             target_log = dev.STATE / (nodes[target]+".log")
             log_info = target_log.stat(); log_offset = log_info.st_size
             record("target-image-cache-before", requested=args.target_image_cache, **before)
-        lifecycle("resume")
+        restored = lifecycle("resume")
         verify("cross-worker", next(node for node in nodes if node != source))
+        if abandoned_target:
+            node, original, guardian = abandoned_target
+            selected_node, selected = native_operation(restored["operation_id"])
+            if selected_node != node or not selected or selected["generation"] <= 1 or selected["box_id"] == original["box_id"]:
+                raise RuntimeError("restore did not use a newer independent target after initial cleanup")
+            record("restore-after-abandoned-initial", newer_generation=True, independent_native_instance=True)
         if image_probe is not None:
             after = image_probe.cache_snapshot(target_home, image)
             now = target_log.stat()
@@ -816,6 +896,12 @@ print(json.dumps({'snapshot_id':archive['snapshot_id'],'sha256':digest.hexdigest
         require(*api("DELETE", base + query), expected=204)
         record("deleted", status=204)
         wait_cleanup()
+        if abandoned_target:
+            node, original, guardian = abandoned_target
+            services("stop", nodes[node]); offline(node)
+            services("start", nodes[node]); online_without_sessions(node)
+            check_abandoned_initial(node, original, guardian, after_delete=True)
+            record("abandoned-initial-target-restart-verified", restored_session_deleted=True, retained_creation_receipt=True, no_recreation=True, active_session_count=0)
         return
     if scenario in ("same-worker", "console-restart", "worker-restart", "worker-start-restart", "cache-corrupt", "cache-miss", "cache-copy-eviction", "worker-graceful-restart", "worker-expired-restart"):
         stopped_peer = None

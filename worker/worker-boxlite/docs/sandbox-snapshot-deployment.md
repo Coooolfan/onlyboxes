@@ -1,5 +1,7 @@
 # BoxLite 文件系统持久化部署
 
+本分支已实现能力、未完成故障协调及部署验收条件见[实施状态与接手指南](../../../docs/plan/sandbox-session-persistence-status.zh-CN.md)。本机双 Worker 的成功结果不能替代跨物理宿主验收。
+
 Worker 通过 `persistence.enabled` 显式开启文件系统快照。在取得专用 SDK home、journal 和独立租约守护器的绑定后，才连接 Console 并声明 `boxlite / 0.10.7 / boxlite-archive-v1`、guest platform、管理动作并发和可用暂存字节数。心跳持续报告管理动作占用与暂存空间，取 SDK home 和归档文件系统的剩余空间及配置额度的较小值，并扣除在途和持久化保留预算。默认关闭，未启用或启动校验失败的节点不能接收生命周期动作；持久化未开启时若指定了已受保护的 SDK home，会在 Connect 前报错，不能降级注册。
 
 这项能力保存 guest 文件系统，不保存内存和进程状态。恢复使用相同 runtime、版本、guest platform 和归档格式；没有兼容 Worker 时由 Console 返回现有的无可用 Worker/容量错误。共享对象存储及 Console API 的要求见[跨工程存储与 API 设计](../../../docs/plan/sandbox-session-persistence-storage-api.zh-CN.md)。Worker 使用 Console 下发的短期对象授权，不配置长期对象存储密钥。

@@ -12,25 +12,57 @@ pub(super) fn scan_home(
     journal: &JournalState,
     reconcile: bool,
 ) -> Result<Vec<String>> {
+    scan_census(home, journal, reconcile, &BTreeSet::new()).map(|(residual, _)| residual)
+}
+
+pub(super) fn creation_recovery_bindings(
+    home: &Path,
+    journal: &JournalState,
+    allow_selection: &BTreeSet<String>,
+) -> Result<BTreeMap<String, String>> {
+    scan_census(home, journal, true, allow_selection).map(|(_, bindings)| bindings)
+}
+
+fn scan_census(
+    home: &Path,
+    journal: &JournalState,
+    reconcile: bool,
+    allow_selection: &BTreeSet<String>,
+) -> Result<(Vec<String>, BTreeMap<String, String>)> {
     // A recorded create may have completed without returning its ID. Until
     // explicit reconciliation binds that outcome, even an empty inventory
     // cannot authorize SDK initialization or another creation for the scope.
-    if journal
-        .initial_creations
-        .keys()
-        .any(|scope| !journal.initial_boots.contains_key(scope))
-    {
+    if journal.initial_creations.keys().any(|scope| {
+        !journal.initial_boots.contains_key(scope) && !journal.initial_creations[scope].abandoned
+    }) {
         return Err(NativeError::Conflict);
     }
     let host = HostProcess::capture(std::process::id()).map_err(|_| NativeError::Unavailable)?;
     let mut expected = BTreeMap::new();
     let mut known_names = BTreeSet::new();
     let mut markers = BTreeMap::new();
+    let mut creation_bindings = BTreeMap::new();
+    let abandoned: BTreeMap<_, _> = journal
+        .initial_creations
+        .values()
+        .filter(|intent| intent.abandoned)
+        .map(|intent| (terminal_name(&intent.scoped_session_id), intent))
+        .collect();
     let creations: BTreeMap<_, _> = journal
         .initial_creations
         .values()
         .map(|intent| (intent.box_id.as_str(), intent))
         .collect();
+    for intent in abandoned.values() {
+        known_names.insert(terminal_name(&intent.scoped_session_id));
+        if !intent.box_id.is_empty() {
+            insert(
+                &mut expected,
+                &intent.box_id,
+                &terminal_name(&intent.scoped_session_id),
+            )?;
+        }
+    }
     for boot in journal.initial_boots.values() {
         boot.authorization
             .executable
@@ -146,7 +178,7 @@ pub(super) fn scan_home(
                 && directories.is_empty()
                 && expected.is_empty() =>
         {
-            return Ok(Vec::new())
+            return Ok((Vec::new(), BTreeMap::new()))
         }
         Err(_) => return Err(NativeError::Unavailable),
         Ok(meta) => {
@@ -224,8 +256,15 @@ pub(super) fn scan_home(
         if !valid_id(&id) || config_data.len() > CONFIG_LIMIT || state_data.len() > CONFIG_LIMIT {
             return Err(NativeError::Unsupported);
         }
-        let config: BoxConfig =
+        let config_value: serde_json::Value =
             serde_json::from_str(&config_data).map_err(|_| NativeError::Unsupported)?;
+        let config: BoxConfig =
+            serde_json::from_value(config_value.clone()).map_err(|_| NativeError::Unsupported)?;
+        if serde_json::to_value(&config.options).map_err(|_| NativeError::Unsupported)?
+            != config_value["options"]
+        {
+            return Err(NativeError::Unsupported);
+        }
         let state: boxlite::litebox::BoxState =
             serde_json::from_str(&state_data).map_err(|_| NativeError::Unsupported)?;
         if config.id.as_str() != id
@@ -245,12 +284,40 @@ pub(super) fn scan_home(
             }
         }
         if let Some(intent) = creations.get(id.as_str()) {
+            if intent.abandoned && intent.cleanup_complete {
+                return Err(NativeError::Conflict);
+            }
             if crate::persistence::InitialCreation::options_digest(&config.options)
                 .map_err(|_| NativeError::Conflict)?
                 != intent.options_sha256
             {
                 return Err(NativeError::Conflict);
             }
+        }
+        let unbooted = name
+            .as_ref()
+            .and_then(|name| abandoned.get(name))
+            .filter(|intent| !intent.cleanup_complete);
+        if let Some(intent) = unbooted {
+            if intent.cleanup_complete
+                || (!intent.box_id.is_empty() && intent.box_id != id)
+                || (intent.box_id.is_empty()
+                    && !allow_selection.contains(&intent.scoped_session_id))
+                || state.status != BoxStatus::Configured
+                || pid.is_some()
+                || !intent
+                    .origin
+                    .has_exited()
+                    .map_err(super::cleanup::journal_error)?
+                || crate::persistence::InitialCreation::options_digest(&config.options)
+                    .map_err(super::cleanup::journal_error)?
+                    != intent.options_sha256
+            {
+                return Err(NativeError::Conflict);
+            }
+            crate::persistence::boot_executable::validate_unstarted_directory(home, &id)
+                .map_err(super::cleanup::journal_error)?;
+            creation_bindings.insert(intent.scoped_session_id.clone(), id.clone());
         }
         // A protected terminal home has no untracked one-shot runtime. Its
         // Python boxes live in a separate home. Neither a familiar name nor
@@ -262,7 +329,7 @@ pub(super) fn scan_home(
             if !names.insert(name.to_owned()) {
                 return Err(NativeError::Conflict);
             }
-            let known = expected.contains_key(&id);
+            let known = expected.contains_key(&id) || unbooted.is_some();
             let pending_import = journal.operations.values().any(|op| {
                 op.kind == Kind::Target
                     && op.box_id.is_empty()
@@ -340,7 +407,7 @@ pub(super) fn scan_home(
         }
         super::recovery::authorize_residue(home, journal, id)?;
     }
-    Ok(residual)
+    Ok((residual, creation_bindings))
 }
 fn insert(map: &mut BTreeMap<String, String>, id: &str, name: &str) -> Result<()> {
     if map.get(id).is_some_and(|stored| stored != name) {

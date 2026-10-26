@@ -19,6 +19,8 @@ fn creation() -> InitialCreation {
         expires_unix_ms: 10000,
         options_sha256: InitialCreation::options_digest(&boxlite::BoxOptions::default()).unwrap(),
         box_id: String::new(),
+        abandoned: false,
+        cleanup_complete: false,
     }
 }
 
@@ -180,6 +182,47 @@ fn creation_digest_binds_sdk_normalized_limits_and_survives_config_roundtrip() {
     let stored: boxlite::BoxOptions =
         serde_json::from_slice(&serde_json::to_vec(&options).unwrap()).unwrap();
     assert_eq!(InitialCreation::options_digest(&stored).unwrap(), effective);
+}
+
+#[test]
+fn abandoned_creation_denies_original_start_and_cannot_change_a_sealed_empty_selection() {
+    let root = Root::new();
+    let j = root.open();
+    let intent = creation();
+    j.begin_initial_creation(intent.clone()).unwrap();
+    let expected = BTreeMap::from([(intent.scoped_session_id.clone(), intent.clone())]);
+    j.abandon_initial_creations(&expected, &BTreeMap::new())
+        .unwrap();
+    let abandoned = j.snapshot().unwrap().initial_creations[&intent.scoped_session_id].clone();
+    assert!(abandoned.abandoned && !abandoned.cleanup_complete && abandoned.box_id.is_empty());
+    assert!(j.begin_initial_creation(intent.clone()).is_err());
+    assert!(j.select_initial_creation(&intent, "late-root").is_err());
+    let before = fs::read(root.journal().join("journal.json")).unwrap();
+    assert!(j
+        .abandon_initial_creations(
+            &BTreeMap::from([(intent.scoped_session_id.clone(), abandoned.clone())]),
+            &BTreeMap::from([(intent.scoped_session_id.clone(), "late-root".into())])
+        )
+        .is_err());
+    assert!(j.claim(source()).is_err());
+    assert_eq!(
+        fs::read(root.journal().join("journal.json")).unwrap(),
+        before
+    );
+    j.complete_initial_creation_cleanup(&abandoned).unwrap();
+    drop(j);
+    let j = root.open();
+    let complete = j.snapshot().unwrap().initial_creations[&intent.scoped_session_id].clone();
+    assert!(complete.abandoned && complete.cleanup_complete && complete.box_id.is_empty());
+    assert!(j
+        .abandon_initial_creations(
+            &BTreeMap::from([(intent.scoped_session_id.clone(), complete.clone())]),
+            &BTreeMap::new()
+        )
+        .is_err());
+    assert!(j.begin_initial_creation(intent).is_err());
+    assert!(j.claim(source()).is_err());
+    j.claim(target(2)).unwrap();
 }
 
 #[test]

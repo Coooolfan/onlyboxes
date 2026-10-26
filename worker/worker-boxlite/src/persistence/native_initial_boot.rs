@@ -45,6 +45,8 @@ impl NativeRuntime {
             expires_unix_ms,
             options_sha256: InitialCreation::options_digest(&options).map_err(error)?,
             box_id: String::new(),
+            abandoned: false,
+            cleanup_complete: false,
         };
         journal
             .begin_initial_creation(creation.clone())
@@ -72,20 +74,7 @@ impl NativeRuntime {
         journal
             .select_initial_creation(&creation, id)
             .map_err(error)?;
-        // SDK create persists only configuration. Materialize its still-empty
-        // box directory so the shim can be pinned before SDK start creates it.
-        for directory in [self.home.join("boxes"), self.home.join("boxes").join(id)] {
-            use std::os::unix::fs::DirBuilderExt;
-            match fs::DirBuilder::new().mode(0o700).create(&directory) {
-                Ok(()) => {
-                    fs::File::open(directory.parent().ok_or(NativeError::Conflict)?)
-                        .and_then(|f| f.sync_all())
-                        .map_err(|_| NativeError::Unavailable)?;
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),
-                Err(_) => return Err(NativeError::Unavailable),
-            }
-        }
+        let executable = self.prepare_initial_creation_executable(journal, scope)?;
         let authorization = BootAuthorization {
             operation_id: creation.operation_id,
             box_id: id.into(),
@@ -94,7 +83,7 @@ impl NativeRuntime {
             prior_revision: None,
             expires_unix_ms,
             origin: creation.origin,
-            executable: self.boot_executable(id, true)?,
+            executable,
         };
         journal
             .begin_initial_boot(InitialBoot {
@@ -123,6 +112,55 @@ impl NativeRuntime {
             .map_err(error)?;
         self.confirm_initial_adoption(journal, &adoption).await?;
         self.inspect(scope, id).await
+    }
+
+    /// Prepare only a current, durably selected initial create. This returns
+    /// executable evidence, never a boot grant; begin_initial_boot must still
+    /// persist before any independent authorization or SDK start.
+    pub fn prepare_initial_creation_executable(
+        &self,
+        journal: &Journal,
+        scope: &str,
+    ) -> Result<crate::persistence::BootExecutable> {
+        let state = journal.snapshot().map_err(error)?;
+        let intent = state
+            .initial_creations
+            .get(scope)
+            .ok_or(NativeError::Conflict)?;
+        if intent.abandoned
+            || intent.box_id.is_empty()
+            || state.initial_boots.contains_key(scope)
+            || self
+                .execution_guard
+                .as_ref()
+                .is_none_or(|guard| guard.identity() != &intent.guard)
+            || intent.origin != HostProcess::current().map_err(error)?
+        {
+            return Err(NativeError::Conflict);
+        }
+        let id = intent.box_id.as_str();
+        let config = read_config_mode(&self.home, id, false)?;
+        if InitialCreation::options_digest(&config.options).map_err(error)? != intent.options_sha256
+        {
+            return Err(NativeError::Conflict);
+        }
+        crate::persistence::boot_executable::validate_unstarted_directory(&self.home, id)
+            .map_err(error)?;
+        // SDK create persists only configuration. Materialize its still-empty
+        // box directory so the shim can be pinned before SDK start creates it.
+        for directory in [self.home.join("boxes"), self.home.join("boxes").join(id)] {
+            use std::os::unix::fs::DirBuilderExt;
+            match fs::DirBuilder::new().mode(0o700).create(&directory) {
+                Ok(()) => {
+                    fs::File::open(directory.parent().ok_or(NativeError::Conflict)?)
+                        .and_then(|f| f.sync_all())
+                        .map_err(|_| NativeError::Unavailable)?;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),
+                Err(_) => return Err(NativeError::Unavailable),
+            }
+        }
+        self.boot_executable(id, true)
     }
 }
 fn error(error: crate::persistence::Error) -> NativeError {

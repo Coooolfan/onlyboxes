@@ -36,6 +36,17 @@ impl JournalState {
         }
         let mut creation_ids = std::collections::BTreeSet::new();
         let mut creation_operations = std::collections::BTreeSet::new();
+        let mut restored_scopes = BTreeMap::new();
+        for op in self
+            .operations
+            .values()
+            .filter(|op| op.kind == Kind::Target && op.generation > 1)
+        {
+            restored_scopes
+                .entry(op.scoped_session_id.as_str())
+                .and_modify(|generation: &mut i64| *generation = (*generation).min(op.generation))
+                .or_insert(op.generation);
+        }
         for (scope, intent) in &self.initial_creations {
             intent.validate().map_err(|_| Error::Unavailable)?;
             if scope != &intent.scoped_session_id
@@ -43,9 +54,19 @@ impl JournalState {
                 || match self.initial_boots.get(scope) {
                     Some(boot) => !intent.matches_boot(boot),
                     None => {
-                        self.current.contains_key(scope)
-                            || self.probes.contains_key(scope)
+                        self.probes.contains_key(scope)
                             || self.adoptions.contains_key(scope)
+                            || self.current.get(scope).is_some_and(|id| {
+                                self.operations.get(id).is_none_or(|op| {
+                                    !intent.abandoned
+                                        || !intent.cleanup_complete
+                                        || op.generation <= 1
+                                        || (matches!(op.kind, Kind::Source | Kind::Adopt)
+                                            && restored_scopes.get(scope.as_str()).is_none_or(
+                                                |generation| *generation > op.generation,
+                                            ))
+                                })
+                            })
                     }
                 }
                 || (!intent.box_id.is_empty() && !creation_ids.insert(&intent.box_id))

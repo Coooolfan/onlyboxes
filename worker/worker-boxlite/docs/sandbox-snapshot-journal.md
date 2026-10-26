@@ -17,7 +17,9 @@ BoxLite 的私有 journal 使用磁盘格式 v2，将恢复规格按 SHA-256 共
 
 公开 API、registry 协议、快照归档格式、配置以及 home/Worker/lease-store 的配对身份均不改变。归档中携带的恢复规格与 journal 的私有引用编码相互独立。
 
-`initial_creations` 另记录 SDK 创建前的初始会话意图及不可替换的选定原生 ID，随 v2 编码完整保留，不放入恢复规格共享表，也不因创建结果未知而丢弃。其选项摘要、创建者、守护器、scope、期限及 boot 关联的约束见[初始创建意图](sandbox-snapshot-startup.md#初始创建意图)。只保存该摘要不能授予启动、采纳或删除权限；未完成意图在 SDK 初始化前拒绝开放。
+`initial_creations` 另记录 SDK 创建前的初始会话意图及不可替换的选定原生 ID，随 v2 编码完整保留，不放入恢复规格共享表，也不因创建结果未知而丢弃。其选项摘要、创建者、守护器、scope、期限及 boot 关联的约束见[初始创建意图](sandbox-snapshot-startup.md#初始创建意图)。只保存该摘要不能授予启动、采纳或删除权限；生产入口仅在同一守护器、创建者已退出、无启动授权及完整原生清单证明下，将可清理意图 CAS 标记为 `abandoned`，清理完成再标记 `cleanup_complete`。两个字段为 false 时省略，完成必须同时已 abandoned；不可变身份与回执永久保留。未满足条件的意图仍在 SDK 初始化前拒绝开放。
+
+完成清理后的本地 generation 1 拒绝栅栏不占容量，也不构造 Console 的永久 DELETE。journal 只允许明确授权的较高代次 target/cancel/delete；source/adopt 还须有较高代次 target 历史。该条件既防止普通创建复用旧 scope，也允许从有效共享快照恢复及后续再次快照。空 ID 终结后不得追加绑定，原 ID 再出现不得按新资源采纳。
 
 ## 读取、升级与失败
 

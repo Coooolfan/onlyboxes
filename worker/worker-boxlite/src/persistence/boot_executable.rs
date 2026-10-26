@@ -14,6 +14,10 @@ type Result<T> = std::result::Result<T, Error>;
 const MAX_EXECUTABLE: u64 = 512 << 20;
 const MAX_PROCESSES: usize = 16384;
 
+#[path = "initial_creation_files.rs"]
+mod initial_creation_files;
+pub(crate) use initial_creation_files::validate_unstarted_directory;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Directory {
